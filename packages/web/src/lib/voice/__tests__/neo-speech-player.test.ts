@@ -164,6 +164,23 @@ describe('openNeoSpeechPlayer', () => {
     expect(sound.sources.map((source) => source.samples)).toEqual([[-0.5], [-0.5], [-0.5]]);
   });
 
+  it('starts a queued reply wait only when it reaches the front', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    emit(audio(ID_A, 0, pcm(16384)));
+    emit(end(ID_A, 1));
+    await vi.advanceTimersByTimeAsync(40_000);
+    sound.finish(0);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(acks()).toEqual(['A:playing', 'A:played']);
+    emit(audio(ID_B, 0, pcm(-16384)));
+    expect(sound.sources.map((source) => source.samples)).toEqual([[0.5], [-0.5]]);
+  });
+
   it('does not give up on a reply while its audio is playing', async () => {
     vi.useFakeTimers();
     const { hub, emit, acks } = fakeHub();
