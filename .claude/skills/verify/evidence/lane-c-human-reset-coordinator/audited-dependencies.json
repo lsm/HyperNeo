@@ -71,7 +71,7 @@
   },
   "coreAppend": {
     "lines": 387,
-    "sha256": "762d3c3a190639b5d2a26a915e224251e04f1f6ffb31e71116d5bc84fedac355",
+    "sha256": "cf846e4e1eab11c113208f0fb629cd979ab0d6b59bc11872c5f177d9c6a1d555",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -180,24 +180,24 @@
       {
         "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
         "name": "byteCount",
-        "start": 14,
-        "end": 14,
+        "start": 13,
+        "end": 13,
         "lines": 1,
         "sha256": "e8fd7ba60989e9c32f89be1b6fb3dde6417f10f081a8b1435d3d1c622c61de55"
       },
       {
         "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
         "name": "artifactId",
-        "start": 15,
-        "end": 15,
+        "start": 14,
+        "end": 14,
         "lines": 1,
         "sha256": "7cf5c80d753afcf83e402db33ed9a0d2d148b527d4127608b12220d981aec090"
       },
       {
         "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
         "name": "ArtifactRefSchema",
-        "start": 33,
-        "end": 43,
+        "start": 32,
+        "end": 42,
         "lines": 11,
         "sha256": "f2fbf412f30944e4585cc76defbb16d80b81c23d1690aaa0880d350528f2c996"
       },
