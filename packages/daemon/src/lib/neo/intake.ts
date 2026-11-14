@@ -167,7 +167,13 @@ export function neoIntakeMessage(
       ...(facts.length ? { humanContent: content } : {}),
     };
   }
-  const storedHead = enveloped ? (storedBlocks?.[0] as { text?: string } | undefined)?.text : null;
+  const storedFirst = (storedBlocks?.[0] as { type: string; text?: string } | undefined) ?? null;
+  const storedHead =
+    enveloped &&
+    storedFirst?.type === 'text' &&
+    storedFirst.text?.trimStart().startsWith('<human-message ') !== true
+      ? storedFirst.text
+      : null;
   const head =
     storedHead ??
     [said, [localTime, sourceFact].filter(Boolean).join(' '), previewFact]

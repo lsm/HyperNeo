@@ -369,4 +369,22 @@ describe('neoIntakeMessage order', () => {
     expect(retry).toEqual(first);
     expect(joined(retry).match(/\[input: dictation\]/g)).toHaveLength(1);
   });
+
+  test('a retry of a row with no opening line does not repeat the envelope', () => {
+    const first = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it' },
+      session,
+      null,
+      null
+    );
+    const retry = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it' },
+      session,
+      null,
+      neoRetryLocalTime(first, 'fresh'),
+      first
+    );
+    expect(retry).toEqual(first);
+    expect(joined(retry).match(/<human-message id=/g)).toHaveLength(1);
+  });
 });
