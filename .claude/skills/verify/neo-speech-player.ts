@@ -109,7 +109,7 @@ w.player = openNeoSpeechPlayer(hub as any, ${JSON.stringify(sessionId)}, { creat
   w.contextRate = context.sampleRate;
   return { get currentTime() { return context.currentTime; }, destination: tap,
     createBuffer: context.createBuffer.bind(context), createBufferSource: context.createBufferSource.bind(context),
-    close: () => context.close() } as unknown as AudioContext;
+    resume: () => context.resume(), close: () => context.close() } as unknown as AudioContext;
 } });`
 );
 const built = await Bun.build({ entrypoints: [playerBundle], target: 'browser' });

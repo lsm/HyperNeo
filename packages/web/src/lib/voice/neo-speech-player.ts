@@ -36,6 +36,7 @@ export function openNeoSpeechPlayer(
   options: NeoSpeechPlayerOptions = {}
 ): NeoSpeechPlayer {
   const context = (options.createContext ?? (() => new AudioContext()))();
+  context.resume().catch(() => {});
   let queue: Utterance[] = [];
   let playhead = 0;
 
@@ -49,6 +50,7 @@ export function openNeoSpeechPlayer(
       source.stop();
     }
     utterance.sources.clear();
+    playhead = context.currentTime;
   };
 
   const schedule = (utterance: Utterance, bytes: Uint8Array) => {
