@@ -121,7 +121,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one reply per human message. text is the reply; add details only for more than five sentences or any structured report, list, table or multi-topic update, and make them add information beyond text. If your reads answer the message, reply with the answer; otherwise say in one brief line what will be done, without claiming it is done. Every message also goes on to be handled in full, so never promise what you cannot check. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
+        'Send one reply per human message. text is the reply; add details only for a body over the limit or any structured report, list, table or multi-topic update, and make them add information beyond text. If your reads answer the message, reply with the answer; otherwise say in one brief line what will be done, without claiming it is done. Every message also goes on to be handled in full, so never promise what you cannot check. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(16000),
