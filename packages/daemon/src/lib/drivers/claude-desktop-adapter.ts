@@ -1778,7 +1778,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
   const cache: ClaudeRecordCache = new Map();
   const reused = {
     ...deps,
-    liveSessions: deps.liveSessionsListed ?? reuseLiveSessions(deps.liveSessions, Date.now).listed,
+    liveSessions: deps.liveSessionsListed ?? deps.liveSessions,
   };
   return {
     id: 'claude-desktop',
@@ -1853,7 +1853,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
     start: (request, context) => runClaudeDesktopStart(request, deps, cache, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
-    status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
+    status: (ref, since, receipt) => runClaudeDesktopStatus(ref, deps, cache, since, receipt),
     turns: async (ref, cursor, limit) => {
       const record = (await loadClaudeDesktopRecords(deps, cache)).find(
         (row) => row.sessionId === ref.id

@@ -310,9 +310,8 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
         runLagPhase('scanner:claude_code', () => readClaudeCodeFolders(projectsDir, cache))
       )
     : async () => [];
-  const liveSessionsListed = deps.liveSessionsListed
-    ? shareInFlight(deps.liveSessionsListed)
-    : undefined;
+  const listed = deps.liveSessionsListed ?? deps.liveSessions;
+  const liveSessionsListed = listed ? shareInFlight(listed) : undefined;
   const status: WorkAdapter['status'] = liveSessionsListed
     ? (ref, since, receipt) =>
         readClaudeCliStatus(ref, since, receipt, {
