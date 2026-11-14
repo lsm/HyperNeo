@@ -2,6 +2,7 @@ import type { Session } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 
 export const currentSessionIdSignal = signal<string | null>(null);
+export const newChatProjectSignal = signal<string | null>(null);
 
 export const sessionsSignal = signal<Session[]>([]);
 
