@@ -335,6 +335,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         const { text, details } = foldPublicationDetails({
           text: _rawText,
           details: _rawDetails,
+          deliverable: _deliverable,
         });
         return runtime.append(
           {

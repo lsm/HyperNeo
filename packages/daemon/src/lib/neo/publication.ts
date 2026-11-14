@@ -107,13 +107,14 @@ export function publicationTextRule(
     ctx.addIssue({ code: 'custom', message: 'shortText is required without verbatim' });
 }
 
-export function foldPublicationDetails(value: { text: string; details?: string }): {
+export function foldPublicationDetails(value: {
   text: string;
   details?: string;
-} {
+  deliverable?: true;
+}): { text: string; details?: string } {
   if (value.details === undefined || value.details.length >= value.text.length) return value;
   const folded = { text: `${value.text}\n\n${value.details}` };
-  return replyBodyRefusal(folded) ? value : folded;
+  return !value.deliverable && replyBodyRefusal(folded) ? value : folded;
 }
 
 const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
