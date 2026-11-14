@@ -139,10 +139,24 @@ try {
     await page.waitForTimeout(600);
     result.retargetFormOpen = await retargetInput.count();
     result.retargetHint = await page.getByText(/Adds a folder to alpha/).count();
-    await retargetInput.fill(`${run}/projects/assets-${scheme}-retarget`);
+    const retargetPath = `${run}/projects/assets-${scheme}-retarget`;
+    await retargetInput.fill(retargetPath);
     await retargetInput.press('Enter');
-    await retargetInput.waitFor({ state: 'detached', timeout: 10000 });
-    retargetFolders.push(`${run}/projects/assets-${scheme}-retarget`);
+    const retargetClosed = await retargetInput
+      .waitFor({ state: 'detached', timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!retargetClosed) {
+      const reason = await page
+        .locator('p.text-danger')
+        .first()
+        .textContent()
+        .catch(() => null);
+      throw new Error(
+        `the form did not close after adding ${retargetPath} (${scheme}): ${reason ?? 'no reason shown'}`
+      );
+    }
+    retargetFolders.push(retargetPath);
     await page.keyboard.press('Escape');
     await page.mouse.move(900, 700);
     await plus(page, 'alpha').hover();
