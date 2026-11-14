@@ -198,7 +198,10 @@ export function neoIntakeMessage(
       role: 'user',
       content: [
         ...(head ? [{ type: 'text' as const, text: head }] : []),
-        { type: 'text' as const, text: `${head ? '\n' : ''}<human-message ${envelope}>\n` },
+        {
+          type: 'text' as const,
+          text: `${head ? '\n' : ''}<human-message ${envelope}>\n${fact ? '' : '\n'}`,
+        },
         ...(fact
           ? [
               {
@@ -206,7 +209,7 @@ export function neoIntakeMessage(
                 text: `<reference${reference}>\n${escapeSessionText(fact)}\n</reference>\n\n`,
               },
             ]
-          : [{ type: 'text' as const, text: '\n' }]),
+          : []),
         ...human,
         { type: 'text' as const, text: '\n\n</human-message>' },
       ],

@@ -67,7 +67,7 @@ export async function verifySpentAdmission(
     const text = active ? `Visible synthetic recovery reply ${requests.length + 1}` : 'Probe ready';
     if (active) {
       evidence.inputWithMessageId ??= JSON.stringify(body.messages).includes(
-        `[message id: ${requestId}]`
+        `human-message id=\\"${requestId}\\"`
       );
       requests.push(text);
       if (JSON.stringify(body.messages).includes('HUMAN_MID_TURN')) midTurnSeen = true;
