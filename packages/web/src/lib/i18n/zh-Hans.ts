@@ -132,6 +132,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.new': '新',
   'todo.doneWhen': '做完 = {doneWhen}',
   'todo.open': '打开',
+  'todo.desktopControl': '允许智能体使用这台电脑',
   'todo.showDetails': '显示详情：{title}',
   'todo.hideDetails': '收起详情：{title}',
   'todo.openTitle': '打开 {title}',

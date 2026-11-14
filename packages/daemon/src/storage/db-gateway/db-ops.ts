@@ -18,6 +18,7 @@ import {
 } from '../repositories/pairing-request-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
 import { neoDaemonCardWrite } from '../repositories/neo-daemon-card-write.ts';
+import { neoTodoDesktopControlWrite } from '../repositories/neo-todo-desktop-control-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
 import {
@@ -262,6 +263,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoSessionWrites,
     neoStallReminderWrite,
     neoDaemonCardWrite,
+    neoTodoDesktopControlWrite,
     codingTodoPrReads,
     neoAskInputReads,
     neoAskInputWrites,
