@@ -269,8 +269,8 @@ export class ModelSwitchHandler {
 
     if (result.stripped) {
       logger.info(
-        `Stripped ${result.thinkingBlocksRemoved} thinking block(s) from JSONL ` +
-          `for cross-provider switch ${previousProvider} → ${newProvider}` +
+        `Cleaned JSONL for cross-provider switch ${previousProvider} → ${newProvider} ` +
+          `(${result.thinkingBlocksRemoved} thinking block(s) removed)` +
           (result.backupPath ? ` (backup: ${result.backupPath})` : '')
       );
     }
