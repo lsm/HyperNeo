@@ -181,8 +181,8 @@ describe('durable Neo intake operation', () => {
       inputKind: 'human',
       message: {
         content: [
-          { type: 'text', text: expect.stringMatching(/^\(local time: /) },
-          { type: 'text', text: `\n<human-message id="${input.requestId}">\n\n` },
+          { type: 'text', text: expect.stringMatching(/^\(local time: [^\n]*\)\n$/) },
+          { type: 'text', text: `<human-message id="${input.requestId}">\n\n` },
           { type: 'text', text: input.content },
           { type: 'text', text: '\n\n</human-message>' },
         ],

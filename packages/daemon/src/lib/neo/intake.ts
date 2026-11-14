@@ -100,6 +100,28 @@ export function requireNeoIntakeTarget(
   return { value: session };
 }
 
+type StoredBlock = { type: string; text?: string };
+
+export function readStoredEnvelope(
+  blocks: readonly StoredBlock[] | null,
+  requestId: string
+): { enveloped: boolean; head: string | null } {
+  const all = blocks ?? [];
+  const last = all.at(-1);
+  const open = new RegExp(`^\\s*<human-message id="${attribute(requestId)}"`);
+  const openIndex = all.findIndex((block) => block.type === 'text' && open.test(block.text ?? ''));
+  const closes = last?.type === 'text' && /^\s*<\/human-message>\s*$/.test(last.text ?? '');
+  if (!closes || openIndex < 0 || openIndex > 1 || openIndex >= all.length - 1)
+    return { enveloped: false, head: null };
+  const before = all
+    .slice(0, openIndex)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join('')
+    .trim();
+  return { enveloped: true, head: before || null };
+}
+
 export function neoIntakeMessage(
   input: IntakeInput,
   sessionId: string = input.sessionId,
@@ -132,22 +154,9 @@ export function neoIntakeMessage(
       (block: { type: string; text?: string }) =>
         block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
-  const opensEnvelope = `<human-message id="${attribute(input.requestId)}"`;
-  const isOpen = (block: { type: string; text?: string } | undefined) =>
-    block?.type === 'text' && block.text?.trimStart().startsWith(opensEnvelope) === true;
-  const isClose = (block: { type: string; text?: string } | undefined) =>
-    block?.type === 'text' && block.text?.trim() === '</human-message>';
   const blocks = storedBlocks ?? [];
-  const openIndex = isOpen(blocks[0] as { type: string; text?: string })
-    ? 0
-    : isOpen(blocks[1] as { type: string; text?: string })
-      ? 1
-      : -1;
-  const enveloped =
-    stored !== undefined &&
-    openIndex !== -1 &&
-    openIndex < blocks.length - 1 &&
-    isClose(blocks.at(-1) as { type: string; text?: string });
+  const storedShape = readStoredEnvelope(storedBlocks, input.requestId);
+  const enveloped = storedShape.enveloped;
   const legacy = stored !== undefined && !enveloped;
   const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
@@ -184,15 +193,8 @@ export function neoIntakeMessage(
       ...(facts.length ? { humanContent: content } : {}),
     };
   }
-  const storedFirst = (storedBlocks?.[0] as { type: string; text?: string } | undefined) ?? null;
-  const storedHead =
-    enveloped &&
-    storedFirst?.type === 'text' &&
-    storedFirst.text?.trimStart().startsWith('<human-message ') !== true
-      ? storedFirst.text
-      : null;
   const head =
-    storedHead ??
+    storedShape.head ??
     [said, [localTime, sourceFact].filter(Boolean).join(' '), previewFact]
       .filter(Boolean)
       .join('\n');
@@ -220,10 +222,10 @@ export function neoIntakeMessage(
     message: {
       role: 'user',
       content: [
-        ...(head ? [{ type: 'text' as const, text: head }] : []),
+        ...(head ? [{ type: 'text' as const, text: `${head}\n` }] : []),
         {
           type: 'text' as const,
-          text: `${head ? '\n' : ''}<human-message ${envelope}>\n${fact ? '' : '\n'}`,
+          text: `<human-message ${envelope}>\n${fact ? '' : '\n'}`,
         },
         ...(fact
           ? [

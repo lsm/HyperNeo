@@ -475,7 +475,7 @@ describe('neoIntakeMessage order', () => {
     expect(joined(retry).match(/\[input: dictation\]/g)).toHaveLength(1);
   });
 
-  test('a retry of a row with no opening line does not repeat the envelope', () => {
+  test('a headless front row retried twice keeps one opening tag', () => {
     const first = neoIntakeMessage(
       { sessionId: session, requestId, content: 'Ship it' },
       session,
@@ -489,7 +489,16 @@ describe('neoIntakeMessage order', () => {
       neoRetryLocalTime(first, 'fresh'),
       first
     );
-    expect(retry).toEqual(first);
-    expect(joined(retry).match(/<human-message id=/g)).toHaveLength(1);
+    const again = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it' },
+      session,
+      null,
+      neoRetryLocalTime(retry, 'fresh'),
+      retry
+    );
+    expect(joined(first).match(/<human-message id="/g)).toHaveLength(1);
+    expect(joined(retry).match(/<human-message id="/g)).toHaveLength(1);
+    expect(joined(again).match(/<human-message id="/g)).toHaveLength(1);
+    expect(again).toEqual(first);
   });
 });
