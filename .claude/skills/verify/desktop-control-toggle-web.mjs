@@ -39,6 +39,7 @@ try {
   await page.goto(`${base}/neo`);
   const row = page.locator('[data-ask-todo="dentist"]').first();
   await expand(row, 'Book the dentist on the clinic site');
+  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
   const box = row.getByRole('checkbox', { name: 'Let the agent use this computer' });
   await box.waitFor();
   const card = page.locator('[data-ask-todo="dentist"]').first().locator('xpath=ancestor::article[1]');
@@ -55,6 +56,7 @@ try {
   await page.reload();
   const again = page.locator('[data-ask-todo="dentist"]').first();
   await expand(again, 'Book the dentist on the clinic site');
+  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
   const reloaded = again.getByRole('checkbox', { name: 'Let the agent use this computer' });
   await reloaded.waitFor();
   observations.push({ todo: 'dentist', checkedAfterReload: await reloaded.isChecked() });
@@ -62,7 +64,6 @@ try {
   await page.emulateMedia({ colorScheme: 'dark' });
   await shot('todo-on-dark.png');
   await page.emulateMedia({ colorScheme: 'light' });
-  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
   observations.push({
     todo: 'taxes',
     checked: await page.locator('[data-ask-todo="taxes"]').first().getByRole('checkbox', { name: 'Let the agent use this computer' }).isChecked(),
