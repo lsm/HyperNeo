@@ -709,8 +709,11 @@ export async function stopHyperneoWork(
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps
 ): Promise<Result<{ stopped: boolean }>> {
-  if (row.processing === 'interrupted_by_restart')
-    return { ok: true, value: { stopped: await deps.sessions.dropRestartResume(row.id) } };
+  if (
+    row.processing === 'interrupted_by_restart' &&
+    (await deps.sessions.dropRestartResume(row.id))
+  )
+    return { ok: true, value: { stopped: true } };
   return {
     ok: true,
     value: { stopped: hyperneoSessionBusy(row) && (await deps.sessions.interrupt(row.id)) },

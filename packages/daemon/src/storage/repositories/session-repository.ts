@@ -336,7 +336,8 @@ export class SessionRepository {
            WHERE id = ?
              AND json_valid(processing_state)
              AND json_extract(processing_state, '$.status') = 'interrupted'
-             AND json_extract(processing_state, '$.reason') = 'restart'`
+             AND json_extract(processing_state, '$.reason') = 'restart'
+             AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
         )
         .run(sessionId).changes > 0
     );
