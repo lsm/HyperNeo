@@ -411,7 +411,6 @@
     "packages/daemon/tests/unit/4-space-storage/storage/space-workflow-repository-handle.test.ts": 20,
     "packages/daemon/tests/unit/4-space-storage/storage/space-workflow-repository-post-approval.test.ts": 8,
     "packages/daemon/tests/unit/4-space-storage/storage/task-id-resolution-cache.test.ts": 5,
-    "packages/daemon/tests/unit/4-space-storage/storage/workflow-run-pin-write.test.ts": 2,
     "packages/daemon/tests/unit/5-space/actions/task-message-delivery.test.ts": 3,
     "packages/daemon/tests/unit/5-space/actor-registry.test.ts": 3,
     "packages/daemon/tests/unit/5-space/agent/agent-config.test.ts": 4,

@@ -8,12 +8,20 @@ import type {
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
-import { computeDefinitionVersion } from '../../lib/workflows/definition-version.ts';
+import {
+  computeDefinitionVersion,
+  verifyDefinitionVersion,
+} from '../../lib/workflows/definition-version.ts';
 import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
   type AgentTemplateResolverFactory,
 } from '../../lib/workflows/run-template-snapshot.ts';
+import {
+  buildPlanRunSnapshotMigration,
+  isRunSnapshotMigrationSkip,
+  type RunSnapshotMigrationPlan,
+} from '../../lib/workflows/plan-run-snapshot-migration.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { workflowRunPinWrites } from './workflow-run-pin-write.ts';
@@ -164,6 +172,88 @@ export class SpaceWorkflowRunRepository {
       versionHash,
       payload,
     });
+  }
+
+  listSnapshotlessPinnedRuns(): Array<{
+    id: string;
+    workflowId: string;
+    spaceId: string;
+    payload: string;
+    versionHash: string;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT r.id, r.workflow_id, r.space_id, r.definition_version AS version_hash, v.payload
+         FROM space_workflow_runs r
+         JOIN space_workflow_definition_versions v
+           ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
+         WHERE r.definition_version IS NOT NULL
+           AND CASE
+                 WHEN json_valid(v.payload)
+                   THEN json_extract(v.payload, '$.templateSnapshots') IS NULL
+                 ELSE 1
+               END
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
+           )
+         ORDER BY r.created_at ASC, r.rowid ASC`
+      )
+      .all() as Array<{
+      id: string;
+      workflow_id: string;
+      space_id: string;
+      payload: string;
+      version_hash: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      workflowId: r.workflow_id,
+      spaceId: r.space_id,
+      payload: r.payload,
+      versionHash: r.version_hash,
+    }));
+  }
+
+  async migrateSnapshotlessPins(
+    resolveTemplateFor: AgentTemplateResolverFactory,
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null
+  ): Promise<number> {
+    let count = 0;
+    for (const run of this.listSnapshotlessPinnedRuns()) {
+      try {
+        const plan = buildPlanRunSnapshotMigration({
+          verifyVersion: verifyDefinitionVersion,
+          loadWorkflow,
+          resolveTemplate: resolveTemplateFor(run.spaceId),
+          computeVersion: computeDefinitionVersion,
+        });
+        const outcome = plan(run);
+        if (isRunSnapshotMigrationSkip(outcome)) {
+          log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
+          continue;
+        }
+        if (outcome.source === 'live') {
+          log.warn(
+            `migrateSnapshotlessPins: run ${outcome.runId} had an unverifiable pin; ` +
+              `snapshotting the live definition it was already resolving`
+          );
+        }
+        if (await this.applyRunSnapshotMigration(outcome)) count += 1;
+      } catch (err) {
+        log.warn(`migrateSnapshotlessPins: skipped run ${run.id} (non-fatal):`, err);
+      }
+    }
+    return count;
+  }
+
+  private applyRunSnapshotMigration(plan: RunSnapshotMigrationPlan): Promise<boolean> {
+    return gatewayFor(this.db).call(workflowRunPinWrites, 'migrateSnapshot', plan);
   }
 
   async backfillDefinitionPins(
