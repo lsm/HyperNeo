@@ -2244,6 +2244,34 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(authStatus.isAuthenticated).toBe(true);
       p.stopAllBridgeServers();
     });
+
+    it('propagates a failure to persist rotated credentials instead of reporting transient', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'stale-access-token',
+        refresh: 'valid-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'rotated-access-token',
+            refresh_token: 'rotated-refresh-token',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+      fsPromiseMocks.writeFile.mockRejectedValueOnce(new Error('disk full'));
+
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+
+      await expect(p.refreshToken()).rejects.toThrow('disk full');
+      p.stopAllBridgeServers();
+    });
   });
 
   describe.skipIf(!isBun)('setSessionThinkingConfig', () => {

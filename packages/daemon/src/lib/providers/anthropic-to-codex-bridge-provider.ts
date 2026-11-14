@@ -1145,12 +1145,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async refreshToken(): Promise<TokenRefreshOutcome> {
-    try {
-      const result = await this.refreshStoredOauthCredentials();
-      return typeof result === 'object' ? 'refreshed' : result;
-    } catch {
-      return 'transient';
-    }
+    const result = await this.refreshStoredOauthCredentials();
+    return typeof result === 'object' ? 'refreshed' : result;
   }
 
   async logout(): Promise<void> {

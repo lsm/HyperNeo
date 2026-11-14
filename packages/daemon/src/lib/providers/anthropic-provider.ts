@@ -261,17 +261,13 @@ export class AnthropicProvider implements Provider {
   async refreshToken(): Promise<TokenRefreshOutcome> {
     const credentials = this.credentials;
     if (credentials?.type !== 'oauth' || !credentials.refreshToken) return 'definitive';
-    try {
-      const result = await refreshClaudeSubscriptionToken({
-        refreshToken: credentials.refreshToken,
-        fetchImpl: this.fetchImpl,
-      });
-      if (!result.ok) return result.definitive ? 'definitive' : 'transient';
-      this.applyClaudeSubscriptionTokens(result.token);
-      return 'refreshed';
-    } catch {
-      return 'transient';
-    }
+    const result = await refreshClaudeSubscriptionToken({
+      refreshToken: credentials.refreshToken,
+      fetchImpl: this.fetchImpl,
+    });
+    if (!result.ok) return result.definitive ? 'definitive' : 'transient';
+    this.applyClaudeSubscriptionTokens(result.token);
+    return 'refreshed';
   }
 
   async logout(): Promise<void> {
