@@ -1658,7 +1658,7 @@ export async function startClaudeSession(
         ? join(cwd, '.claude/settings.local.json')
         : JSON.stringify({ env: workerWorkEnvironment(cwd) }),
       '--append-system-prompt',
-      workerWorkLocationsBrief(cwd),
+      `${workerWorkLocationsBrief(cwd)}\nOpen the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor.`,
       '--',
       CLAUDE_DESKTOP_PREPARE,
     ],
