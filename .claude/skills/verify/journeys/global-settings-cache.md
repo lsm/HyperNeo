@@ -3,7 +3,8 @@
 Run the focused regression on the build/test host with Bun 1.4.2. It boots a real
 isolated daemon on an ephemeral port and calls the authenticated WebSocket
 settings update door. Use a fresh synthetic HOME and data directory, with no
-provider credentials in the environment.
+provider credentials in the environment. The daemon test owns its synthetic
+data directory and restores the prior environment after cleanup.
 
 From the repository root, choose a fresh evidence directory and run this in Bash.
 
@@ -14,7 +15,7 @@ bash .claude/skills/verify/resource-check.sh && (
   mkdir -p "$RUN/home" "$RUN/tmp"
   cd packages/daemon
   env -i PATH="$PATH" HOME="$RUN/home" TMPDIR="$RUN/tmp" NODE_ENV=test \
-    HYPERNEO_SPACE=on HYPERNEO_DATA_DIR="$RUN/data" \
+    HYPERNEO_SPACE=on \
     bun test tests/unit/4-space-storage/storage/global-settings-cache.test.ts \
       tests/unit/1-core/operations/neo-rule-answers.test.ts
 )
