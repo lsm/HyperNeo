@@ -84,8 +84,7 @@ const one = (state: string, todo: string | null = 'Book the dentist') => ({
 test('a worker whose todo did not turn on desktop control is off', async () => {
   db.prepare('UPDATE neo_todos SET named = ?').run('{}');
   await openApp();
-  await recordDriver();
-  expect(await status({ worker })).toMatchObject(one('off', null));
+  expect(await status({ worker })).toMatchObject(one('off', 'Book the dentist'));
 });
 
 test('desktop control is unavailable while HyperNeo Desktop is not running', async () => {
@@ -135,7 +134,7 @@ test('without a worker it reads every worker on a running todo', async () => {
     value: {
       workers: [
         { worker, todo: 'Book the dentist', state: 'running' },
-        { worker: 'worker-b', todo: null, state: 'off' },
+        { worker: 'worker-b', todo: 'Plain', state: 'off' },
       ],
     },
   });
@@ -189,4 +188,14 @@ test('a driver that exited without the human stop keeps its Stop', async () => {
   await recordDriver();
   alive = false;
   expect(await status({ worker })).toMatchObject(one('running'));
+});
+
+test('a live driver stays listed with Stop after its todo leaves doing', async () => {
+  await openApp();
+  await recordDriver();
+  db.prepare('UPDATE neo_todos SET state = ?').run('done');
+  expect(await status({ worker })).toMatchObject(one('running'));
+  expect(await status({})).toMatchObject(one('running'));
+  alive = false;
+  expect(await status({ worker })).toMatchObject(one('off'));
 });
