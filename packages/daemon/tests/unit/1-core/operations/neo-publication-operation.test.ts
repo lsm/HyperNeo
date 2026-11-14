@@ -496,6 +496,10 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_summary_too_long',
     });
+    expect(await send('long-short-details', long, 'One more note.')).toMatchObject({
+      accepted: false,
+      reason: 'reply_summary_too_long',
+    });
     expect(await send('chinese-long', '中'.repeat(151))).toMatchObject({
       accepted: false,
       reason: 'reply_needs_details',

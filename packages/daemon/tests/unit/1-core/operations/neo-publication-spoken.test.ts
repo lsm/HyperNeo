@@ -255,14 +255,13 @@ describe('publication speech follows the committed version', () => {
       cardReply,
     });
     const long = Array(61).fill('word').join(' ');
-    for (const [requestId, text, details] of [
-      ['card-text-over', long, undefined],
-      ['card-folded-over', long, 'd'.repeat(200)],
+    for (const [requestId, text, details, reason] of [
+      ['card-text-over', long, undefined, 'reply_needs_details: '],
+      ['card-folded-over', long, 'd'.repeat(200), 'reply_summary_too_long: '],
     ] as const) {
       const refused = await send({ ...textOnly, requestId, text, details, cardReply });
       expect(refused).toMatchObject({ accepted: false });
-      expect(String(refused.reason)).toContain('reply_needs_details');
-      expect(String(refused.reason)).toContain('the rest in details');
+      expect(String(refused.reason)).toStartWith(reason);
     }
     expect(ledger.list(conversationId)).toHaveLength(1);
   });
