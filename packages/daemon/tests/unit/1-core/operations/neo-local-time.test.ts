@@ -381,6 +381,58 @@ describe('neoIntakeMessage order', () => {
     expect(retry.message.content).toEqual(content);
   });
 
+  test('a legacy reply retry keeps the fact line it stored', () => {
+    const content = [
+      { type: 'text' as const, text: `[message id: ${requestId}]` },
+      { type: 'text' as const, text: '(local time: Sun 2026-10-18 21:10 EDT)' },
+      { type: 'text' as const, text: 'The human answered your question "Deploy?":' },
+      { type: 'text' as const, text: 'B' },
+    ];
+    const stored = {
+      type: 'user' as const,
+      uuid: requestId as `${string}-${string}-${string}-${string}-${string}`,
+      session_id: session,
+      parent_tool_use_id: null,
+      message: { role: 'user' as const, content },
+      inputKind: 'human' as const,
+      humanContent: [{ type: 'text' as const, text: 'B' }],
+    };
+    const retry = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'B', replyTo: reply.replyTo },
+      session,
+      reply as never,
+      neoRetryLocalTime(stored, 'fresh'),
+      stored as never
+    );
+    expect(retry.message.content).toEqual(content);
+  });
+
+  test('reads no stored time from the human words', () => {
+    const words = '(local time: Mon 2025-01-01 09:00 EST) that is what I typed';
+    const content = [
+      { type: 'text' as const, text: `[message id: ${requestId}]` },
+      { type: 'text' as const, text: words },
+    ];
+    const stored = {
+      type: 'user' as const,
+      uuid: requestId as `${string}-${string}-${string}-${string}-${string}`,
+      session_id: session,
+      parent_tool_use_id: null,
+      message: { role: 'user' as const, content },
+      inputKind: 'human' as const,
+      humanContent: [{ type: 'text' as const, text: words }],
+    };
+    expect(neoRetryLocalTime(stored, 'fresh')).toBeNull();
+    const retry = neoIntakeMessage(
+      { sessionId: session, requestId, content: words },
+      session,
+      null,
+      neoRetryLocalTime(stored, 'fresh'),
+      stored as never
+    );
+    expect(retry.message.content).toEqual(content);
+  });
+
   test('a retry keeps the stored local time readable when already-said leads the turn', () => {
     const said = '<already-said>\n<said>x</said>\n</already-said>';
     const first = neoIntakeMessage(

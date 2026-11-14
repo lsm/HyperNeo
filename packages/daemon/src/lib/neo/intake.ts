@@ -12,6 +12,7 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
+import { canonicalJson } from '../agent/prompt-comparison.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import {
   type NeoConversationAskImageRow,
@@ -159,9 +160,18 @@ export function neoIntakeMessage(
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
   if (legacy) {
-    const facts = [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
-      text ? [{ type: 'text' as const, text }] : []
-    );
+    const storedTail = blocks.slice(-content.length);
+    const keepsWords =
+      content.length > 0 &&
+      storedTail.length === content.length &&
+      storedTail.every(
+        (block: unknown, index: number) => canonicalJson(block) === canonicalJson(content[index])
+      );
+    const facts = keepsWords
+      ? (blocks.slice(0, -content.length) as { type: 'text'; text: string }[])
+      : [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
+          text ? [{ type: 'text' as const, text }] : []
+        );
     return {
       type: 'user',
       uuid: input.requestId as UUID,
@@ -238,8 +248,12 @@ export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string)
   if (!stored) return fresh;
   const content = stored.type === 'user' ? stored.message.content : null;
   if (!Array.isArray(content)) return null;
-  for (const block of content) {
+  const humanContent = (stored as { humanContent?: unknown }).humanContent;
+  const words = Array.isArray(humanContent) ? humanContent.length : 0;
+  const facts = words ? content.slice(0, -words) : content;
+  for (const block of facts) {
     if (block.type !== 'text') continue;
+    if (block.text.trimStart().startsWith('<human-message')) break;
     const line = block.text
       .split('\n')
       .find((candidate: string) => candidate.startsWith('(local time: '));
