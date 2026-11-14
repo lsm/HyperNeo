@@ -93,6 +93,7 @@ import {
 const SESSIONS_PER_PLACE = 20;
 const LIVE_TIMEOUT_MS = 90_000;
 const LIVE_REUSE_MS = 5_000;
+const LIVE_STALE_MAX_MS = 15 * 60_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RELAY_TIMEOUT_MS = 120_000;
@@ -408,7 +409,8 @@ export async function probeLiveClaudeSessions(
 export function reuseLiveSessions(
   read: () => Promise<readonly ClaudeLiveSession[]>,
   now: () => number,
-  freshForMs = LIVE_REUSE_MS
+  freshForMs = LIVE_REUSE_MS,
+  staleForMs = LIVE_STALE_MAX_MS
 ): () => Promise<readonly ClaudeLiveSession[]> {
   let good: { at: number; sessions: readonly ClaudeLiveSession[] } | null = null;
   let pending: Promise<readonly ClaudeLiveSession[]> | null = null;
@@ -426,13 +428,24 @@ export function reuseLiveSessions(
     return sessions;
   };
   return () => {
-    if (good) {
+    if (good && now() - good.at < staleForMs) {
       if (now() - good.at >= freshForMs) pending ??= refresh();
       return Promise.resolve(good.sessions);
     }
     pending ??= refresh();
     return pending;
   };
+}
+
+const sharedLiveReads = new WeakMap<SpawnFn, () => Promise<readonly ClaudeLiveSession[]>>();
+
+export function sharedLiveSessions(spawn: SpawnFn): () => Promise<readonly ClaudeLiveSession[]> {
+  let shared = sharedLiveReads.get(spawn);
+  if (!shared) {
+    shared = reuseLiveSessions(() => readLiveClaudeSessions(spawn), Date.now);
+    sharedLiveReads.set(spawn, shared);
+  }
+  return shared;
 }
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)

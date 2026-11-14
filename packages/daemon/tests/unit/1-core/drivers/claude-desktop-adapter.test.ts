@@ -1449,7 +1449,8 @@ describe('reuseLiveSessions', () => {
     const live = reuseLiveSessions(
       () => readLiveClaudeSessions(spawn, '/missing-claude-registrations'),
       () => clock,
-      1_000
+      1_000,
+      5_000
     );
     await live();
     hang();
@@ -1461,7 +1462,10 @@ describe('reuseLiveSessions', () => {
     clock = 2_000;
     expect(await live()).toEqual([{ sessionId: 'cli-a1', status: 'waiting', owner: 'unknown' }]);
     expect(spawned()).toBe(2);
+    clock = 10_000;
+    const expired = live();
     kills();
+    await expect(expired).rejects.toThrow('exited with 137');
   });
 });
 
