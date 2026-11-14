@@ -10,7 +10,7 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 
-const FRONT_REPLY_MAX_CHARS = 300;
+const FRONT_REPLY_MAX_CHARS = 150;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -66,8 +66,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       { source: 'mcp', sessionId }
     );
   };
-  const handOff = async (asks: NeoConversationAsk[], messageIds: string[], saidText: string) => {
-    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText }]);
+  const handOff = async (
+    asks: NeoConversationAsk[],
+    messageIds: string[],
+    saidText: string,
+    workOn: boolean
+  ) => {
+    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText, workOn }]);
     const reserved = await service.db.gateway.call(
       neoFrontInputWrites,
       'reserve',
@@ -121,12 +126,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one short reply per human message, one or two sentences. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
+        'Send one short reply per human message, one or two sentences. work_on: false when your reads answered it; true when the full Neo must check or do something, and then say what you will do. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
+          work_on: z.boolean(),
         },
-        async ({ text, ...input }) => {
+        async ({ text, work_on: workOn, ...input }) => {
           const body = { text };
           const targets = input.replyTo ?? [];
           if (!targets.length) return result(await publish({ ...input, ...body }));
@@ -150,7 +156,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,
-            said
+            said,
+            workOn
           );
           return result(
             handed.started

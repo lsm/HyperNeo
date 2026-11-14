@@ -73,6 +73,6 @@ describe('Neo scheduled goal-cycle guidance', () => {
     expect(NEO_ROOT_PROMPT).not.toContain('goal.journal');
     expect(neoPrompt([])).toContain('one plain-text summary line');
     expect(neoPrompt([])).toContain('On other turns');
-    expect(neoPrompt([])).toContain('end the turn without text');
+    expect(neoPrompt([])).toContain('End every other turn with exactly "No response requested."');
   });
 });

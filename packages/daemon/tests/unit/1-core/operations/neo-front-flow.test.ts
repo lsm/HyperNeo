@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { NEO_FRONT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
+import { NEO_FRONT, NEO_ROOT_PROMPT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -1408,7 +1408,7 @@ test('the front reply is short, and its rules live only in the front prompt', as
   await createNeoFrontHandler(service)(job);
   const prompt = db.getSession(front)!.config.systemPrompt as string;
   expect(prompt).toContain('Reply in one or two short sentences');
-  expect(prompt).toContain('say what you knew and that you will check for updates');
+  expect(prompt).toContain('at most 150 characters');
   expect(prompt).not.toContain('five short sentences');
   createFrontTools(service, conversationId);
   const reply = vi
@@ -1417,8 +1417,13 @@ test('the front reply is short, and its rules live only in the front prompt', as
     .tools!.find((tool) => tool.name === 'reply')!;
   const shape = z.object(reply.inputSchema as z.ZodRawShape);
   expect(Object.keys(reply.inputSchema)).not.toContain('details');
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(300) }).success).toBe(true);
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(301) }).success).toBe(false);
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(150), work_on: true }).success).toBe(
+    true
+  );
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(151), work_on: true }).success).toBe(
+    false
+  );
+  expect(shape.safeParse({ requestId: 'r', text: 'Answer.' }).success).toBe(false);
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
   expect(intake).not.toContain('five sentences');
   expect(frontModeNote()).not.toContain('five sentences');
@@ -1829,6 +1834,23 @@ test('a reply that answers hands the input to the full session with that answer 
   expect(said).not.toContain('Front');
 });
 
+test('the hand-off tells the full session whether the reply answered or promised work', async () => {
+  for (const workOn of [false, true]) {
+    const { id } = await deliveredConvoInput();
+    expect(
+      await convoPublish({
+        requestId: `work-on-${workOn}`,
+        replyTo: [id],
+        fullText: workOn ? "I'll cancel them." : 'Two todos are open.',
+        verbatim: true,
+        work_on: workOn,
+      })
+    ).toMatchObject({ accepted: true, started: true });
+    const delivered = await db.getSDKMessageRepo().getDeliveryContent(root, id);
+    expect(JSON.stringify(delivered?.content ?? '')).toContain(`work_on=\\"${workOn}\\"`);
+  }
+});
+
 test('a reply with two replyTo IDs hands both inputs off', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
@@ -1845,8 +1867,9 @@ test('a reply with two replyTo IDs hands both inputs off', async () => {
 
 test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
-  expect(NEO_FRONT).not.toContain('work_on');
-  expect(NEO_FRONT).toContain('never decide, assign, refuse or promise anything');
+  expect(NEO_FRONT).toContain('set work_on: true');
+  expect(NEO_FRONT).toContain('never say you cannot');
+  expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
 });
 
 test('a dual-mode hand-off keeps the listening fact and carries no acknowledgment note', async () => {
