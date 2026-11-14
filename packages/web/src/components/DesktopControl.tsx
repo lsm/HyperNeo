@@ -25,8 +25,8 @@ export function DesktopControl({
   onOpen?: (worker: string, todo: string | null) => void;
 }) {
   const [workers, setWorkers] = useState<DesktopWorker[]>([]);
-  const [stopping, setStopping] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  const [stopping, setStopping] = useState<Record<string, boolean>>({});
+  const [outcome, setOutcome] = useState<Record<string, 'failed' | 'unconfirmed' | undefined>>({});
   const live = useRef(true);
   const read = useCallback(async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -53,8 +53,8 @@ export function DesktopControl({
     return () => clearInterval(timer);
   }, [read, active]);
   const stop = async (id: string) => {
-    setStopping(id);
-    setFailed(null);
+    setStopping((current) => ({ ...current, [id]: true }));
+    setOutcome((current) => ({ ...current, [id]: undefined }));
     const hub = connectionManager.getHubIfConnected();
     const result = hub
       ? await invokeOperation<{ state?: string }>(hub, 'desktop.stop', { worker: id }).catch(
@@ -63,8 +63,13 @@ export function DesktopControl({
       : null;
     await read();
     if (!live.current) return;
-    setStopping(null);
-    if (!result?.state) setFailed(id);
+    setStopping((current) => ({ ...current, [id]: false }));
+    const next = !result?.state
+      ? 'failed'
+      : result.state === 'stop_unconfirmed'
+        ? 'unconfirmed'
+        : undefined;
+    setOutcome((current) => ({ ...current, [id]: next }));
   };
   if (workers.length === 0) return null;
   return (
@@ -73,47 +78,57 @@ export function DesktopControl({
       class={`flex flex-col gap-2 text-sm ${className ?? ''}`}
     >
       {!worker && <h3 class="text-sm font-medium text-fg-muted">{t('desktop.title')}</h3>}
-      {workers.map((entry) => (
-        <div
-          key={entry.worker}
-          class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface px-3 py-2"
-        >
-          <span aria-hidden="true" class={`h-2.5 w-2.5 rounded-full ${TONE[entry.state]}`} />
-          <span class="min-w-0 flex-1">
-            <span class="block">{t(`desktop.state.${entry.state}`)}</span>
-            {entry.todo && onOpen ? (
+      {workers.map((entry) => {
+        const unconfirmed =
+          entry.state === 'stop_unconfirmed' ||
+          (outcome[entry.worker] === 'unconfirmed' && entry.state !== 'stopped');
+        return (
+          <div
+            key={entry.worker}
+            class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface px-3 py-2"
+          >
+            <span aria-hidden="true" class={`h-2.5 w-2.5 rounded-full ${TONE[entry.state]}`} />
+            <span class="min-w-0 flex-1">
+              <span class="block">{t(`desktop.state.${entry.state}`)}</span>
+              {entry.todo && onOpen ? (
+                <button
+                  type="button"
+                  onClick={() => onOpen(entry.worker, entry.todo)}
+                  class="block max-w-full truncate text-left text-xs text-fg-muted underline-offset-2 hover:text-fg hover:underline"
+                >
+                  {entry.todo}
+                </button>
+              ) : (
+                entry.todo && <span class="block truncate text-xs text-fg-muted">{entry.todo}</span>
+              )}
+            </span>
+            {entry.state !== 'stopped' && (
               <button
                 type="button"
-                onClick={() => onOpen(entry.worker, entry.todo)}
-                class="block max-w-full truncate text-left text-xs text-fg-muted underline-offset-2 hover:text-fg hover:underline"
+                disabled={stopping[entry.worker]}
+                onClick={() => void stop(entry.worker)}
+                class="min-h-11 rounded-full border border-danger/30 bg-danger/10 px-4 text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {entry.todo}
+                {stopping[entry.worker]
+                  ? t('desktop.stopping')
+                  : unconfirmed
+                    ? t('desktop.retry')
+                    : t('desktop.stop')}
               </button>
-            ) : (
-              entry.todo && <span class="block truncate text-xs text-fg-muted">{entry.todo}</span>
             )}
-          </span>
-          {entry.state !== 'stopped' && (
-            <button
-              type="button"
-              disabled={stopping === entry.worker}
-              onClick={() => void stop(entry.worker)}
-              class="min-h-11 rounded-full border border-danger/30 bg-danger/10 px-4 text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {stopping === entry.worker
-                ? t('desktop.stopping')
-                : entry.state === 'stop_unconfirmed'
-                  ? t('desktop.retry')
-                  : t('desktop.stop')}
-            </button>
-          )}
-          {failed === entry.worker && (
-            <p role="alert" class="w-full text-xs text-danger">
-              {t('desktop.stopFailed')}
-            </p>
-          )}
-        </div>
-      ))}
+            {outcome[entry.worker] === 'failed' && (
+              <p role="alert" class="w-full text-xs text-danger">
+                {t('desktop.stopFailed')}
+              </p>
+            )}
+            {unconfirmed && entry.state !== 'stop_unconfirmed' && (
+              <p role="alert" class="w-full text-xs text-danger">
+                {t('desktop.state.stop_unconfirmed')}
+              </p>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
