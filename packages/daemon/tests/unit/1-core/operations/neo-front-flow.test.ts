@@ -1852,24 +1852,50 @@ test('the hand-off tells the full session whether the reply answered or promised
 });
 
 test('a retried reply keeps the work_on decision committed with it', async () => {
+  const { id } = await deliveredConvoInput();
+  const send = (text: string, workOn: boolean) =>
+    convoPublish({
+      requestId: 'retried',
+      replyTo: [id],
+      fullText: text,
+      verbatim: true,
+      work_on: workOn,
+    });
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let failReserve = true;
+  const spy = vi.spyOn(service.db.gateway, 'call').mockImplementation((async (
+    ...args: Parameters<typeof call>
+  ) => {
+    if (failReserve && args[1] === 'reserve') return 'undeliverable';
+    return call(...args);
+  }) as typeof call);
+  expect(await send("I'll cancel them.", true)).toMatchObject({ started: false });
+  failReserve = false;
+  expect(await send('Two todos are open.', false)).toMatchObject({ started: true });
+
+  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(delivered, delivered).toContain('work_on=\\"true\\"');
+  expect(delivered, delivered).toContain("I'll cancel them.");
+  spy.mockRestore();
+});
+
+test('a reused request ID for a different input is refused, not handed off', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
   const send = (replyTo: string[], text: string, workOn: boolean) =>
     convoPublish({
-      requestId: 'retried',
+      requestId: 'reused-id',
       replyTo,
       fullText: text,
       verbatim: true,
       work_on: workOn,
     });
-  expect(await send([first.id], "I'll cancel them.", true)).toMatchObject({ started: true });
-  expect(await send([second.id], 'Two todos are open.', false)).toMatchObject({ started: true });
-
-  const delivered = JSON.stringify(
-    db.getSDKMessageRepo().getDeliveryContent(root, second.id) ?? ''
-  );
-  expect(delivered, delivered).toContain('work_on=\\"true\\"');
-  expect(delivered, delivered).toContain("I'll cancel them.");
+  expect(await send([first.id], 'Two todos are open.', false)).toMatchObject({ started: true });
+  expect(await send([second.id], 'Two todos are open.', false)).toMatchObject({
+    accepted: false,
+    reason: 'publication_conflict',
+  });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
 });
 
 test('a reply with two replyTo IDs hands both inputs off', async () => {
@@ -1954,7 +1980,10 @@ test('a refused duplicate reply does not claim the refused text was delivered', 
     replyTo: [second.id],
     text: 'An answer the human never saw.',
   });
-  expect(refused, JSON.stringify(refused)).toMatchObject({ accepted: true });
+  expect(refused, JSON.stringify(refused)).toMatchObject({
+    accepted: false,
+    reason: 'publication_conflict',
+  });
 
   const delivered = JSON.stringify(
     db.getSDKMessageRepo().getDeliveryContent(root, second.id) ?? ''

@@ -154,7 +154,9 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
-          if (second && !existing)
+          const sameTargets = (ids: readonly string[] = []) =>
+            [...ids].sort().join() === [...targets].sort().join();
+          if (second && !(existing && sameTargets(existing.replyTo)))
             return result({ accepted: false, reason: 'publication_conflict' });
           const handed = await handOff(
             asks.map((ask) => ask!),
