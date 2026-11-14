@@ -166,4 +166,32 @@ describe('DesktopControl', () => {
     });
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
   });
+
+  it('keeps each row stopping on its own', async () => {
+    const two = {
+      workers: [entry('running'), { worker: 'worker-b', todo: 'File taxes', state: 'running' }],
+    };
+    invoke.mockImplementation((_hub, name) =>
+      name === 'desktop.status' ? Promise.resolve(two) : new Promise(() => {})
+    );
+    render(<DesktopControl />);
+    const [first, second] = await screen.findAllByRole('button', { name: 'Stop and take over' });
+    fireEvent.click(first);
+    fireEvent.click(second);
+    const stopping = await screen.findAllByRole('button', { name: 'Stopping…' });
+    expect(stopping).toHaveLength(2);
+    expect(stopping.every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it('says a stop is unconfirmed while Desktop is not running', async () => {
+    statuses('unavailable');
+    invoke.mockResolvedValueOnce({ state: 'stop_unconfirmed' });
+    statuses('unavailable');
+    render(<DesktopControl worker="worker-a" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and take over' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Stop not confirmed: the driver may still run'
+    );
+    expect(screen.getByRole('button', { name: 'Try stopping again' })).toBeTruthy();
+  });
 });
