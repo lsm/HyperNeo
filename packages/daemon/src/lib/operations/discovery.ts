@@ -192,23 +192,6 @@ export function operationSignature(
   return `${operation.name} ${signatureType(schema, compact)}`;
 }
 
-export function describeOperationSignatures(
-  registry: OperationRegistry,
-  names: readonly string[],
-  caller?: OperationCaller
-): string {
-  const enabled = caller?.role === 'neo' ? enabledOperationPacks(registry) : [];
-  return names
-    .flatMap((name) => {
-      const operation = registry.get(name);
-      return operation &&
-        (!caller || caller.role !== 'neo' || isOperationAdmitted(operation, caller, enabled))
-        ? [operationSignature(operation)]
-        : [];
-    })
-    .join('\n');
-}
-
 export function describeOperationDefinition(
   operation: OperationDefinition,
   caller?: OperationCaller

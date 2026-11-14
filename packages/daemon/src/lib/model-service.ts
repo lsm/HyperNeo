@@ -1484,41 +1484,6 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
   }
 }
 
-export function updateProviderModelsInCache(
-  providerId: string,
-  models: ModelInfo[],
-  cacheKey: string = 'global'
-): boolean {
-  const cachedModels = modelsCache.get(cacheKey);
-  const sliceKey = pendingSliceKey(cacheKey, providerId);
-  if (!cachedModels) {
-    pendingProviderSlices.set(sliceKey, models);
-    return false;
-  }
-
-  pendingProviderSlices.set(sliceKey, models);
-  modelsCache.set(cacheKey, [
-    ...cachedModels.filter((model) => model.provider !== providerId),
-    ...models,
-  ]);
-  const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
-  const inFlight = refreshInProgress.get(cacheKey);
-  if (inFlight) {
-    inFlight
-      .then(() => {
-        if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
-        const current = modelsCache.get(cacheKey);
-        if (!current) return;
-        modelsCache.set(cacheKey, [
-          ...current.filter((model) => model.provider !== providerId),
-          ...models,
-        ]);
-      })
-      .catch(() => {});
-  }
-  return true;
-}
-
 export function canonicalModelId(providerId: string, model: string): string {
   const known = STATIC_MODEL_METADATA.filter((candidate) => candidate.provider === providerId);
   return findInModels(known, model)?.id ?? model;
@@ -1904,17 +1869,6 @@ export async function resolveModelAlias(
   providerId: string
 ): Promise<string> {
   const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
-  if (modelInfo) {
-    return modelInfo.id;
-  }
-  return idOrAlias;
-}
-
-export async function resolveModelAliasUnfiltered(
-  idOrAlias: string,
-  cacheKey: string = 'global'
-): Promise<string> {
-  const modelInfo = await getModelInfoUnfiltered(idOrAlias, cacheKey);
   if (modelInfo) {
     return modelInfo.id;
   }
