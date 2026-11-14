@@ -3,6 +3,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'With details, keep text to a standalone summary of at most 300 words and 4000 characters, and put the rest in details.',
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
+  work_on_needs_reply_to: 'work_on: true needs replyTo with the human message IDs you will act on.',
   front_not_speaking: 'reply is available only while fast replies are on for this conversation.',
   front_model_required: 'Choose a fast reply model before turning on fast replies.',
 

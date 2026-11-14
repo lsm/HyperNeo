@@ -1,6 +1,3 @@
-export const MAX_CONCURRENT_GROUPS_LIMIT = 10;
-export const MAX_REVIEW_ROUNDS_LIMIT = 20;
-
 export type RoomStatus = 'active' | 'archived';
 
 export interface WorkspacePath {
@@ -41,29 +38,9 @@ export interface MissionMetric {
   baseline?: number;
 }
 
-export interface MetricHistoryEntry {
-  metricName: string;
-  value: number;
-  recordedAt: number;
-}
-
 export interface CronSchedule {
   expression: string;
   timezone: string;
-}
-
-export type MissionExecutionStatus = 'running' | 'completed' | 'failed';
-
-export interface MissionExecution {
-  id: string;
-  goalId: string;
-  executionNumber: number;
-  startedAt: number;
-  completedAt?: number;
-  status: MissionExecutionStatus;
-  resultSummary?: string;
-  taskIds: string[];
-  planningAttempts: number;
 }
 
 export interface RoomGoal {
@@ -94,28 +71,6 @@ export interface RoomGoal {
   replanCount?: number;
 }
 
-export type Mission = RoomGoal;
-
-export interface CreateRoomParams {
-  name: string;
-  background?: string;
-  allowedPaths?: WorkspacePath[];
-  defaultPath: string;
-  defaultModel?: string;
-  allowedModels?: string[];
-}
-
-export interface UpdateRoomParams {
-  name?: string;
-  allowedPaths?: WorkspacePath[];
-  defaultPath?: string | null;
-  defaultModel?: string | null;
-  allowedModels?: string[];
-  background?: string | null;
-  instructions?: string | null;
-  config?: Record<string, unknown>;
-}
-
 export interface TaskRestriction {
   type: 'rate_limit' | 'usage_limit';
   limit: string;
@@ -124,33 +79,4 @@ export interface TaskRestriction {
   retryAfter?: number;
 }
 
-export interface SubagentConfig {
-  model: string;
-  provider?: string;
-  type?: 'cli';
-  modelId?: string;
-  cliModel?: string;
-  name?: string;
-  description?: string;
-}
-
 export type RuntimeState = 'running' | 'paused' | 'stopped';
-
-export interface SessionSummary {
-  id: string;
-  title: string;
-  status: string;
-  lastActiveAt: number;
-}
-
-export interface RoomOverview {
-  room: Room;
-  sessions: SessionSummary[];
-  runtimeState?: RuntimeState;
-}
-
-export interface RoomSkillOverride {
-  skillId: string;
-  roomId: string;
-  enabled: boolean;
-}

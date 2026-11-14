@@ -1,8 +1,6 @@
-import type { WorkRef } from '../../../drivers/types.ts';
 import { isAbsolute } from 'node:path';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { WorktreeMetadata } from '@hyperneo/shared';
 import { z } from 'zod';
 import { buildGitHubLookupEnv, runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
@@ -11,26 +9,9 @@ import { NEO_WORK_PR_READ_MS } from './work-prs.ts';
 type NeoWorkBranch = { branch: string; cwd: string };
 type BranchQuery = { cwd: string; branch?: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
-const NEO_BRANCH_PR_MAX = 2;
 export const CODING_BRANCH_PR_LIMIT = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const read = new Map<string, { at: number; urls: string[] }>();
-export function localCodingSessionId(ref: WorkRef | null): string | null {
-  return ref?.adapter === 'hyperneo' && !ref.daemon ? ref.id : null;
-}
-
-export function neoWorkBranch(
-  session: { worktree?: WorktreeMetadata } | null
-): NeoWorkBranch | null {
-  return session?.worktree?.branch
-    ? { branch: session.worktree.branch, cwd: session.worktree.worktreePath }
-    : null;
-}
-
-export function neoCardPrUrls(base: readonly string[], opened: readonly string[]): string[] {
-  return [...base, ...opened.filter((url) => !base.includes(url)).slice(0, NEO_BRANCH_PR_MAX)];
-}
-
 async function readNamedGithubBranchPrs(
   branch: NeoWorkBranch,
   spawnImpl: SpawnFn = spawnProcess

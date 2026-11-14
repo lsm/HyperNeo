@@ -16,7 +16,6 @@ import {
   createSpaceConfigurePath,
   createSpaceGoalsPath,
   createSpaceEvolvePath,
-  createSpaceForgePath,
   createSpacePath,
   createSpaceSessionPath,
   createSpaceTaskPath,
@@ -25,7 +24,6 @@ import {
   getSpaceConfigureTabFromPath,
   getSpaceGoalsFromPath,
   getSpaceEvolveFromPath,
-  getSpaceForgeFromPath,
   getSpaceIdFromPath,
   getSpaceTaskIdFromPath,
   getSpaceTaskViewFromPath,
@@ -34,7 +32,6 @@ import {
   navigateToSpaceConfigure,
   navigateToSpaceGoals,
   navigateToSpaceEvolve,
-  navigateToSpaceForge,
   navigateToSpaceSession,
   navigateToSpacesPage,
   navigateToSpaceTask,
@@ -118,10 +115,6 @@ describe('router', () => {
     expect(createSpaceEvolvePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
     expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
-    expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
-    expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
-    expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
-    expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
     expect(createSpaceAgentPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/agents`);
     expect(createSpaceAgentPath(SPACE_ID, 'reviewer')).toBe(`/space/${SPACE_ID}/agent/reviewer`);
@@ -148,21 +141,6 @@ describe('router', () => {
     expect(currentSpaceIdSignal.value).toBeNull();
   });
 
-  it('redirects the retired space sessions URL to the space overview', () => {
-    setPath(`/space/${SPACE_ID}/sessions`);
-
-    expect(initializeRouter()).toBeNull();
-
-    expect(window.history.replaceState).toHaveBeenCalledWith(
-      expect.objectContaining({ spaceId: SPACE_ID, path: `/space/${SPACE_ID}` }),
-      '',
-      `/space/${SPACE_ID}`
-    );
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(currentSpaceViewModeSignal.value).toBe('overview');
-    expect(navSectionSignal.value).toBe('spaces');
-  });
-
   it('opens old canvas links on the task thread', () => {
     setPath(`/space/${SPACE_ID}/task/${TASK_ID}/canvas`);
 
@@ -183,41 +161,6 @@ describe('router', () => {
       spaceId: SPACE_ID,
       taskId: TASK_ID,
     });
-  });
-
-  it('redirects the legacy configure/workflows URL to the workflow templates tab', () => {
-    setPath(`/space/${SPACE_ID}/configure/workflows`);
-    initializeRouter();
-
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(currentSpaceViewModeSignal.value).toBe('configure');
-    expect(currentSpaceSettingsTabSignal.value).toBe('workflow-templates');
-    expect(window.history.replaceState).toHaveBeenLastCalledWith(
-      {
-        spaceId: SPACE_ID,
-        path: `/space/${SPACE_ID}/configure/workflow-templates`,
-        [IN_APP_HISTORY_DEPTH_KEY]: 0,
-      },
-      '',
-      `/space/${SPACE_ID}/configure/workflow-templates`
-    );
-  });
-
-  it('redirects the legacy configure/settings URL to the bare configure route', () => {
-    setPath(`/space/${SPACE_ID}/configure/settings`);
-    initializeRouter();
-
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(currentSpaceViewModeSignal.value).toBe('configure');
-    expect(window.history.replaceState).toHaveBeenLastCalledWith(
-      {
-        spaceId: SPACE_ID,
-        path: `/space/${SPACE_ID}/configure`,
-        [IN_APP_HISTORY_DEPTH_KEY]: 0,
-      },
-      '',
-      `/space/${SPACE_ID}/configure`
-    );
   });
 
   it('initializes configure tabs and task list tabs', () => {
@@ -254,56 +197,6 @@ describe('router', () => {
     expect(currentSpaceViewModeSignal.value).toBe('forge');
     expect(currentSpaceSessionIdSignal.value).toBeNull();
     expect(currentSpaceTaskIdSignal.value).toBeNull();
-  });
-
-  it('redirects the legacy /forge route to the canonical /evolve route', () => {
-    setPath(`/space/${SPACE_ID}/forge`);
-    initializeRouter();
-
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(currentSpaceViewModeSignal.value).toBe('forge');
-    expect(currentSpaceSessionIdSignal.value).toBeNull();
-    expect(currentSpaceTaskIdSignal.value).toBeNull();
-    expect(window.history.replaceState).toHaveBeenLastCalledWith(
-      {
-        spaceId: SPACE_ID,
-        path: `/space/${SPACE_ID}/evolve`,
-        [IN_APP_HISTORY_DEPTH_KEY]: 0,
-      },
-      '',
-      `/space/${SPACE_ID}/evolve`
-    );
-  });
-
-  it('navigates to the canonical /evolve route via the legacy Forge helper', () => {
-    navigateToSpaceForge(SPACE_ID);
-    finishNavigation();
-
-    expect(currentSpaceViewModeSignal.value).toBe('forge');
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(window.history.pushState).toHaveBeenLastCalledWith(
-      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/evolve`, [IN_APP_HISTORY_DEPTH_KEY]: 1 },
-      '',
-      `/space/${SPACE_ID}/evolve`
-    );
-  });
-
-  it('redirects legacy archived task tabs to completed', () => {
-    setPath(`/space/${SPACE_ID}/tasks/archived`);
-    initializeRouter();
-
-    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
-    expect(currentSpaceViewModeSignal.value).toBe('tasks');
-    expect(currentSpaceTasksFilterTabSignal.value).toBe('completed');
-    expect(window.history.replaceState).toHaveBeenLastCalledWith(
-      {
-        spaceId: SPACE_ID,
-        path: `/space/${SPACE_ID}/tasks/completed`,
-        [IN_APP_HISTORY_DEPTH_KEY]: 0,
-      },
-      '',
-      `/space/${SPACE_ID}/tasks/completed`
-    );
   });
 
   it.each(['providers', 'neo-model', 'coding-pack', 'connections', 'harness'])(

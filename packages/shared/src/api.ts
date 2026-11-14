@@ -1,28 +1,16 @@
 import type {
   AuthStatus,
-  HealthStatus,
-  Provider,
-  ProviderInfo,
   Session,
   SessionConfig,
   SessionMetadata,
-  Tool,
-  ToolBundle,
   CommitInfo,
   WorktreeCommitStatus,
 } from './types.ts';
-import type {
-  AppMcpServer,
-  CreateAppMcpServerRequest,
-  UpdateAppMcpServerRequest,
-} from './types/app-mcp-server.ts';
+import type { AppMcpServer } from './types/app-mcp-server.ts';
 import type { SessionToolInventory } from './types/observed-tool-inventory.ts';
-import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
 import type {
-  CreateEvolutionLessonParams,
   CreateEvolutionScopeParams,
   CreateMetricSnapshotParams,
-  CreateTaskProposalParams,
   EvidenceQualityPreflight,
   EvidenceRef,
   EvolutionEpisode,
@@ -59,38 +47,8 @@ export interface CreateSessionResponse {
   session?: Session;
 }
 
-export interface SetWorktreeModeRequest {
-  sessionId: string;
-  mode: 'worktree' | 'direct';
-}
-
-export interface SetWorktreeModeResponse {
-  success: boolean;
-  session?: Session;
-}
-
-export interface SetWorkspaceRequest {
-  sessionId: string;
-  workspacePath: string;
-  worktreeMode: 'worktree' | 'direct';
-}
-
-export interface SetWorkspaceResponse {
-  success: boolean;
-  session: Session;
-}
-
 export interface ListSessionsResponse {
   sessions: Session[];
-}
-
-export interface GetSessionResponse {
-  session: Session;
-  activeTools: string[];
-  context: {
-    files: string[];
-    workingDirectory: string | null;
-  };
 }
 
 export interface UpdateSessionRequest {
@@ -111,16 +69,8 @@ export interface WorkspaceHistoryResponse {
   entries: WorkspaceHistoryEntry[];
 }
 
-export interface WorkspaceAddRequest {
-  path: string;
-}
-
 export interface WorkspaceAddResponse {
   entry: WorkspaceHistoryEntry;
-}
-
-export interface WorkspaceRemoveRequest {
-  path: string;
 }
 
 export interface WorkspaceRemoveResponse {
@@ -198,11 +148,6 @@ export interface GitReviewSummary {
   githubError?: string;
 }
 
-export interface GitSessionStatusRequest {
-  sessionId: string;
-  includeGitHub?: boolean;
-}
-
 export interface GitSessionStatusResponse {
   sessionId: string;
   mode: GitSessionMode;
@@ -223,11 +168,6 @@ export interface GitSessionStatusResponse {
   error?: string;
 }
 
-export interface GitFileDiffRequest {
-  sessionId: string;
-  path: string;
-}
-
 export interface GitFileDiffResponse {
   sessionId: string;
   path: string;
@@ -243,12 +183,6 @@ export type CloneChildrenChoice = 'cascade' | 'flatten';
 export interface CloneSummary {
   id: string;
   title: string;
-}
-
-export interface ArchiveSessionRequest {
-  sessionId: string;
-  confirmed?: boolean;
-  children?: CloneChildrenChoice;
 }
 
 export interface ArchiveSessionResponse {
@@ -268,78 +202,8 @@ export interface DeleteSessionResponse {
   agentName?: string;
 }
 
-export interface SendMessageRequest {
-  content: string;
-  role?: 'user';
-  attachments?: {
-    files?: string[];
-    images?: string[];
-  };
-}
-
-export interface SendMessageResponse {
-  messageId: string;
-  status: 'processing';
-}
-
-export interface ListToolsResponse {
-  tools: Tool[];
-  bundles: Record<string, ToolBundle>;
-}
-
-export interface LoadToolsRequest {
-  tools?: string[];
-  bundles?: string[];
-}
-
-export interface UnloadToolsRequest {
-  tools: string[];
-}
-
-export interface GetActiveToolsResponse {
-  activeTools: Array<{
-    name: string;
-    loadedAt: string;
-    usageCount: number;
-    lastUsed: string;
-  }>;
-}
-
-export interface UpdateConfigRequest {
-  defaultModel?: string;
-  maxSessions?: number;
-}
-
 export interface GetAuthStatusResponse {
   authStatus: AuthStatus;
-}
-
-export interface GetCurrentModelRequest {
-  sessionId: string;
-}
-
-export interface GetCurrentModelResponse {
-  currentModel: string;
-  modelInfo: {
-    id: string;
-    name: string;
-    alias: string;
-    family: 'opus' | 'sonnet' | 'haiku' | 'glm';
-    contextWindow: number;
-    description: string;
-  } | null;
-}
-
-export interface SwitchModelRequest {
-  sessionId: string;
-  model: string;
-  provider: string;
-}
-
-export interface SwitchModelResponse {
-  success: boolean;
-  model: string;
-  error?: string;
 }
 
 export interface RuntimeMcpServerEntry {
@@ -505,14 +369,6 @@ export interface EvolutionEpisodeListRequest {
   offset?: number;
 }
 
-export interface EvolutionLessonCreateRequest {
-  params: CreateEvolutionLessonParams;
-}
-
-export interface EvolutionLessonCreateResponse {
-  lesson: EvolutionLesson;
-}
-
 export interface EvolutionLessonUpdateRequest {
   id: string;
   params: UpdateEvolutionLessonParams;
@@ -531,14 +387,6 @@ export interface EvolutionLessonListRequest {
 
 export interface EvolutionLessonListResponse {
   lessons: EvolutionLesson[];
-}
-
-export interface EvolutionTaskProposalCreateRequest {
-  params: CreateTaskProposalParams;
-}
-
-export interface EvolutionTaskProposalCreateResponse {
-  proposal: TaskProposal;
 }
 
 export interface EvolutionTaskProposalUpdateRequest {
@@ -601,116 +449,8 @@ export interface McpImportsRefreshResponse {
   notes: string[];
 }
 
-export interface APIClient {
-  createSession(req: CreateSessionRequest): Promise<CreateSessionResponse>;
-  listSessions(): Promise<ListSessionsResponse>;
-  getSession(sessionId: string): Promise<GetSessionResponse>;
-  updateSession(sessionId: string, req: UpdateSessionRequest): Promise<void>;
-  deleteSession(sessionId: string): Promise<void>;
-  setWorktreeMode(req: SetWorktreeModeRequest): Promise<SetWorktreeModeResponse>;
-
-  sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;
-  clearMessages(sessionId: string): Promise<void>;
-
-  listTools(): Promise<ListToolsResponse>;
-  loadTools(sessionId: string, req: LoadToolsRequest): Promise<void>;
-  unloadTools(sessionId: string, req: UnloadToolsRequest): Promise<void>;
-  getActiveTools(sessionId: string): Promise<GetActiveToolsResponse>;
-
-  health(): Promise<HealthStatus>;
-  updateConfig(req: UpdateConfigRequest): Promise<void>;
-
-  getAuthStatus(): Promise<GetAuthStatusResponse>;
-
-  getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
-  switchModel(sessionId: string, model: string, provider: string): Promise<SwitchModelResponse>;
-
-  listProviders(): Promise<ListProvidersResponse>;
-  getSessionProvider(sessionId: string): Promise<GetSessionProviderResponse>;
-  switchProvider(
-    sessionId: string,
-    provider: Provider,
-    apiKey?: string
-  ): Promise<SwitchProviderResponse>;
-}
-
-export interface ListProvidersResponse {
-  providers: ProviderInfo[];
-}
-
-export interface GetSessionProviderRequest {
-  sessionId: string;
-}
-
-export interface GetSessionProviderResponse {
-  provider: Provider;
-  providerInfo: ProviderInfo | null;
-}
-
-export interface SwitchProviderRequest {
-  sessionId: string;
-  provider: Provider;
-  apiKey?: string;
-}
-
-export interface SwitchProviderResponse {
-  success: boolean;
-  provider: Provider;
-  error?: string;
-  warning?: string;
-}
-
-export interface SDKSessionFileInfo {
-  path: string;
-  sdkSessionId: string;
-  kaiSessionIds: string[];
-  size: number;
-  modifiedAt: string;
-}
-
-export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
-  reason: 'no-matching-session' | 'unknown-session';
-}
-
-export interface SDKScanRequest {
-  workspacePath: string;
-}
-
-export interface SDKScanResponse {
-  success: boolean;
-  workspacePath: string;
-  summary: {
-    totalFiles: number;
-    totalSize: number;
-    orphanedFiles: number;
-    orphanedSize: number;
-  };
-  files: SDKSessionFileInfo[];
-  orphaned: OrphanedSDKFileInfo[];
-}
-
-export interface SDKCleanupRequest {
-  workspacePath: string;
-  mode: 'archive' | 'delete';
-  sdkSessionIds?: string[];
-}
-
-export interface SDKCleanupResponse {
-  success: boolean;
-  mode: 'archive' | 'delete';
-  processedCount: number;
-  totalSize: number;
-  errors: string[];
-}
-
-export type { AppMcpServer, CreateAppMcpServerRequest, UpdateAppMcpServerRequest };
-
 export interface McpRegistryListResponse {
   servers: AppMcpServer[];
-}
-
-export interface McpRegistryGetResponse {
-  server: AppMcpServer;
 }
 
 export interface McpRegistryCreateResponse {
@@ -721,79 +461,10 @@ export interface McpRegistryUpdateResponse {
   server: AppMcpServer;
 }
 
-export interface McpRegistryDeleteRequest {
-  id: string;
-}
-
 export interface McpRegistryDeleteResponse {
   success: boolean;
 }
 
-export interface McpRegistrySetEnabledRequest {
-  id: string;
-  enabled: boolean;
-}
-
 export interface McpRegistrySetEnabledResponse {
   server: AppMcpServer;
-}
-
-export interface McpRegistryError {
-  serverId: string;
-  name: string;
-  error: string;
-}
-
-export interface McpRegistryListErrorsResponse {
-  errors: McpRegistryError[];
-}
-
-export type { AppSkill, CreateSkillParams, UpdateSkillParams };
-
-export interface SkillListRequest {}
-
-export interface SkillListResponse {
-  skills: AppSkill[];
-}
-
-export interface SkillGetRequest {
-  id: string;
-}
-
-export interface SkillGetResponse {
-  skill: AppSkill | null;
-}
-
-export interface SkillCreateRequest {
-  params: CreateSkillParams;
-}
-
-export interface SkillCreateResponse {
-  skill: AppSkill;
-}
-
-export interface SkillUpdateRequest {
-  id: string;
-  params: UpdateSkillParams;
-}
-
-export interface SkillUpdateResponse {
-  skill: AppSkill;
-}
-
-export interface SkillDeleteRequest {
-  id: string;
-}
-
-export interface SkillDeleteResponse {
-  success: boolean;
-}
-
-export interface SkillSetEnabledRequest {
-  id: string;
-  enabled: boolean;
-}
-
-export interface SkillSetEnabledResponse {
-  skill: AppSkill;
 }

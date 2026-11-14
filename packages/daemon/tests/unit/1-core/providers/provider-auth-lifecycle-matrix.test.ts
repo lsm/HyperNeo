@@ -298,7 +298,7 @@ describe('Provider auth lifecycle regression matrix', () => {
         const provider = track(makeProvider({}, hyperneo, codex, createFetchImpl().impl));
         const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
         try {
-          expect(await provider.refreshToken()).toBe(false);
+          expect(await provider.refreshToken()).toBe('definitive');
           expect(await provider.isAvailable()).toBe(false);
           expect(await provider.getApiKey()).toBeUndefined();
           expect(authFileExists(hyperneo)).toBe(false);
@@ -324,7 +324,7 @@ describe('Provider auth lifecycle regression matrix', () => {
           })
         );
         try {
-          expect(await provider.refreshToken()).toBe(false);
+          expect(await provider.refreshToken()).toBe('transient');
           expect(await provider.isAvailable()).toBe(true);
           expect(await provider.getApiKey()).toBe('valid-access');
           const preserved = readAuthOpenai(hyperneo);
@@ -340,7 +340,7 @@ describe('Provider auth lifecycle regression matrix', () => {
         const provider = track(makeProvider({}, hyperneo, codex, createFetchImpl().impl));
         provider.setCredentials(loginCredsFor('api_key'));
 
-        expect(await provider.refreshToken()).toBe(false);
+        expect(await provider.refreshToken()).toBe('definitive');
         expect(await provider.isAvailable()).toBe(true);
         expect(await provider.getApiKey()).toBe('sk-matrix-key');
       });
@@ -417,7 +417,7 @@ describe('Provider auth lifecycle regression matrix', () => {
 
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
       try {
-        expect(await provider.refreshToken()).toBe(false);
+        expect(await provider.refreshToken()).toBe('definitive');
       } finally {
         refreshSpy.mockRestore();
       }
@@ -442,7 +442,7 @@ describe('Provider auth lifecycle regression matrix', () => {
 
       const refreshSpy = spyOn(globalThis, 'fetch').mockResolvedValue(invalidGrantResponse());
       try {
-        expect(await provider.refreshToken()).toBe(false);
+        expect(await provider.refreshToken()).toBe('definitive');
       } finally {
         refreshSpy.mockRestore();
       }

@@ -13,7 +13,6 @@ import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
-type LegacyTaskFilterTab = TaskFilterTab | 'archived';
 
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested'];
 
@@ -687,8 +686,7 @@ export function SpaceTasks({
   const tasks = spaceStore.tasks.value;
   const archivedTaskCount = spaceStore.archivedTaskCount?.value ?? 0;
   const schedules = spaceStore.schedules.value;
-  const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
-  const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
+  const activeTab = currentSpaceTasksFilterTabSignal.value;
   const routeSpaceId = navigationSpaceId ?? spaceId;
 
   useEffect(() => {

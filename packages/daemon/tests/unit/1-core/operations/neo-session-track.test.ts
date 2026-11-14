@@ -8,8 +8,6 @@ import {
   findNeoSessionNotice,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
-  requireNeoTrackedAdoption,
-  reserveNeoAdoption,
 } from '../../../../src/lib/neo/session-track.ts';
 import { neoSessionKey, type NeoSessionNotice } from '../../../../src/lib/neo/session-watch.ts';
 import type { PlaceGroup, WorkRef, WorkStatus } from '../../../../src/lib/drivers/types.ts';
@@ -35,16 +33,6 @@ const notice = (overrides: Partial<NeoSessionNotice> = {}): NeoSessionNotice => 
   ...overrides,
 });
 
-describe('reserveNeoAdoption', () => {
-  test('lets one adoption of a session run at a time', () => {
-    const adopting = new Set<string>();
-    const adopt = { verb: 'adopt' as const, ref };
-    expect(reserveNeoAdoption(adopting, { verb: 'send', ref })).toEqual({ value: null });
-    expect(reserveNeoAdoption(adopting, adopt)).toEqual({ value: key });
-    expect(reserveNeoAdoption(adopting, adopt)).toMatchObject({ reason: { ok: false } });
-  });
-});
-
 describe('requireNeoTrackRoot', () => {
   test('refuses cleanly before Neo has a root session', () => {
     expect(requireNeoTrackRoot('neo:root')).toEqual({ value: 'neo:root' });
@@ -66,18 +54,6 @@ describe('requireNeoTrackableSession', () => {
   test('refuses a session a Neo card already follows', () => {
     expect(requireNeoTrackableSession(notice(), [])).toEqual({ value: notice() });
     expect(requireNeoTrackableSession(notice(), [ref])).toEqual({
-      reason: { ok: false, reason: 'A Neo card already follows this session.' },
-    });
-  });
-});
-
-describe('requireNeoTrackedAdoption', () => {
-  test('follows a named session from any Neo turn without a Track timer', () => {
-    expect(requireNeoTrackedAdoption({ verb: 'adopt', ref }, [], 'ok')).toEqual({ value: 'ok' });
-    expect(requireNeoTrackedAdoption({ verb: 'send', ref }, [ref], 'ok')).toEqual({ value: 'ok' });
-  });
-  test('keeps the duplicate-follow guard', () => {
-    expect(requireNeoTrackedAdoption({ verb: 'adopt', ref }, [ref], 'ok')).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
   });

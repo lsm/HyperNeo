@@ -3,14 +3,13 @@ import { homedir } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
-import { githubGraphqlArgs, githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { githubGraphqlArgs, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
-const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const GhPrSchema = z.object({
   url: z.string(),
   createdAt: z.string().optional(),
@@ -40,16 +39,6 @@ const GhPrSchema = z.object({
   ),
 });
 type GhCheck = z.infer<typeof GhPrSchema>['statusCheckRollup'][number];
-
-export function extractNeoWorkPrUrls(
-  report: string | null,
-  tracked: readonly { url: string }[] = []
-): string[] {
-  const urls = new Map<string, string>();
-  for (const url of [...tracked.map((pr) => pr.url), ...(report?.match(PR_URL) ?? [])])
-    if (!urls.has(githubUrlKey(url))) urls.set(githubUrlKey(url), url);
-  return [...urls.values()].slice(0, 8);
-}
 
 function checkResult(check: GhCheck): NeoWorkPr['checks'] {
   if (check.state)
@@ -107,23 +96,6 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
 
 export function neoTextRefs(text: string): number[] {
   return [...text.matchAll(/(?:#|\/(?:issues|pull)\/)(\d+)\b/g)].map((match) => Number(match[1]));
-}
-
-type StoredPrs = {
-  prs: readonly NeoWorkPr[];
-  readAt: number;
-  readOkAt: number;
-};
-
-export function shouldReadNeoWorkPrs(
-  stored: StoredPrs | null,
-  urls: readonly string[],
-  now: number
-): boolean {
-  if (!urls.length) return false;
-  const same = (url: string) => (pr: { url: string }) => githubUrlKey(pr.url) === githubUrlKey(url);
-  if (!stored || urls.some((url) => !stored.prs.some(same(url)))) return true;
-  return stored.prs.some((pr) => pr.state === 'OPEN') && now - stored.readAt >= NEO_WORK_PR_READ_MS;
 }
 
 type BranchRule = {
@@ -502,13 +474,4 @@ export async function readGithubPrs(
     if (pr) prs.push(pr);
   }
   return prs.length || !urls.length ? prs : null;
-}
-
-export function mergeNeoWorkPrReads(
-  urls: readonly string[],
-  read: readonly NeoWorkPr[],
-  stored: readonly NeoWorkPr[] = []
-): NeoWorkPr[] {
-  const same = (url: string) => (pr: NeoWorkPr) => githubUrlKey(pr.url) === githubUrlKey(url);
-  return [...new Set(urls.flatMap((url) => read.find(same(url)) ?? stored.find(same(url)) ?? []))];
 }

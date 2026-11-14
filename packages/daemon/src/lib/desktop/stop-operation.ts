@@ -194,4 +194,8 @@ export function createDesktopStopOperation(options: Options = {}) {
   });
 }
 
-export { recorded as readDesktopDriverRecord, missing as desktopRecordMissing };
+export {
+  recorded as readDesktopDriverRecord,
+  missing as desktopRecordMissing,
+  pidGone as desktopPidGone,
+};

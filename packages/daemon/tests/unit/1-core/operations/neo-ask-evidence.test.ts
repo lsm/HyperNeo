@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import {
-  extractNeoAskRefs,
-  extractNeoCardRefs,
   readGithubRefStates,
   type NeoRef,
   type NeoRefState,
@@ -55,47 +53,6 @@ const merged = (n: number, at: number): NeoRefState => ({
   at,
   done: true,
   closedBy: null,
-});
-
-describe('extractNeoAskRefs', () => {
-  test('takes URLs and owner/repo#N, and leaves bare #N alone when the ask names two repos', () => {
-    expect(extractNeoAskRefs(ask, [])).toEqual([ref(6159), ref(32, 'neo-ios'), ref(6205)]);
-  });
-
-  test('leaves out pull requests the ask cards already track', () => {
-    expect(extractNeoAskRefs(ask, [url(6159)])).toEqual([ref(32, 'neo-ios'), ref(6205)]);
-  });
-
-  test('resolves bare #N against the one repo the ask and its cards point at', () => {
-    const plain = { ...ask, ask: 'Fix HyperNeo #5546', evidence: null, doneItems: [] };
-    expect(extractNeoAskRefs(plain, [url(6300)])).toEqual([ref(5546)]);
-    expect(extractNeoAskRefs(plain, [])).toEqual([]);
-    expect(
-      extractNeoAskRefs(
-        { ...plain, outcome: 'See https://github.com/lsm/HyperNeo/issues/5546' },
-        []
-      )
-    ).toEqual([ref(5546)]);
-  });
-});
-
-describe('extractNeoCardRefs', () => {
-  const repo = { owner: 'lsm', repo: 'HyperNeo' };
-  test.each<[string, string, typeof repo | null, string[]]>([
-    ['reads owner/repo#N', 'See lsm/HyperNeo#6403.', null, ['lsm/HyperNeo#6403']],
-    [
-      'reads bare #N against the card repo',
-      'CI on #6403 and #6440.',
-      repo,
-      ['lsm/HyperNeo#6403', 'lsm/HyperNeo#6440'],
-    ],
-    ['skips bare #N without a repo', 'CI on #6403.', null, []],
-    ['lists each ref once', 'lsm/HyperNeo#6403 then #6403', repo, ['lsm/HyperNeo#6403']],
-  ])('%s', (_label, text, known, refs) => {
-    expect(
-      extractNeoCardRefs(text, known).map((ref) => `${ref.owner}/${ref.repo}#${ref.number}`)
-    ).toEqual(refs);
-  });
 });
 
 describe('readGithubRefStates', () => {

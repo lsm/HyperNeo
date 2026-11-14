@@ -307,37 +307,6 @@ describe('voice transcript outbox', () => {
     stopVoiceTranscriptOutboxFlush();
   });
 
-  it('sweeps the retired design’s localStorage namespaces at startup', () => {
-    localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
-      JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'x' })
-    );
-    localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.draft.s1.sometab',
-      JSON.stringify({ content: 'edits', ts: Date.now(), generation: 1 })
-    );
-    localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.clear.s1.sometab',
-      JSON.stringify({ ts: Date.now() })
-    );
-    localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.superseded.s1.1.1',
-      JSON.stringify({ generation: 1, beforeTs: Date.now() })
-    );
-    localStorage.setItem('hyperneo_tab_heartbeat.sometab', String(Date.now()));
-    enqueueTranscript('s2', 'still deliverable');
-    startVoiceTranscriptOutboxFlush();
-    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')).toBeNull();
-    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.sometab')).toBeNull();
-    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.s1.sometab')).toBeNull();
-    expect(
-      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1.1.1')
-    ).toBeNull();
-    expect(localStorage.getItem('hyperneo_tab_heartbeat.sometab')).toBeNull();
-    expect(getPendingTranscripts().map((e) => e.text)).toEqual(['still deliverable']);
-    stopVoiceTranscriptOutboxFlush();
-  });
-
   it('keeps a full live queue intact at startup (no slot reservation without an enqueue)', () => {
     const entries = Array.from({ length: 20 }, (_, i) => ({
       id: `e${i}`,

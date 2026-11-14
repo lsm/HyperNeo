@@ -328,11 +328,6 @@ const RECOGNIZED_ERROR_TYPE_NAMES: ReadonlySet<string> = new Set(
   ]).map((name) => name.toLowerCase())
 );
 
-export function isOpenAiErrorTypeName(type: string | undefined): boolean {
-  if (typeof type !== 'string' || type.length === 0) return false;
-  return RECOGNIZED_ERROR_TYPE_NAMES.has(type.toLowerCase());
-}
-
 const TERMINAL_PROVIDER_CODE_NAMES: ReadonlySet<string> = new Set(
   TERMINAL_PROVIDER_ERROR_TEXT.map((s) => s.toLowerCase())
 );

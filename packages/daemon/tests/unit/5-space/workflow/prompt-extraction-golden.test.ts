@@ -14,10 +14,7 @@ import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
 import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/agent/non-delegating-agent.ts';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/agents/long-horizon-tools.ts';
-import {
-  getPresetAgentTemplates,
-  LEGACY_REVIEWER_PROMPT,
-} from '../../../../src/lib/agents/seed-agents.ts';
+import { getPresetAgentTemplates } from '../../../../src/lib/agents/seed-agents.ts';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../helpers/system-contracts.ts';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
 import { buildPromptTooLongContinueNag } from '../../../../src/lib/session/prompt-too-long-recovery.ts';
@@ -80,7 +77,6 @@ const GOLDEN: Record<string, string> = {
     '1815eaf2b9369f95d8a5742891ef38ba2fdcf50de8f8f18234831febb70b65d0',
   REVIEW_THREAD_RESOLUTION_GUIDANCE:
     '48b32262a1df32c43b4f87933592e1e222c8c7f6b731dac27eede79b61c14ee9',
-  LEGACY_REVIEWER_PROMPT: '3d62ec5b500028f9513df1c9d4cd6dad24a8e956026a12969fc59c7117c76d8d',
   LONG_HORIZON_SCHEDULING_GUARDRAIL:
     '955cf84f23441beff646c1cb61abbaf0e452e10bda303c07f25ce36ba523aa6a',
   NON_DELEGATING_GENERAL_PROMPT: '5543aeae7a2a3aac9c5a4f9b489e3849c0998cb5e1d82b20e383da876fc5ae89',
@@ -138,7 +134,6 @@ const VALUES: Record<string, string> = {
   CODER_OWNED_MERGE_INSTRUCTIONS,
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
-  LEGACY_REVIEWER_PROMPT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
   NON_DELEGATING_GENERAL_PROMPT: NON_DELEGATING_GENERAL_AGENT.prompt,
   PRESET_CODER_PROMPT: byPreset.get('swe')!,

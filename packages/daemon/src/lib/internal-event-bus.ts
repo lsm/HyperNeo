@@ -204,12 +204,6 @@ export class InternalEventBus<TEventMap extends object = Record<string, Internal
   }
 }
 
-export function createInternalEventBus<
-  TEventMap extends object = Record<string, InternalEventPayload>,
->(): InternalEventBus<TEventMap> {
-  return new InternalEventBus<TEventMap>();
-}
-
 export interface SettingsUpdatedEvent {
   sessionId?: string;
   namespaceId?: string;

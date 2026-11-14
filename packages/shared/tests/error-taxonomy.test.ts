@@ -17,7 +17,6 @@ import {
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
-  isOpenAiErrorTypeName,
   isProviderErrorCodeOrType,
   isRetryableProviderError,
   matchPromptTooLong,
@@ -135,26 +134,6 @@ describe('httpStatusForSymbolicErrorType', () => {
     expect(httpStatusForSymbolicErrorType('not_a_real_type')).toBeUndefined();
     expect(httpStatusForSymbolicErrorType('')).toBeUndefined();
     expect(httpStatusForSymbolicErrorType(undefined)).toBeUndefined();
-  });
-});
-
-describe('isOpenAiErrorTypeName', () => {
-  test('admits recognized transient and terminal error type names', () => {
-    expect(isOpenAiErrorTypeName('server_error')).toBe(true);
-    expect(isOpenAiErrorTypeName('rate_limit_exceeded')).toBe(true);
-    expect(isOpenAiErrorTypeName('overloaded_error')).toBe(true);
-    expect(isOpenAiErrorTypeName('invalid_request_error')).toBe(true);
-    expect(isOpenAiErrorTypeName('authentication_error')).toBe(true);
-    expect(isOpenAiErrorTypeName('not_found_error')).toBe(true);
-    expect(isOpenAiErrorTypeName('429')).toBe(true);
-    expect(isOpenAiErrorTypeName('INVALID_REQUEST_ERROR')).toBe(true);
-  });
-  test('rejects non-error frame types (heartbeat/metadata/event discriminators)', () => {
-    expect(isOpenAiErrorTypeName('ping')).toBe(false);
-    expect(isOpenAiErrorTypeName('response.completed')).toBe(false);
-    expect(isOpenAiErrorTypeName('response.output_text.delta')).toBe(false);
-    expect(isOpenAiErrorTypeName('')).toBe(false);
-    expect(isOpenAiErrorTypeName(undefined)).toBe(false);
   });
 });
 

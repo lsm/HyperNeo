@@ -1,11 +1,6 @@
 // @ts-nocheck
 
-import {
-  currentSessionIdSignal,
-  sidebarOpenSignal,
-  sessionsSignal,
-  slashCommandsSignal,
-} from '../signals';
+import { currentSessionIdSignal, sessionsSignal, slashCommandsSignal } from '../signals';
 
 describe('signals', () => {
   describe('currentSessionIdSignal', () => {
@@ -41,39 +36,6 @@ describe('signals', () => {
       unsubscribe();
 
       expect(values).toEqual([null, 'session-1', 'session-2', null]);
-    });
-  });
-
-  describe('sidebarOpenSignal', () => {
-    beforeEach(() => {
-      sidebarOpenSignal.value = false;
-    });
-
-    it('should start with false value', () => {
-      expect(sidebarOpenSignal.value).toBe(false);
-    });
-
-    it('should toggle between true and false', () => {
-      sidebarOpenSignal.value = true;
-      expect(sidebarOpenSignal.value).toBe(true);
-
-      sidebarOpenSignal.value = false;
-      expect(sidebarOpenSignal.value).toBe(false);
-    });
-
-    it('should be reactive', () => {
-      const values: boolean[] = [];
-      const unsubscribe = sidebarOpenSignal.subscribe((value) => {
-        values.push(value);
-      });
-
-      sidebarOpenSignal.value = true;
-      sidebarOpenSignal.value = false;
-      sidebarOpenSignal.value = true;
-
-      unsubscribe();
-
-      expect(values).toEqual([false, true, false, true]);
     });
   });
 

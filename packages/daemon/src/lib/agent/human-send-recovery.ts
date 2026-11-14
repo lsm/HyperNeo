@@ -74,7 +74,7 @@ export type HumanSendRoute = 'deliver' | 'recovered' | 'wait';
 interface RecoveryEffects {
   facts(): Promise<HumanSendFacts>;
   reachable(): Promise<boolean>;
-  refresh(): Promise<void>;
+  refresh(): Promise<unknown>;
   rebuild(): Promise<void>;
   wake(): Promise<void>;
 }
@@ -122,7 +122,7 @@ export interface HumanSendSession {
 
 export interface HumanSendRecoveryDeps {
   getSession(sessionId: string): Promise<HumanSendSession | null>;
-  refreshCredentials(providerId: string): Promise<void>;
+  refreshCredentials(providerId: string): Promise<unknown>;
   wakeParked(sessionId: string): Promise<void>;
   reopen(sessionId: string, messageUuid: string): Promise<boolean>;
 }

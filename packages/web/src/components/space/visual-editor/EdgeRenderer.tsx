@@ -343,19 +343,6 @@ export function buildChannelPathD(channel: ResolvedWorkflowChannel, pts: EdgePoi
   return roundedOrthogonalPath(buildChannelOrthogonalPoints(channel, pts));
 }
 
-export function buildVisibleChannelPathD(
-  channel: ResolvedWorkflowChannel,
-  pts: EdgePoints
-): string {
-  const trimmedPoints = trimOrthogonalPathPoints(
-    buildChannelOrthogonalPoints(channel, pts),
-    channel.direction === 'bidirectional' ? CHANNEL_DOCK_RADIUS : 0,
-    CHANNEL_DOCK_RADIUS
-  );
-
-  return roundedOrthogonalPath(trimmedPoints);
-}
-
 function getVisibleChannelPathPoints(channel: ResolvedWorkflowChannel, pts: EdgePoints): Point2D[] {
   return trimOrthogonalPathPoints(
     buildChannelOrthogonalPoints(channel, pts),

@@ -285,7 +285,7 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
     });
 
     const refreshed = await provider.refreshToken();
-    expect(refreshed).toBe(true);
+    expect(refreshed).toBe('refreshed');
 
     const credentials = provider.getCredentials();
     expect(credentials).toMatchObject({
@@ -306,15 +306,15 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
     });
   });
 
-  it('returns false from refreshToken without oauth refresh credentials', async () => {
+  it('returns definitive from refreshToken without oauth refresh credentials', async () => {
     const { provider } = makeProvider(async () => jsonResponse(TOKEN_RESPONSE));
-    expect(await provider.refreshToken()).toBe(false);
+    expect(await provider.refreshToken()).toBe('definitive');
 
     provider.setCredentials({ type: 'api_key', apiKey: 'sk-key' });
-    expect(await provider.refreshToken()).toBe(false);
+    expect(await provider.refreshToken()).toBe('definitive');
   });
 
-  it('returns false from refreshToken when the grant is rejected and keeps credentials', async () => {
+  it('returns definitive from refreshToken when the grant is rejected and keeps credentials', async () => {
     const { provider } = makeProvider(async () => jsonResponse({ error: 'invalid_grant' }, 400));
 
     provider.setCredentials({
@@ -324,11 +324,44 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       expiresAt: Date.now() + 3600_000,
     });
 
-    expect(await provider.refreshToken()).toBe(false);
+    expect(await provider.refreshToken()).toBe('definitive');
     expect(provider.getCredentials()).toMatchObject({
       accessToken: 'old-access-token',
       refreshToken: 'stored-refresh-token',
     });
+  });
+
+  it('returns transient from refreshToken on a transient failure and keeps credentials', async () => {
+    const { provider } = makeProvider((async () =>
+      jsonResponse({ error: 'overloaded' }, 503)) as unknown as typeof fetch);
+
+    provider.setCredentials({
+      type: 'oauth',
+      accessToken: 'old-access-token',
+      refreshToken: 'stored-refresh-token',
+      expiresAt: Date.now() + 3600_000,
+    });
+
+    expect(await provider.refreshToken()).toBe('transient');
+    expect(provider.getCredentials()).toMatchObject({
+      accessToken: 'old-access-token',
+      refreshToken: 'stored-refresh-token',
+    });
+  });
+
+  it('returns transient from refreshToken when the request throws', async () => {
+    const { provider } = makeProvider((async () => {
+      throw new Error('network down');
+    }) as unknown as typeof fetch);
+
+    provider.setCredentials({
+      type: 'oauth',
+      accessToken: 'old-access-token',
+      refreshToken: 'stored-refresh-token',
+      expiresAt: Date.now() + 3600_000,
+    });
+
+    expect(await provider.refreshToken()).toBe('transient');
   });
 
   it('reports oauth expiry and account email in auth status', async () => {

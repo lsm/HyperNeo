@@ -15,9 +15,6 @@ import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-schedu
 import mdagentsNonDelegatingGeneral from './agents/non-delegating-general.md' with { type: 'text' };
 import mdagentsPresetsCoder from './agents/presets/coder.md' with { type: 'text' };
 import mdagentsPresetsGeneral from './agents/presets/general.md' with { type: 'text' };
-import mdagentsPresetsLegacyReviewer from './agents/presets/legacy-reviewer.md' with {
-  type: 'text',
-};
 import mdagentsPresetsPlanner from './agents/presets/planner.md' with { type: 'text' };
 import mdagentsPresetsResearch from './agents/presets/research.md' with { type: 'text' };
 import mdagentsSystemContractsQaSystemContract from './agents/system-contracts/qa-system-contract.md' with {
@@ -370,7 +367,6 @@ const registry: Record<string, string> = {
   'agents/non-delegating-general.md': mdagentsNonDelegatingGeneral,
   'agents/presets/coder.md': mdagentsPresetsCoder,
   'agents/presets/general.md': mdagentsPresetsGeneral,
-  'agents/presets/legacy-reviewer.md': mdagentsPresetsLegacyReviewer,
   'agents/presets/planner.md': mdagentsPresetsPlanner,
   'agents/presets/research.md': mdagentsPresetsResearch,
   'agents/system-contracts/qa-system-contract.md': mdagentsSystemContractsQaSystemContract,
@@ -520,7 +516,6 @@ export const {
   NON_DELEGATING_GENERAL_PROMPT,
   PRESET_CODER_PROMPT,
   PRESET_GENERAL_PROMPT,
-  LEGACY_REVIEWER_PROMPT,
   PRESET_PLANNER_PROMPT,
   PRESET_RESEARCH_PROMPT,
   QA_SYSTEM_CONTRACT,
@@ -657,11 +652,14 @@ export const {
 export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
   PUBLISH_TOOL: 'neo.publication.publish',
   SAY_TOOL: 'neo.speech.say',
+  WAKE_SPEECH:
+    'When listening is yes, worker reports and wakes also get a natural spoken result alongside the publication, without a human-input acknowledgment. ',
 });
 
 export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
   PUBLISH_TOOL: 'reply',
   SAY_TOOL: 'speech_say',
+  WAKE_SPEECH: '',
 });
 
 const codingSkill = parseSkillMarkdown(mdneoPacksCodingSkill, 'neo/packs/coding/SKILL.md');

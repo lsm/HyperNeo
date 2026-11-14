@@ -134,7 +134,22 @@ try {
   NeoAskTodoRepository.prototype.claimStart=()=>{throw new Error('Runtime used main-thread claim');};
   const receipt=await hub.request<{ok:boolean;todo:NeoTodo}>('operation.invoke',{name:'neo.todo.retry',input:{todoId:'rpc'}});
   assert.equal(receipt.ok,true); assert.equal(receipt.todo.state,'doing'); assert.equal(publicDispatches,1);
-  result.publicRetryUsesWriter=true; result.verified=true;
+  result.publicRetryUsesWriter=true;
+  ask('capacity'); seed('capacity','capacity');
+  prepare('UPDATE neo_todo_sessions SET target=? WHERE todo_id=?').run(JSON.stringify({verb:'send',ref:{adapter:'hyperneo',id:'capacity-worker'}}),'capacity');
+  const capacityNotes: string[] = [];
+  const heldRunner = createNeoTodoRunner({
+    limits: () => ({ running: 0, perGroup: 99 }),
+    store, sessions, write: app.db.gateway.run.bind(app.db.gateway), packs: () => [],
+    changed: () => {},
+    tell: async (_ask, todo, note) => { if (todo.id === 'capacity') capacityNotes.push(note); },
+    invoke: async () => ({ kind: 'completed', value: { ok: true, value: { status: 'done', lastActivityAt: Date.now() } } }),
+  });
+  await heldRunner.refresh((_message, error) => { throw error; });
+  assert.equal((await visible('capacity')).entry.todos.find(todo => todo.id === 'capacity')?.state, 'todo');
+  assert(capacityNotes.some(note => /\d+ workers running; total limit is 0/.test(note)), JSON.stringify(capacityNotes));
+  result.capacityNotes = capacityNotes;
+  result.verified=true;
 } finally {
   if(held) db.exec('ROLLBACK'); db.prepare=prepare; app.db.gateway.onChanges=replay;
   NeoAskTodoRepository.prototype.recompute=legacyRecompute; NeoAskTodoRepository.prototype.claimStart=legacyClaim;

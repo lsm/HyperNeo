@@ -1,12 +1,10 @@
-import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@hyperneo/shared';
-import type { ComponentChildren } from 'preact';
+import type { SpaceGoal, SpaceGoalStatus, SpaceTask } from '@hyperneo/shared';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/space-goal-status';
-import { navigateToSpaceTask } from '../../lib/space-router';
 import { rightPanelTargetSignal } from '../../lib/signals';
 import { currentSpaceGoalIdSignal } from '../../lib/space-signals';
 import { spaceStore } from '../../lib/space-store';
-import { cn, getRelativeTime } from '../../lib/utils';
+import { cn } from '../../lib/utils';
 import {
   formatGoalMetricSnapshot,
   getGoalActivityTask,
@@ -54,10 +52,6 @@ function goalDisplayTask(goal: SpaceGoal, tasks: SpaceTask[]): SpaceTask | null 
   return getGoalActivityTask(goal, tasks) ?? goalTask(tasks, goal.lastTaskId);
 }
 
-function eventLabel(event: SpaceGoalEvent): string {
-  return event.eventType.replace(/_/g, ' ');
-}
-
 function lastActivityLabel(goal: SpaceGoal, lastTask: SpaceTask | null): string {
   const lastActivityAt = getGoalLastActivityAt(goal, lastTask);
   return lastActivityAt ? formatDate(lastActivityAt) : '—';
@@ -75,9 +69,6 @@ function GoalStatusBadge({ status }: { status: SpaceGoalStatus }) {
     </span>
   );
 }
-
-const GOAL_ACTION_BUTTON_CLASS =
-  'h-8 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50';
 
 function ProgressBar({ value }: { value: number }) {
   const safeValue = Math.max(0, Math.min(100, value));
@@ -189,265 +180,6 @@ function GoalCard({
         </div>
       </div>
     </button>
-  );
-}
-
-function DetailSection({ title, children }: { title: string; children: ComponentChildren }) {
-  return (
-    <section class="rounded-lg bg-surface/65 p-4">
-      <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-fg-muted">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-export function GoalDetail({
-  goal,
-  tasks,
-  events,
-  onEdit,
-  onRunAction,
-  actionLoading,
-  spaceId,
-  navigationSpaceId,
-}: {
-  goal: SpaceGoal;
-  tasks: SpaceTask[];
-  events: SpaceGoalEvent[];
-  onEdit: () => void;
-  onRunAction: (action: 'pause' | 'resume' | 'archive' | 'trigger') => void;
-  actionLoading: boolean;
-  spaceId: string;
-  navigationSpaceId?: string;
-}) {
-  const routeSpaceId = navigationSpaceId ?? spaceId;
-  const linkedTasks = tasks
-    .filter(
-      (task) =>
-        task.goalId === goal.id || task.id === goal.activeTaskId || task.id === goal.lastTaskId
-    )
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  const activeTask = goalTask(tasks, goal.activeTaskId);
-  const lastTask = goalTask(tasks, goal.lastTaskId);
-  const activityTask = getGoalActivityTask(goal, tasks);
-
-  return (
-    <div class="flex h-full flex-col overflow-hidden">
-      <div class="relative flex h-[88px] flex-col justify-center bg-surface/30 px-5">
-        <div class="pr-12">
-          <h2 class="truncate text-base font-semibold leading-6 text-fg">{goal.title}</h2>
-          <div class="mt-2 flex flex-wrap items-center gap-2">
-            <GoalStatusBadge status={goal.status} />
-            <span class="rounded-full border border-line-strong px-2 py-0.5 text-xs text-fg-muted">
-              {TYPE_LABELS[goal.type]}
-            </span>
-            <span class="rounded-full border border-line-strong px-2 py-0.5 text-xs capitalize text-fg-muted">
-              {goal.priority}
-            </span>
-          </div>
-        </div>
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-fill-strong" />
-      </div>
-
-      <div class="flex flex-wrap gap-2 px-4 pt-4">
-        <button
-          type="button"
-          onClick={onEdit}
-          class={cn(
-            GOAL_ACTION_BUTTON_CLASS,
-            'border-line-strong bg-surface-raised text-fg-soft hover:bg-fill-strong'
-          )}
-        >
-          Edit details
-        </button>
-        {goal.status === 'active' && (
-          <button
-            type="button"
-            disabled={actionLoading}
-            onClick={() => onRunAction('pause')}
-            class={cn(
-              GOAL_ACTION_BUTTON_CLASS,
-              'border-line-strong bg-surface-raised text-warning-soft hover:bg-fill-strong'
-            )}
-          >
-            Pause
-          </button>
-        )}
-        {goal.status === 'paused' && (
-          <button
-            type="button"
-            disabled={actionLoading}
-            onClick={() => onRunAction('resume')}
-            class={cn(
-              GOAL_ACTION_BUTTON_CLASS,
-              'border-line-strong bg-surface-raised text-success-soft hover:bg-fill-strong'
-            )}
-          >
-            Resume
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={actionLoading || goal.status !== 'active'}
-          onClick={() => onRunAction('trigger')}
-          class={cn(
-            GOAL_ACTION_BUTTON_CLASS,
-            'border-accent bg-accent-hover text-accent-fg hover:bg-accent'
-          )}
-        >
-          Create task now
-        </button>
-        {goal.status !== 'archived' && (
-          <button
-            type="button"
-            disabled={actionLoading}
-            onClick={() => onRunAction('archive')}
-            class={cn(
-              GOAL_ACTION_BUTTON_CLASS,
-              'border-line-strong bg-surface-raised text-danger-soft hover:bg-fill-strong'
-            )}
-          >
-            Archive
-          </button>
-        )}
-      </div>
-
-      <div class="flex-1 space-y-4 overflow-y-auto p-4">
-        <DetailSection title="Rolling state">
-          <div class="space-y-3">
-            <p class="text-sm text-fg-soft">{goal.summary || 'No summary yet'}</p>
-            {goal.type === 'recurring' ? (
-              <div class="rounded-lg border border-line bg-surface-raised/60 px-3 py-2 text-xs">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-fg-muted">Activity status</span>
-                  <span class="capitalize text-fg-soft">
-                    {getRecurringGoalActivityStatus(goal, activityTask)}
-                  </span>
-                </div>
-                <div class="mt-2 text-fg-muted">
-                  Last activity: {lastActivityLabel(goal, activityTask)}
-                </div>
-                <div class="mt-2 text-fg-muted">
-                  Metric trajectory: {formatGoalMetricSnapshot(goal)}
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div class="mb-1 flex justify-between text-xs text-fg-muted">
-                  <span>Progress</span>
-                  <span>{goal.progress ?? 0}%</span>
-                </div>
-                <ProgressBar value={goal.progress ?? 0} />
-              </div>
-            )}
-            <div class="grid grid-cols-2 gap-3 text-xs text-fg-muted">
-              <div>
-                <span class="block text-fg-muted">Last check-in</span>
-                <span class="text-fg-soft">{formatDate(goal.lastCheckInAt)}</span>
-              </div>
-              <div>
-                <span class="block text-fg-muted">Next check-in</span>
-                <span class="text-fg-soft">{formatDate(goal.nextCheckInAt)}</span>
-              </div>
-              <div>
-                <span class="block text-fg-muted">Auto trigger next</span>
-                <span class="text-fg-soft">{goal.autoTriggerNext ? 'Enabled' : 'Off'}</span>
-              </div>
-              <div>
-                <span class="block text-fg-muted">Concurrency state</span>
-                <span class="text-fg-soft">
-                  {activeTask
-                    ? 'Active task running'
-                    : goal.pendingNextRun
-                      ? 'Pending next run'
-                      : 'Idle'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </DetailSection>
-
-        <DetailSection title="Metrics">
-          {Object.keys(goal.metrics).length === 0 ? (
-            <p class="text-sm text-fg-muted">No metrics recorded</p>
-          ) : (
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {Object.entries(goal.metrics).map(([key, value]) => (
-                <div key={key} class="rounded-lg border border-line bg-surface-raised/60 px-3 py-2">
-                  <span class="block text-xs text-fg-muted">{key}</span>
-                  <span class="text-sm text-fg-soft">{String(value ?? '—')}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </DetailSection>
-
-        <DetailSection title="Next steps">
-          {goal.nextSteps.length === 0 ? (
-            <p class="text-sm text-fg-muted">No next steps recorded</p>
-          ) : (
-            <ul class="space-y-2 text-sm text-fg-soft">
-              {goal.nextSteps.map((step) => (
-                <li key={step} class="flex gap-2">
-                  <span class="text-fg-muted">•</span>
-                  <span>{step}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </DetailSection>
-
-        <DetailSection title="Linked tasks">
-          {linkedTasks.length === 0 ? (
-            <p class="text-sm text-fg-muted">No linked tasks yet</p>
-          ) : (
-            <div class="space-y-2">
-              {linkedTasks.map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => navigateToSpaceTask(routeSpaceId, task.id)}
-                  class="w-full rounded-lg border border-line bg-surface-raised/60 px-3 py-2 text-left hover:border-line-strong"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="truncate text-sm text-fg-soft">{task.title}</span>
-                    <span class="text-xs text-fg-muted">#{task.taskNumber}</span>
-                  </div>
-                  <div class="mt-1 flex items-center gap-2 text-xs text-fg-muted">
-                    <span>{task.status}</span>
-                    {task.result && <span class="truncate">{task.result}</span>}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-          {lastTask && !linkedTasks.some((task) => task.id === lastTask.id) && (
-            <p class="mt-2 text-xs text-fg-muted">Last task: {lastTask.title}</p>
-          )}
-        </DetailSection>
-
-        <DetailSection title="Recent goal events">
-          {events.length === 0 ? (
-            <p class="text-sm text-fg-muted">No events loaded</p>
-          ) : (
-            <div class="space-y-2">
-              {events.slice(0, 6).map((event) => (
-                <div
-                  key={event.id}
-                  class="rounded-lg border border-line bg-surface-raised/60 px-3 py-2"
-                >
-                  <div class="flex items-center justify-between gap-2 text-xs">
-                    <span class="capitalize text-fg-soft">{eventLabel(event)}</span>
-                    <span class="text-fg-muted">{getRelativeTime(event.createdAt)}</span>
-                  </div>
-                  {event.note && <p class="mt-1 text-xs text-fg-muted">{event.note}</p>}
-                </div>
-              ))}
-            </div>
-          )}
-        </DetailSection>
-      </div>
-    </div>
   );
 }
 

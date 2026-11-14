@@ -156,6 +156,22 @@ export function useNeo() {
     await refresh();
   }
 
+  async function setDesktopControl(todoId: string, on: boolean) {
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<{ accepted: boolean; reason?: string }>(
+        hub,
+        'desktop.control.set',
+        { todoId, on }
+      );
+      if (!result.accepted) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current) setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function muteSession(key: string, muted: boolean) {
     setError('');
     try {
@@ -221,6 +237,7 @@ export function useNeo() {
     refresh,
     settleAsk,
     controlTodo,
+    setDesktopControl,
     muteSession,
     answerQuestion,
     send: intake.send,

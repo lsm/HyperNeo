@@ -1,4 +1,3 @@
-import type { NeoDriverTarget } from './driver-work.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
 
@@ -29,28 +28,4 @@ export function requireNeoTrackableSession(
   return followed.some((item) => neoSessionKey(item) === notice.key)
     ? { reason: { ok: false, reason: 'A Neo card already follows this session.' } }
     : { value: notice };
-}
-
-export function reserveNeoAdoption(
-  adopting: Set<string>,
-  target: NeoDriverTarget | undefined
-): { value: string | null } | { reason: Rejection } {
-  if (target?.verb !== 'adopt') return { value: null };
-  const key = neoSessionKey(target.ref);
-  if (adopting.has(key))
-    return { reason: { ok: false, reason: 'This session is already being adopted.' } };
-  adopting.add(key);
-  return { value: key };
-}
-
-export function requireNeoTrackedAdoption<T>(
-  target: NeoDriverTarget | undefined,
-  followed: readonly WorkRef[],
-  value: T
-): { value: T } | { reason: Rejection } {
-  if (target?.verb !== 'adopt') return { value };
-  const key = neoSessionKey(target.ref);
-  if (followed.some((item) => neoSessionKey(item) === key))
-    return { reason: { ok: false, reason: 'A Neo card already follows this session.' } };
-  return { value };
 }

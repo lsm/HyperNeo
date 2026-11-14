@@ -4,7 +4,6 @@ import {
   getProviderBrandColor,
   providerPillStyle,
   providerLogoColor,
-  providerHeaderStyle,
   shortenModelName,
 } from '../provider-brand';
 import { resolvedTheme } from '../theme';
@@ -81,31 +80,6 @@ describe('provider-brand', () => {
       resolvedTheme.value = 'light';
       expect(providerLogoColor('glm')).toBe('#0369a1');
       expect(providerLogoColor('anthropic-codex')).toBe('#3f3f46');
-    });
-  });
-
-  describe('providerHeaderStyle', () => {
-    afterEach(() => {
-      resolvedTheme.value = 'dark';
-    });
-
-    it('returns a brand-tinted band + brand-hued text color in dark mode', () => {
-      resolvedTheme.value = 'dark';
-      const style = providerHeaderStyle('anthropic');
-      expect(style.backgroundColor).toContain('#D97757');
-      expect(style.color).toContain('#D97757');
-    });
-
-    it('uses darker foreground variants in light mode for pale brands', () => {
-      resolvedTheme.value = 'light';
-      expect(providerHeaderStyle('anthropic-codex').color).toBe('#3f3f46');
-      expect(providerHeaderStyle('glm').color).toBe('#0369a1');
-      expect(providerHeaderStyle('kimi').color).toBe('#7c3aed');
-    });
-
-    it('falls back to gray for unknown providers', () => {
-      resolvedTheme.value = 'dark';
-      expect(providerHeaderStyle('nope').backgroundColor).toContain('#9CA3AF');
     });
   });
 

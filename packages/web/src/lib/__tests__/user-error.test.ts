@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeUserError, isAuthError, isTransientError } from '../user-error';
+import { sanitizeUserError, isAuthError } from '../user-error';
 
 describe('sanitizeUserError', () => {
   describe('user-friendly messages pass through', () => {
@@ -102,27 +102,5 @@ describe('isAuthError', () => {
   it('should handle null/undefined', () => {
     expect(isAuthError(null)).toBe(false);
     expect(isAuthError(undefined)).toBe(false);
-  });
-});
-
-describe('isTransientError', () => {
-  it('should detect timeout errors', () => {
-    expect(isTransientError(new Error('Request timeout'))).toBe(true);
-  });
-
-  it('should detect network errors', () => {
-    expect(isTransientError(new Error('Network error'))).toBe(true);
-  });
-
-  it('should detect ECONNRESET', () => {
-    expect(isTransientError(new Error('read ECONNRESET'))).toBe(true);
-  });
-
-  it('should NOT flag auth errors as transient', () => {
-    expect(isTransientError(new Error('Unauthorized'))).toBe(false);
-  });
-
-  it('should handle null as transient (safe default)', () => {
-    expect(isTransientError(null)).toBe(true);
   });
 });

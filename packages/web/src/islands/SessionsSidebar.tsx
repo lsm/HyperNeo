@@ -9,10 +9,10 @@ import type {
 } from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
 import { sessions } from '../lib/state.ts';
+import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
   addWorkspaceToHistory,
-  addFolderToProject,
   removeWorkspaceFromHistory,
   archiveSession,
 } from '../lib/api-helpers.ts';
@@ -131,14 +131,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [addProjectBusy, setAddProjectBusy] = useState(false);
-  const [folderTarget, setFolderTarget] = useState<ProjectGroup | null>(null);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
+  const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
       .catch(() => {});
-  }, []);
+  }, [historyVersion]);
 
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
@@ -160,7 +160,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     });
   };
 
-  const addProjectFromPath = async (path: string, target = folderTarget) => {
+  const addProjectFromPath = async (path: string) => {
     const trimmed = path.trim();
     if (!trimmed) {
       setAddProjectError('Enter an absolute project path.');
@@ -169,14 +169,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setAddProjectBusy(true);
     setAddProjectError(null);
     try {
-      if (target) {
-        await addFolderToProject(target.folders[0], trimmed);
-        setHistory(await getWorkspaceHistory());
-      } else {
-        const entry = await addWorkspaceToHistory(trimmed);
-        setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
-      }
-      setFolderTarget(null);
+      const entry = await addWorkspaceToHistory(trimmed);
+      setHistory((prev) => [entry, ...prev.filter((e) => e.path !== entry.path)]);
+      workspaceHistoryVersionSignal.value += 1;
       setAddProjectPath('');
       setAddProjectOpen(false);
     } catch (err) {
@@ -203,7 +198,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         setAddProjectError('Enter a path manually if the folder picker is unavailable.');
         return;
       }
-      await addProjectFromPath(picked.path, null);
+      await addProjectFromPath(picked.path);
     } catch (err) {
       setAddProjectOpen(true);
       setAddProjectError(err instanceof Error ? err.message : 'Failed to add project');
@@ -221,11 +216,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     } catch {
       toast.error('Failed to remove project');
     } finally {
-      try {
-        setHistory(await getWorkspaceHistory());
-      } catch {
-        toast.error('Failed to refresh projects');
-      }
+      workspaceHistoryVersionSignal.value += 1;
     }
   };
 
@@ -312,7 +303,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               data-testid="add-project-button"
               disabled={addProjectBusy}
               onClick={() => {
-                setFolderTarget(null);
                 setAddProjectError(null);
                 if (nativeFolderPickerAvailable) {
                   void handleBrowseProject();
@@ -341,9 +331,6 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               onSubmit={handleAddProjectSubmit}
               class="mx-2 mb-2 rounded-lg border border-line bg-surface-overlay p-2"
             >
-              {folderTarget && (
-                <p class="mb-2 text-xs text-fg-soft">Add folder to {folderTarget.name}</p>
-              )}
               <div class="flex items-center gap-1.5">
                 <input
                   type="text"
@@ -354,7 +341,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                     setAddProjectPath((e.currentTarget as HTMLInputElement).value);
                     setAddProjectError(null);
                   }}
-                  placeholder={folderTarget ? 'Folder path' : 'Project path'}
+                  placeholder="Project path"
                   autoFocus
                   class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
                 />
@@ -382,12 +369,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   name={project.name}
                   path={project.path}
                   folders={project.folders}
-                  onAddFolder={() => {
-                    if (addProjectBusy) return;
-                    setFolderTarget(project);
-                    setAddProjectPath('');
-                    setAddProjectError(null);
-                    setAddProjectOpen(true);
+                  onNewSession={() => {
+                    newChatProjectSignal.value = project.folders[0];
+                    handleNewChat();
                   }}
                   sessions={project.sessions}
                   collapsed={collapsed.has(project.path)}

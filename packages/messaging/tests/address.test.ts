@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatAddress, isAddress, parseAddress } from '../src/address.ts';
+import { formatAddress, parseAddress } from '../src/address.ts';
 
 const roundTrips = [
   '@coordinator',
@@ -61,13 +61,6 @@ describe('address parsing', () => {
 
     for (const target of invalidTargets) {
       expect(() => parseAddress(target), target).toThrow();
-      expect(isAddress(target), target).toBe(false);
-    }
-  });
-
-  test('returns true for supported address strings', () => {
-    for (const target of roundTrips) {
-      expect(isAddress(target), target).toBe(true);
     }
   });
 

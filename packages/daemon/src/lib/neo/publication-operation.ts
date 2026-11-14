@@ -39,6 +39,7 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
   revisionId: true,
   revisions: true,
   publishedBy: true,
+  workOn: true,
   shortText: true,
   verbatim: true,
   fullText: true,
@@ -92,7 +93,6 @@ type Producer = {
 type Proof = Producer & { session?: string };
 interface NeoPublicationRuntime {
   receivedHumanInput(sessionId: string, messageId: string): boolean;
-  currentHumanInputs(sessionId: string): string[];
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   isPublicationSpeaker?(sessionId: string): boolean;
@@ -164,7 +164,7 @@ export function requirePublicationLifetime(
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
-    .input(['input', 'caller'])
+    .input(['input', 'caller', 'workOn'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
       (draft: Draft) => {
@@ -199,7 +199,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(
       (draft: Draft, caller: OperationCaller, proof: Proof) =>
-        caller.sessionId === frontSessionId(proof.root.sessionId.slice(4)) &&
         draft.replyTo?.some((id) => !runtime.receivedHumanInput(caller.sessionId!, id))
           ? { reason: { accepted: false as const, reason: 'unknown_reply_target' } }
           : { value: proof },
@@ -286,16 +285,10 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (draft: Draft, caller: OperationCaller, proof: Proof) => {
         const sessionId = caller.sessionId!;
-        const explicit = draft.replyTo?.filter((id) => runtime.receivedHumanInput(sessionId, id));
-        const inferred = draft.cardReply
-          ? []
-          : runtime
-              .currentHumanInputs(sessionId)
-              .filter((id) => runtime.receivedHumanInput(sessionId, id));
         return {
           ...draft,
           session: proof.session,
-          replyTo: explicit ?? (inferred.length ? [...new Set(inferred)] : undefined),
+          replyTo: draft.replyTo,
           cardReply: draft.cardReply?.sourceMessageIds.every((id) =>
             runtime.receivedHumanInput(sessionId, id)
           )
@@ -318,7 +311,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'result:publication'
     )
     .pipe(
-      (draft: Draft, proof: Proof) => {
+      (draft: Draft, proof: Proof, workOn?: boolean) => {
         const {
           requestId,
           spoken: _spoken,
@@ -354,11 +347,12 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
               progress ? frontProgressRequest(message.replyTo!) : requestId
             ),
             conversationId: proof.root.sessionId.slice(4),
+            ...(workOn === undefined ? {} : { workOn }),
           },
           proof.binding.sessionId
         );
       },
-      ['draft', 'publication'],
+      ['draft', 'publication', 'workOn'],
       'publication'
     )
     .pipe(
@@ -392,7 +386,11 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       ['publication', 'draft', 'caller'],
       'publication'
     )
-    .endAsync('publication') as (input: unknown, caller: OperationCaller) => Promise<Receipt>;
+    .endAsync('publication') as (
+    input: unknown,
+    caller: OperationCaller,
+    workOn?: boolean
+  ) => Promise<Receipt>;
 }
 
 export function createNeoPublicationOperation(

@@ -11,7 +11,7 @@ import {
   SessionExternalEventStore,
 } from '../../../../src/lib/external-events/session-external-event-store';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
-import { createInternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { runMigration331 } from '../../../../src/storage/schema/m331-session-external-events';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -57,7 +57,7 @@ describe('SessionExternalEventStore', () => {
 
 describe('session-scoped publishing', () => {
   test('retries a failed terminal publication with the committed canonical bytes', async () => {
-    const bus = createInternalEventBus<{
+    const bus = new InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
     }>();
     const seen: ExternalEventPublishedPayload[] = [];
@@ -88,7 +88,7 @@ describe('session-scoped publishing', () => {
   });
 
   test('publishes a new event once and drops a repeat', async () => {
-    const bus = createInternalEventBus<{
+    const bus = new InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
     }>();
     const seen: ExternalEventPublishedPayload[] = [];
@@ -120,7 +120,7 @@ describe('session-scoped publishing', () => {
 
 describe('session-scoped asynchronous persistence', () => {
   test('publication waits for the committed canonical event and keeps duplicate bytes', async () => {
-    const bus = createInternalEventBus<{
+    const bus = new InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
     }>();
     const seen: ExternalEventPublishedPayload[] = [];
@@ -157,7 +157,7 @@ describe('session-scoped asynchronous persistence', () => {
   });
 
   test('unknown write failure never publishes or silently replays the command', async () => {
-    const bus = createInternalEventBus<{
+    const bus = new InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
     }>();
     const seen: ExternalEventPublishedPayload[] = [];

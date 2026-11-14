@@ -35,7 +35,3 @@ export class ClientEventGateway implements IClientEventGateway {
     this.publish(method, data, { kind: 'global' });
   }
 }
-
-export function createClientEventGateway(options: ClientEventGatewayOptions): ClientEventGateway {
-  return new ClientEventGateway(options);
-}

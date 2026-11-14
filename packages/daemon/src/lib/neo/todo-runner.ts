@@ -5,6 +5,7 @@ import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.t
 import { planNeoTrackerStarts } from './tracker-start-gate.ts';
 import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
+import { planWorkQueue } from '../work-queue/capacity.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
@@ -255,13 +256,17 @@ const idleMinutes = (incident: { since: number }, now: number) =>
 const neoTodoIdleReason = (minutes: number) =>
   `its worker has been idle with no progress for ${minutes} min.`;
 
-const neoTodoUnworkedNote = (todo: NeoTodo, target: NeoDriverTarget | null) => {
+const neoTodoUnworkedNote = (
+  todo: NeoTodo,
+  target: NeoDriverTarget | null,
+  capacity: string | undefined
+) => {
   const reason =
     todo.approvedAt === null
       ? 'it was not approved'
       : !todo.instruction || !target || !['start', 'send'].includes(target.verb)
         ? 'it needs an instruction and a start or send target'
-        : (todo.reason ?? 'worker capacity is unavailable');
+        : (todo.reason ?? capacity ?? 'work is awaiting dispatch');
   return `Todo "${todo.title}" (${todo.id}) is ready but cannot start: ${reason}. Review it with neo.todo.read.`;
 };
 
@@ -737,7 +742,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'todoIds'
     )
     .pipe(
-      async (todoIds: readonly string[]) => {
+      async (todoIds: readonly string[], facts: QueueFacts) => {
+        const { reasons } = planWorkQueue(facts.candidates, facts.running, deps.limits());
         for (const todoId of todoIds) {
           const todo = store.getTodo(todoId);
           const ask = todo && store.getAsk(todo.askId);
@@ -745,19 +751,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           await deps.tell(
             ask,
             todo,
-            neoTodoUnworkedNote(todo, sessions.get(todo.id)),
+            neoTodoUnworkedNote(todo, sessions.get(todo.id), reasons[todo.id]),
             `neo-todo-unworked:${todo.id}`
           );
           noted.add(todoId);
         }
       },
-      'todoIds',
+      ['todoIds', 'facts'],
       'told'
     )
-    .endAsync('told') as (facts: {
-    unworked: readonly string[];
-    candidates: readonly { id: string }[];
-  }) => Promise<void>;
+    .endAsync('told') as (facts: QueueFacts) => Promise<void>;
   type PrerequisiteNote = { todo: NeoTodo; family: NeoTodo[]; key: string };
   const tellCancelledPrerequisites = (
     superpipe({})('neo.todo.tell-cancelled-prerequisites') as PipelineAPI

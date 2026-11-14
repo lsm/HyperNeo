@@ -40,10 +40,11 @@ describe('workspace project folders', () => {
   });
 
   test('persists a stable project with several folders across reopening and repeated calls', () => {
-    expect(repo.addProjectFolder('/a', '/b', 'Product')).toBe(true);
-    expect(repo.addProjectFolder('/b', '/c', 'Ignored rename')).toBe(true);
+    repo.upsert('/a');
+    expect(repo.addProjectFolder('/a', '/b', 'Product')).toEqual({ accepted: true });
+    expect(repo.addProjectFolder('/b', '/c', 'Ignored rename')).toEqual({ accepted: true });
     const entries = repo.entries();
-    expect(repo.addProjectFolder('/a', '/b', 'Ignored rename')).toBe(true);
+    expect(repo.addProjectFolder('/a', '/b', 'Ignored rename')).toEqual({ accepted: true });
     expect(repo.entries()).toEqual(entries);
     const [project] = repo.projects();
     expect(project).toEqual({
@@ -63,11 +64,16 @@ describe('workspace project folders', () => {
   });
 
   test('refuses cross-project transfers atomically and rolls back failed writes', () => {
+    repo.upsert('/a');
+    repo.upsert('/x');
     repo.addProjectFolder('/a', '/b', 'One');
     repo.addProjectFolder('/x', '/y', 'Two');
     const before = repo.entries();
-    expect(repo.addProjectFolder('/a', '/y', 'One')).toBe(false);
-    expect(repo.addProjectFolder('/new', '/y', 'New')).toBe(false);
+    expect(repo.addProjectFolder('/a', '/y', 'One')).toMatchObject({ accepted: false });
+    expect(repo.addProjectFolder('/new', '/y', 'New')).toEqual({
+      accepted: false,
+      reason: 'Project no longer exists.',
+    });
     expect(repo.entries()).toEqual(before);
     db.exec(`CREATE TRIGGER reject_new BEFORE INSERT ON workspace_project_folders
       WHEN NEW.path = '/fail' BEGIN SELECT RAISE(ABORT, 'injected fault'); END`);
@@ -76,6 +82,7 @@ describe('workspace project folders', () => {
   });
 
   test('history includes every folder even beyond the old twenty-entry limit', () => {
+    repo.upsert('/a');
     for (let i = 0; i < 25; i++) repo.addProjectFolder('/a', `/folder-${i}`, 'Product');
     expect(repo.entries()).toHaveLength(27);
     expect(repo.entries().find((entry) => entry.path === '/a')?.project?.folders).toHaveLength(26);
@@ -101,6 +108,7 @@ describe('workspace project folders', () => {
       });
       expect(repo.projects()).toEqual([]);
     }
+    repo.upsert(first);
     expect(await invoke(`${first}/../first`, second)).toEqual({
       kind: 'completed',
       value: { accepted: true },
@@ -109,11 +117,42 @@ describe('workspace project folders', () => {
     expect(repo.projects()[0].name).toBe('first');
     const third = join(dir, 'third');
     mkdirSync(third);
+    repo.upsert(third);
     expect(await invoke(third, second)).toMatchObject({
       kind: 'completed',
       value: { accepted: false, reason: 'Folder already belongs to another project.' },
     });
-    expect(repo.get(third)).toBeNull();
+    expect(repo.projects()[0].folders).not.toContain(third);
+  });
+
+  test('refuses to add a folder to a project that was just removed', async () => {
+    const anchor = join(dir, 'anchor');
+    const member = join(dir, 'member');
+    const standalone = join(dir, 'standalone');
+    const extra = join(dir, 'extra');
+    for (const folder of [anchor, member, standalone, extra]) mkdirSync(folder);
+    const registry = createOperationRegistry([createProjectFolderOperation(repo)]);
+    const invoke = (projectPath: string, path: string) =>
+      invokeOperation(registry, 'work.project.addFolder', { projectPath, path }, { source: 'rpc' });
+    repo.upsert(anchor);
+    expect(await invoke(anchor, member)).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true },
+    });
+    for (const folder of repo.projects()[0].folders) repo.remove(folder);
+    expect(repo.projects()).toEqual([]);
+    expect(await invoke(anchor, extra)).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'Project no longer exists.' },
+    });
+    expect(repo.projects()).toEqual([]);
+    expect(repo.get(anchor)).toBeNull();
+    repo.upsert(standalone);
+    expect(await invoke(standalone, extra)).toEqual({
+      kind: 'completed',
+      value: { accepted: true },
+    });
+    expect(repo.projects()[0].folders).toEqual([extra, standalone]);
   });
 
   test('adds to a persisted project after its first member vanished but still validates the new directory', async () => {
@@ -121,6 +160,7 @@ describe('workspace project folders', () => {
     const second = join(dir, 'b');
     const added = join(dir, 'c');
     for (const folder of [first, second, added]) mkdirSync(folder);
+    repo.upsert(first);
     repo.addProjectFolder(first, second, 'Product');
     const project = repo.projects()[0];
     rmSync(first, { recursive: true });
@@ -148,6 +188,7 @@ describe('workspace project folders', () => {
   });
 
   test('driver discovery carries one tool project identity on all folders and matches its name', async () => {
+    repo.upsert('/code');
     repo.addProjectFolder('/code', '/docs', 'Product');
     const places = ['/code', '/docs'].map((folder) => ({
       folder,

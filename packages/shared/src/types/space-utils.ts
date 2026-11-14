@@ -2,7 +2,6 @@ import type {
   AgentModelPoolEntry,
   SpaceTaskStatus,
   SpaceWorkflow,
-  WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgent,
   WorkflowRunStatus,
@@ -110,10 +109,6 @@ export function isWorkflowRunSucceeded(status: WorkflowRunStatus | 'failed'): st
   return status === 'done';
 }
 
-export function isWorkflowRunTerminal(status: WorkflowRunStatus | 'failed'): boolean {
-  return status === 'done' || status === 'cancelled' || status === 'failed';
-}
-
 export function isWorkflowRunWaiting(status: WorkflowRunStatus | 'failed'): status is 'blocked' {
   return status === 'blocked';
 }
@@ -135,40 +130,6 @@ export function isWorkflowRecoveryTransition(
     (from === 'stopped' && to === 'in_progress') ||
     (isRateOrUsageLimited(from) && to === 'in_progress')
   );
-}
-
-export function findNodeByName(nodes: WorkflowNode[], name: string): WorkflowNode | undefined {
-  return nodes.find((n) => n.name === name);
-}
-
-export function getChannelsFromNode(
-  channels: WorkflowChannel[],
-  nodeName: string
-): WorkflowChannel[] {
-  return channels.filter((ch) => ch.from === nodeName || ch.from === '*');
-}
-
-export function getChannelsToNode(
-  channels: WorkflowChannel[],
-  nodeName: string
-): WorkflowChannel[] {
-  return channels.filter((ch) => {
-    const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-    return toList.includes(nodeName) || toList.includes('*');
-  });
-}
-
-export function findChannel(
-  channels: WorkflowChannel[],
-  fromNode: string,
-  toNode: string
-): WorkflowChannel | undefined {
-  return channels.find((ch) => {
-    if (ch.from !== fromNode && ch.from !== '*') return false;
-    if (ch.to === toNode || ch.to === '*') return true;
-    if (Array.isArray(ch.to)) return ch.to.includes(toNode) || ch.to.includes('*');
-    return false;
-  });
 }
 
 export function validateChannels(

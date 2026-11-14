@@ -13,6 +13,7 @@ export type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
+  TokenRefreshOutcome,
   CuratedModel,
   ListRemoteModelsOptions,
 } from './types.js';
@@ -28,15 +29,11 @@ export type {
   ProviderRefreshRequest,
   ProviderRefreshResponse,
   ListProviderAuthStatusResponse,
-  OAuthFlowData,
 } from './auth-types.js';
 
 export type {
   AnthropicErrorType,
-  PromptTooLongMatch,
-  ProviderErrorAction,
   ProviderErrorKind,
-  ProviderErrorTaxonomyEntry,
 } from './error-taxonomy.js';
 
 export {
@@ -57,7 +54,6 @@ export {
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
   isRetryableProviderError,
-  looseTextSubstringToRegex,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
 } from './error-taxonomy.js';

@@ -4,6 +4,16 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { GlobalToolsConfig, GlobalSettings } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
+const settingsRevisions = new WeakMap<BunDatabase, number>();
+
+export function globalSettingsRevision(db: BunDatabase): number {
+  return settingsRevisions.get(db) ?? 0;
+}
+
+export function invalidateGlobalSettings(db: BunDatabase): void {
+  settingsRevisions.set(db, globalSettingsRevision(db) + 1);
+}
+
 export class SettingsRepository {
   constructor(
     private db: BunDatabase,
@@ -129,6 +139,7 @@ export class SettingsRepository {
       RETURNING settings
     `)
       .get(...values) as { settings: string };
+    invalidateGlobalSettings(this.db);
     this.reactiveDb?.notifyChange('global_settings');
     return JSON.parse(row.settings) as GlobalSettings;
   }

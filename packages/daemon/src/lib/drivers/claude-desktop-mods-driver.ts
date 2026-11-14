@@ -1,4 +1,3 @@
-import { reuseLiveSessions } from './claude-desktop-adapter.ts';
 import { createClaudeDesktopModsControl } from './claude-desktop-mods-control.ts';
 import { createClaudeDesktopModsRuntime } from './claude-desktop-mods-runtime.ts';
 
@@ -12,7 +11,6 @@ export function createClaudeDesktopModsDriver(deps: Deps) {
   const ready: Promise<ReturnType<typeof createClaudeDesktopModsControl> | undefined> =
     createClaudeDesktopModsRuntime({
       ...deps,
-      liveSessions: reuseLiveSessions(deps.liveSessions, Date.now, 1000),
       onExchange: async (sessionId) => (await ready)?.report(sessionId),
     })
       .then((instance) => {

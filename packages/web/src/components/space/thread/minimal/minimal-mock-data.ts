@@ -1,34 +1,8 @@
-export interface CompletedTurn {
-  state: 'completed';
-  id: string;
-  agent: string;
-  startedAt: number;
-  durationSec: number;
-  stats: {
-    toolCalls: number;
-    messages: number;
-    userInputs: number;
-    tokens: number;
-    costUsd: number;
-  };
-  lastMessage: string;
-}
-
 export interface ActiveTurnStats {
   toolCalls: number;
   tokens: number;
   costUsd: number;
   elapsedSec: number;
-}
-
-export interface ActiveTurn {
-  state: 'active';
-  id: string;
-  agent: string;
-  startedAt: number;
-  status: string;
-  stats: ActiveTurnStats;
-  roster: ToolCallEntry[];
 }
 
 export interface ToolCallEntry {

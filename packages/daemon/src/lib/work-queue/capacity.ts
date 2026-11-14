@@ -19,7 +19,7 @@ export function planWorkQueue(
   candidates: readonly WorkCandidate[],
   running: readonly RunningWork[],
   limits: { running: number; perGroup: number }
-): { start: string[]; queued: string[] } {
+): { start: string[]; queued: string[]; reasons: Record<string, string> } {
   const perGroup = new Map<string | null, number>();
   const busy = new Set(running.flatMap((row) => row.worker ?? []));
   const active = running.filter((row) => !row.idle);
@@ -27,13 +27,19 @@ export function planWorkQueue(
   let total = active.length;
   const start: string[] = [];
   const queued: string[] = [];
+  const reasons: Record<string, string> = Object.create(null);
   for (const item of orderWork(candidates)) {
     const inGroup = perGroup.get(item.group) ?? 0;
-    if (
-      total >= limits.running ||
-      (item.group !== null && inGroup >= limits.perGroup) ||
-      (item.worker && busy.has(item.worker))
-    ) {
+    const reason =
+      total >= limits.running
+        ? `${total} worker${total === 1 ? '' : 's'} running; total limit is ${limits.running}`
+        : item.group !== null && inGroup >= limits.perGroup
+          ? `${inGroup} worker${inGroup === 1 ? '' : 's'} running in this project; project limit is ${limits.perGroup}`
+          : item.worker && busy.has(item.worker)
+            ? 'the assigned worker is busy'
+            : null;
+    if (reason) {
+      reasons[item.id] = reason;
       queued.push(item.id);
       continue;
     }
@@ -42,5 +48,5 @@ export function planWorkQueue(
     perGroup.set(item.group, inGroup + 1);
     if (item.worker) busy.add(item.worker);
   }
-  return { start, queued };
+  return { start, queued, reasons };
 }

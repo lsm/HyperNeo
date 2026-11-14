@@ -8,12 +8,8 @@ import type {
 import {
   resolveNodeAgents,
   validateChannels,
-  findChannel,
-  getChannelsFromNode,
-  getChannelsToNode,
   getWorkflowRunExecutionStatusLabel,
   isWorkflowRunSucceeded,
-  isWorkflowRunTerminal,
   isWorkflowRunWaiting,
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
@@ -71,19 +67,12 @@ describe('workflow-run execution status helpers', () => {
     expect(getWorkflowRunExecutionStatusLabel('failed')).toBe('Failed');
   });
 
-  test('classifies succeeded, waiting, and terminal run execution states', () => {
+  test('classifies succeeded and waiting run execution states', () => {
     expect(isWorkflowRunSucceeded('done')).toBe(true);
     expect(isWorkflowRunSucceeded('in_progress')).toBe(false);
 
     expect(isWorkflowRunWaiting('blocked')).toBe(true);
     expect(isWorkflowRunWaiting('pending')).toBe(false);
-
-    expect(isWorkflowRunTerminal('done')).toBe(true);
-    expect(isWorkflowRunTerminal('blocked')).toBe(false);
-    expect(isWorkflowRunTerminal('cancelled')).toBe(true);
-    expect(isWorkflowRunTerminal('failed')).toBe(true);
-    expect(isWorkflowRunTerminal('pending')).toBe(false);
-    expect(isWorkflowRunTerminal('in_progress')).toBe(false);
   });
 });
 
@@ -241,64 +230,6 @@ describe('validateChannels', () => {
     });
     const errors = validateChannels(workflow, allAgents);
     expect(errors).toEqual([]);
-  });
-});
-
-describe('findChannel', () => {
-  const channels: WorkflowChannel[] = [
-    { id: 'ch-1', from: 'Code', to: 'Review' },
-    { id: 'ch-2', from: 'Review', to: 'Code' },
-    { id: 'ch-3', from: 'Review', to: 'QA' },
-    { id: 'ch-4', from: 'Code', to: ['Review', 'QA'] },
-  ];
-
-  test('finds a simple from → to channel', () => {
-    const found = findChannel(channels, 'Review', 'Code');
-    expect(found?.id).toBe('ch-2');
-  });
-
-  test('returns undefined when no channel matches', () => {
-    expect(findChannel(channels, 'QA', 'Code')).toBeUndefined();
-  });
-
-  test('matches fan-out channel when target is in array', () => {
-    const found = findChannel(channels, 'Code', 'QA');
-    expect(found?.id).toBe('ch-4');
-  });
-});
-
-describe('getChannelsFromNode', () => {
-  const channels: WorkflowChannel[] = [
-    { id: 'ch-1', from: 'Code', to: 'Review' },
-    { id: 'ch-2', from: 'Review', to: 'Code' },
-    { id: 'ch-3', from: '*', to: 'QA' },
-  ];
-
-  test('returns channels where from matches node name', () => {
-    const result = getChannelsFromNode(channels, 'Code');
-    expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
-  });
-
-  test('returns empty when no channels from node', () => {
-    expect(getChannelsFromNode(channels, 'QA')).toHaveLength(1);
-  });
-});
-
-describe('getChannelsToNode', () => {
-  const channels: WorkflowChannel[] = [
-    { id: 'ch-1', from: 'Code', to: 'Review' },
-    { id: 'ch-2', from: 'Review', to: 'Code' },
-    { id: 'ch-3', from: 'Code', to: ['Review', 'QA'] },
-  ];
-
-  test('returns channels where to matches node name (string)', () => {
-    const result = getChannelsToNode(channels, 'Code');
-    expect(result.map((c) => c.id)).toEqual(['ch-2']);
-  });
-
-  test('returns channels where to matches node name (array)', () => {
-    const result = getChannelsToNode(channels, 'Review');
-    expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
   });
 });
 

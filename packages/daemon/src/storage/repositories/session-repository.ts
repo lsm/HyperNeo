@@ -328,6 +328,21 @@ export class SessionRepository {
     );
   }
 
+  clearRestartResume(sessionId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE sessions SET processing_state = json_object('status', 'interrupted')
+           WHERE id = ?
+             AND json_valid(processing_state)
+             AND json_extract(processing_state, '$.status') = 'interrupted'
+             AND json_extract(processing_state, '$.reason') = 'restart'
+             AND json_type(processing_state, '$.resumeAt') IN ('integer', 'real')`
+        )
+        .run(sessionId).changes > 0
+    );
+  }
+
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     const rows = this.db
       .prepare(
@@ -876,6 +891,7 @@ export const sessionWrites = defineRepositoryOp('sessions.write', 'write', Sessi
   'setLastError',
   'markRestartInterruptedTurns',
   'takeRestartCooldownResume',
+  'clearRestartResume',
   'casSessionInputDraft',
   'casSessionRuntimeSettings',
   'casSessionToolPreferences',

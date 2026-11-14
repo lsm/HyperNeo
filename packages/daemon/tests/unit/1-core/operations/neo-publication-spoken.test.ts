@@ -84,7 +84,6 @@ describe('publication speech follows the committed version', () => {
     );
     const runtime = {
       receivedHumanInput: () => true,
-      currentHumanInputs: () => [conversationId, '20000000-0000-4000-8000-000000000001'],
       getBinding: (id: string) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: () => false,
@@ -144,7 +143,7 @@ describe('publication speech follows the committed version', () => {
     expect(await send()).toMatchObject({ accepted: true, listening: 'yes', spokenDelivered: true });
     expect(events.map((e) => e.type)).toEqual(['persisted', 'say', 'publication']);
     expect(events[1]).toMatchObject({ client: 'phone', text: draft.spoken });
-    expect(ledger.list(conversationId)[0].replyTo).toHaveLength(2);
+    expect(ledger.list(conversationId)[0].replyTo).toBeUndefined();
     expect(JSON.stringify(ledger.list(conversationId))).not.toContain(draft.spoken);
   });
 

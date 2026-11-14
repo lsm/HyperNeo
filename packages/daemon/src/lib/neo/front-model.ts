@@ -9,7 +9,8 @@ import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
-import { foldPublicationDetails, replySummaryTooLong } from './publication.ts';
+
+const FRONT_REPLY_MAX_CHARS = 150;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -57,16 +58,25 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       "Required while the latest fact is [listening: yes]: one or two natural spoken lines in the human's language, consistent with the text, without paths, IDs, hashes, long numbers or Markdown. Omit when [listening: no]."
     ),
   };
-  const publish = async (input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] }) => {
+  const publish = async (
+    input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] },
+    workOn?: boolean
+  ) => {
     if (!input.spoken && service.speech.isListening(service.defaultSessionId() ?? sessionId))
       return { accepted: false, reason: 'spoken_required', listening: 'yes' };
     return service.publish(
       { ...input, replyTo: input.replyTo ?? [] },
-      { source: 'mcp', sessionId }
+      { source: 'mcp', sessionId },
+      workOn
     );
   };
-  const handOff = async (asks: NeoConversationAsk[], messageIds: string[], saidText: string) => {
-    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText }]);
+  const handOff = async (
+    asks: NeoConversationAsk[],
+    messageIds: string[],
+    saidText: string,
+    workOn: boolean
+  ) => {
+    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText, workOn }]);
     const reserved = await service.db.gateway.call(
       neoFrontInputWrites,
       'reserve',
@@ -120,18 +130,21 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one reply per human message. text is the reply; add details only for more than five sentences or any structured report, list, table or multi-topic update, and make them add information beyond text. If your reads answer the message, reply with the answer; otherwise say in one brief line what will be done, without claiming it is done. Every message also goes on to be handled in full, so never promise what you cannot check. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
+        'Send one short reply per human message, one or two sentences. work_on: false when your reads answered it; true for anything else, with text saying what you will do: that call starts the work, and its answer reaches the human by itself. The reply reaches the human. While [listening: yes], include spoken.',
         {
           ...replyFields,
-          text: z.string().trim().min(1).max(16000),
-          details: z.string().trim().min(1).max(16000).optional(),
+          text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
+          work_on: z.boolean(),
         },
-        async ({ text, details, ...input }) => {
-          const body = foldPublicationDetails({ text, details });
-          if (replySummaryTooLong(body))
-            return result({ accepted: false, reason: 'reply_summary_too_long' });
+        async ({ text, work_on: workOn, ...input }) => {
+          const body = { text };
           const targets = input.replyTo ?? [];
-          if (!targets.length) return result(await publish({ ...input, ...body }));
+          if (!targets.length)
+            return result(
+              workOn
+                ? { accepted: false, reason: 'work_on_needs_reply_to' }
+                : await publish({ ...input, ...body }, workOn)
+            );
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ accepted: false, reason: 'unknown_reply_target' });
@@ -140,19 +153,21 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const receipt = await publish({ ...input, ...body });
+          const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(receipt);
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
-          if (second && !existing)
+          const sameTargets = (ids: readonly string[] = []) =>
+            [...ids].sort().join() === [...targets].sort().join();
+          if (second && !(existing && sameTargets(existing.replyTo)))
             return result({ accepted: false, reason: 'publication_conflict' });
-          const said = existing?.fullText ?? body.details ?? body.text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,
-            said
+            existing?.fullText ?? text,
+            existing ? (existing.workOn ?? workOn) : workOn
           );
           return result(
             handed.started

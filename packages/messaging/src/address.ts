@@ -107,15 +107,6 @@ export function formatAddress(address: ParsedAddress): string {
   }
 }
 
-export function isAddress(target: string): boolean {
-  try {
-    parseAddress(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function parseWorkerAddress(value: string, rawTarget: string): WorkerAddress {
   const parts = value.split('/');
   if (parts.length !== 1 && parts.length !== 2 && parts.length !== 3) {

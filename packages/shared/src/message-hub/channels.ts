@@ -88,7 +88,3 @@ class DefaultChannelRegistry implements ChannelRegistry {
 }
 
 export const channelRegistry: ChannelRegistry = new DefaultChannelRegistry();
-
-export function channelToWire(channel: EventChannel): ChannelWireString {
-  return channelRegistry.toWire(channel);
-}

@@ -11,6 +11,7 @@ import { removeOwnedClaudeInboxPath } from './claude-inbox.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 
 const LIMIT = 1_048_576;
+const LIVE_WAIT_MS = 4_000;
 class DesktopModsBodyLimit extends Error {}
 const EventSchema = z
   .object({
@@ -106,7 +107,14 @@ function parseExchange(request: RequestData): Gate<Exchange> {
   return { reason: new Response(null, { status: 400 }) };
 }
 async function requireDesktop(exchange: Exchange, deps: Deps) {
-  const live = await deps.liveSessions();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const live = await Promise.race([
+    deps.liveSessions(),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), LIVE_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (!live) return { reason: new Response(null, { status: 503 }) };
   const target = await readClaudeInboxEndpoint(exchange.sessionId, live, deps.registrationsDir);
   return !('ok' in target) && target.version === '2.1.299'
     ? {

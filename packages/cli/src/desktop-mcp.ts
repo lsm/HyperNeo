@@ -1,6 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDataDir } from '../../daemon/src/lib/data-dir.ts';
+import { desktopOptIn, readDesktopTodos } from '../../daemon/src/lib/desktop/opt-in.ts';
 import { createDesktopProxy } from '../../daemon/src/lib/desktop/mcp-proxy.ts';
 import { serveDesktopMcp } from '../../daemon/src/lib/desktop/mcp-server.ts';
 import { createDesktopTargetBroker } from '../../daemon/src/lib/desktop/target-broker.ts';
@@ -15,13 +16,8 @@ export async function readDesktopBinding(worker: string) {
     readonly: true,
   });
   try {
-    const rows = db
-      .prepare(`SELECT t.id, t.named FROM neo_todos t
-      JOIN neo_asks a ON a.id = t.ask_id JOIN neo_todo_sessions s ON s.todo_id = t.id
-      WHERE t.state = 'doing' AND t.approved_at IS NOT NULL AND a.status = 'open'
-      AND json_extract(s.ref, '$.id') = ? AND json_extract(s.ref, '$.daemon') IS NULL`)
-      .all(worker) as { id: string; named: string | null }[];
-    if (rows.length !== 1 || JSON.parse(rows[0].named ?? '{}').desktopControl !== true) return null;
+    const todo = desktopOptIn(readDesktopTodos(db, worker), worker);
+    if (!todo) return null;
     try {
       const desktop = join(getDataDir(), 'desktop');
       const directory = join(desktop, 'workers', worker);
@@ -37,7 +33,7 @@ export async function readDesktopBinding(worker: string) {
         return null;
       const record = readDesktopDriverRecord(directory);
       return {
-        todo_id: rows[0].id,
+        todo_id: todo.id,
         worker_id: worker,
         driver_instance_id: `${record.pid}-${record.startedAt.seconds}-${record.startedAt.microseconds}`,
         target_app_id: null,

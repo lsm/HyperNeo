@@ -6,6 +6,7 @@ import {
   type SessionToolChoiceInput,
 } from '../../lib/tools/session-tool-choice.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { invalidateGlobalSettings } from './settings-repository.ts';
 import { extensionSessionSkillVetoes, schemaTableExists } from '../schema/extensions.ts';
 
 export type ToolSelectionCatalog = Pick<
@@ -110,6 +111,7 @@ function planSelections(db: Database, catalog: ToolSelectionCatalog): SelectionW
 }
 
 function applySelections(db: Database, plans: SelectionWrite[]): number {
+  invalidateGlobalSettings(db);
   return db.transaction(() =>
     plans.reduce(
       (count, plan) =>

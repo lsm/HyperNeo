@@ -4,12 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { describe, expect, test } from 'bun:test';
-import {
-  localCodingSessionId,
-  neoCardPrUrls,
-  neoWorkBranch,
-  readGithubBranchPrs,
-} from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
+import { readGithubBranchPrs } from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
 
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
@@ -19,42 +14,6 @@ const worktree = {
   mainRepoPath: '/repo',
   branch: 'neo/fix-5546',
 };
-
-describe('localCodingSessionId', () => {
-  test('admits only a local HyperNeo identity for local Git evidence', () => {
-    expect(localCodingSessionId({ adapter: 'hyperneo', id: 'same-id' })).toBe('same-id');
-    expect(
-      localCodingSessionId({ adapter: 'hyperneo', id: 'same-id', daemon: 'other-host' })
-    ).toBeNull();
-    expect(localCodingSessionId({ adapter: 'codex-desktop', id: 'same-id' })).toBeNull();
-    expect(localCodingSessionId(null)).toBeNull();
-  });
-});
-
-describe('neoWorkBranch', () => {
-  test("takes the card session's worktree branch, and nothing for a session in its main checkout", () => {
-    expect(neoWorkBranch({ worktree })).toEqual({
-      branch: 'neo/fix-5546',
-      cwd: '/repo/.worktrees/fix',
-    });
-    expect(neoWorkBranch({})).toBe(null);
-    expect(neoWorkBranch(null)).toBe(null);
-  });
-});
-
-describe('neoCardPrUrls', () => {
-  test('adds at most two branch pull requests after the stored and report-cited ones', () => {
-    const base = Array.from({ length: 8 }, (_, index) => `https://github.com/o/r/pull/${index}`);
-    expect(
-      neoCardPrUrls(base, [
-        base[0],
-        'https://github.com/o/r/pull/90',
-        'https://github.com/o/r/pull/91',
-        'https://github.com/o/r/pull/92',
-      ])
-    ).toEqual([...base, 'https://github.com/o/r/pull/90', 'https://github.com/o/r/pull/91']);
-  });
-});
 
 describe('readGithubBranchPrs', () => {
   test('lists pull requests from the branch in its worktree, reusing a fresh read', async () => {

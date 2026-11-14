@@ -85,6 +85,8 @@ export type ProviderUsageResult =
   | { supported: true; provider: string; windows: UsageWindow[] }
   | { supported: false; provider: string; reason: 'not_supported' };
 
+export type TokenRefreshOutcome = 'refreshed' | 'transient' | 'definitive';
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -138,7 +140,7 @@ export interface Provider {
 
   logout?(): Promise<void>;
 
-  refreshToken?(): Promise<boolean>;
+  refreshToken?(): Promise<TokenRefreshOutcome>;
 
   setSessionThinkingConfig?(
     sessionId: string,

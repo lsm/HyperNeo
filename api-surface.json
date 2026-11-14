@@ -6598,6 +6598,127 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "on": {
+            "type": "boolean"
+          },
+          "todoId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "todoId",
+          "on"
+        ],
+        "type": "object"
+      },
+      "name": "desktop.control.set",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "desktopControl": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "accepted",
+              "desktopControl"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "enum": [
+                  "todo_not_found",
+                  "todo_finished"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "worker": {
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "desktop.status",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "workers": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "state": {
+                  "enum": [
+                    "off",
+                    "unavailable",
+                    "running",
+                    "stopped",
+                    "stop_unconfirmed"
+                  ],
+                  "type": "string"
+                },
+                "todo": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "worker": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "worker",
+                "todo",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workers"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
           "worker": {
             "pattern": "^[A-Za-z0-9_-]{1,64}$",
             "type": "string"
@@ -27908,6 +28029,9 @@
                               "const": true,
                               "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
                               "type": "boolean"
+                            },
+                            "workOn": {
+                              "type": "boolean"
                             }
                           },
                           "required": [
@@ -32869,6 +32993,9 @@
                     "const": true,
                     "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
                     "type": "boolean"
+                  },
+                  "workOn": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -33463,6 +33590,9 @@
                     "verbatim": {
                       "const": true,
                       "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
+                      "type": "boolean"
+                    },
+                    "workOn": {
                       "type": "boolean"
                     }
                   },

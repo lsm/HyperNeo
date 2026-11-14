@@ -857,20 +857,6 @@ export interface SpaceAgentPromotionProfile {
   standingContext: string;
 }
 
-export interface SpaceAgentPromotionDraft {
-  sourceSessionId: string;
-  sourceSessionTitle: string;
-  name: string;
-  description?: string;
-  model?: string;
-  thinkingLevel?: ThinkingLevel;
-  provider?: string;
-  customPrompt: string;
-  tools?: string[];
-  settingSources?: SettingSource[];
-  profile: SpaceAgentPromotionProfile;
-}
-
 export interface SpaceWorkflowSyncFieldDiff {
   before: string;
   after: string;
@@ -1139,12 +1125,6 @@ export interface HandoffTransition {
   maxCycles?: number;
 }
 
-export interface HandoffOperation {
-  target: string;
-  summary: string;
-  data?: Record<string, unknown>;
-}
-
 export interface WorkflowNode {
   id: string;
   name: string;
@@ -1353,15 +1333,6 @@ export interface WorkflowRunArtifact {
   data: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface ApprovalRecord {
-  source: SpaceApprovalSource;
-  requiredLevel: SpaceAutonomyLevel;
-  spaceLevel: SpaceAutonomyLevel;
-  timestamp: number;
-  reason?: string;
-  skipped?: boolean;
 }
 
 export type ActivityEntry =

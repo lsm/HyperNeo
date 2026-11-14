@@ -180,13 +180,6 @@ export const GLOBAL_SYSTEM_SNAPSHOT_REQUEST = {
   includeSessions: false,
 } as const satisfies GlobalSnapshotRequest;
 
-export interface SessionsUpdate {
-  added?: SessionInfo[];
-  updated?: SessionInfo[];
-  removed?: string[];
-  timestamp: number;
-}
-
 export interface SDKMessagesUpdate {
   added?: ChatMessage[];
   timestamp: number;
@@ -200,10 +193,3 @@ export const STATE_CHANNELS = {
   SESSION: 'state.session',
   SESSION_SDK_MESSAGES: 'state.sdkMessages',
 } as const;
-
-export type StateChangeEvent<T> = {
-  type: 'full' | 'partial' | 'delta';
-  data: T;
-  timestamp: number;
-  version: number;
-};

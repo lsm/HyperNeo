@@ -7,15 +7,14 @@ mod record;
 #[path = "desktop_target.rs"]
 mod target;
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex as StdMutex,
-    },
+    sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
 use tempfile::TempDir;
@@ -48,7 +47,6 @@ struct Drivers {
     workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
     binary: PathBuf,
     verification_path: String,
-    starts_enabled: AtomicBool,
     records: PathBuf,
 }
 #[derive(serde::Deserialize)]
@@ -137,7 +135,6 @@ impl Control {
             workers: Mutex::new(BTreeMap::new()),
             binary,
             verification_path,
-            starts_enabled: AtomicBool::new(false),
             records: directory,
         });
         let state = drivers.clone();
@@ -198,10 +195,6 @@ impl Control {
             _lock: lock,
         }))
     }
-    #[cfg(test)]
-    pub(crate) fn enable_fixture_starts(&self) {
-        self.drivers.starts_enabled.store(true, Ordering::Relaxed);
-    }
     pub(crate) async fn shutdown(&self) {
         let task = self.task.lock().unwrap().take();
         if let Some(task) = task {
@@ -256,6 +249,31 @@ impl Drivers {
             return Ok(json!({"armed": true}));
         }
         #[cfg(test)]
+        if request.action == "fixture-dialog" {
+            if let Some(mode) = request.tool.as_deref() {
+                grants::FIXTURE_DIALOG.lock().unwrap().0 = match mode {
+                    "allow" => "allow",
+                    "hold" => "hold",
+                    "panic" => "panic",
+                    "real" => "real",
+                    _ => "deny",
+                };
+                grants::ASKS.lock().unwrap().1.clear();
+            }
+            let dialogs = grants::FIXTURE_DIALOG.lock().unwrap().1;
+            let texts: serde_json::Map<String, Value> =
+                ["observe", "launch", "pointer", "keyboard", "other"]
+                    .map(|class| {
+                        (
+                            class.to_owned(),
+                            json!(grants::dialog_text("com.apple.finder", class)),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+            return Ok(json!({"dialogs": dialogs, "texts": texts}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(
@@ -274,8 +292,16 @@ impl Drivers {
                 [&value["bundle_id"], &value["requirement"], &value["class"]].map(Value::as_str);
             if let [Some(bundle), Some(requirement), Some(class)] = tuple {
                 match request.action.as_str() {
+                    "resolve" if bundle == "io.hyperneo.app" => {
+                        result = json!({"reason": "app_not_grantable", "class": class, "bundle_id": bundle});
+                    }
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
+                            let reason = if reason == "app_action_not_authorized" {
+                                grants::ask_owner(bundle, requirement, class)
+                            } else {
+                                reason
+                            };
                             result = json!({"reason": reason, "class": class, "bundle_id": bundle});
                         }
                     }
@@ -305,16 +331,6 @@ impl Drivers {
         }
         if request.action == "start" {
             record::ensure_enabled(&directory)?;
-        }
-        if !self.starts_enabled.load(Ordering::Relaxed) {
-            let reason = "Driver control unavailable until worker authorization is enforced";
-            return match request.action.as_str() {
-                "start" => Err(reason.into()),
-                "status" | "stop" => {
-                    Ok(json!({"state": "unavailable", "reason": reason, "pid": null}))
-                }
-                _ => Err("Unknown Desktop control action".into()),
-            };
         }
         let worker_id = request.worker.clone();
         let slot = {

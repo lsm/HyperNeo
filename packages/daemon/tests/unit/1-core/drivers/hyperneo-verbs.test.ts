@@ -28,6 +28,7 @@ import {
 import { ModelUnavailableError } from '../../../../src/lib/session/session-lifecycle';
 import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
@@ -71,6 +72,10 @@ function control(
       interrupt: (sessionId: string) => {
         events.push(`interrupt ${sessionId}`);
         return true;
+      },
+      dropRestartResume: async (sessionId: string) => {
+        events.push(`drop resume ${sessionId}`);
+        return new SessionRepository(db).clearRestartResume(sessionId);
       },
       archive: async (ref: { id: string }, admit: ArchiveAdmission) => {
         const refused = admit();
@@ -1006,6 +1011,51 @@ describe('hyperneo adapter start and stop', () => {
       value: { stopped: true },
     });
     expect(events).toEqual(['interrupt idle']);
+  });
+
+  test('stop clears the resume of a session the restart left waiting, loaded or not', async () => {
+    db.exec(
+      `UPDATE sessions SET processing_state = '{"status":"interrupted","reason":"restart","messageId":"m1","resumeAt":1}' WHERE id = 'idle'`
+    );
+    const driver = adapter({ interrupt: () => false });
+    expect(await driver.stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, () => null)).toEqual({
+      ok: true,
+      value: { archived: true },
+    });
+    expect(events).toEqual(['drop resume idle', 'archive idle']);
+  });
+
+  test('stop reports nothing stopped while a claimed restart resume is on its way', async () => {
+    db.exec(
+      `UPDATE sessions SET processing_state = '{"status":"interrupted","reason":"restart","messageId":"m1"}' WHERE id = 'idle'`
+    );
+    expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(events).toEqual(['drop resume idle']);
+  });
+
+  test('stop fails when the cleared resume cannot be written', async () => {
+    db.exec(
+      `UPDATE sessions SET processing_state = '{"status":"interrupted","reason":"restart","messageId":"m1","resumeAt":1}' WHERE id = 'idle'`
+    );
+    const driver = adapter({
+      dropRestartResume: async () => {
+        throw new Error('disk full');
+      },
+    });
+    await expect(driver.stop!({ adapter: 'hyperneo', id: 'idle' }, from)).rejects.toThrow(
+      'disk full'
+    );
+    expect(await driver.archive?.({ adapter: 'hyperneo', id: 'idle' }, () => null)).toMatchObject({
+      ok: false,
+      reason: 'busy',
+    });
   });
 
   test('stop interrupts a running session and leaves an idle one alone', async () => {

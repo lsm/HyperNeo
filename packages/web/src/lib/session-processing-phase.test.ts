@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getAgentProcessingStateClasses,
   getAgentProcessingStateConfig,
   SESSION_PROCESSING_PHASE_CONFIG,
   SESSION_PROCESSING_STATUS_CONFIG,
@@ -62,15 +61,6 @@ describe('session-processing-phase', () => {
   it('resolves interrupted status config', () => {
     const config = getAgentProcessingStateConfig({ status: 'interrupted' });
     expect(config.tone).toBe('danger');
-  });
-
-  it('returns tone classes from getAgentProcessingStateClasses', () => {
-    const classes = getAgentProcessingStateClasses({
-      status: 'processing',
-      messageId: 'msg-1',
-      phase: 'thinking',
-    });
-    expect(classes.bg).toBe('bg-accent');
   });
 
   it('falls back to the processing config for an unrecognized persisted phase', () => {

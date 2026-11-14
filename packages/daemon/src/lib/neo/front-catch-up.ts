@@ -17,13 +17,13 @@ export function cutForFront(text: string): string {
 }
 
 export function catchUpBlock(
-  said: readonly { replyTo?: readonly string[]; fullText: string }[]
+  said: readonly { replyTo?: readonly string[]; fullText: string; workOn?: boolean }[]
 ): string | null {
   if (!said.length) return null;
   return `<already-said>\n${said
     .map(
       (row) =>
-        `<said replyTo="${attribute((row.replyTo ?? []).join(','))}">${cutForFront(escapeSessionText(row.fullText))}</said>`
+        `<said replyTo="${attribute((row.replyTo ?? []).join(','))}"${row.workOn === undefined ? '' : ` work_on="${row.workOn}"`}>${cutForFront(escapeSessionText(row.fullText))}</said>`
     )
     .join('\n')}\n</already-said>`;
 }

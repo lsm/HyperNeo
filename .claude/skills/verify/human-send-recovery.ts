@@ -217,7 +217,7 @@ const cases: Record<string, (marker: string) => Promise<Record<string, unknown>>
     } as typeof getCredentials;
     ProviderCredentialManager.prototype.storeOAuthTokens = async function () {} as typeof storeOAuthTokens;
     AnthropicProvider.prototype.getAuthStatus = async function () { return { ...await getAuthStatus.call(this), expiresAt: expired ? Date.now() - 1000 : Date.now() + 3_600_000 }; };
-    AnthropicProvider.prototype.refreshToken = async function () { refreshes += 1; expired = false; mode = 'ok'; return true; };
+    AnthropicProvider.prototype.refreshToken = async function () { refreshes += 1; expired = false; mode = 'ok'; return 'refreshed'; };
     try {
       mode = '401';
       await send(marker);

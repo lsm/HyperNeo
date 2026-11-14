@@ -1,5 +1,5 @@
 import { MODEL_LIST_REQUEST_TIMEOUT_MS } from '@hyperneo/shared/provider';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import type { ModelInfo, PendingModelSwitch } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { t } from '../lib/i18n/index.ts';
@@ -28,10 +28,6 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
   gpt: '🔮',
   __default__: '💎',
 };
-
-export function getModelFamilyIcon(family: string): string {
-  return MODEL_FAMILY_ICONS[family] || MODEL_FAMILY_ICONS.__default__;
-}
 
 export const PROVIDER_ORDER: Record<string, number> = {
   anthropic: 0,
@@ -231,24 +227,6 @@ export function filterModelsBySearch(models: ModelInfo[], searchQuery: string): 
 
     return terms.every((term) => searchable.includes(term));
   });
-}
-
-export function useFilteredModelsForPicker(
-  models: ModelInfo[],
-  providerAuthMap: Map<string, ProviderAuthStatus>,
-  currentProvider: string | undefined,
-  currentModelId: string | undefined,
-  searchQuery: string
-): ModelInfo[] {
-  return useMemo(() => {
-    const authFilteredModels = filterModelsForPicker(
-      models,
-      providerAuthMap,
-      currentProvider,
-      currentModelId
-    );
-    return filterModelsBySearch(authFilteredModels, searchQuery);
-  }, [models, providerAuthMap, currentProvider, currentModelId, searchQuery]);
 }
 
 export function useModelSwitcher(

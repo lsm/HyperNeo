@@ -31,6 +31,7 @@ import {
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
   reuseLiveSessions,
+  probeLiveClaudeSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import { WorkDeliverySchema, WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import { claudeInboxText } from '../../../../src/lib/drivers/claude-inbox';
@@ -1358,11 +1359,59 @@ describe('readLiveClaudeSessions', () => {
   });
 });
 
+function spawnLiveReads(firstStdout: string, ...rest: (string | 'hang')[]) {
+  const answers = [firstStdout, ...rest];
+  let spawned = 0;
+  const kills: (() => void)[] = [];
+  const spawn: SpawnFn = () => {
+    const answer = answers[spawned] ?? 'hang';
+    spawned++;
+    if (answer !== 'hang')
+      return {
+        stdout: new Response(answer).body,
+        stderr: null,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
+    let done: (code: number) => void = () => {};
+    let closeStdout: () => void = () => {};
+    const proc = {
+      stdout: new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          closeStdout = () => {
+            try {
+              controller.close();
+            } catch {}
+          };
+        },
+      }),
+      stderr: null,
+      exited: new Promise<number>((resolve) => {
+        done = resolve;
+      }),
+      exitCode: null,
+      kill: () => {
+        closeStdout();
+        done(137);
+      },
+    };
+    kills.push(proc.kill);
+    return proc;
+  };
+  return {
+    spawn,
+    hang: () => answers.fill('hang', spawned),
+    kills: () => kills.forEach((kill) => kill()),
+    spawned: () => spawned,
+  };
+}
+
 describe('reuseLiveSessions', () => {
   test('asks the CLI again only after the reuse window', async () => {
     let reads = 0;
     let clock = 0;
-    const live = reuseLiveSessions(
+    const { listed } = reuseLiveSessions(
       async () => {
         reads++;
         return [];
@@ -1370,13 +1419,110 @@ describe('reuseLiveSessions', () => {
       () => clock,
       1_000
     );
-    await live();
+    await listed();
     clock = 999;
-    await live();
+    await listed();
     expect(reads).toBe(1);
     clock = 1_000;
-    await live();
+    await listed();
     expect(reads).toBe(2);
+  });
+
+  test('stamps a listing fresh when the read completes, not when it starts', async () => {
+    let clock = 0;
+    let reads = 0;
+    let resolveRead: () => void = () => {};
+    const read = () =>
+      new Promise<readonly ClaudeLiveSession[]>((resolve) => {
+        reads++;
+        resolveRead = () => resolve([]);
+      });
+    const { listed } = reuseLiveSessions(read, () => clock, 1_000);
+    const first = listed();
+    clock = 4_000;
+    resolveRead();
+    await first;
+    clock = 4_999;
+    await listed();
+    expect(reads).toBe(1);
+    clock = 5_000;
+    await listed();
+    expect(reads).toBe(2);
+  });
+
+  test('serves the last listing while a slower live read is still running', async () => {
+    const listing = (sessionId: string) => JSON.stringify([{ sessionId, status: 'busy' }]);
+    const { spawn, hang, kills } = spawnLiveReads(listing('cli-a1'));
+    let clock = 0;
+    const { listed } = reuseLiveSessions(
+      () => readLiveClaudeSessions(spawn, '/missing-claude-registrations'),
+      () => clock,
+      1_000
+    );
+    await listed();
+    hang();
+    clock = 1_000;
+    const answer = listed();
+    const settled = await Promise.race([
+      answer.then(
+        () => 'settled',
+        () => 'rejected'
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 50)),
+    ]);
+    expect(settled).toBe('settled');
+    expect(await answer).toEqual([{ sessionId: 'cli-a1', status: 'busy', owner: 'unknown' }]);
+    kills();
+  });
+
+  test('falls back to the last listing when a live read fails and keeps probing', async () => {
+    const listing = () => JSON.stringify([{ sessionId: 'cli-a1', status: 'waiting' }]);
+    const { spawn, hang, kills, spawned } = spawnLiveReads(listing());
+    let clock = 0;
+    const { listed } = reuseLiveSessions(
+      () => readLiveClaudeSessions(spawn, '/missing-claude-registrations'),
+      () => clock,
+      1_000,
+      5_000
+    );
+    await listed();
+    hang();
+    clock = 1_000;
+    const probed = await probeLiveClaudeSessions({ liveSessions: listed });
+    expect(probed).toEqual({
+      value: [{ sessionId: 'cli-a1', status: 'waiting', owner: 'unknown' }],
+    });
+    clock = 2_000;
+    expect(await listed()).toEqual([{ sessionId: 'cli-a1', status: 'waiting', owner: 'unknown' }]);
+    expect(spawned()).toBe(2);
+    clock = 10_000;
+    const expired = listed();
+    kills();
+    await expect(expired).rejects.toThrow();
+  });
+
+  test('a fresh read answers even while the listed listing is served stale', async () => {
+    const { spawn, spawned } = spawnLiveReads(
+      JSON.stringify([{ sessionId: 'cli-old', status: 'busy' }]),
+      JSON.stringify([
+        { sessionId: 'cli-old', status: 'busy' },
+        { pid: 9, sessionId: 'cli-new', status: 'busy' },
+      ])
+    );
+    let clock = 0;
+    const { listed, fresh } = reuseLiveSessions(
+      () => readLiveClaudeSessions(spawn, '/missing-claude-registrations'),
+      () => clock,
+      1_000
+    );
+    await listed();
+    clock = 1_000;
+    expect(await listed()).toEqual([{ sessionId: 'cli-old', status: 'busy', owner: 'unknown' }]);
+    expect(await fresh()).toEqual([
+      { sessionId: 'cli-old', status: 'busy', owner: 'unknown' },
+      { pid: 9, sessionId: 'cli-new', status: 'busy', owner: 'unknown' },
+    ]);
+    expect(spawned()).toBe(2);
   });
 });
 

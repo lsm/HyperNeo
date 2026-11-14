@@ -49,6 +49,7 @@ import {
   neoTodoStatus,
 } from './todo-status.ts';
 import { neoTopicColor } from './topic-color.ts';
+import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning', 'font-semibold'],
@@ -179,10 +180,12 @@ function TodoRow({
   onToggle,
   onControl,
   disabled,
+  onDesktopControl,
 }: {
   todo: NeoTodoEntry;
   onControl?: (control: NeoTodoControl) => Promise<void>;
   disabled?: boolean;
+  onDesktopControl?: (todoId: string, on: boolean) => void;
   expanded?: boolean;
   anchorPrefix?: string;
   onToggle?: () => void;
@@ -321,6 +324,22 @@ function TodoRow({
                   </p>
                 ))}
               <ArtifactCards artifacts={todo.artifacts} />
+              {number === undefined &&
+                onDesktopControl &&
+                !todo.worker?.daemon &&
+                ['todo', 'doing', 'blocked'].includes(todo.state) && (
+                  <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
+                    <input
+                      type="checkbox"
+                      class={`${FORM_CHECKBOX_CLASS} accent-accent`}
+                      checked={todo.named?.desktopControl === true}
+                      onChange={(event) =>
+                        onDesktopControl(todo.id, (event.target as HTMLInputElement).checked)
+                      }
+                    />
+                    {t('todo.desktopControl')}
+                  </label>
+                )}
               {number === undefined && nextAction && (
                 <span data-todo-next-action class="block break-words text-xs text-fg-muted">
                   <CardFileText
@@ -688,9 +707,11 @@ export function NeoAskTodos({
   onLoadDetails,
   onTopic,
   onControl,
+  onDesktopControl,
 }: {
   entry: NeoAskEntry;
   onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
+  onDesktopControl?: (todoId: string, on: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
@@ -909,6 +930,7 @@ export function NeoAskTodos({
         })
       }
       expanded={expanded.includes(todo.id)}
+      onDesktopControl={onDesktopControl}
       onToggle={
         entry.summary || neoTodoHasMore(todo)
           ? () =>
@@ -1036,6 +1058,7 @@ export function NeoAskTodos({
               disabled={disabled}
               onControl={onControl && ((control) => onControl(todo, control))}
               expanded={expanded.includes(todo.id)}
+              onDesktopControl={onDesktopControl}
               onToggle={
                 entry.summary || neoTodoHasMore(todo)
                   ? () =>

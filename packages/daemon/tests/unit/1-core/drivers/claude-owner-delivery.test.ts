@@ -13,6 +13,7 @@ import { createClaudeCodeAdapter } from '../../../../src/lib/drivers/claude-code
 import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
+  reuseLiveSessions,
   type ClaudeLiveSession,
   type ClaudeDesktopAdapterDeps,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
@@ -26,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-function fixture(registered = false) {
+function fixture(registered = false, overrides: Partial<ClaudeDesktopAdapterDeps> = {}) {
   const id = crypto.randomUUID(),
     inputId = crypto.randomUUID();
   const cwd = join(dir, 'workspace'),
@@ -109,6 +110,7 @@ function fixture(registered = false) {
         kill: () => {},
       };
     },
+    ...overrides,
   };
   const desktop = createClaudeDesktopAdapter(desktopDeps);
   const deps = {
@@ -176,6 +178,27 @@ describe('createClaudeCodeAdapter owner-aware delivery', () => {
     expect(f.spawns).toHaveLength(1);
     expect(f.spawns[0]).toContain('--resume');
     expect(readFileSync(f.transcript, 'utf8')).toContain('Stopped Desktop marker');
+  });
+
+  test('send re-reads the listing instead of resuming a session Desktop just opened', async () => {
+    let live: ClaudeLiveSession[] = [];
+    const readers = reuseLiveSessions(
+      async () => live,
+      () => 0,
+      60_000
+    );
+    const f = fixture(true, { liveSessions: readers.fresh });
+    await readers.listed();
+    live = [{ sessionId: f.id, owner: 'desktop', pid: 1234, status: 'busy' }];
+    expect(
+      await f.desktop.send!(
+        { adapter: 'claude-desktop', id: `local_${f.id}` },
+        'Fresh listing marker',
+        context
+      )
+    ).toMatchObject({ ok: true, value: { delivered: true } });
+    expect(f.spawns).toEqual([]);
+    expect(readFileSync(f.transcript, 'utf8')).toContain('Fresh listing marker');
   });
 
   test('registered Desktop record with a CLI owner still matches the receiver class', async () => {

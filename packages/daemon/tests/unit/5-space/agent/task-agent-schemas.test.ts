@@ -72,28 +72,14 @@ describe('MarkCompleteSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  test('accepts rolling goal_update fields', () => {
-    const result = MarkCompleteSchema.safeParse({
-      goal_update: {
-        summary: 'Shipped first milestone',
-        progress: 50,
-        metrics: { activated: 12, healthy: true, note: 'ok', stale: null },
-        nextSteps: ['Measure adoption'],
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
   test('rejects extra fields (strict schema)', () => {
     const result = MarkCompleteSchema.safeParse({ reason: 'done' });
     expect(result.success).toBe(false);
   });
 
-  test('rejects invalid goal_update payloads', () => {
-    expect(MarkCompleteSchema.safeParse({ goal_update: { progress: 101 } }).success).toBe(false);
-    expect(MarkCompleteSchema.safeParse({ goal_update: { status: 'completed' } }).success).toBe(
-      false
-    );
+  test('rejects the retired goal_update field', () => {
+    const result = MarkCompleteSchema.safeParse({ goal_update: { progress: 50 } });
+    expect(result.success).toBe(false);
   });
 
   test('rejects non-object input', () => {

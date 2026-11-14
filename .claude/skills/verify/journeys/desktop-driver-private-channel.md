@@ -13,6 +13,16 @@ python3 packages/desktop/tests/worker-drivers.py \
   packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture
 ```
 
+The release host build has no test hooks. It must start a driver too, and
+return only its state and pid:
+
+```bash
+cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
+python3 packages/desktop/tests/worker-drivers.py \
+  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
+  WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach
+```
+
 Real guarded driver, on a Mac with the Developer ID identity in its keychain.
 Download the pinned archive named in `packages/desktop/prepare-cua-driver.sh`,
 or build it with `packages/desktop/build-cua-driver.sh <dir>`, then:
