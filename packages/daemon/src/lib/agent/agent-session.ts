@@ -50,6 +50,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import {
   createLoginRecovery,
   type LoginRecoveryFacts,
+  type LoginRecoveryPlan,
   type LoginRefreshState,
 } from './login-recovery.ts';
 import { Logger } from '../logger.ts';
@@ -441,6 +442,7 @@ export class AgentSession
   private loginUnsubscribes: Array<() => void> = [];
   private authRejected = false;
   private loginRetriedInTurn = false;
+  private loginRetryPromptUuid: string | null = null;
   private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
@@ -2916,6 +2918,7 @@ export class AgentSession
     if (isSDKResultSuccess(message) && message.is_error !== true) {
       this.authRejected = false;
       this.loginRetriedInTurn = false;
+      this.loginRetryPromptUuid = null;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -3006,6 +3009,7 @@ export class AgentSession
           }),
         resume: async (prompt) => {
           this.loginRetriedInTurn = true;
+          this.loginRetryPromptUuid = prompt?.uuid ?? null;
           await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
           if (prompt)
             await this.lifecycleManager.startQueryAndEnqueue(
@@ -3042,18 +3046,23 @@ export class AgentSession
       prompt,
       this.loginRetriedInTurn
     );
-    if (plan === 'retry') this.loginRetriedInTurn = true;
+    if (plan === 'retry') {
+      this.loginRetriedInTurn = true;
+      this.loginRetryPromptUuid = prompt?.uuid ?? null;
+    }
     return plan;
   }
 
-  private async enterLoginHoldForWaitingMessage(messageUuid: string): Promise<void> {
+  private async enterLoginHoldForWaitingMessage(
+    messageUuid: string
+  ): Promise<LoginRecoveryPlan | undefined> {
     const stored = this.db
       .getSDKMessageRepo()
       .getStoredPromptsByUuid(this.session.id, messageUuid)[0] as
       | { message?: { content?: unknown } }
       | undefined;
     const content = stored?.message?.content as string | MessageContent[] | undefined;
-    await this.loginRecovery?.recover(
+    return await this.loginRecovery?.recover(
       this.providerId(),
       content === undefined ? null : { uuid: messageUuid, content },
       this.loginRetriedInTurn
@@ -3280,8 +3289,9 @@ export class AgentSession
             return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
 
           if (this.loginNeedsLoginAt() !== null) {
-            await this.enterLoginHoldForWaitingMessage(messageUuid);
-            return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
+            const plan = await this.enterLoginHoldForWaitingMessage(messageUuid);
+            if (plan !== 'retry')
+              return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
           }
 
           if (!this.messageQueue.isRunning()) {
@@ -3327,7 +3337,10 @@ export class AgentSession
             });
           }
 
-          this.loginRetriedInTurn = false;
+          if (this.loginRetryPromptUuid !== null && this.loginRetryPromptUuid !== messageUuid) {
+            this.loginRetryPromptUuid = null;
+            this.loginRetriedInTurn = false;
+          }
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
           return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
         },
@@ -3885,7 +3898,7 @@ export class AgentSession
     this.networkPause.stop();
     for (const unsubscribe of this.loginUnsubscribes) unsubscribe();
     this.loginUnsubscribes = [];
-    this.loginRecovery?.stop(this.providerId());
+    this.loginRecovery?.stopAll();
     await this.lifecycleManager.cleanup();
   }
 }

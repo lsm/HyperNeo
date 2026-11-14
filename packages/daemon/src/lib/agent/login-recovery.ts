@@ -218,7 +218,11 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     return holds.get(providerId)?.active === true;
   }
 
-  return { recover, hold, maybeResume, isHeld, stop };
+  function stopAll(): void {
+    for (const providerId of Array.from(holds.keys())) stop(providerId);
+  }
+
+  return { recover, hold, maybeResume, isHeld, stop, stopAll };
 }
 
 interface LoginHoldState {

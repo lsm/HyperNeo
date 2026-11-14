@@ -26,6 +26,7 @@ interface Harness {
     uuid: string,
     content: string
   ): Promise<Awaited<ReturnType<AgentSession['driveDeliveryTurn']>>>;
+  setOutcome(outcome: RefreshNowOutcome): void;
 }
 
 async function harness(
@@ -46,6 +47,9 @@ async function harness(
   let nextOutcome: RefreshNowOutcome = 'transient';
   let refreshes = 0;
   if (options.needsLoginAt !== undefined) needsLogin.set('anthropic', options.needsLoginAt);
+  const setOutcome = (outcome: RefreshNowOutcome) => {
+    nextOutcome = outcome;
+  };
 
   const agent = new AgentSession(
     saved,
@@ -135,6 +139,7 @@ async function harness(
     started,
     deliver,
     deliverWhileQueued,
+    setOutcome,
   };
 }
 
@@ -256,6 +261,50 @@ describe('login hold', () => {
     expect(h.resume).toHaveBeenCalledWith('human-login', 'do the thing', undefined, {
       prepend: true,
     });
+    await h.agent.cleanup();
+  });
+
+  it('a login rejection that a refresh fixes lets the waiting message go ahead', async () => {
+    const h = await harness();
+    h.setNeedsLogin('anthropic', Date.now());
+    h.clocks.clear();
+    h.setOutcome('refreshed');
+
+    const admitted = await h.deliver();
+
+    expect(admitted.outcome).toBe('completed');
+    expect(h.agent.isLoginHeld()).toBe(false);
+    await h.agent.cleanup();
+  });
+
+  it('cleanup stops a hold it no longer tracks under the current provider', async () => {
+    const h = await harness();
+    h.setNeedsLogin('anthropic', Date.now());
+    await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
+    expect(h.agent.isLoginHeld()).toBe(true);
+
+    h.agent.getSessionData().config.provider = 'glm';
+    await h.agent.cleanup();
+
+    const recovery = (h.agent as unknown as { loginRecovery: { isHeld(id: string): boolean } })
+      .loginRecovery;
+    expect(recovery.isHeld('anthropic')).toBe(false);
+    h.setNeedsLogin('anthropic', null);
+    h.clocks.delete('anthropic');
+    for (const listener of h.writes) listener('anthropic');
+    await new Promise((done) => setTimeout(done, 0));
+    expect(h.resume).toHaveBeenCalledTimes(0);
+  });
+
+  it('a second rejection of the same prompt after a refresh asks for sign-in', async () => {
+    const h = await harness();
+    h.setOutcome('refreshed');
+    const prompt = { uuid: 'human-login', content: 'do the thing' };
+
+    expect(await h.agent.onLoginRejected(prompt)).toBe('retry');
+    expect(await h.deliver()).toBeDefined();
+    expect(await h.agent.onLoginRejected(prompt)).toBe('sign_in');
+
     await h.agent.cleanup();
   });
 
