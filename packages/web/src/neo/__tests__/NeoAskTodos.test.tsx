@@ -697,13 +697,23 @@ describe('NeoAskTodos', () => {
             todo('a', { state: 'doing' }),
             todo('b', { state: 'doing', named: { desktopControl: true } }),
             todo('c', { state: 'done' }),
+            todo('d', {
+              state: 'doing',
+              worker: {
+                id: 'remote',
+                adapter: 'hyperneo',
+                name: null,
+                label: 'Remote',
+                daemon: 'other',
+              },
+            }),
           ],
         })}
         onAnswer={vi.fn()}
         onDesktopControl={onDesktopControl}
       />
     );
-    for (const id of ['a', 'b'])
+    for (const id of ['a', 'b', 'd'])
       fireEvent.click(app.getByRole('button', { name: `Show details: Todo ${id}` }));
     const boxes = app.getAllByRole('checkbox', { name: /Let the agent use this computer/ });
     expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true]);
