@@ -317,4 +317,23 @@ describe('neoIntakeMessage order', () => {
     expect(joined(retry).startsWith(said)).toBe(true);
     expect(neoRetryLocalTime(retry, 'fresh')).toBe('(local time: Sun 2026-10-18 21:10 EDT)');
   });
+
+  test('a retry with an input mode does not repeat the source fact', () => {
+    const first = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it', inputMode: 'dictation' },
+      session,
+      null,
+      '(local time: Sun 2026-10-18 21:10 EDT)'
+    );
+    expect(neoRetryLocalTime(first, 'fresh')).toBe('(local time: Sun 2026-10-18 21:10 EDT)');
+    const retry = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it', inputMode: 'dictation' },
+      session,
+      null,
+      neoRetryLocalTime(first, 'fresh'),
+      first
+    );
+    expect(retry).toEqual(first);
+    expect(joined(retry).match(/\[input: dictation\]/g)).toHaveLength(1);
+  });
 });

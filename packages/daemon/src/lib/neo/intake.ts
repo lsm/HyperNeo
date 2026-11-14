@@ -227,7 +227,8 @@ export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string)
     const line = block.text
       .split('\n')
       .find((candidate: string) => candidate.startsWith('(local time: '));
-    if (line) return line;
+    const time = line?.match(/^\(local time: [^)]*\)/)?.[0];
+    if (time) return time;
   }
   return null;
 }
