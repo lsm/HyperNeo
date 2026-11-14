@@ -17,6 +17,7 @@ interface Utterance {
   carry: Uint8Array;
   sources: Set<AudioBufferSourceNode>;
   started: boolean;
+  heard: number;
 }
 
 export interface NeoSpeechPlayer {
@@ -27,6 +28,8 @@ export interface NeoSpeechPlayer {
 interface NeoSpeechPlayerOptions {
   createContext?: () => AudioContext;
 }
+
+const STALL_MS = 30_000;
 
 const decode = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
@@ -39,6 +42,7 @@ export function openNeoSpeechPlayer(
   let queue: Utterance[] = [];
   let playhead = 0;
   let audible = true;
+  let stall: ReturnType<typeof setTimeout> | undefined;
 
   const ack = (id: string, state: 'playing' | 'played' | 'cancelled' | 'failed') => {
     invokeOperation(hub, 'neo.speech.ack', { sessionId, id, state }).catch(() => {});
@@ -49,6 +53,7 @@ export function openNeoSpeechPlayer(
       source.onended = null;
       source.stop();
     }
+    if (!utterance.sources.size) return;
     utterance.sources.clear();
     playhead = context.currentTime;
   };
@@ -70,6 +75,7 @@ export function openNeoSpeechPlayer(
     utterance.sources.add(source);
     source.onended = () => {
       utterance.sources.delete(source);
+      utterance.heard = Date.now();
       pump();
     };
     if (!utterance.started) {
@@ -79,13 +85,16 @@ export function openNeoSpeechPlayer(
   };
 
   const finish = (utterance: Utterance, state?: 'played') => {
+    const head = queue[0] === utterance;
     queue = queue.filter((item) => item !== utterance);
+    if (head && queue[0]) queue[0].heard = Date.now();
     silence(utterance);
     if (state) ack(utterance.id, state);
     pump();
   };
 
   const pump = () => {
+    clearTimeout(stall);
     const utterance = queue[0];
     if (!utterance) return;
     for (let chunk = utterance.chunks.get(utterance.next); chunk; ) {
@@ -97,8 +106,17 @@ export function openNeoSpeechPlayer(
       schedule(utterance, bytes);
       chunk = utterance.chunks.get(utterance.next);
     }
-    if (utterance.end !== null && utterance.next >= utterance.end && !utterance.sources.size)
-      finish(utterance, 'played');
+    if (utterance.sources.size) return;
+    if (utterance.end !== null && utterance.next >= utterance.end)
+      return finish(utterance, 'played');
+    stall = setTimeout(
+      () => {
+        if (queue[0] !== utterance) return;
+        ack(utterance.id, 'failed');
+        finish(utterance);
+      },
+      utterance.heard + STALL_MS - Date.now()
+    );
   };
 
   const drop = () => {
@@ -130,11 +148,16 @@ export function openNeoSpeechPlayer(
         carry: new Uint8Array(0),
         sources: new Set(),
         started: false,
+        heard: Date.now(),
       });
     } else if (!utterance) return;
     else if (event.type === 'failed') return finish(utterance);
-    else if (event.type === 'audio') utterance.chunks.set(event.seq, decode(event.pcm));
-    else utterance.end = event.seq;
+    else {
+      utterance.heard = Date.now();
+      if (event.type === 'end') utterance.end = event.seq;
+      else if (event.seq >= utterance.next && !utterance.chunks.has(event.seq))
+        utterance.chunks.set(event.seq, decode(event.pcm));
+    }
     pump();
   });
 

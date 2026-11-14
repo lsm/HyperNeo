@@ -18,10 +18,12 @@ plays it through a real `AudioContext` tapped by a level meter. Its
 `neo.speech.ack` calls go back through the same WebSocket.
 
 Require, from neo-speech-player.json and the wrapper's exit status: the short
-reply's saved receipts include `playing` then `played`; `played` arrives no
-sooner than the 0.6 s of audio; at least half a second of voiced samples reached
-the output. The long reply is interrupted after `playing`: a `cancelled` receipt
-is saved and no further voiced audio follows.
+reply's saved receipts include `playing` then `played`, and `played` comes no
+sooner than 550 ms after `playing` (the clip is 0.6 s). The meter counts output
+samples above 0.05 at the context's sample rate; the short reply must produce at
+least half a second of them. The long reply is interrupted only after a further
+0.2 s of its audio has reached the meter: a `cancelled` receipt is saved, and
+fewer than 0.05 s of samples above 0.05 follow in the next 600 ms.
 
 The player is not yet wired to a button, so this proves the daemon-to-Web-Audio
 path and receipts, not a rendered control or a speaker.

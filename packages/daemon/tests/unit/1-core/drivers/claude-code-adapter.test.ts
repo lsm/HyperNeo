@@ -139,6 +139,28 @@ describe('createClaudeCodeAdapter', () => {
     }
   });
 
+  test('work.status reads the fresh listing, not the stale-while-revalidate one', async () => {
+    let freshReads = 0;
+    let listedReads = 0;
+    const adapter = createClaudeCodeAdapter({
+      machine: 'laptop',
+      searchChats: async () => [],
+      desktopSessions: async () => new Set(),
+      liveSessions: async () => {
+        freshReads++;
+        return [{ sessionId: 'session', pid: 456, owner: 'cli', status: 'busy' }];
+      },
+      liveSessionsListed: async () => {
+        listedReads++;
+        return [];
+      },
+    });
+    const ref = { adapter: 'claude-code', id: 'session' };
+    expect(await adapter.status!(ref)).toMatchObject({ ok: true });
+    expect(freshReads).toBe(1);
+    expect(listedReads).toBe(0);
+  });
+
   test('returns a typed refusal when live CLI discovery fails', async () => {
     let probes = 0;
     const adapter = createClaudeCodeAdapter({

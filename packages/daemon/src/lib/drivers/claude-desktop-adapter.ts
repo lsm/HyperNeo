@@ -91,8 +91,9 @@ import {
 } from './claude-session-owner.ts';
 
 const SESSIONS_PER_PLACE = 20;
-const LIVE_TIMEOUT_MS = 5_000;
+const LIVE_TIMEOUT_MS = 90_000;
 const LIVE_REUSE_MS = 5_000;
+const LIVE_STALE_MAX_MS = 15 * 60_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RELAY_TIMEOUT_MS = 120_000;
@@ -147,6 +148,7 @@ export interface ClaudeDesktopAdapterDeps {
   projectsDir: string;
   machine: string;
   liveSessions: () => Promise<readonly ClaudeLiveSession[]>;
+  liveSessionsListed?: () => Promise<readonly ClaudeLiveSession[]>;
   listProcesses?: ProcessLister;
   spawn: SpawnFn;
   folderExists: (folder: string) => boolean;
@@ -408,13 +410,58 @@ export async function probeLiveClaudeSessions(
 export function reuseLiveSessions(
   read: () => Promise<readonly ClaudeLiveSession[]>,
   now: () => number,
-  freshForMs = LIVE_REUSE_MS
-): () => Promise<readonly ClaudeLiveSession[]> {
-  let cached: { at: number; sessions: Promise<readonly ClaudeLiveSession[]> } | null = null;
-  return () => {
-    if (!cached || now() - cached.at >= freshForMs) cached = { at: now(), sessions: read() };
-    return cached.sessions;
+  freshForMs = LIVE_REUSE_MS,
+  staleForMs = LIVE_STALE_MAX_MS
+): {
+  listed: () => Promise<readonly ClaudeLiveSession[]>;
+  fresh: () => Promise<readonly ClaudeLiveSession[]>;
+} {
+  let good: { at: number; sessions: readonly ClaudeLiveSession[] } | null = null;
+  let pending: Promise<readonly ClaudeLiveSession[]> | null = null;
+  const refresh = () => {
+    const sessions = read().finally(() => {
+      if (pending === sessions) pending = null;
+    });
+    pending = sessions;
+    void sessions
+      .then((listed) => {
+        good = { at: now(), sessions: listed };
+      })
+      .catch(() => {});
+    return sessions;
   };
+  return {
+    listed: () => {
+      if (good && now() - good.at < staleForMs) {
+        if (now() - good.at >= freshForMs) pending ??= refresh();
+        return Promise.resolve(good.sessions);
+      }
+      pending ??= refresh();
+      return pending;
+    },
+    fresh: async () => {
+      pending ??= refresh();
+      try {
+        return await pending;
+      } catch (error) {
+        if (good && now() - good.at < staleForMs) return good.sessions;
+        throw error;
+      }
+    },
+  };
+}
+
+export type LiveSessionReaders = ReturnType<typeof reuseLiveSessions>;
+
+const sharedLiveReads = new WeakMap<SpawnFn, LiveSessionReaders>();
+
+export function sharedLiveSessions(spawn: SpawnFn): LiveSessionReaders {
+  let shared = sharedLiveReads.get(spawn);
+  if (!shared) {
+    shared = reuseLiveSessions(() => readLiveClaudeSessions(spawn), Date.now);
+    sharedLiveReads.set(spawn, shared);
+  }
+  return shared;
 }
 
 const runClaudeDesktopFind = (superpipe({})('claude-desktop-find-work') as PipelineAPI)
@@ -1729,7 +1776,10 @@ const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as Pip
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
   const cache: ClaudeRecordCache = new Map();
-  const reused = { ...deps, liveSessions: reuseLiveSessions(deps.liveSessions, Date.now) };
+  const reused = {
+    ...deps,
+    liveSessions: deps.liveSessionsListed ?? deps.liveSessions,
+  };
   return {
     id: 'claude-desktop',
     readInput: async (id, marker) => {

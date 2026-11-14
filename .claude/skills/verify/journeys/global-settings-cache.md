@@ -1,0 +1,61 @@
+# Global settings cache visibility
+
+Run the focused regression on the build/test host with Bun 1.4.2. It boots a real
+isolated daemon on an ephemeral port and calls the authenticated WebSocket
+settings update door. Use a fresh synthetic HOME and data directory, with no
+provider credentials in the environment. The daemon test owns its synthetic
+data directory and restores the prior environment after cleanup.
+
+From the repository root, choose a fresh evidence directory and run this in Bash.
+
+```bash
+bash .claude/skills/verify/resource-check.sh && (
+  RUN=$(mktemp -d "${TMPDIR:-/tmp}/settings-cache-proof.XXXXXX")
+  trap 'rm -rf "$RUN"' EXIT
+  mkdir -p "$RUN/home" "$RUN/tmp"
+  cd packages/daemon
+  env -i PATH="$PATH" HOME="$RUN/home" TMPDIR="$RUN/tmp" NODE_ENV=test \
+    HYPERNEO_SPACE=on \
+    bun test tests/unit/4-space-storage/storage/global-settings-cache.test.ts \
+      tests/unit/1-core/operations/neo-rule-answers.test.ts
+)
+status=$?
+printf 'EXIT_CODE=%s\n' "$status"
+exit "$status"
+```
+
+Retain stdout and stderr outside the disposable run. The baseline fails with ten
+SQLite SELECTs for ten repeated reads. The fixed tree must pass with zero extra
+SELECTs between committed changes. The test covers full save, synchronous patch,
+worker patch, compensation, WebSocket settings update, Neo mute and tool-default
+transition. Each next read must expose the committed value. Caller mutation of a
+returned nested object must leave subsequent reads intact. The daemon, socket
+and synthetic database close in finally. This proves RPC and facade behavior.
+
+Warm-cache regressions must also expose a human-approved standing rule through
+`neo.question.answer`, startup tool-choice migration and the original committed
+value after a transaction reads its own write and rolls back. Low-level settings
+writes advance a connection-local revision even without a reactive notifier.
+Reads inside SQL transactions discard and bypass the facade cache, preventing
+uncommitted values from surviving rollback. Worker commits retain reactive
+invalidation. These checks use synthetic data only.
+
+The disk-backed daemon case also submits a rule-proposal card to the relay
+worker operation. It must return `direct_human_required`, leave the card open
+and the proposal unapplied, and retain the warmed standing rules. The Bun proof
+prints `relaySettingsSelectsOnMain: 0` to distinguish the worker connection from
+the Node runner's inline fallback. Rule proposals require direct human action.
+
+Lost-reply regressions use a second real SQLite connection to commit settings
+while a controlled worker drops its reply. Both the gateway watchdog and a
+post-commit worker error must reject the call, terminate the worker and expose
+the committed settings to the next facade read. The controlled transport keeps
+the failure timing deterministic. These checks establish committed readback
+after failure, while the disk-backed daemon case exercises native worker replies.
+
+The rollback regression asserts the native transaction-state property is false
+before the transaction, true inside it and false after rollback. Bun supplies
+`inTransaction`. Node 24 supplies `isTransaction`, documented in the
+[Node 24 SQLite API](https://github.com/nodejs/node/blob/v24.0.0/doc/api/sqlite.md#databaseistransaction).
+Run this regression under both supported proof runtimes to verify the facade's
+transaction bypass and committed readback.

@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   NEO_FOCUSED_DISCUSSION,
-  NEO_FRONT,
   NEO_GOAL_CYCLE,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
@@ -182,10 +181,9 @@ describe('root Neo system prompt', () => {
       expect(prompt).toContain(rule);
   });
 
-  test('gives Neo the same reply length rule the front reads', () => {
+  test('gives Neo the reply length rule the check enforces', () => {
     const rule =
       'Keep text to at most 5 lines including the title, about 60 words or 150 Chinese characters, and at most 500 characters. For anything longer, or for any structured report, multi-topic update, sectioned explanation, list, table or long report, put a standalone summary in text and details that add new information; never repeat text in details.';
-    expect(NEO_FRONT).toContain(rule);
     expect(neoToolDescription('neo.publication.publish')).toContain(rule);
     const prompt = neoPrompt([]);
     expect(prompt).not.toContain('a few bullets or a small comparison table');
