@@ -22,6 +22,11 @@ const pair = JSON.parse(
 ).reply;
 assert(pair.ok, JSON.stringify(pair));
 const observations = [];
+const expand = async (row, title) => {
+  const show = row.getByRole('button', { name: `Show details: ${title}` });
+  await row.getByRole('button', { name: new RegExp(`(Show|Hide) details: ${title}`) }).waitFor();
+  if (await show.count()) await show.click();
+};
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US', reducedMotion: 'reduce' });
   await context.route('**/*', (route) =>
@@ -33,7 +38,7 @@ try {
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/neo`);
   const row = page.locator('[data-ask-todo="dentist"]').first();
-  await row.getByRole('button', { name: 'Show details: Book the dentist on the clinic site' }).click();
+  await expand(row, 'Book the dentist on the clinic site');
   const box = row.getByRole('checkbox', { name: 'Let the agent use this computer' });
   await box.waitFor();
   const card = page.locator('[data-ask-todo="dentist"]').first().locator('xpath=ancestor::article[1]');
@@ -49,7 +54,7 @@ try {
   );
   await page.reload();
   const again = page.locator('[data-ask-todo="dentist"]').first();
-  await again.getByRole('button', { name: 'Show details: Book the dentist on the clinic site' }).click();
+  await expand(again, 'Book the dentist on the clinic site');
   const reloaded = again.getByRole('checkbox', { name: 'Let the agent use this computer' });
   await reloaded.waitFor();
   observations.push({ todo: 'dentist', checkedAfterReload: await reloaded.isChecked() });
@@ -57,7 +62,7 @@ try {
   await page.emulateMedia({ colorScheme: 'dark' });
   await shot('todo-on-dark.png');
   await page.emulateMedia({ colorScheme: 'light' });
-  await page.locator('[data-ask-todo="taxes"]').first().getByRole('button', { name: 'Show details: File the tax form' }).click();
+  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
   observations.push({
     todo: 'taxes',
     checked: await page.locator('[data-ask-todo="taxes"]').first().getByRole('checkbox', { name: 'Let the agent use this computer' }).isChecked(),
