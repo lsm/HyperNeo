@@ -78,6 +78,7 @@ function fakeAudio() {
     sources,
     finish,
     closed: () => closed,
+    resumed: () => context.resume.mock.calls.length > 0,
   };
 }
 
@@ -204,6 +205,39 @@ describe('openNeoSpeechPlayer', () => {
     expect(sound.sources).toHaveLength(1);
     await vi.waitFor(() => expect(acks()).toEqual(['A:playing']));
   });
+
+  it('resumes audio that the browser started suspended', () => {
+    const { hub } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    expect(sound.resumed()).toBe(true);
+  });
+
+  for (const [label, cut] of [
+    ['an interrupt', (player: { interrupt(): void }) => player.interrupt()],
+    [
+      'a daemon stop',
+      (_player: unknown, emit: (data: unknown) => void) => emit({ type: 'stop', sessionId: 'neo' }),
+    ],
+    [
+      'a failed reply',
+      (_player: unknown, emit: (data: unknown) => void) =>
+        emit({ type: 'failed', id: ID_A, sessionId: 'neo' }),
+    ],
+  ] as const) {
+    it(`plays the next reply without waiting out audio cut short by ${label}`, () => {
+      const { hub, emit } = fakeHub();
+      const sound = fakeAudio();
+      const player = openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+      emit(say(ID_A));
+      emit(audio(ID_A, 0, pcm(...new Array(2400).fill(16384))));
+      cut(player, emit);
+      emit(say(ID_B));
+      emit(audio(ID_B, 0, pcm(-16384)));
+      expect(sound.sources).toHaveLength(2);
+      expect(sound.sources[1].when).toBe(0);
+    });
+  }
 
   it('stops listening for speech and releases audio on close', async () => {
     const { hub, emit, acks, listeners } = fakeHub();
