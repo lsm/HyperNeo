@@ -18,7 +18,7 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 
 The control socket has no answer or approve action, and requests with unknown fields are rejected. A worker therefore cannot submit, replay or reuse an answer. The host never offers a grant for its own app and refuses it with `app_not_grantable`, so driver input cannot be pointed at its own dialog.
 
-Only the daemon asks the host to act. Today the worker's `desktop-mcp` process calls the host's `resolve` guard, which sends no driver input but can open the approval dialog, and it has no input path at all: dispatch throws, so the proxy answers `driver_unavailable`. The forwarding action below sends input, so it moves behind the daemon: the proxy submits a call to the daemon's operations door and the daemon is the only client accepted for the dispatch action. The four layers below are what has to hold before that action exists.
+Only the daemon asks the host to act. Today the worker's `desktop-mcp` process calls the host's `resolve` guard itself, and `resolve` sends no driver input but can open the approval dialog; there is still no input path, because dispatch throws and the proxy answers `driver_unavailable`. The forwarding action below sends input, so every call moves behind the daemon: the proxy submits it to the daemon's operations door, the daemon does the `resolve` and the dispatch, and the daemon is the only client the host accepts for either.
 
 ## Host forwarding
 
