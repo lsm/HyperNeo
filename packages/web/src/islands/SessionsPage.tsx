@@ -22,7 +22,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { isUserSession } from '../lib/session-utils.ts';
-import { listProjectPaths } from '../lib/projects.ts';
+import { listProjectPaths, projectName } from '../lib/projects.ts';
 import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
@@ -136,6 +136,7 @@ export function SessionsPage() {
   const [baseBranch, setBaseBranch] = useState<string | null>(initialSelection.baseBranch);
   const [manualProjectOpen, setManualProjectOpen] = useState(false);
   const [addingFolder, setAddingFolder] = useState(false);
+  const [folderProject, setFolderProject] = useState<string | null>(null);
   const [manualProjectPath, setManualProjectPath] = useState('');
   const [manualProjectError, setManualProjectError] = useState<string | null>(null);
   const [manualProjectBusy, setManualProjectBusy] = useState(false);
@@ -272,14 +273,15 @@ export function SessionsPage() {
 
   const addFolderToSelectedProject = async (path: string) => {
     const trimmed = path.trim();
-    if (!project || !trimmed) {
+    const target = folderProject ?? project;
+    if (!target || !trimmed) {
       setManualProjectError('Enter an absolute folder path.');
       return;
     }
     setManualProjectBusy(true);
     setManualProjectError(null);
     try {
-      await addFolderToProject(project, trimmed);
+      await addFolderToProject(target, trimmed);
       workspaceHistoryVersionSignal.value += 1;
       setHistory(await getWorkspaceHistory());
       setManualProjectPath('');
@@ -293,6 +295,7 @@ export function SessionsPage() {
 
   const openManualProjectFallback = (message?: string) => {
     setAddingFolder(false);
+    setFolderProject(null);
     setManualProjectOpen(true);
     setManualProjectError(message ?? null);
   };
@@ -509,11 +512,13 @@ export function SessionsPage() {
               onBrowse={handleBrowse}
               onEnterPath={() => {
                 setAddingFolder(false);
+                setFolderProject(null);
                 setManualProjectOpen(true);
                 setManualProjectError(null);
               }}
               onAddFolder={() => {
                 setAddingFolder(true);
+                setFolderProject(project);
                 setManualProjectOpen(true);
                 setManualProjectError(null);
               }}
@@ -547,7 +552,9 @@ export function SessionsPage() {
                   </button>
                 </div>
                 <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
-                  Use an absolute path accessible to HyperNeo.
+                  {addingFolder && folderProject
+                    ? `Adds a folder to ${projectName(folderProject)}. Use an absolute path accessible to HyperNeo.`
+                    : 'Use an absolute path accessible to HyperNeo.'}
                 </p>
                 {manualProjectError && (
                   <p class="mt-1.5 text-[11px] leading-4 text-danger">{manualProjectError}</p>
