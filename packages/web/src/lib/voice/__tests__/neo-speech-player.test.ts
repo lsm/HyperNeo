@@ -149,6 +149,21 @@ describe('openNeoSpeechPlayer', () => {
     expect(sound.sources.map((source) => source.samples)).toEqual([[-0.5]]);
   });
 
+  it('gives up on a stalled reply even while the next reply keeps streaming', async () => {
+    vi.useFakeTimers();
+    const { hub, emit, acks } = fakeHub();
+    const sound = fakeAudio();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    for (let seq = 0; seq < 3; seq++) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      emit(audio(ID_B, seq, pcm(-16384)));
+    }
+    expect(acks()).toEqual(['A:failed', 'B:playing']);
+    expect(sound.sources.map((source) => source.samples)).toEqual([[-0.5], [-0.5], [-0.5]]);
+  });
+
   it('does not give up on a reply while its audio is playing', async () => {
     vi.useFakeTimers();
     const { hub, emit, acks } = fakeHub();
