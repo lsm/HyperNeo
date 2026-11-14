@@ -1,3 +1,4 @@
+import { createDesktopStatusOperation } from '../../desktop/status-operation.ts';
 import { createDesktopStopOperation } from '../../desktop/stop-operation.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { registerClientOperations } from './clients.ts';
@@ -13,6 +14,7 @@ export type { FamilyOperationContext } from './context.ts';
 
 export function collectFamilyOperations(context: FamilyOperationContext): OperationDefinition[] {
   return [
+    createDesktopStatusOperation(context.deps.db.getDatabase()),
     createDesktopStopOperation(),
     createProjectFolderOperation(context.deps.db.workspaceHistory),
     ...registerClientOperations(context),

@@ -6603,6 +6603,63 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "name": "desktop.status",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "workers": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "state": {
+                  "enum": [
+                    "off",
+                    "unavailable",
+                    "running",
+                    "stopped",
+                    "stop_unconfirmed"
+                  ],
+                  "type": "string"
+                },
+                "todo": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "worker": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "worker",
+                "todo",
+                "state"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workers"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "worker": {
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "type": "string"
+          }
+        },
         "required": [
           "worker"
         ],
