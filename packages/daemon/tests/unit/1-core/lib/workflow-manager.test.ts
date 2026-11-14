@@ -24,7 +24,6 @@ import {
   CODER_ONLY_PROMPT,
   CODER_ONLY_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
 } from '../../../../src/lib/workflows/built-in-workflows';
 
 describe('SpaceWorkflowManager', () => {
@@ -1383,10 +1382,7 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('preserves the prompt bytes stored in a pinned built-in definition', () => {
-      const pinnedPrompt = CODER_ONLY_PROMPT.replace(
-        EXTERNAL_REVIEW_BOTS_GUIDANCE,
-        EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
-      );
+      const pinnedPrompt = `${CODER_ONLY_PROMPT}\n\nA pinned historical note.`;
       const pinnedWorkflow = {
         ...CODER_ONLY_WORKFLOW,
         id: 'pinned-built-in',

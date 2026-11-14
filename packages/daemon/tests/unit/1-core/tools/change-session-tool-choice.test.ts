@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { AppSkill, SpaceWorkflow } from '@hyperneo/shared';
 import { computeDefinitionVersion } from '../../../../src/lib/workflows/definition-version.ts';
-import { pinnedSlotVetoes } from '../../../../src/storage/repositories/session-tool-selection-migration.ts';
+import { pinnedSlotVetoes } from '../../../../src/storage/repositories/session-slot-vetoes.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';

@@ -8,7 +8,7 @@ import { SkillRepository } from './skill-repository.ts';
 import { AppMcpServerRepository } from './app-mcp-server-repository.ts';
 import { McpEnablementRepository } from './mcp-enablement-repository.ts';
 import { captureToolPreferenceRow, type ToolPreferenceSnapshot } from './tool-preference-commit.ts';
-import { pinnedSlotVetoes } from './session-tool-selection-migration.ts';
+import { pinnedSlotVetoes } from './session-slot-vetoes.ts';
 import { scopeChainForSession } from '../../lib/mcp/resolve-mcp-servers.ts';
 import {
   translateLegacyToolPreference,

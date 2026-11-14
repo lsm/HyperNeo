@@ -183,9 +183,19 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('refuses to send API keys over plaintext HTTP endpoints', async () => {
+    const credentialManager = {
+      getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'sk-test' })),
+    };
     await expect(
       transcribe(
-        createDeps({ endpoint: 'http://ai0:9002/v1/audio/transcriptions', apiKey: 'sk-test' })
+        createDeps(
+          {
+            endpoint: 'http://ai0:9002/v1/audio/transcriptions',
+            apiKeyEndpoint: 'http://ai0:9002/v1/audio/transcriptions',
+          },
+          createVoiceTranscribeLimiters(),
+          credentialManager
+        )
       )
     ).resolves.toEqual({
       action: 'denied',

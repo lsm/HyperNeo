@@ -28,7 +28,6 @@ import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { daemonPairWaits } from './lib/pairing/pair-waits.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
-import { migrateSessionToolSelections } from './storage/repositories/session-tool-selection-migration.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
   hasRuntimeWorkerOperations,
@@ -537,9 +536,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const internalEventBus = createDaemonInternalEventBus();
     const daemonConfigService = new DaemonConfigService(db.getDatabase(), internalEventBus);
-    if (daemonConfigService.seedFromLegacyEnv()) {
-      logInfo('[Daemon] Seeded daemon config from legacy environment variables');
-    }
 
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
@@ -770,13 +766,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     } catch (err) {
       logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
     }
-
-    startupTimer.start('tool selection migration');
-    migrateSessionToolSelections(db.getDatabase(), {
-      skills: db.skills.findAll(),
-      registry: db.appMcpServers.list(),
-      overrides: db.mcpEnablement.listAll(),
-    });
 
     const logScratchError = (error: unknown) =>
       logError('[Daemon] Scratch cleanup failed (non-fatal):', error);

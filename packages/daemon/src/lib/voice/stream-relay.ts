@@ -112,7 +112,7 @@ async function buildAsrRelayOpen(
     const endpoint = new URL(voice.endpoint);
     const apiKey = await withVoiceCredentialLock(() =>
       withTimeout(
-        resolveApiKey(voice.apiKey, voice.apiKeyEndpoint, endpoint, deps.credentialManager),
+        resolveApiKey(voice.apiKeyEndpoint, endpoint, deps.credentialManager),
         CREDENTIAL_LOOKUP_TIMEOUT_MS,
         'Voice transcription credential lookup timed out'
       )

@@ -9,8 +9,6 @@ import {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   RESEARCH_PROMPT,
@@ -48,8 +46,6 @@ export {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   RESEARCH_PROMPT,
@@ -62,28 +58,8 @@ export {
   REVIEWER_ZERO_FINDINGS_GATE,
 };
 
-export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
-  {
-    legacyName: 'Coding Workflow',
-    legacyHandle: 'coding-workflow',
-    name: 'Coding',
-    handle: 'coding',
-  },
-  {
-    legacyName: 'Coding with QA Workflow',
-    legacyHandle: 'coding-with-qa-workflow',
-    name: 'Coding with QA',
-    handle: 'coding-with-qa',
-  },
-] as const;
-
-const LEGACY_BUILT_IN_TEMPLATE_NAMES = new Map<string, string>(
-  LEGACY_CODING_TEMPLATE_IDENTITIES.map((identity) => [identity.legacyName, identity.name])
-);
-
 export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkflow | undefined {
-  const canonicalName = LEGACY_BUILT_IN_TEMPLATE_NAMES.get(templateName) ?? templateName;
-  return getBuiltInWorkflows().find((workflow) => workflow.name === canonicalName);
+  return getBuiltInWorkflows().find((workflow) => workflow.name === templateName);
 }
 
 export function builtInWorkflowRequiresPrMerge(templateName: string | null | undefined): boolean {

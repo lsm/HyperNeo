@@ -1035,7 +1035,6 @@
 7	packages/daemon/tests/unit/5-space/workflow/end-node-handoff.test.ts
 16	packages/daemon/tests/unit/5-space/workflow/hook-validation.test.ts
 5	packages/daemon/tests/unit/5-space/workflow/merge-base-revalidation-policy.test.ts
-6	packages/daemon/tests/unit/5-space/workflow/plan-run-snapshot-migration.test.ts
 6	packages/daemon/tests/unit/5-space/workflow/post-approval-template.test.ts
 5	packages/daemon/tests/unit/5-space/workflow/post-approval-validator.test.ts
 10	packages/daemon/tests/unit/5-space/workflow/prompt-extraction-golden.test.ts

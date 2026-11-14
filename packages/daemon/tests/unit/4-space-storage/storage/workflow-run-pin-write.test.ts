@@ -56,34 +56,4 @@ describe('workflow snapshot persistence', () => {
       },
     };
   }
-
-  it('migrates an existing pin while normal pin admission keeps the original', async () => {
-    const { repository, run, pin } = fixture();
-    expect(await gateway.call(workflowRunPinWrites, 'pin', pin)).toBe(false);
-    expect(repository.getRun(run.id)?.definitionVersion).toBe(run.definitionVersion);
-    expect(await gateway.call(workflowRunPinWrites, 'migrateSnapshot', pin)).toBe(true);
-    expect(repository.getRun(run.id)?.definitionVersion).toBe(pin.versionHash);
-    expect(repository.getRun(run.id)?.title).toBe('Legacy');
-    expect(
-      changes.some(
-        (change) => change.table === 'space_workflow_runs' && change.scope?.spaceId === pin.spaceId
-      )
-    ).toBe(true);
-  });
-
-  it('rolls back the snapshot and emits nothing when the pin update is refused', async () => {
-    const { repository, run, pin } = fixture();
-    db.exec(`CREATE TRIGGER refuse_snapshot BEFORE UPDATE OF definition_version ON space_workflow_runs
-      BEGIN SELECT RAISE(ABORT, 'synthetic snapshot refusal'); END`);
-    await expect(gateway.call(workflowRunPinWrites, 'migrateSnapshot', pin)).rejects.toThrow(
-      'synthetic snapshot refusal'
-    );
-    expect(repository.getRun(run.id)?.definitionVersion).toBe(run.definitionVersion);
-    expect(
-      db
-        .prepare('SELECT payload FROM space_workflow_definition_versions WHERE version_hash = ?')
-        .get(pin.versionHash)
-    ).toBeNull();
-    expect(changes).toEqual([]);
-  });
 });

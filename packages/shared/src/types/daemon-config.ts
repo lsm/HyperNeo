@@ -20,7 +20,6 @@ export interface DaemonConfigKeyEntry {
   max?: number;
   appliesAt: DaemonConfigAppliesAt;
   description: string;
-  legacyEnvName: string;
 }
 
 export interface DaemonBehaviorConfig {
@@ -141,10 +140,6 @@ const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolea
   disableGoalProcessing: [['1'], true],
 };
 
-function legacyEnvNameFor(key: string): string {
-  return `HYPERNEO_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`;
-}
-
 /** @public */
 export const DAEMON_CONFIG_KEY_CATALOG: readonly DaemonConfigKeyEntry[] = Object.entries(
   FAMILY_ROWS
@@ -165,7 +160,6 @@ export const DAEMON_CONFIG_KEY_CATALOG: readonly DaemonConfigKeyEntry[] = Object
       ...(max !== undefined ? { max } : {}),
       appliesAt: isRestart ? 'restart' : 'live',
       description,
-      legacyEnvName: legacyEnvNameFor(key),
     } satisfies DaemonConfigKeyEntry;
   })
 );

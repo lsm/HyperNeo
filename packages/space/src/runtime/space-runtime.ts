@@ -83,7 +83,6 @@ import {
 import type { ExternalEventPublishedPayload } from '../../../daemon/src/lib/external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../external-events/external-event-store.ts';
 import { SESSION_EVENT_SCOPE } from '../../../daemon/src/lib/external-events/session-external-event-store.ts';
-import { legacyGitHubTopic } from '../../../daemon/src/lib/external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../../daemon/src/lib/external-events/long-horizon-subscription-pattern.ts';
 import {
   ExternalEventQueueMetrics,
@@ -5219,10 +5218,7 @@ export class SpaceRuntime {
   }
 
   private lookupSubscriptionTargets(topic: string): SubscriptionTarget[] {
-    const matches = this.topicTrie.lookup(topic);
-    const legacyTopic = legacyGitHubTopic(topic);
-    if (!legacyTopic) return matches;
-    return matches.concat(this.topicTrie.lookup(legacyTopic));
+    return this.topicTrie.lookup(topic);
   }
 
   private externalEventPayloadFromRecord(event: ExternalEvent): ExternalEventPublishedPayload {

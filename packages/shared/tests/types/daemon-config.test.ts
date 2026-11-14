@@ -6,48 +6,6 @@ import {
   type DaemonConfigKeyEntry,
 } from '../../src/types/daemon-config.ts';
 
-const EXPECTED_ENV_BY_FAMILY: Record<string, string[]> = {
-  deliveryTiming: [
-    'HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS',
-    'HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS',
-    'HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS',
-    'HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS',
-    'HYPERNEO_INTERRUPT_CONTROL_TIMEOUT_MS',
-  ],
-  deliveryPolicy: [
-    'HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES',
-    'HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT',
-    'HYPERNEO_JOB_QUEUE_MAX_CONCURRENT',
-  ],
-  sdkAcp: ['HYPERNEO_SDK_STARTUP_MAX_CONCURRENT', 'HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS'],
-  providersMisc: [
-    'HYPERNEO_PROVIDER_MAX_RETRIES',
-    'HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS',
-    'HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS',
-    'HYPERNEO_FILE_INDEX_POLL_MS',
-  ],
-  spaceEvents: [
-    'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
-    'HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP',
-    'HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS',
-    'HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS',
-  ],
-  startup: [
-    'HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT',
-    'HYPERNEO_DISABLE_WORKTREES',
-    'HYPERNEO_DISABLE_GOAL_PROCESSING',
-    'HYPERNEO_LOG_MAX_BYTES',
-    'HYPERNEO_LOG_RETAINED_FILES',
-    'HYPERNEO_LOG_MAX_PENDING_BYTES',
-    'HYPERNEO_SQL_QUERY_OBSERVABILITY',
-    'HYPERNEO_SQL_QUERY_SLOW_THRESHOLD_MS',
-    'HYPERNEO_SQL_QUERY_SUMMARY_INTERVAL_MS',
-    'HYPERNEO_SQL_QUERY_MAX_QUERY_GROUPS',
-    'HYPERNEO_SQL_QUERY_SUMMARY_LIMIT',
-  ],
-  flags: ['HYPERNEO_WORKFLOW_CONNECTORS'],
-};
-
 const EXPECTED_RESTART_KEYS = [
   'messageDeliveryMaxConcurrent',
   'jobQueueMaxConcurrent',
@@ -88,21 +46,9 @@ describe('DAEMON_CONFIG_KEY_CATALOG', () => {
     expect(DAEMON_CONFIG_KEY_CATALOG).toHaveLength(30);
   });
 
-  it('has globally unique keys and legacy env names', () => {
+  it('has globally unique keys', () => {
     const keys = DAEMON_CONFIG_KEY_CATALOG.map((e) => e.key);
-    const envs = DAEMON_CONFIG_KEY_CATALOG.map((e) => e.legacyEnvName);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(new Set(envs).size).toBe(envs.length);
-    for (const env of envs) expect(env).toMatch(/^HYPERNEO_[A-Z0-9_]+$/);
-  });
-
-  it('carries each key historical legacy env name in family order', () => {
-    for (const [family, expected] of Object.entries(EXPECTED_ENV_BY_FAMILY)) {
-      const envs = DAEMON_CONFIG_KEY_CATALOG.filter((e) => e.family === family).map(
-        (e) => e.legacyEnvName
-      );
-      expect(envs).toEqual(expected);
-    }
   });
 
   it('marks exactly the restart-scoped keys', () => {

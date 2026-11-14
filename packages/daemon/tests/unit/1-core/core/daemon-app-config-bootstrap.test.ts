@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DAEMON_CONFIG_KEY_CATALOG } from '@hyperneo/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -24,13 +23,8 @@ describe('Daemon App daemon-config bootstrap', () => {
   let config: Config;
   let originalTestUserSettingsDir: string | undefined;
   let bunServeSpy: ReturnType<typeof spyOn> | null = null;
-  const savedCatalogEnv = new Map<string, string | undefined>();
 
   beforeEach(() => {
-    for (const entry of DAEMON_CONFIG_KEY_CATALOG) {
-      savedCatalogEnv.set(entry.legacyEnvName, process.env[entry.legacyEnvName]);
-      delete process.env[entry.legacyEnvName];
-    }
     originalTestUserSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
     process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `hyperneo-test-settings-${Date.now()}`);
     bunServeSpy = spyOn(Bun, 'serve').mockImplementation(
@@ -57,14 +51,6 @@ describe('Daemon App daemon-config bootstrap', () => {
   });
 
   afterEach(() => {
-    for (const [name, value] of savedCatalogEnv) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-    savedCatalogEnv.clear();
     if (originalTestUserSettingsDir !== undefined) {
       process.env.TEST_USER_SETTINGS_DIR = originalTestUserSettingsDir;
     } else {

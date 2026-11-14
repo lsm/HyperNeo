@@ -718,39 +718,17 @@ describe('resolveSlotCustomPrompt', () => {
     expect(resolveSlotCustomPrompt(slot as never)).toBe('direct');
   });
 
-  test('merges legacy system prompt and instructions fields', () => {
+  test('returns undefined when a slot carries no custom prompt', () => {
+    const slot = { agentId: 'a', name: 'coder', replaceAgentPrompt: true };
+    expect(resolveSlotCustomPrompt(slot as never)).toBeUndefined();
+  });
+
+  test('ignores slot fields outside customPrompt even when they carry text', () => {
     const slot = {
       agentId: 'a',
       name: 'coder',
-      systemPrompt: { value: 'system part' },
-      instructions: { value: 'instructions part' },
-    };
-    expect(resolveSlotCustomPrompt(slot as never)).toBe('system part\n\ninstructions part');
-  });
-
-  test('uses whichever legacy field is present alone', () => {
-    expect(
-      resolveSlotCustomPrompt({
-        agentId: 'a',
-        name: 'coder',
-        instructions: { value: 'only instructions' },
-      } as never)
-    ).toBe('only instructions');
-    expect(
-      resolveSlotCustomPrompt({
-        agentId: 'a',
-        name: 'coder',
-        systemPrompt: { value: '  ' },
-      } as never)
-    ).toBeUndefined();
-  });
-
-  test('returns undefined when replaceAgentPrompt is set without a custom prompt', () => {
-    const slot = {
-      agentId: 'a',
-      name: 'coder',
-      replaceAgentPrompt: true,
-      systemPrompt: { value: 'ignored legacy' },
+      systemPrompt: { value: 'legacy system text' },
+      instructions: { value: 'legacy instructions text' },
     };
     expect(resolveSlotCustomPrompt(slot as never)).toBeUndefined();
   });
