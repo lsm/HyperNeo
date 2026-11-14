@@ -57,6 +57,7 @@ function adapter() {
       chooseWorktree: async () => {},
       announce: () => {},
       interrupt: () => false,
+      dropRestartResume: async () => false,
     },
     neoFolder: () => '/synthetic/neo',
     folderExists: () => true,

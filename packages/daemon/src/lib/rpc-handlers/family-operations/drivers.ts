@@ -293,6 +293,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (session)
         internalEventBus.publish('session.created', { sessionId, session }).catch(() => {});
     },
+    dropRestartResume: (sessionId) => db.clearRestartResume(sessionId),
     interrupt: async (sessionId) => {
       const session = sessionManager.getCachedSession(sessionId);
       if (!session) return false;

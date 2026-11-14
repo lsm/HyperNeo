@@ -269,6 +269,10 @@ export class Database {
     return this.gateway.call(sessionWrites, 'takeRestartCooldownResume', sessionId);
   }
 
+  async clearRestartResume(sessionId: string): Promise<boolean> {
+    return this.gateway.call(sessionWrites, 'clearRestartResume', sessionId);
+  }
+
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
     return this.sessionRepo.listAcpSessionIds();
   }
