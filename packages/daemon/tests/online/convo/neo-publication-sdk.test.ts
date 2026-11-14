@@ -82,7 +82,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
   const nativeToolsSeen: string[][] = [];
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
-  const verbatimText = '> kept quote\n\n```md\n# Draft\nCopy exactly: "as written"\n```';
+  const verbatimText = '> kept quote\n```md\n# Draft\nCopy exactly: "as written"\n```';
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
   const receivedToolCalls = new Set<string>();

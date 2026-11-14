@@ -6,6 +6,7 @@ import {
   NEO_PACK_CODING_WORKER_RULES,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  neoToolDescription,
 } from '@hyperneo/prompts';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -180,12 +181,18 @@ describe('root Neo system prompt', () => {
       expect(prompt).toContain(rule);
   });
 
-  test('gives questions and publications the same concise Markdown guidance', () => {
+  test('states the reply length rule once, in the publish description', () => {
     const prompt = neoPrompt([]);
-    expect(prompt).toContain('For neo.question.ask text and publication text, use Markdown');
-    expect(prompt).toContain('a short title line, then a few bullets or a small comparison table');
-    expect(prompt).toContain('Bold the key choice');
-    expect(prompt).toContain('Avoid walls of text');
+    expect(neoToolDescription('neo.publication.publish')).toContain(
+      'at most 200 characters and 5 lines counting every line including blank ones'
+    );
+    for (const stale of [
+      'a few bullets or a small comparison table',
+      'Bold the key choice',
+      'Avoid walls of text',
+      'keep detail in publication details',
+    ])
+      expect(prompt).not.toContain(stale);
     expect(prompt).toContain('Preserve required proposal text, path and hash');
   });
 
@@ -197,9 +204,12 @@ describe('root Neo system prompt', () => {
     expect(prompt).toContain('any lead-in line is a separate normal message or is skipped');
     expect(prompt).toContain('One message per deliverable');
     expect(prompt).toContain(
+      'published with deliverable:true so it is exempt from the reply limit; the whole message is the complete copyable text with no details'
+    );
+    expect(prompt).toContain('a revision resends the full text rather than describing edits');
+    expect(prompt).toContain(
       'Plain text for emails and translations; Markdown or code only when the human wants it'
     );
-    expect(prompt).toContain('Anything over the text limit goes as a file');
   });
 
   test('appends the pack briefing only when packs are enabled', () => {

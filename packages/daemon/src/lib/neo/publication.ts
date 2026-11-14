@@ -1,8 +1,18 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import {
+  NEO_DELIVERABLE_CHAR_LIMIT,
+  NEO_REPLY_FIELD_LIMIT,
+  NEO_SHORT_TEXT_LIMIT,
+} from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
 import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import { WorkerOpenSourceSchema } from '../drivers/worker-identity-schema.ts';
+
+export const REPLY_CHAR_LIMIT = 200;
+export const REPLY_LINE_LIMIT = 5;
+export const REPLY_FIELD_LIMIT = NEO_REPLY_FIELD_LIMIT;
+export const DELIVERABLE_CHAR_LIMIT = NEO_DELIVERABLE_CHAR_LIMIT;
 
 const text = (max: number) =>
   z
@@ -26,7 +36,7 @@ export const NeoPublicationObject = z
     publicationId: z.string().uuid(),
     askOrigin: origin.optional(),
     producerInput: origin.optional(),
-    shortText: text(4000)
+    shortText: text(NEO_SHORT_TEXT_LIMIT)
       .describe('What the human reads first; it must stand alone and summarize the message.')
       .optional(),
     verbatim: z
@@ -35,7 +45,15 @@ export const NeoPublicationObject = z
         'Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.'
       )
       .optional(),
-    fullText: text(16000).describe('The details of the topic(s) shortText names.'),
+    fullText: text(DELIVERABLE_CHAR_LIMIT).describe(
+      'The details of the topic(s) shortText names, or the whole deliverable.'
+    ),
+    deliverable: z
+      .literal(true)
+      .describe(
+        'The publication is a copyable deliverable: fullText is the whole message and may exceed the ordinary reply cap.'
+      )
+      .optional(),
     session: text(500).optional(),
     links: z
       .array(
@@ -71,8 +89,8 @@ export const NeoPublicationObject = z
         z
           .object({
             revisionId: z.uuid(),
-            shortText: text(4000).optional(),
-            fullText: text(16000),
+            shortText: text(NEO_SHORT_TEXT_LIMIT).optional(),
+            fullText: text(DELIVERABLE_CHAR_LIMIT),
             session: text(500).optional(),
             createdAt: z.string().datetime(),
             producerInput: origin.optional(),
@@ -89,12 +107,18 @@ export const workerSession = (session?: string | null) =>
   session && !session.startsWith('neo:') ? session : undefined;
 
 export const NeoPublicationReplyFields = {
-  text: text(16000),
-  details: text(16000).optional(),
+  text: text(DELIVERABLE_CHAR_LIMIT),
+  details: text(REPLY_FIELD_LIMIT).optional(),
 };
 
 export function publicationTextRule(
-  value: { verbatim?: true; shortText?: string; cardReply?: unknown },
+  value: {
+    verbatim?: true;
+    shortText?: string;
+    cardReply?: unknown;
+    fullText: string;
+    deliverable?: true;
+  },
   ctx: z.RefinementCtx
 ): void {
   if (value.verbatim === true && value.cardReply !== undefined)
@@ -106,33 +130,35 @@ export function publicationTextRule(
     });
   if (value.verbatim !== true && value.shortText === undefined)
     ctx.addIssue({ code: 'custom', message: 'shortText is required without verbatim' });
+  if (value.deliverable !== true && value.fullText.length > REPLY_FIELD_LIMIT)
+    ctx.addIssue({
+      code: 'custom',
+      message: `A publication body fits ${REPLY_FIELD_LIMIT} characters; a longer deliverable sets deliverable: true, up to ${DELIVERABLE_CHAR_LIMIT}.`,
+    });
+}
+
+function replyLines(text: string): number {
+  return text.replace(/\n$/, '').split('\n').length;
+}
+
+export function replyBodyRefusal({
+  text,
+  details,
+}: {
+  text: string;
+  details?: string;
+}): 'reply_needs_details' | 'reply_summary_too_long' | undefined {
+  if (text.length <= REPLY_CHAR_LIMIT && replyLines(text) <= REPLY_LINE_LIMIT) return undefined;
+  return details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 
 export function foldPublicationDetails(value: { text: string; details?: string }): {
   text: string;
   details?: string;
 } {
-  return value.details !== undefined && value.details.length < value.text.length
-    ? { text: `${value.text}\n\n${value.details}` }
-    : value;
-}
-
-const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
-
-export function wordCount(text: string): number {
-  let count = 0;
-  for (const segment of wordSegments.segment(text)) if (segment.isWordLike) count++;
-  return count;
-}
-
-export const SUMMARY_WORD_LIMIT = 300;
-export const SUMMARY_CHAR_LIMIT = 4000;
-
-export function replySummaryTooLong(body: { text: string; details?: string }): boolean {
-  return (
-    body.details !== undefined &&
-    (wordCount(body.text) > SUMMARY_WORD_LIMIT || body.text.length > SUMMARY_CHAR_LIMIT)
-  );
+  if (value.details === undefined || value.details.length >= value.text.length) return value;
+  const folded = { text: `${value.text}\n\n${value.details}` };
+  return replyBodyRefusal(folded) === undefined ? folded : value;
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);
