@@ -347,6 +347,24 @@ describe('CustomEndpointProvider', () => {
     expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(settings?.autoCompactWindow));
   });
 
+  it('reports the declared context window, which the shared env builder turns into the SDK window', async () => {
+    const fake = makeFakeBridge();
+    const p = new CustomEndpointProvider(
+      {
+        ...baseConfig,
+        models: [{ id: 'swe-2-high', capabilities: { maxContextTokens: 256_000 } }],
+        defaultModelId: 'swe-2-high',
+      },
+      { bridgeFactory: fake.factory }
+    );
+    await p.ensureBridgeStarted('swe-2-high');
+    const cfg = p.buildSdkConfig('swe-2-high');
+    expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('263400');
+    expect(p.getCachedModels()?.find((model) => model.id === 'swe-2-high')?.contextWindow).toBe(
+      256_000
+    );
+  });
+
   it('scales CLAUDE_CODE_AUTO_COMPACT_WINDOW with explicit per-model autoCompactPercent', async () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(
