@@ -21,6 +21,7 @@ export function NeoRealtimeVoice({
 }) {
   const [on, setOn] = useState(false);
   const live = useRef<{ player: NeoSpeechPlayer; stop: (disable: boolean) => void } | null>(null);
+  const disabling = useRef<Promise<unknown> | null>(null);
 
   const stop = (disable = true) => {
     live.current?.stop(disable);
@@ -36,10 +37,13 @@ export function NeoRealtimeVoice({
   const start = async () => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return onError(t('composer.reconnecting'));
-    let accepted = false;
+    let current = !disabling.current;
+    disabling.current?.then(() => {
+      current = true;
+    });
     const player = openNeoSpeechPlayer(hub, sessionId, {
       onStop: () => {
-        if (live.current === session && accepted) stop(false);
+        if (live.current === session && current) stop(false);
       },
     });
     const session = {
@@ -47,7 +51,10 @@ export function NeoRealtimeVoice({
       stop: (disable: boolean) => {
         player.close();
         if (disable)
-          invokeOperation(hub, 'neo.speech.listen', { sessionId, enabled: false }).catch(() => {});
+          disabling.current = invokeOperation(hub, 'neo.speech.listen', {
+            sessionId,
+            enabled: false,
+          }).catch(() => {});
       },
     };
     live.current = session;
@@ -73,7 +80,6 @@ export function NeoRealtimeVoice({
       });
       if (live.current !== session) return;
       if (!listen.ok) return refuse(listen);
-      accepted = true;
       setOn(true);
     } catch {
       if (live.current === session) refuse({ ok: false });
