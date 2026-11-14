@@ -76,6 +76,7 @@ try {
   );
   assert.equal(seen.workflowTemplates.tabBar, 1, 'the configure page still renders for that tab');
 
+  assert.equal(errors.length, 0, `page errors: ${errors.join('; ')}`);
   seen.pageErrors = errors;
   writeFileSync(`${run}/evidence/retired-space-urls.json`, JSON.stringify(seen, null, 2));
   console.log(JSON.stringify(seen, null, 1));
