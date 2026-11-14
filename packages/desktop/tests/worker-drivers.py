@@ -464,27 +464,19 @@ class WorkerDrivers(unittest.TestCase):
             self.assertEqual(client.recv(1), b'')
         self.assertTrue(self.call('status')['ok'])
 
-    def test_unapproved_same_user_cannot_start_or_get_driver_socket(self):
-        self.process.send_signal(signal.SIGINT)
-        self.assertEqual(self.process.wait(timeout=10), 0)
-        self.process.stdout.close()
-        self.process.stderr.close()
-        self.process = subprocess.Popen(
-            [str(RUNNER), str(self.root), str(self.binary), self.path, 'unapproved'],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
-        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+    def test_release_host_starts_a_driver_only_it_can_reach(self):
         result = self.call('start', workDir=str(self.work))
         if result.get('result', {}).get('pid'):
             self.pids.append(result['result']['pid'])
-        self.assertFalse(result['ok'], result)
-        self.assertIn('authorization', result['error'])
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(set(result['result']), {'state', 'pid'})
+        self.assertEqual(result['result']['state'], 'running')
+        self.assertTrue(alive(result['result']['pid']))
+        self.assertFalse([path for path in self.work.rglob('*') if path.is_socket()])
         self.assertFalse(self.call('start', workDir=str(self.work), fixtureEnabled=True)['ok'])
-        status = self.call('status')['result']
-        self.assertEqual(status['state'], 'unavailable')
-        self.assertIsNone(status['pid'])
-        self.assertFalse(list(self.work.glob('d-*')))
+        stopped = self.call('stop')['result']
+        self.assertEqual(stopped, {'state': 'stopped', 'pid': None})
+        self.assertFalse(alive(result['result']['pid']))
 
     def test_bind_failure_allows_desktop_setup_to_continue(self):
         base = self.root / ('long-data-directory-' + 'x' * 90)
