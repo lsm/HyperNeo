@@ -11,6 +11,10 @@ It owns its daemon, adds two projects (`alpha`, `beta`), pairs a browser and cle
   `Add folder to alpha…`; entering a path closes the form and the new folder appears in the menu.
 - The row's `+` and trash (`Remove project <name>`) buttons have the same size, and both gain
   the same `fill` background on hover.
+- Open `Add folder to alpha…`, then click beta's `+` while the form is open: the form stays,
+  names alpha in its hint, and the path submitted there joins alpha, not beta. The runner
+  checks the folder's owning project through `rpc:workspace.history` and writes
+  `retarget-project.txt`.
 - Touch device (`hover: none`): the button stays visible.
 - Screenshots: `sidebar-{light,dark}-{rest,hover,hover-plus,hover-remove,new-session,folder-menu,folder-added}.png` and
   `sidebar-touch-rest.png`. Run with `TMPDIR=/private/tmp` so folder paths in the sidebar stay generic.

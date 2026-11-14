@@ -12,6 +12,7 @@ const browser = await chromium.launch({
   ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
 });
 const seen = {};
+const retargetFolders = [];
 const opacity = (locator) => locator.evaluate((el) => getComputedStyle(el).opacity);
 const plus = (page, name) => page.getByRole('button', { name: `New session in ${name}` });
 
@@ -80,7 +81,9 @@ try {
     result.focusBeta = await opacity(plus(page, 'beta'));
     result.focusAlpha = await opacity(plus(page, 'alpha'));
     await plus(page, 'alpha').click();
-    const chip = page.locator('button:not([data-testid])[title$="/projects/alpha"]');
+    const chip = page.locator(
+      'button:not([data-testid]):not([role="menuitem"])[title$="/projects/alpha"]'
+    );
     await chip.waitFor({ timeout: 10000 });
     await page.mouse.move(900, 700);
     await page.waitForTimeout(800);
@@ -112,6 +115,24 @@ try {
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-folder-added.png` });
     await page.keyboard.press('Escape');
+    await page.mouse.move(900, 700);
+    await plus(page, 'alpha').hover();
+    await plus(page, 'alpha').click();
+    await chip.waitFor({ timeout: 10000 });
+    await chip.click();
+    await page.getByRole('menuitem', { name: 'Add folder to alpha…' }).click();
+    const retargetInput = page.getByPlaceholder('Folder path');
+    await retargetInput.waitFor({ timeout: 5000 });
+    await plus(page, 'beta').hover();
+    await plus(page, 'beta').click();
+    await page.waitForTimeout(600);
+    result.retargetFormOpen = await retargetInput.count();
+    result.retargetHint = await page.getByText(/Adds a folder to alpha/).count();
+    await retargetInput.fill(`${run}/projects/assets-${scheme}-retarget`);
+    await retargetInput.press('Enter');
+    await retargetInput.waitFor({ state: 'detached', timeout: 10000 });
+    retargetFolders.push(`${run}/projects/assets-${scheme}-retarget`);
+    await page.keyboard.press('Escape');
     result.pageErrors = errors;
     seen[scheme] = result;
     assert.equal(result.hoverMedia, true);
@@ -127,6 +148,8 @@ try {
     assert.equal(result.addProjectForms, 0);
     assert.equal(result.addedFolderInMenu, true);
     assert.equal(result.addedFolderInSidebar, true);
+    assert.equal(result.retargetFormOpen, 1);
+    assert.equal(result.retargetHint, 1);
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);
@@ -154,7 +177,10 @@ try {
   await touch.close();
   console.log('PASS');
 } finally {
-  writeFileSync(`${run}/evidence/sidebar-project-new-session.json`, JSON.stringify(seen, null, 2));
+  writeFileSync(
+    `${run}/evidence/sidebar-project-new-session.json`,
+    JSON.stringify({ ...seen, retargetFolders }, null, 2)
+  );
   console.log(JSON.stringify(seen, null, 1));
   await browser.close();
 }
