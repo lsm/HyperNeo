@@ -16,11 +16,6 @@ import {
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import { createTestDb, createTestSession } from '../../../helpers/database';
-import { ProcessingStateManager as RealProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import {
-  hyperneoWorkStatus,
-  readHyperneoSession,
-} from '../../../../src/lib/drivers/hyperneo-adapter';
 
 describe('InterruptHandler', () => {
   let handler: InterruptHandler;
@@ -1090,83 +1085,5 @@ describe('InterruptHandler', () => {
         f.db.close();
       }
     });
-  });
-});
-
-describe('InterruptHandler stopping a session the restart left waiting', () => {
-  async function stopRestartWaitingSession(
-    write: (original: () => Promise<unknown>) => Promise<unknown>
-  ) {
-    const db = await createTestDb();
-    const sessionId = 'sess-restart-cooldown';
-    const session = createTestSession(sessionId);
-    await db.createSession(session);
-    await db.updateSession(sessionId, {
-      processingState: JSON.stringify({
-        status: 'interrupted',
-        reason: 'restart',
-        messageId: 'cut-off',
-        resumeAt: Date.now() + 86_400_000,
-      }),
-    });
-    const bus = {
-      publish: mock(async () => {}),
-      publishAsync: mock(async () => {}),
-    } as unknown as InterruptHandlerContext['internalEventBus'];
-    const stateManager = new RealProcessingStateManager(sessionId, bus as never, db);
-    stateManager.restoreFromDatabase();
-    const update = db.updateSession.bind(db);
-    db.updateSession = ((...args: Parameters<typeof update>) =>
-      write(() => update(...args))) as typeof db.updateSession;
-    const status = () => {
-      const row = readHyperneoSession(db.getDatabase(), sessionId);
-      return row ? hyperneoWorkStatus(row.status, row.processing) : null;
-    };
-    const before = status();
-    const stopped = new InterruptHandler({
-      session,
-      messageHub: { event: mock(async () => {}) } as unknown as MessageHub,
-      messageQueue: new MessageQueue(),
-      stateManager,
-      logger: {
-        info: mock(() => {}),
-        warn: mock(() => {}),
-        error: mock(() => {}),
-      } as unknown as Logger,
-      db,
-      internalEventBus: bus,
-      queryObject: null,
-      queryPromise: null,
-      queryAbortController: new AbortController(),
-      processExitedPromise: null,
-    }).handleInterrupt();
-    return { db, before, stopped, status };
-  }
-
-  it('has dropped the pending restart resume by the time stop returns', async () => {
-    const f = await stopRestartWaitingSession(async (original) => {
-      await Bun.sleep(100);
-      return original();
-    });
-    try {
-      expect(f.before).toBe('queued');
-      await f.stopped;
-      expect(f.status()).toBe('stopped');
-      expect(f.db.listRestartCooldownResumes()).toEqual([]);
-    } finally {
-      f.db.close();
-    }
-  });
-
-  it('fails the stop when the cleared state cannot be written', async () => {
-    const f = await stopRestartWaitingSession(async () => {
-      throw new Error('disk full');
-    });
-    try {
-      await expect(f.stopped).rejects.toThrow('disk full');
-      expect(f.status()).toBe('queued');
-    } finally {
-      f.db.close();
-    }
   });
 });

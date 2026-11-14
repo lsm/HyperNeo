@@ -237,6 +237,17 @@ describe('restart recovery reads', () => {
     });
   });
 
+  test('stopping a session the restart left waiting drops its resume', () => {
+    expect(sessions.markRestartInterruptedTurns()).toBe(4);
+    expect(sessions.clearRestartResume('cooling')).toBe(true);
+    expect(sessions.clearRestartResume('cooling')).toBe(false);
+    expect(sessions.listRestartCooldownResumes()).toEqual([]);
+    expect(sessions.takeRestartCooldownResume('cooling')).toBe(false);
+    expect(JSON.parse(sessions.getSession('cooling')?.processingState ?? '{}')).toEqual({
+      status: 'interrupted',
+    });
+  });
+
   test('archived sessions are not resumed', () => {
     sessions.updateSession('asked', { status: 'archived' });
     expect(sessions.listProcessingSessionIds()).toEqual(['working']);
