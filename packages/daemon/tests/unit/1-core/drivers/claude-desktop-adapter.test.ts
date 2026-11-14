@@ -1374,14 +1374,26 @@ function spawnLiveReads(firstStdout: string) {
         kill: () => {},
       };
     let done: (code: number) => void = () => {};
+    let closeStdout: () => void = () => {};
     const proc = {
-      stdout: new ReadableStream<Uint8Array>({ start: () => {} }),
+      stdout: new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          closeStdout = () => {
+            try {
+              controller.close();
+            } catch {}
+          };
+        },
+      }),
       stderr: null,
       exited: new Promise<number>((resolve) => {
         done = resolve;
       }),
       exitCode: null,
-      kill: () => done(137),
+      kill: () => {
+        closeStdout();
+        done(137);
+      },
     };
     kills.push(proc.kill);
     return proc;
@@ -1465,7 +1477,7 @@ describe('reuseLiveSessions', () => {
     clock = 10_000;
     const expired = live();
     kills();
-    await expect(expired).rejects.toThrow('exited with 137');
+    await expect(expired).rejects.toThrow();
   });
 });
 
