@@ -1,13 +1,16 @@
 // @ts-nocheck
 
 import { signal } from '@preact/signals';
-import { cleanup, render, screen, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGetWorkspaceHistory, mockGetGitBranches } = vi.hoisted(() => ({
-  mockGetWorkspaceHistory: vi.fn(),
-  mockGetGitBranches: vi.fn(),
-}));
+const { mockGetWorkspaceHistory, mockGetGitBranches, mockAddFolderToProject } = vi.hoisted(
+  () => ({
+    mockGetWorkspaceHistory: vi.fn(),
+    mockGetGitBranches: vi.fn(),
+    mockAddFolderToProject: vi.fn(),
+  })
+);
 
 vi.mock('../../lib/state.ts', () => ({
   connectionState: signal('connected'),
@@ -24,6 +27,7 @@ vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
   getGitBranches: mockGetGitBranches,
   addWorkspaceToHistory: vi.fn(),
+  addFolderToProject: mockAddFolderToProject,
 }));
 
 vi.mock('../../hooks/useModelSwitcher.ts', () => ({
@@ -70,5 +74,35 @@ describe('SessionsPage', () => {
     expect(screen.getAllByText('No folder').length).toBeGreaterThan(0);
     newChatProjectSignal.value = '/code';
     await waitFor(() => expect(folderChip().textContent).toContain('code'));
+  });
+
+  it('adds a folder to the selected project from the folder menu', async () => {
+    newChatProjectSignal.value = '/code';
+    render(<SessionsPage />);
+    await waitFor(() => expect(folderChip().textContent).toContain('code'));
+    expect(screen.queryByRole('menuitem', { name: /Add folder/ })).toBeNull();
+    fireEvent.click(folderChip());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add folder to code…' }));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    mockAddFolderToProject.mockResolvedValue(undefined);
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
+    await waitFor(() => expect(screen.queryByPlaceholderText('Folder path')).toBeNull());
+    expect(folderChip().textContent).toContain('code');
+  });
+
+  it('keeps the folder form open with the reason when the daemon refuses', async () => {
+    newChatProjectSignal.value = '/code';
+    render(<SessionsPage />);
+    await waitFor(() => expect(folderChip().textContent).toContain('code'));
+    fireEvent.click(folderChip());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add folder to code…' }));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/taken' } });
+    mockAddFolderToProject.mockRejectedValue(
+      new Error('Folder already belongs to another project.')
+    );
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    expect(await screen.findByText('Folder already belongs to another project.')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Folder path')).toBeTruthy();
   });
 });
