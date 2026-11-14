@@ -407,6 +407,45 @@ describe('neoIntakeMessage order', () => {
     expect(retry.message.content).toEqual(content);
   });
 
+  test('a legacy prompt that quoted a message replays verbatim on every retry', () => {
+    const content = [
+      { type: 'text' as const, text: `[message id: ${requestId}]` },
+      { type: 'text' as const, text: '(local time: Sun 2026-10-18 21:10 EDT)' },
+      {
+        type: 'text' as const,
+        text: '<quoted>{"replyTo":{"kind":"message","id":"m1"},"quoted":null}</quoted>',
+      },
+      { type: 'text' as const, text: 'The human replied to the Neo message "Ready?":' },
+      { type: 'text' as const, text: 'Thanks' },
+    ];
+    const stored = {
+      type: 'user' as const,
+      uuid: requestId as `${string}-${string}-${string}-${string}-${string}`,
+      session_id: session,
+      parent_tool_use_id: null,
+      message: { role: 'user' as const, content },
+      inputKind: 'human' as const,
+      humanContent: [{ type: 'text' as const, text: 'Thanks' }],
+      replyTo: { kind: 'message' as const, id: 'm1' },
+    };
+    const input = {
+      sessionId: session,
+      requestId,
+      content: 'Thanks',
+      replyTo: { kind: 'message' as const, id: 'm1' },
+    };
+    const first = neoIntakeMessage(
+      input,
+      session,
+      null,
+      neoRetryLocalTime(stored, 'fresh'),
+      stored as never
+    );
+    const second = neoIntakeMessage(input, session, null, neoRetryLocalTime(first, 'fresh'), first);
+    expect(first.message.content).toEqual(content);
+    expect(second.message.content).toEqual(content);
+  });
+
   test('reads no stored time from the human words', () => {
     const words = '(local time: Mon 2025-01-01 09:00 EST) that is what I typed';
     const content = [

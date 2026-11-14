@@ -144,7 +144,6 @@ export function neoIntakeMessage(
   const fact =
     (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
     neoQuoteFact(input.replyTo);
-  const messageId = `[message id: ${input.requestId}]`;
   const storedBlocks =
     stored?.type === 'user' && Array.isArray(stored.message.content)
       ? stored.message.content
@@ -158,7 +157,6 @@ export function neoIntakeMessage(
   const storedShape = readStoredEnvelope(storedBlocks, input.requestId);
   const enveloped = storedShape.enveloped;
   const legacy = stored !== undefined && !enveloped;
-  const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
     (block: { type: string; text?: string }) =>
       block.type === 'text' && block.text?.startsWith('<already-said>') === true
@@ -168,19 +166,23 @@ export function neoIntakeMessage(
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
+  const storedWords = (stored as { humanContent?: unknown } | undefined)?.humanContent;
   if (legacy) {
-    const storedTail = blocks.slice(-content.length);
+    const words = blocks.slice(-content.length);
     const keepsWords =
-      content.length > 0 &&
-      storedTail.length === content.length &&
-      storedTail.every(
-        (block: unknown, index: number) => canonicalJson(block) === canonicalJson(content[index])
-      );
-    const facts = keepsWords
-      ? (blocks.slice(0, -content.length) as { type: 'text'; text: string }[])
-      : [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
-          text ? [{ type: 'text' as const, text }] : []
-        );
+      storedWords !== undefined ||
+      (content.length > 0 &&
+        words.length === content.length &&
+        words.every(
+          (block: unknown, index: number) => canonicalJson(block) === canonicalJson(content[index])
+        ));
+    const storedFacts = keepsWords ? blocks.slice(0, -content.length) : [];
+    const missing = [
+      ...(localTime && !has('(local time: ') ? [localTime] : []),
+      ...(previewFact && !has('Preview context: ') ? [previewFact] : []),
+      ...(sourceFact && !has(`[input: ${input.inputMode}]`) ? [sourceFact] : []),
+    ].filter((text): text is string => Boolean(text));
+    const facts = [...missing.map((text) => ({ type: 'text' as const, text })), ...storedFacts];
     return {
       type: 'user',
       uuid: input.requestId as UUID,
@@ -190,7 +192,10 @@ export function neoIntakeMessage(
       inputKind: 'human',
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(previewContext ? { previewContext } : {}),
-      ...(facts.length ? { humanContent: content } : {}),
+      ...(facts.length && !keepsWords ? { humanContent: content } : {}),
+      ...(keepsWords && storedWords !== undefined
+        ? { humanContent: storedWords as SDKUserMessage['message']['content'] }
+        : {}),
     };
   }
   const head =
