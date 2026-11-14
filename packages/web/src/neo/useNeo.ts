@@ -5,9 +5,10 @@ import type {
   NeoWorkingEvent,
   NeoWorkingSession,
 } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoQuestionAnswer } from '@hyperneo/shared/types/neo-ask';
+import type { NeoQuestionAnswer, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import { type NeoTodoControl, neoTodoControlCall } from './todo-controls.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient, type NeoPendingAsk } from './neo-intake.ts';
 import { readNeoConversationAsks } from './conversation-ask-client.ts';
@@ -146,6 +147,15 @@ export function useNeo() {
     }
   }
 
+  async function controlTodo(todo: Pick<NeoTodo, 'id' | 'startedAt'>, control: NeoTodoControl) {
+    setError('');
+    const hub = await connectionManager.getHub();
+    const call = neoTodoControlCall(todo, control);
+    const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, call.name, call.input);
+    if (!result.ok) throw new Error(result.reason);
+    await refresh();
+  }
+
   async function muteSession(key: string, muted: boolean) {
     setError('');
     try {
@@ -210,6 +220,7 @@ export function useNeo() {
     open,
     refresh,
     settleAsk,
+    controlTodo,
     muteSession,
     answerQuestion,
     send: intake.send,

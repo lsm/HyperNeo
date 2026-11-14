@@ -6,6 +6,7 @@ import { Button } from '../ui/Button.tsx';
 import { ModelsSettings } from './ModelsSettings.tsx';
 import { NeoMutedSessionsSettings } from './NeoMutedSessionsSettings.tsx';
 import { NeoRulesSettings } from './NeoRulesSettings.tsx';
+import { NeoTodoLimitsSettings } from './NeoTodoLimitsSettings.tsx';
 import { SettingsGroup, SettingsRow, SettingsSection } from './SettingsSection.tsx';
 
 function NeoRelatedSettings() {
@@ -40,6 +41,7 @@ export function NeoModelSettings() {
       <div class="mt-4">
         <NeoRulesSettings />
       </div>
+      <NeoTodoLimitsSettings />
       <NeoRelaySendersSettings />
       <NeoMutedSessionsSettings />
       <NeoRelatedSettings />

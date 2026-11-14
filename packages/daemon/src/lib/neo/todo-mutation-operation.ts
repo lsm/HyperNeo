@@ -213,7 +213,9 @@ export function wireNeoTodoMutations(
       ? {
           ...entry,
           execute: (input, caller) =>
-            mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
+            entry.name === 'neo.todo.hold' && (input as { reason: unknown }).reason !== null
+              ? entry.execute(input, caller)
+              : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
         }
       : entry;
   });
