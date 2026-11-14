@@ -882,6 +882,41 @@ test.each(['human', undefined])(
   }
 );
 
+test('same-head sign-off holds skip reads for ten minutes then refresh every gate', async () => {
+  labels = ['human-merge'];
+  const run = sweep();
+  await run(10);
+  const firstReads = calls.length;
+  expect(firstReads).toBeGreaterThan(0);
+  labels = [];
+  reviewHead = 'b'.repeat(40);
+  await run(600_009);
+  expect(calls).toHaveLength(firstReads);
+  expect(merges()).toHaveLength(0);
+  await run(600_010);
+  expect(calls.length).toBeGreaterThan(firstReads);
+  expect(merges()).toHaveLength(0);
+  reviewHead = head;
+  await run(600_011);
+  expect(merges()).toHaveLength(1);
+});
+
+test('a new head immediately refreshes a cached human sign-off hold', async () => {
+  labels = ['human-merge'];
+  const run = sweep();
+  await run(10);
+  const firstReads = calls.length;
+  await run(11);
+  expect(calls).toHaveLength(firstReads);
+  actualHead = reviewHead = 'b'.repeat(40);
+  labels = [];
+  const rows = await ledger.read('list');
+  await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], head: actualHead }], 12);
+  await run(12);
+  expect(calls.length).toBeGreaterThan(firstReads);
+  expect(merges()).toHaveLength(1);
+});
+
 test('a rejected sign-off delivery holds merging but lets the sweep finish and retry', async () => {
   labels = ['human-merge'];
   let wakes = 0;
