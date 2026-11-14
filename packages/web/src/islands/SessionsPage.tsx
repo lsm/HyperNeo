@@ -279,6 +279,12 @@ export function SessionsPage() {
       setManualProjectError('Enter an absolute folder path.');
       return;
     }
+    if (!history.some((entry) => entry.path === target)) {
+      setManualProjectError(
+        `${owningProjectName(target, history)} is no longer a project. Add the folder as a project instead.`
+      );
+      return;
+    }
     setManualProjectBusy(true);
     setManualProjectError(null);
     try {
