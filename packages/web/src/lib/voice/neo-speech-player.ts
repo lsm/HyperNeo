@@ -27,6 +27,7 @@ export interface NeoSpeechPlayer {
 
 interface NeoSpeechPlayerOptions {
   createContext?: () => AudioContext;
+  onStop?: () => void;
 }
 
 const STALL_MS = 30_000;
@@ -134,7 +135,10 @@ export function openNeoSpeechPlayer(
 
   const unsubscribe = hub.onEvent<SpeechEvent>('neo.speech', (event) => {
     if (event?.sessionId !== sessionId) return;
-    if (event.type === 'stop') return drop();
+    if (event.type === 'stop') {
+      drop();
+      return options.onStop?.();
+    }
     const utterance = queue.find((item) => item.id === event.id);
     if (event.type === 'say') {
       if (event.format !== 'pcm16' || utterance) return;
