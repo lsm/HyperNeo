@@ -118,11 +118,6 @@ const script = await built.outputs[0].text();
 
 const requireFrom = createRequire(join(process.env.NODE_PATH || run, 'noop.js'));
 const { chromium } = requireFrom('playwright');
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: process.env.VERIFY_BROWSER || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required'],
-});
 const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({
   createSocket: createLocalSocket,
@@ -130,7 +125,13 @@ const transport = new WebSocketClientTransport({
   autoReconnect: false,
 });
 let evidence: Record<string, unknown> = { passed: false };
+let browser: { newPage(): Promise<any>; close(): Promise<void> } | undefined;
 try {
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.VERIFY_BROWSER || undefined,
+    args: ['--autoplay-policy=no-user-gesture-required'],
+  });
   hub.registerTransport(transport);
   await transport.initialize();
   const page = await browser.newPage();
@@ -186,7 +187,7 @@ try {
   console.log(JSON.stringify(evidence));
 } finally {
   writeFileSync(join(run, 'evidence/neo-speech-player.json'), JSON.stringify(evidence, null, 2));
-  await browser.close();
+  await browser?.close();
   await transport.close();
   hub.cleanup();
   tts.closeAllConnections();
