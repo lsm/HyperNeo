@@ -99,9 +99,9 @@ test('a recorded live driver is running', async () => {
 
 test('a stopped worker reads stopped once its driver is gone', async () => {
   await openApp();
+  await writeFile(join(directory, 'stopped'), '', { mode: 0o600 });
   expect(await status({ worker })).toMatchObject(one('stopped'));
   await recordDriver();
-  await writeFile(join(directory, 'stopped'), '', { mode: 0o600 });
   alive = false;
   expect(await status({ worker })).toMatchObject(one('stopped'));
 });
@@ -171,4 +171,13 @@ test('a live driver whose identity cannot be read is not reported stopped', asyn
   );
   alive = false;
   expect(await status({ worker })).toMatchObject(one('stop_unconfirmed'));
+});
+
+test('an opted-in worker whose driver is still starting keeps its Stop', async () => {
+  await openApp();
+  expect(await status({ worker })).toMatchObject(one('running'));
+  await recordDriver();
+  await writeFile(join(directory, 'starting'), '', { mode: 0o600 });
+  alive = false;
+  expect(await status({ worker })).toMatchObject(one('running'));
 });
