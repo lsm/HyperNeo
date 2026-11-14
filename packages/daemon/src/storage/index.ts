@@ -112,6 +112,7 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
+  private globalSettingsCache?: { version: number; settings: GlobalSettings };
   spaceSessions?: SpaceSessionPort;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
@@ -650,15 +651,22 @@ export class Database {
   }
 
   getGlobalSettings(): GlobalSettings {
-    return this.settingsRepo.getGlobalSettings();
+    const version = this.reactiveDb?.getTableVersion('global_settings') ?? 0;
+    if (!this.globalSettingsCache || this.globalSettingsCache.version !== version) {
+      this.globalSettingsCache = { version, settings: this.settingsRepo.getGlobalSettings() };
+    }
+    return structuredClone(this.globalSettingsCache.settings);
   }
 
   saveGlobalSettings(settings: GlobalSettings): void {
     this.settingsRepo.saveGlobalSettings(settings);
+    this.globalSettingsCache = undefined;
   }
 
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
-    return this.settingsRepo.updateGlobalSettings(updates);
+    const settings = this.settingsRepo.updateGlobalSettings(updates);
+    this.globalSettingsCache = undefined;
+    return settings;
   }
 
   getDatabase(): BunDatabase {
