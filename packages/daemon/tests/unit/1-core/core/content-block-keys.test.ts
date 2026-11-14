@@ -14,9 +14,12 @@ const toolUse = {
 
 describe('stripDisallowedBlockKeys', () => {
   test('drops keys the Anthropic API rejects on a tool_use block', () => {
-    expect(stripDisallowedBlockKeys({ ...toolUse, text: '', thinking: 'planning' })).toEqual(
-      toolUse
-    );
+    const block: { type: string; [key: string]: unknown } = {
+      ...toolUse,
+      text: '',
+      thinking: 'planning',
+    };
+    expect(stripDisallowedBlockKeys(block)).toEqual(toolUse);
   });
 
   test('returns an allowed tool_use block and other block types unchanged', () => {
