@@ -32,17 +32,18 @@ function appListening(path: string): Promise<boolean> {
 async function driverState(dataDir: string, worker: string, options: Options) {
   if (!(await appListening(join(dataDir, 'desktop/control.sock')))) return 'unavailable';
   const directory = join(dataDir, 'desktop/workers', worker);
-  if (desktopRecordMissing(join(directory, 'driver.json'))) return 'stopped';
+  const stopped = !desktopRecordMissing(join(directory, 'stopped'));
+  const starting = !desktopRecordMissing(join(directory, 'starting'));
+  if (desktopRecordMissing(join(directory, 'driver.json'))) return stopped ? 'stopped' : 'running';
   try {
     const driver = readDesktopDriverRecord(directory);
     const now = await (options.readIdentity ?? readProcessIdentity)(driver.pid);
     const alive =
       now?.seconds === driver.startedAt.seconds &&
       now.microseconds === driver.startedAt.microseconds;
-    if (!alive && (now || desktopPidGone(driver.pid))) return 'stopped';
-    return alive && desktopRecordMissing(join(directory, 'stopped'))
-      ? 'running'
-      : 'stop_unconfirmed';
+    if (!alive && (now || desktopPidGone(driver.pid)))
+      return starting && !stopped ? 'running' : 'stopped';
+    return alive && !stopped ? 'running' : 'stop_unconfirmed';
   } catch {
     return 'stop_unconfirmed';
   }
