@@ -36,11 +36,11 @@ export function openNeoSpeechPlayer(
   options: NeoSpeechPlayerOptions = {}
 ): NeoSpeechPlayer {
   const context = (options.createContext ?? (() => new AudioContext()))();
-  context.resume().catch(() => {});
   let queue: Utterance[] = [];
   let playhead = 0;
+  let audible = true;
 
-  const ack = (id: string, state: 'playing' | 'played' | 'cancelled') => {
+  const ack = (id: string, state: 'playing' | 'played' | 'cancelled' | 'failed') => {
     invokeOperation(hub, 'neo.speech.ack', { sessionId, id, state }).catch(() => {});
   };
 
@@ -101,6 +101,11 @@ export function openNeoSpeechPlayer(
       finish(utterance, 'played');
   };
 
+  context.resume().catch(() => {
+    audible = false;
+    for (const utterance of queue.splice(0)) ack(utterance.id, 'failed');
+  });
+
   const unsubscribe = hub.onEvent<SpeechEvent>('neo.speech', (event) => {
     if (event?.sessionId !== sessionId) return;
     if (event.type === 'stop') {
@@ -111,6 +116,7 @@ export function openNeoSpeechPlayer(
     const utterance = queue.find((item) => item.id === event.id);
     if (event.type === 'say') {
       if (event.format !== 'pcm16' || utterance) return;
+      if (!audible) return ack(event.id, 'failed');
       queue.push({
         id: event.id,
         sampleRate: event.sampleRate ?? 24000,
