@@ -133,7 +133,7 @@ export function replyBodyRefusal(body: {
   const lines = body.text.split('\n').filter((line) => line.trim()).length;
   const share =
     (body.text.match(cjk)?.length ?? 0) / 150 + wordCount(body.text.replace(cjk, ' ')) / 60;
-  if (lines <= 5 && share <= 1) return undefined;
+  if (lines <= 5 && share <= 1 && body.text.length <= 500) return undefined;
   return body.details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 

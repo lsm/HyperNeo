@@ -50,8 +50,9 @@ try {
   evidence.longAlone = await publish('long-alone', long);
   evidence.list = await publish('list', '**Status**\n- one\n- two\n- three\n- four\n- five');
   evidence.chinese = await publish('chinese', '中'.repeat(151));
+  evidence.base64 = await publish('base64', `Key: ${'QUJD'.repeat(125)}`);
   evidence.longSummary = await publish('long-summary', long, `${long} ${long}`);
-  for (const key of ['longAlone', 'list', 'chinese']) {
+  for (const key of ['longAlone', 'list', 'chinese', 'base64']) {
     assert.equal((evidence[key] as { accepted: boolean }).accepted, false);
     assert.match((evidence[key] as { reason: string }).reason, /^reply_needs_details: .*the rest in details/);
   }

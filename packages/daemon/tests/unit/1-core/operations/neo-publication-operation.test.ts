@@ -504,6 +504,10 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_needs_details',
     });
+    expect(await send('base64', `Key: ${'QUJD'.repeat(125)}`)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
     for (const [requestId, text] of [
       ['short', '**Merged**\n- CI green\n- 已部署'],
       ['words-at-limit', Array(60).fill('word').join(' ')],
@@ -523,15 +527,7 @@ describe('Neo publication without runtime input attribution', () => {
       caller
     );
     expect(over).toMatchObject({ accepted: false, reason: 'invalid_publication' });
-    const exact = await publish(
-      { requestId: 'send-folded-exact', text: 'x'.repeat(15990), details: 'dddddddd' },
-      caller
-    );
-    expect(exact).toMatchObject({
-      accepted: true,
-      publication: { verbatim: true, fullText: `${'x'.repeat(15990)}\n\ndddddddd` },
-    });
-    expect(ledger.list(conversationId)).toHaveLength(1);
+    expect(ledger.list(conversationId) ?? []).toHaveLength(0);
   });
 
   test('refuses the old shortText, fullText and verbatim fields', async () => {
