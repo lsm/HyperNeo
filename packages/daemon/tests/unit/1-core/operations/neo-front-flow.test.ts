@@ -1495,6 +1495,17 @@ test('the front input starts with what Neo said since the last input and escapes
   expect(human.match(/<\/human-message>/g)).toHaveLength(1);
 });
 
+test('the front input carries the human words in one envelope with no nested tags', async () => {
+  const { id } = await frontInput('Ship it');
+  const text = delivered(id)
+    .map((block) => block.text ?? '')
+    .join('\n');
+  expect(text.match(/<human-message id=/g)).toHaveLength(1);
+  expect(text.match(/<\/human-message>/g)).toHaveLength(1);
+  expect(text).not.toContain('&lt;human-message');
+  expect(text).toContain('Ship it');
+});
+
 test('queued front inputs take consecutive catch-up ranges', async () => {
   await frontInput();
   await neoSays('First result.');

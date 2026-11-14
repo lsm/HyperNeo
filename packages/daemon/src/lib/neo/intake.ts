@@ -130,14 +130,12 @@ export function neoIntakeMessage(
     stored?.type === 'user' && Array.isArray(stored.message.content)
       ? stored.message.content
       : null;
-  const identifier =
-    !stored ||
-    (storedBlocks?.some(
-      (block: { type: string; text?: string }) => block.type === 'text' && block.text === messageId
-    ) ??
-      false)
-      ? messageId
-      : null;
+  const has = (text: string) =>
+    storedBlocks?.some(
+      (block: { type: string; text?: string }) => block.type === 'text' && block.text === text
+    ) === true;
+  const legacy = stored !== undefined && !has(`<human-message id="${input.requestId}">`);
+  const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
     (block: { type: string; text?: string }) =>
       block.type === 'text' && block.text?.startsWith('<already-said>') === true
@@ -147,8 +145,8 @@ export function neoIntakeMessage(
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
-  if (stored && identifier === null) {
-    const legacy = [localTime, fact, previewFact, sourceFact].flatMap((text) =>
+  if (legacy) {
+    const facts = [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
       text ? [{ type: 'text' as const, text }] : []
     );
     return {
@@ -156,11 +154,11 @@ export function neoIntakeMessage(
       uuid: input.requestId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
-      message: { role: 'user', content: [...legacy, ...content] },
+      message: { role: 'user', content: facts.length ? [...facts, ...content] : content },
       inputKind: 'human',
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(previewContext ? { previewContext } : {}),
-      ...(legacy.length ? { humanContent: content } : {}),
+      ...(facts.length ? { humanContent: content } : {}),
     };
   }
   const opening = [identifier, localTime, sourceFact].flatMap((text) =>
