@@ -167,6 +167,43 @@ describe('SessionsPage', () => {
     expect(mockAddFolderToProject).not.toHaveBeenCalled();
   });
 
+  it('refuses the form when the removed project was the only one', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([{ path: '/gone', lastUsedAt: 1, useCount: 1 }]);
+    newChatProjectSignal.value = '/gone';
+    render(<SessionsPage />);
+    const goneChip = await screen.findByText((_, element) =>
+      Boolean(element?.getAttribute('title') === '/gone')
+    );
+    fireEvent.click(goneChip);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to gone…' }));
+    mockGetWorkspaceHistory.mockResolvedValue([]);
+    workspaceHistoryVersionSignal.value += 1;
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(2));
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    expect(await screen.findByText(/gone is no longer a project/)).toBeTruthy();
+    expect(mockAddFolderToProject).not.toHaveBeenCalled();
+  });
+
+  it('refuses the form when the project was removed before the page reloaded', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([
+      { path: '/code', lastUsedAt: 1, useCount: 1 },
+      { path: '/gone', lastUsedAt: 1, useCount: 1 },
+    ]);
+    newChatProjectSignal.value = '/gone';
+    render(<SessionsPage />);
+    const goneChip = await screen.findByText((_, element) =>
+      Boolean(element?.getAttribute('title') === '/gone')
+    );
+    fireEvent.click(goneChip);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add folder to gone…' }));
+    mockGetWorkspaceHistory.mockResolvedValue([{ path: '/code', lastUsedAt: 1, useCount: 1 }]);
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), { target: { value: '/assets' } });
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    expect(await screen.findByText(/gone is no longer a project/)).toBeTruthy();
+    expect(mockAddFolderToProject).not.toHaveBeenCalled();
+  });
+
   it('still adds a folder when the history never loaded', async () => {
     mockGetWorkspaceHistory.mockRejectedValue(new Error('Disconnected'));
     newChatProjectSignal.value = '/code';
