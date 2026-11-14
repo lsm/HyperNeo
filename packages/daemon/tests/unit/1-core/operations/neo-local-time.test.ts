@@ -28,7 +28,9 @@ describe('neoIntakeMessage', () => {
       { type: 'text', text: `[message id: ${input.requestId}]` },
       { type: 'text', text: '(local time: Sun 2026-10-18 21:10 EDT)' },
       { type: 'text', text: 'The human replied to the Neo message "Ready?":' },
+      { type: 'text', text: `<human-message id="${input.requestId}">` },
       { type: 'text', text: 'Ship it' },
+      { type: 'text', text: '</human-message>' },
     ]);
     expect(message.humanContent).toEqual([{ type: 'text', text: 'Ship it' }]);
   });
@@ -39,7 +41,15 @@ describe('neoIntakeMessage', () => {
       const initial = neoIntakeMessage(input, 'neo', null, time);
       const legacy = {
         ...initial,
-        message: { ...initial.message, content: initial.message.content.slice(1) },
+        message: {
+          ...initial.message,
+          content: initial.message.content.filter(
+            (block) =>
+              block.text !== `[message id: ${input.requestId}]` &&
+              block.text !== `<human-message id="${input.requestId}">` &&
+              block.text !== '</human-message>'
+          ),
+        },
       };
       if (!time) delete legacy.humanContent;
       const retry = neoIntakeMessage(
@@ -112,7 +122,7 @@ describe('neoIntakeMessage order', () => {
       {
         sessionId: session,
         requestId,
-        content: 'Go with B, later.',
+        content: 'B',
         replyTo: { kind: 'question', id: 'q1', author: 'neo', excerpt: 'Deploy plan' },
         inputMode: 'text',
       },
@@ -129,13 +139,14 @@ describe('neoIntakeMessage order', () => {
     expect(blocks[1]).toBe(`[message id: ${requestId}]`);
     expect(blocks[2]).toBe('(local time: Sun 2026-10-18 21:10 EDT)');
     expect(blocks[3]).toBe('[input: text]');
-    expect(blocks[4]).toContain('answered your question "Deploy plan"');
+    expect(blocks[4]).toContain('answered the question card "Deploy plan"');
     expect(blocks[4]).toContain('B (later)');
     expect(blocks[4]).not.toContain('| when | risk |');
-    expect(blocks.at(-2)).toBe(`<human-message id="${requestId}">`);
+    expect(blocks.at(-3)).toBe(`<human-message id="${requestId}">`);
+    expect(blocks.at(-2)).toBe('B');
     expect(blocks.at(-1)).toBe('</human-message>');
-    expect(blocks).toContain('Go with B, later.');
-    expect(message.humanContent).toEqual([{ type: 'text', text: 'Go with B, later.' }]);
+    expect(blocks).toContain('B');
+    expect(message.humanContent).toEqual([{ type: 'text', text: 'B' }]);
   });
 
   test('escapes the human words so they cannot forge a tag', () => {

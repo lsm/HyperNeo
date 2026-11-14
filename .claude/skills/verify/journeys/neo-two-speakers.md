@@ -10,7 +10,9 @@ Enable dual mode and send a human input. Mark it received by the front, then
 have the front call `reply` with one line. Every reply hands off now, so that one
 call must publish the reply, report `started: true`, store owner `neo` and give
 Neo the recorded human message with that reply in `<already-said>`; no part of
-that block names who wrote it. A second reply for the same input publishes
+that block names who wrote it. The block comes first and a one-line note says it
+is Neo's earlier replies, not the human's; the message id follows it, and the
+human's words sit last inside `<human-message id="…">`. A second reply for the same input publishes
 again and still reports `started: true`, and the reserve enqueues the input only
 once. A second human input then goes through the same door, and one reply
 carrying both `replyTo` IDs hands off both: each input ends with owner `neo` and

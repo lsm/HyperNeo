@@ -116,6 +116,15 @@ try {
   assert.equal(app.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id]).length, 1);
   const delivered = JSON.stringify(app.db.getSDKMessageRepo().getMessageByUuid(root, id));
   assert(delivered.includes('<already-said>') && delivered.includes('I will check the build.'), delivered);
+  const blocks = (
+    JSON.parse(delivered).message.content as { type: string; text?: string }[]
+  ).map((block) => block.text ?? '');
+  assert(blocks[0]?.startsWith('<already-said>'), delivered);
+  assert(blocks[0]?.includes("not the human's words"), delivered);
+  assert(blocks.indexOf(`[message id: ${id}]`) > 0, delivered);
+  assert.equal(blocks.at(-1), '</human-message>');
+  assert(blocks.at(-2)?.startsWith(`<human-message id="${id}">`), delivered);
+  assert(blocks.at(-3) === 'Check the build and tell me.', delivered);
   const again = await call('reply', { requestId: 'work-2', replyTo: [id], text: 'Checking.' });
   assert.equal(again.accepted, true, JSON.stringify(again));
   assert.equal(again.started, true, JSON.stringify(again));
