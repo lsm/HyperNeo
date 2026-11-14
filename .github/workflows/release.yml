@@ -328,7 +328,8 @@ jobs:
             APPLE_SIGNING_IDENTITY \
             APPLE_API_ISSUER \
             APPLE_API_KEY \
-            APPLE_API_PRIVATE_KEY; do
+            APPLE_API_PRIVATE_KEY \
+            APPLE_DESKTOP_PROVISIONING_PROFILE; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required Actions secret: $name"
               missing=1
@@ -342,6 +343,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_DESKTOP_PROVISIONING_PROFILE: ${{ secrets.APPLE_DESKTOP_PROVISIONING_PROFILE }}
 
       - name: Configure App Store Connect API key
         if: runner.os == 'macOS'
@@ -423,6 +425,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_DESKTOP_PROVISIONING_PROFILE: ${{ secrets.APPLE_DESKTOP_PROVISIONING_PROFILE }}
 
       - name: Check macOS bundle runtime paths
         if: runner.os == 'macOS'

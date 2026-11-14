@@ -8,7 +8,10 @@ import type {
   ProviderSdkConfig,
   ModelTier,
   ListRemoteModelsOptions,
+  ProviderUsageResult,
+  UsageWindow,
 } from '@hyperneo/shared/provider';
+import type { SDKControlGetUsageResponse } from '@hyperneo/shared/sdk';
 import type { ModelInfo } from '@hyperneo/shared';
 import { awaitSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
@@ -27,10 +30,16 @@ import {
 } from './anthropic-subscription-oauth.js';
 import { Logger } from '../logger.js';
 import { PROVIDER_MODEL_LOAD_TIMEOUT_MS } from './discovery-refresh-pipeline.js';
+import {
+  readStoredRateLimitEvents,
+  usageWindowsFromControl,
+  usageWindowsFromEvents,
+} from './anthropic-usage-source.ts';
 
 const logger = new Logger('anthropic-provider');
 
 const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
+const USAGE_QUERY_TIMEOUT_MS = 20_000;
 const OAUTH_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 
 const STORED_CREDENTIAL_ENV_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
@@ -348,6 +357,54 @@ export class AnthropicProvider implements Provider {
     }
     this.modelCache = models;
     return models;
+  }
+
+  async getUsage(): Promise<ProviderUsageResult> {
+    if (this.storedCredentialEnvVar()?.key !== 'CLAUDE_CODE_OAUTH_TOKEN')
+      return { supported: false, provider: this.id, reason: 'not_supported' };
+    const windows = await this.readUsageWindows();
+    return windows.length
+      ? { supported: true, provider: this.id, windows }
+      : { supported: false, provider: this.id, reason: 'not_supported' };
+  }
+
+  private async readUsageWindows(): Promise<UsageWindow[]> {
+    try {
+      const response = await this.readControlUsage();
+      const windows = usageWindowsFromControl(response);
+      if (windows) return windows;
+    } catch {}
+    return usageWindowsFromEvents(await readStoredRateLimitEvents());
+  }
+
+  private async readControlUsage(): Promise<SDKControlGetUsageResponse> {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const env: Record<string, string | undefined> = { ...this.env };
+    for (const [key, value] of Object.entries(this.buildSdkConfig().envVars)) {
+      env[key] = value === '' ? undefined : value;
+    }
+    const sdkQuery = query({
+      prompt: '',
+      options: {
+        model: 'default',
+        env,
+        cwd: process.cwd(),
+        maxTurns: 0,
+        pathToClaudeCodeExecutable: await awaitSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+      },
+    });
+    try {
+      return (await Promise.race([
+        sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SDK usage load timeout')), USAGE_QUERY_TIMEOUT_MS)
+        ),
+      ])) as SDKControlGetUsageResponse;
+    } finally {
+      sdkQuery.interrupt().catch(() => {});
+    }
   }
 
   private async loadModelsFromSdk(

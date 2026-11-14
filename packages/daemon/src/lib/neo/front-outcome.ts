@@ -1,24 +1,13 @@
-import { frontSessionId } from './front-mode.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { jobQueueWrites } from '../../storage/repositories/job-queue-repository.ts';
 import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
-import { neoPublicationWrites } from '../../storage/repositories/neo-publication-repository.ts';
-import { hasFallbackFor } from '../../storage/repositories/neo-fallback-notice-read.ts';
-import { FRONT_FALLBACK_TEXT, frontFallbackId } from './front-catch-up.ts';
+import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
-
-function hasFallbackNotice(
-  service: NeoService,
-  conversationId: string,
-  messageId: string
-): boolean {
-  return hasFallbackFor(service.db.getDatabase(), conversationId, messageId);
-}
 
 export async function settleConvoInput(
   service: NeoService,
@@ -30,8 +19,6 @@ export async function settleConvoInput(
 ) {
   const owner = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, messageId);
   if (owner?.owner === 'neo') return { delivered: true, outcome: 'handed_off' };
-  if (owner?.owner === 'front' && hasFallbackNotice(service, conversationId, messageId))
-    return { delivered: true, outcome: 'answered' };
   const ask = service.asks.find(conversationId, messageId);
   if (!ask) return { delivered: false };
   const sdk = service.db.getSDKMessageRepo();
@@ -75,41 +62,35 @@ export async function settleConvoInput(
   for (const id of ids) {
     const input = await service.db.gateway.call(neoFrontInputReads, 'get', conversationId, id);
     if (input?.owner === 'neo') continue;
-    if (input?.owner === 'front' && hasFallbackNotice(service, conversationId, id)) continue;
     open.push(id);
   }
-  if (!open.includes(messageId)) {
-    const self = await service.db.gateway.call(
-      neoFrontInputReads,
-      'get',
+  const markFailed = async (id: string) => {
+    const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
+    if (!failedAsk) return 'settled' as const;
+    const origin = failedAsk.askOrigin.sessionId;
+    return service.db.gateway.call(
+      neoFrontInputWrites,
+      'failSettled',
       conversationId,
-      messageId
+      sessionId,
+      id,
+      {
+        sessionId: origin,
+        message: neoIntakeMessage(
+          { ...failedAsk, sessionId: origin },
+          origin,
+          readNeoReply(failedAsk.replyTo, service.todos),
+          null,
+          undefined,
+          failedAsk.previewContext ?? null
+        ),
+      }
     );
-    return { delivered: true, outcome: self?.owner === 'neo' ? 'handed_off' : 'answered' };
+  };
+  let self = 'failed';
+  for (const id of open) {
+    const outcome = await markFailed(id);
+    if (id === messageId) self = outcome;
   }
-  await service.db.gateway.call(neoFrontInputWrites, 'release', conversationId, open);
-  const answeredMeanwhile = open.some((id) => hasFallbackNotice(service, conversationId, id));
-  if (answeredMeanwhile) return { delivered: true, outcome: 'answered' };
-  const receipt = await service.db.gateway.call(
-    neoPublicationWrites,
-    'append',
-    {
-      conversationId,
-      publicationId: frontFallbackId(conversationId, open),
-      verbatim: true,
-      fullText: FRONT_FALLBACK_TEXT,
-      replyTo: open,
-      links: [],
-    },
-    service.db.getGlobalSettings().neo?.front?.enabled === true
-      ? frontSessionId(conversationId)
-      : `neo:${conversationId}`,
-    { unownedReplyTo: true }
-  );
-  if (!receipt.accepted) {
-    if (receipt.reason === 'publication_superseded') return pending();
-    throw new Error(receipt.reason);
-  }
-  service.notifyPublicationsChanged(conversationId);
-  return { delivered: true, outcome: 'answered' };
+  return { delivered: true, outcome: self === 'handed_off' ? 'handed_off' : 'failed' };
 }
