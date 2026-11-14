@@ -3,7 +3,6 @@ import type {
   EventInterest,
   SpaceWorkflow,
   WorkflowNode,
-  WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 
@@ -79,7 +78,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
       toolGuards: DeclarativeToolGuard[] | undefined;
       resetContextPerTurn: boolean | undefined;
       eventInterests: EventInterest[] | undefined;
-      customPrompt?: WorkflowNodeAgentOverride;
     }
   >();
   for (const node of templateNodes) {
@@ -88,7 +86,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
         toolGuards: agent.toolGuards,
         resetContextPerTurn: agent.resetContextPerTurn,
         eventInterests: agent.eventInterests,
-        customPrompt: agent.customPrompt,
       });
     }
   }
