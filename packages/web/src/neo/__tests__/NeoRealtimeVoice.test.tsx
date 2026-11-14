@@ -1,11 +1,17 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoRealtimeVoice } from '../NeoRealtimeVoice.tsx';
 
 const mocks = vi.hoisted(() => ({
   catalog: { ok: true } as { ok: boolean; reason?: string },
   request: vi.fn(),
-  players: [] as { sessionId: string; close: ReturnType<typeof vi.fn>; onStop?: () => void }[],
+  players: [] as {
+    sessionId: string;
+    close: ReturnType<typeof vi.fn>;
+    interrupt: ReturnType<typeof vi.fn>;
+    onStop?: () => void;
+    onSpeaking?: (speaking: boolean) => void;
+  }[],
 }));
 
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -15,9 +21,15 @@ vi.mock('../../lib/voice/neo-speech-player.ts', () => ({
   openNeoSpeechPlayer: (
     _hub: unknown,
     sessionId: string,
-    options: { onStop?: () => void } = {}
+    options: { onStop?: () => void; onSpeaking?: (speaking: boolean) => void } = {}
   ) => {
-    const player = { sessionId, close: vi.fn(), interrupt: vi.fn(), onStop: options.onStop };
+    const player = {
+      sessionId,
+      close: vi.fn(),
+      interrupt: vi.fn(),
+      onStop: options.onStop,
+      onSpeaking: options.onSpeaking,
+    };
     mocks.players.push(player);
     return player;
   },
@@ -203,5 +215,27 @@ describe('NeoRealtimeVoice', () => {
     view.unmount();
     expect(listens().at(-1)).toEqual({ sessionId: 'neo-1', enabled: false });
     expect(mocks.players[0].close).toHaveBeenCalled();
+  });
+
+  it('lets the person stop Neo speaking without leaving live voice', async () => {
+    const onLive = vi.fn();
+    render(
+      <NeoRealtimeVoice
+        collapsed={false}
+        sessionId="neo-1"
+        connected
+        onError={vi.fn()}
+        onLive={onLive}
+      />
+    );
+    fireEvent.click(button());
+    await waitFor(() => expect(onLive).toHaveBeenLastCalledWith({ on: true, speaking: false }));
+    act(() => mocks.players[0].onSpeaking?.(true));
+    expect(onLive).toHaveBeenLastCalledWith({ on: true, speaking: true });
+    expect(button().getAttribute('aria-label')).toBe('Stop Neo speaking');
+    fireEvent.click(button());
+    expect(mocks.players[0].interrupt).toHaveBeenCalledTimes(1);
+    expect(mocks.players[0].close).not.toHaveBeenCalled();
+    expect(button().getAttribute('aria-pressed')).toBe('true');
   });
 });

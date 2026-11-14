@@ -291,6 +291,24 @@ describe('openNeoSpeechPlayer', () => {
     await vi.waitFor(() => expect(acks()).toEqual(['A:playing', 'A:cancelled', 'B:cancelled']));
   });
 
+  it('tells its owner when Neo starts and stops speaking', async () => {
+    const { hub, emit } = fakeHub();
+    const sound = fakeAudio();
+    const onSpeaking = vi.fn();
+    const player = openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create, onSpeaking });
+    emit(say(ID_A));
+    expect(onSpeaking).not.toHaveBeenCalled();
+    emit(audio(ID_A, 0, pcm(16384)));
+    emit(end(ID_A, 1));
+    expect(onSpeaking.mock.calls).toEqual([[true]]);
+    sound.finish(0);
+    expect(onSpeaking.mock.calls).toEqual([[true], [false]]);
+    emit(say(ID_B));
+    emit(audio(ID_B, 0, pcm(16384)));
+    player.interrupt();
+    expect(onSpeaking.mock.calls).toEqual([[true], [false], [true], [false]]);
+  });
+
   it('tells its owner when the daemon stops listening to it', () => {
     const { hub, emit } = fakeHub();
     const sound = fakeAudio();

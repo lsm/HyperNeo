@@ -38,6 +38,7 @@ import {
   pendingVoiceAudioRecords,
   resetVoiceAudioOutbox,
   startVoiceAudioOutboxFlush,
+  submitVoiceSendIntent,
   stopVoiceAudioOutboxFlush,
 } from '../voice-audio-outbox.ts';
 
@@ -292,5 +293,20 @@ describe('voice audio outbox', () => {
 
     expect(hubRequest).toHaveBeenCalled();
     expect(store.records).toEqual([]);
+  });
+
+  it('marks a live voice send for Neo', async () => {
+    hubRequest.mockImplementation(async (_method, data) =>
+      data?.name === 'neo.message.send'
+        ? { ok: true, requestId: 'rec-1', messageId: 'm1', created: true }
+        : { ok: true }
+    );
+    const entry = seedEntry({
+      sessionId: 'neo:1',
+      sendContext: { suffix: '', attachmentIds: [], inputMode: 'live_voice' },
+    });
+    await submitVoiceSendIntent({ request: hubRequest }, entry, 'Hello Neo');
+    const send = hubRequest.mock.calls.find(([, data]) => data?.name === 'neo.message.send');
+    expect(send?.[1].input).toMatchObject({ content: 'Hello Neo', inputMode: 'live_voice' });
   });
 });

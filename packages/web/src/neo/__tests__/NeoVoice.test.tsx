@@ -627,4 +627,68 @@ describe('Neo voice', () => {
     await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('batch only'));
     expect(voice.batch).toHaveBeenCalledOnce();
   });
+
+  it('opens the mic by itself while live voice is on and Neo is quiet', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
+    render(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+  });
+
+  it('closes the mic while Neo speaks and opens it again afterwards', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementation(async () => {
+      voice.recording = true;
+    });
+    voice.cancel.mockImplementation(async () => {
+      voice.recording = false;
+    });
+    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
+    const view = render(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+    view.rerender(liveVoice({ on: true, speaking: true }));
+    await waitFor(() => expect(voice.cancel).toHaveBeenCalledTimes(1));
+    expect(voice.submit).not.toHaveBeenCalled();
+    view.rerender(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps words already heard as a draft when Neo starts speaking', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementation(async () => {
+      voice.recording = true;
+    });
+    let heard: (text: string) => void = () => {};
+    voice.openStream.mockImplementation((_hub, onText) => {
+      heard = onText;
+      return { push: vi.fn(), close: vi.fn(), finish: vi.fn(async () => 'Hello') };
+    });
+    voice.submit.mockImplementation(() => new Promise(() => {}));
+    const view = render(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+    heard('Hello');
+    view.rerender(liveVoice({ on: true, speaking: true }));
+    await waitFor(() => expect(voice.submit).toHaveBeenCalledTimes(1));
+    expect(voice.submit.mock.calls[0][0]).toMatchObject({ intent: 'draft' });
+    expect(voice.cancel).not.toHaveBeenCalled();
+  });
 });
+
+function liveVoice(live: { on: boolean; speaking: boolean }) {
+  return (
+    <NeoVoice
+      sessionId="neo-1"
+      connected
+      draftText=""
+      onTranscript={vi.fn()}
+      onSendVoice={vi.fn()}
+      onSendHandle={vi.fn()}
+      onError={vi.fn()}
+      onPhase={vi.fn()}
+      live={live}
+    />
+  );
+}
