@@ -64,18 +64,25 @@ assert.equal(
 const storageState = await pairing.storageState();
 await pairing.close();
 const results = [];
-for (const width of [1280, 390]) {
+for (const run of [
+  { width: 1280, height: 900, input: 'mouse' },
+  { width: 390, height: 844, input: 'tap' },
+  { width: 390, height: 844, input: 'held-touch' },
+]) {
+  const touch = run.input !== 'mouse';
   const context = await browser.newContext({
     storageState,
-    viewport: { width, height: width === 390 ? 844 : 900 },
-    hasTouch: width === 390,
+    viewport: { width: run.width, height: run.height },
+    hasTouch: touch,
   });
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error(String(error)));
   const publicationId = seed();
-  const entry = { width };
+  const entry = { width: run.width, input: run.input };
   try {
     await page.goto(`${base}/neo`);
+    entry.coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+    assert.equal(entry.coarse, touch, `${run.input} must match its pointer media query`);
     const input = page.getByRole('textbox', { name: 'Message Neo', exact: true });
     await input.waitFor();
     await page.waitForTimeout(1200);
@@ -83,29 +90,73 @@ for (const width of [1280, 390]) {
     const source = page.locator(`[data-message-ref="${publicationId}"]`);
     const reply = source.getByRole('button', { name: 'Reply to Neo’s message' });
     await reply.waitFor();
-    await input.click();
+    if (touch) await input.tap();
+    else await input.click();
     await page.waitForFunction(() => document.querySelector('.neo-composer-input.is-focused'));
     await page.waitForTimeout(400);
-    const box = await reply.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.waitForTimeout(90);
-    entry.pressedHeight = Math.round(
-      await form.evaluate((element) => element.getBoundingClientRect().height)
-    );
-    await page.mouse.up();
+    await page.evaluate(() => {
+      window.__presses = [];
+      for (const kind of ['pointerdown', 'pointerup', 'pointercancel'])
+        document.addEventListener(
+          kind,
+          (event) => window.__presses.push(`${kind}:${event.pointerType}`),
+          true
+        );
+    });
+    if (run.input === 'tap') {
+      await reply.tap();
+    } else {
+      const box = await reply.boundingBox();
+      const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      if (run.input === 'mouse') {
+        await page.mouse.move(at.x, at.y);
+        await page.mouse.down();
+      } else {
+        const cdp = await context.newCDPSession(page);
+        const point = { x: at.x, y: at.y, radiusX: 1, radiusY: 1, force: 1, id: 1 };
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [point],
+        });
+        await page.waitForTimeout(90);
+        entry.pressedHeight = Math.round(
+          await form.evaluate((element) => element.getBoundingClientRect().height)
+        );
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      if (run.input === 'mouse') {
+        await page.waitForTimeout(90);
+        entry.pressedHeight = Math.round(
+          await form.evaluate((element) => element.getBoundingClientRect().height)
+        );
+        await page.mouse.up();
+      }
+    }
     await page.waitForTimeout(300);
+    entry.presses = await page.evaluate(() => window.__presses);
     entry.quoteAfterFirstClick = await page.locator('[data-quote-bar]').count();
     entry.expandedAfterFirstClick = await form.evaluate((element) =>
       element.className.includes('is-focused')
     );
-    await page.screenshot({ path: `${evidence}/${name}-${width}.png` });
-    assert.equal(entry.pressedHeight, 108, 'composer must stay expanded while the press is down');
+    await page.screenshot({ path: `${evidence}/${name}-${run.input}.png` });
+    if (run.input !== 'tap') {
+      assert.equal(
+        entry.pressedHeight,
+        108,
+        'composer must stay expanded while the press is down'
+      );
+      const pointerType = run.input === 'mouse' ? 'mouse' : 'touch';
+      assert.deepEqual(
+        entry.presses,
+        [`pointerdown:${pointerType}`, `pointerup:${pointerType}`],
+        'the press must reach the page as the intended pointer type'
+      );
+    }
     assert.equal(entry.quoteAfterFirstClick, 1, 'one press must add the quote');
     assert.equal(entry.expandedAfterFirstClick, true, 'the composer keeps its expanded size');
   } catch (error) {
     entry.error = String(error);
-    await page.screenshot({ path: `${evidence}/${name}-${width}-failure.png` });
+    await page.screenshot({ path: `${evidence}/${name}-${run.input}-failure.png` });
   }
   await context.close();
   results.push(entry);
