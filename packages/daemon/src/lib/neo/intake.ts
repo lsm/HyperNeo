@@ -12,7 +12,6 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
-import { canonicalJson } from '../agent/prompt-comparison.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import {
   type NeoConversationAskImageRow,
@@ -153,7 +152,6 @@ export function neoIntakeMessage(
       (block: { type: string; text?: string }) =>
         block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
-  const blocks = storedBlocks ?? [];
   const storedShape = readStoredEnvelope(storedBlocks, input.requestId);
   const enveloped = storedShape.enveloped;
   const legacy = stored !== undefined && !enveloped;
@@ -166,36 +164,31 @@ export function neoIntakeMessage(
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
-  const storedWords = (stored as { humanContent?: unknown } | undefined)?.humanContent;
+  const storedHumanContent = (stored as { humanContent?: unknown } | undefined)?.humanContent;
   if (legacy) {
-    const words = blocks.slice(-content.length);
-    const keepsWords =
-      storedWords !== undefined ||
-      (content.length > 0 &&
-        words.length === content.length &&
-        words.every(
-          (block: unknown, index: number) => canonicalJson(block) === canonicalJson(content[index])
-        ));
-    const storedFacts = keepsWords ? blocks.slice(0, -content.length) : [];
-    const missing = [
-      ...(localTime && !has('(local time: ') ? [localTime] : []),
-      ...(previewFact && !has('Preview context: ') ? [previewFact] : []),
-      ...(sourceFact && !has(`[input: ${input.inputMode}]`) ? [sourceFact] : []),
-    ].filter((text): text is string => Boolean(text));
-    const facts = [...missing.map((text) => ({ type: 'text' as const, text })), ...storedFacts];
+    const facts = [has('(local time: ') ? null : localTime, previewFact].filter(
+      (text): text is string => Boolean(text)
+    );
     return {
       type: 'user',
       uuid: input.requestId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
-      message: { role: 'user', content: [...facts, ...content] },
+      message: {
+        role: 'user',
+        content: [
+          ...facts.map((text) => ({ type: 'text' as const, text })),
+          ...(stored?.type === 'user' ? stored.message.content : content),
+        ],
+      },
       inputKind: 'human',
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(previewContext ? { previewContext } : {}),
-      ...(facts.length && !keepsWords ? { humanContent: content } : {}),
-      ...(keepsWords && storedWords !== undefined
-        ? { humanContent: storedWords as SDKUserMessage['message']['content'] }
-        : {}),
+      ...(storedHumanContent !== undefined
+        ? { humanContent: storedHumanContent as SDKUserMessage['message']['content'] }
+        : facts.length
+          ? { humanContent: content }
+          : {}),
     };
   }
   const head =

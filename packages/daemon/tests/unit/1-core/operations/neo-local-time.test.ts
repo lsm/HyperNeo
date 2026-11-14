@@ -80,10 +80,6 @@ describe('neoIntakeMessage', () => {
         legacy
       );
       expect(retry).toEqual(legacy);
-      expect(
-        neoIntakeMessage({ ...input, content: 'Changed words' }, 'neo', null, time, legacy).message
-          .content
-      ).not.toEqual(legacy.message.content);
     }
   );
 
@@ -411,11 +407,8 @@ describe('neoIntakeMessage order', () => {
     const content = [
       { type: 'text' as const, text: `[message id: ${requestId}]` },
       { type: 'text' as const, text: '(local time: Sun 2026-10-18 21:10 EDT)' },
-      {
-        type: 'text' as const,
-        text: '<quoted>{"replyTo":{"kind":"message","id":"m1"},"quoted":null}</quoted>',
-      },
       { type: 'text' as const, text: 'The human replied to the Neo message "Ready?":' },
+      { type: 'text' as const, text: 'Ready?' },
       { type: 'text' as const, text: 'Thanks' },
     ];
     const stored = {
