@@ -439,7 +439,7 @@ describe('Neo publication without runtime input attribution', () => {
     received = new Set(pending);
     const receipt = await publish(draft, caller);
     expect(receipt).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)[0].replyTo).toBeUndefined();
+    expect(ledger.list(conversationId)![0].replyTo).toBeUndefined();
     for (const id of pending) expect(inputs.get(conversationId, id)?.owner).toBeNull();
   });
 
@@ -475,7 +475,7 @@ describe('Neo publication without runtime input attribution', () => {
     };
     const receipt = await publish({ ...draft, cardReply }, caller);
     expect(receipt).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)[0].cardReply).toEqual(cardReply);
+    expect(ledger.list(conversationId)![0].cardReply).toEqual(cardReply);
     expect(inputs.get(conversationId, source)?.owner).toBe('neo');
   });
 
