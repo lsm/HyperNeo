@@ -35,7 +35,7 @@ try {
   await page.goto(`${base}/neo`);
   await page.getByRole('button', { name: 'Settings and connection' }).first().click();
   const drawer = page.getByRole('dialog', { name: 'Settings and connection' });
-  await drawer.getByText('Agent is using the desktop').waitFor();
+  await drawer.getByText('The agent can use the desktop').waitFor();
   await drawer.getByText('Book the dentist on the clinic site').waitFor();
   await page.waitForTimeout(500);
   await page.screenshot({ path: join(out, 'drawer-running.png') });
@@ -43,7 +43,7 @@ try {
 
   await page.goto(`${base}/session/${sessionId}`);
   const control = page.getByRole('region', { name: 'Desktop control' });
-  await control.getByText('Agent is using the desktop').waitFor();
+  await control.getByText('The agent can use the desktop').waitFor();
   await page.waitForTimeout(800);
   await page.screenshot({ path: join(out, 'session-running.png') });
   await page.emulateMedia({ colorScheme: 'dark' });
