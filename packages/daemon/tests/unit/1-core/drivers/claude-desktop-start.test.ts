@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
+import { workerWorkLocationsBrief } from '../../../../src/lib/work-locations';
 import { createNodeSpawn } from '../../../../src/lib/runtime-spawn/node-backend';
 import { listProcesses } from '../../../../src/lib/process-watchdog';
 import {
@@ -566,6 +567,15 @@ describe('claude-desktop start', () => {
     expect(
       await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
     ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
+  });
+
+  test('only the Desktop worker brief tells it to attach a PR from another branch', async () => {
+    const rule =
+      "Open the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor.";
+    await adapter().start!(request, user);
+    const opening = spawned.find((args) => args.includes('--session-id'))!;
+    expect(opening[opening.indexOf('--append-system-prompt') + 1]).toContain(rule);
+    expect(workerWorkLocationsBrief(dir)).not.toContain('ccd_pr');
   });
 
   test('only a real Desktop record enables links in find and status', async () => {
