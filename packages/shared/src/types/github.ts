@@ -59,13 +59,6 @@ export interface SecurityCheckResult {
   injectionRisk: 'none' | 'low' | 'medium' | 'high';
 }
 
-export interface RepositoryMapping {
-  owner: string;
-  repo: string;
-  labels?: string[];
-  issueNumbers?: number[];
-}
-
 export type RoutingDecision = 'accept' | 'reject';
 
 export interface RoutingResult {

@@ -36,23 +36,6 @@ export function isAuthError(error: unknown): boolean {
   );
 }
 
-export function isTransientError(error: unknown): boolean {
-  if (!error) return true;
-  const msg = error instanceof Error ? error.message : String(error);
-  const lower = msg.toLowerCase();
-  return (
-    lower.includes('timeout') ||
-    lower.includes('network') ||
-    lower.includes('econnreset') ||
-    lower.includes('econnrefused') ||
-    lower.includes('etimedout') ||
-    lower.includes('socket') ||
-    lower.includes('fetch') ||
-    lower.includes('disconnected') ||
-    lower.includes('not connected')
-  );
-}
-
 export function sanitizeUserError(error: unknown): string {
   if (error == null) return 'Something went wrong.';
 

@@ -198,6 +198,17 @@ describe('Claude Desktop mods transport', () => {
     }
   );
 
+  test('answers 503 instead of racing the socket timeout on a cold live listing', async () => {
+    let calls = 0;
+    deps.liveSessions = () => (++calls === 1 ? new Promise(() => {}) : Promise.resolve([live]));
+    const started = Date.now();
+    const response = await send();
+    expect(response).toEqual({ status: 503, text: '' });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(saved).toEqual([]);
+    expect((await send()).status).toBe(200);
+  });
+
   test('rechecks the registered endpoint on each request', async () => {
     expect((await send()).status).toBe(200);
     await unlink(join(dir, '456.json'));

@@ -44,7 +44,7 @@ import {
   type SendStatus,
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
-import { SettingsRepository } from './repositories/settings-repository.ts';
+import { globalSettingsRevision, SettingsRepository } from './repositories/settings-repository.ts';
 import type { SpaceSessionPort } from '../lib/agent/space-session-port.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
@@ -112,6 +112,7 @@ export class Database {
   private sessionRepo!: SessionRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
+  private globalSettingsCache?: { version: number; settings: GlobalSettings };
   spaceSessions?: SpaceSessionPort;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
@@ -650,7 +651,19 @@ export class Database {
   }
 
   getGlobalSettings(): GlobalSettings {
-    return this.settingsRepo.getGlobalSettings();
+    const raw = this.core.getDb();
+    if ('inTransaction' in raw ? raw.inTransaction : raw.isTransaction) {
+      this.globalSettingsCache = undefined;
+      return this.settingsRepo.getGlobalSettings();
+    }
+    const version =
+      (this.reactiveDb?.getTableVersion('global_settings') ?? 0) +
+      globalSettingsRevision(raw) +
+      this.gateway.writeFailureVersion;
+    if (!this.globalSettingsCache || this.globalSettingsCache.version !== version) {
+      this.globalSettingsCache = { version, settings: this.settingsRepo.getGlobalSettings() };
+    }
+    return structuredClone(this.globalSettingsCache.settings);
   }
 
   saveGlobalSettings(settings: GlobalSettings): void {

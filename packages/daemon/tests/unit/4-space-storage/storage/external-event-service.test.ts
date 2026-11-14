@@ -6,10 +6,7 @@ import {
 } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../../space/src/external-events/external-event-store';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
-import {
-  createInternalEventBus,
-  type InternalEventBus,
-} from '../../../../src/lib/internal-event-bus';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 let db: Database;
@@ -49,7 +46,7 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 beforeEach(() => {
   db = freshDb();
   store = new ExternalEventStore(db);
-  bus = createInternalEventBus<{
+  bus = new InternalEventBus<{
     'externalEvent.published': ExternalEventPublishedPayload;
   }>();
   service = new ExternalEventService(store, bus);

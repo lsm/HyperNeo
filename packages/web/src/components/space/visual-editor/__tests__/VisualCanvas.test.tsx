@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { VisualCanvas, applyWheelEvent, MIN_SCALE, MAX_SCALE } from '../VisualCanvas';
-import { screenToCanvas, canvasToScreen } from '../types';
+import { screenToCanvas } from '../types';
 import type { NodePosition, ViewportState } from '../types';
 
 afterEach(() => cleanup());
@@ -250,36 +250,11 @@ describe('applyWheelEvent', () => {
   });
 });
 
-describe('screenToCanvas / canvasToScreen', () => {
-  it('are inverse functions at scale=1, no offset', () => {
-    const vp: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
-    const screen = { x: 100, y: 200 };
-    const canvas = screenToCanvas(screen, vp);
-    const back = canvasToScreen(canvas, vp);
-    expect(back.x).toBeCloseTo(screen.x);
-    expect(back.y).toBeCloseTo(screen.y);
-  });
-
-  it('are inverse functions with offset and scale', () => {
-    const vp: ViewportState = { offsetX: 50, offsetY: -30, scale: 1.5 };
-    const screen = { x: 300, y: 150 };
-    const canvas = screenToCanvas(screen, vp);
-    const back = canvasToScreen(canvas, vp);
-    expect(back.x).toBeCloseTo(screen.x);
-    expect(back.y).toBeCloseTo(screen.y);
-  });
-
+describe('screenToCanvas', () => {
   it('screenToCanvas maps correctly', () => {
     const vp: ViewportState = { offsetX: 100, offsetY: 50, scale: 2 };
     const canvas = screenToCanvas({ x: 200, y: 150 }, vp);
     expect(canvas.x).toBeCloseTo(50);
     expect(canvas.y).toBeCloseTo(50);
-  });
-
-  it('canvasToScreen maps correctly', () => {
-    const vp: ViewportState = { offsetX: 100, offsetY: 50, scale: 2 };
-    const screen = canvasToScreen({ x: 50, y: 50 }, vp);
-    expect(screen.x).toBeCloseTo(200);
-    expect(screen.y).toBeCloseTo(150);
   });
 });

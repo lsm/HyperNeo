@@ -40,3 +40,8 @@ and bookkeeping suites and the full check.
 The helper closes its transport and daemon in finally, writes
 `todo-runner-activation.json`, and the wrapper saves evidence before removing
 its synthetic HOME/database. This proof makes no latency-target claim.
+
+The capacity fixture holds an approved todo with a total worker limit of zero.
+The public reader must keep it queued and the runner's delivered note must give
+its running worker count and total limit. The capacity unit contracts also cover
+the per-project limit and an idle but occupied assigned worker.

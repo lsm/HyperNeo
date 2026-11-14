@@ -16,6 +16,7 @@ import { frontSession } from '../../../../src/lib/neo/front-session.ts';
 import { admitCreateSessionConfig } from '../../../../src/lib/session/create-session-config.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
+import { z } from 'zod';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
 import {
   catchUpBlock,
@@ -1117,7 +1118,7 @@ async function convoPublish(input: Record<string, unknown>) {
     .tools!.find((tool) => tool.name === 'reply');
   expect(definition).toBeDefined();
   const receipt = await definition!.handler(
-    verbatim ? { ...fields, text: fullText } : { ...fields, text: shortText, details: fullText },
+    { ...fields, text: verbatim ? fullText : (shortText ?? fullText) },
     {} as never
   );
   return JSON.parse((receipt.content[0] as { text: string }).text);
@@ -1336,43 +1337,6 @@ test.each(['creation', 'delivery'])(
   }
 );
 
-test('a reply with details refuses a summary over 300 words by name', async () => {
-  const { id } = await deliveredConvoInput();
-  const text = Array(301).fill('word').join(' ');
-  expect(
-    await convoPublish({
-      requestId: 'long-summary',
-      replyTo: [id],
-      shortText: text,
-      fullText: 'd'.repeat(text.length + 1),
-    })
-  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
-  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
-});
-
-test('a reply with details accepts 300 words and refuses 301 Chinese words', async () => {
-  const { id } = await deliveredConvoInput();
-  const other = (await deliveredConvoInput()).id;
-  const text = Array(300).fill('word').join(' ');
-  expect(
-    await convoPublish({
-      requestId: 'at-limit',
-      replyTo: [id],
-      shortText: text,
-      fullText: 'd'.repeat(text.length + 1),
-    })
-  ).toMatchObject({ accepted: true });
-  const chinese = '中'.repeat(400);
-  expect(
-    await convoPublish({
-      requestId: 'chinese-long',
-      replyTo: [other],
-      shortText: chinese,
-      fullText: 'd'.repeat(chinese.length + 1),
-    })
-  ).toEqual({ accepted: false, reason: 'reply_summary_too_long' });
-});
-
 test('a reply is the answer and still hands off to the full session', async () => {
   const { id } = await deliveredConvoInput();
   createFrontTools(service, conversationId);
@@ -1389,71 +1353,8 @@ test('a reply is the answer and still hands off to the full session', async () =
   const first = service.publications.list(conversationId)![0];
   expect(first).toMatchObject({ verbatim: true, fullText: 'The build passed.', replyTo: [id] });
   expect(first.shortText).toBeUndefined();
-  const detailed = await reply.handler(
-    {
-      requestId: 'long-result',
-      replyTo: [id],
-      text: 'The result',
-      details: 'Additional evidence and explanation.',
-    },
-    {} as never
-  );
-  expect(JSON.parse((detailed.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  const final = service.publications.list(conversationId)![1];
-  expect(final).toMatchObject({
-    shortText: 'The result',
-    fullText: 'Additional evidence and explanation.',
-    replyTo: [id],
-  });
-  expect(final.verbatim).toBeUndefined();
-  expect(service.publications.list(conversationId)).toHaveLength(2);
+  expect(service.publications.list(conversationId)).toHaveLength(1);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
-});
-
-test('details shorter than the reply text fold into one verbatim reply', async () => {
-  const { id } = await deliveredConvoInput();
-  createFrontTools(service, conversationId);
-  const reply = vi
-    .mocked(createSdkMcpServer)
-    .mock.calls.at(-1)![0]
-    .tools!.find((tool) => tool.name === 'reply')!;
-  const folded = await reply.handler(
-    {
-      requestId: 'folded-reply',
-      replyTo: [id],
-      text: 'The full answer with everything the human needs to know.',
-      details: 'a short addendum',
-    },
-    {} as never
-  );
-  expect(JSON.parse((folded.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  const stored = service.publications.list(conversationId)![0];
-  expect(stored).toMatchObject({
-    verbatim: true,
-    fullText: 'The full answer with everything the human needs to know.\n\na short addendum',
-    replyTo: [id],
-  });
-  expect(stored.shortText).toBeUndefined();
-  const split = await reply.handler(
-    {
-      requestId: 'split-reply',
-      replyTo: [id],
-      text: 'The result',
-      details: 'Additional evidence and explanation.',
-    },
-    {} as never
-  );
-  expect(JSON.parse((split.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  expect(service.publications.list(conversationId)![1]).toMatchObject({
-    shortText: 'The result',
-    fullText: 'Additional evidence and explanation.',
-  });
 });
 
 test('two replies to one human message both deliver', async () => {
@@ -1502,18 +1403,25 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('Front prompt, tool descriptions and intake agree on the five-sentence boundary', async () => {
+test('the front reply is short, and its rules live only in the front prompt', async () => {
   const { job } = await accept();
   await createNeoFrontHandler(service)(job);
-  expect(db.getSession(front)!.config.systemPrompt).toContain('at most five short sentences');
+  const prompt = db.getSession(front)!.config.systemPrompt as string;
+  expect(prompt).toContain('Reply in one or two short sentences');
+  expect(prompt).toContain('say what you knew and that you will check for updates');
+  expect(prompt).not.toContain('five short sentences');
   createFrontTools(service, conversationId);
-  const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
-  expect(definitions.find((tool) => tool.name === 'reply')!.description).toContain(
-    'more than five sentences'
-  );
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const shape = z.object(reply.inputSchema as z.ZodRawShape);
+  expect(Object.keys(reply.inputSchema)).not.toContain('details');
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(300) }).success).toBe(true);
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(301) }).success).toBe(false);
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
-  expect(intake).toContain('more than five sentences');
-  expect(intake).toContain('structured report');
+  expect(intake).not.toContain('five sentences');
+  expect(frontModeNote()).not.toContain('five sentences');
 });
 
 async function frontInput(content = 'Hello') {
@@ -1938,7 +1846,7 @@ test('a reply with two replyTo IDs hands both inputs off', async () => {
 test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
   expect(NEO_FRONT).not.toContain('work_on');
-  expect(NEO_FRONT).toContain('never promise what you cannot check');
+  expect(NEO_FRONT).toContain('never decide, assign, refuse or promise anything');
 });
 
 test('a dual-mode hand-off keeps the listening fact and carries no acknowledgment note', async () => {
@@ -2026,19 +1934,6 @@ test('two settled inputs each end failed for retry and nothing is published', as
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
   for (const { id } of [first, second])
     expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
-});
-
-test('a detailed front reply hands off the details the human received', async () => {
-  const { id } = await deliveredConvoInput();
-  await convoPublish({
-    requestId: 'detailed',
-    replyTo: [id],
-    shortText: 'The build passed.',
-    fullText: 'The build passed on dev and on the release branch, with the flaky test rerun twice.',
-  });
-
-  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
-  expect(delivered, delivered).toContain('on the release branch');
 });
 
 test('a front-owned input whose turn ended without a hand-off ends failed for retry', async () => {

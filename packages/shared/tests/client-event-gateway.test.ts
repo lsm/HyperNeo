@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import {
   ClientEventGateway,
-  createClientEventGateway,
   type ClientEventSink,
 } from '../src/message-hub/client-event-gateway.ts';
 import {
@@ -74,7 +73,7 @@ describe('ClientEventGateway', () => {
       matches: () => false,
     };
 
-    const customGateway = createClientEventGateway({ hub, registry: fakeRegistry });
+    const customGateway = new ClientEventGateway({ hub, registry: fakeRegistry });
     customGateway.publish('foo', { ok: true }, Channels.session('s1'));
 
     expect(hub.calls).toHaveLength(1);

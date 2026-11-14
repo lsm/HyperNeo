@@ -3,8 +3,6 @@ import { signal } from '@preact/signals';
 
 export const currentSessionIdSignal = signal<string | null>(null);
 
-export const sidebarOpenSignal = signal<boolean>(false);
-
 export const sessionsSignal = signal<Session[]>([]);
 
 export const slashCommandsSignal = signal<string[]>([]);

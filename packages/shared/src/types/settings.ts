@@ -226,10 +226,6 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
   codexCuAutoReap?: boolean;
 }
 
-export interface SessionSettings extends GlobalSettings {
-  sessionId: string;
-}
-
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   workerSandbox: 'off',
   settingSources: ['user', 'project', 'local'],
@@ -325,10 +321,3 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     excludeTools: [],
   },
 };
-
-export interface McpServerInfo {
-  name: string;
-  status: 'connected' | 'failed' | 'pending' | 'disabled';
-  enabled: boolean;
-  description?: string;
-}

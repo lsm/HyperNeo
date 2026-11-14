@@ -1,11 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  extractNeoWorkPrUrls,
-  mergeNeoWorkPrReads,
   countNeoWorkPrApprovals,
   planNeoWorkPrBlockers,
   readGithubPrs,
-  shouldReadNeoWorkPrs,
   summarizeNeoWorkPr,
   wantsNeoWorkPrBlockers,
 } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
@@ -27,32 +24,6 @@ const pr: NeoWorkPr = {
   checks: 'passing',
   review: 'none',
 };
-
-describe('extractNeoWorkPrUrls', () => {
-  test('keeps each GitHub pull request link once', () => {
-    expect(
-      extractNeoWorkPrUrls(
-        'Opened https://github.com/lsm/HyperNeo/pull/42 (see https://github.com/lsm/HyperNeo/pull/42/files) and https://github.com/lsm/neo-ios/pull/8.'
-      )
-    ).toEqual(['https://github.com/lsm/HyperNeo/pull/42', 'https://github.com/lsm/neo-ios/pull/8']);
-    expect(extractNeoWorkPrUrls('No link here.')).toEqual([]);
-    expect(extractNeoWorkPrUrls(null)).toEqual([]);
-  });
-
-  test('treats links that differ only in case as one pull request', () => {
-    const tracked = [{ url: 'https://github.com/lsm/HyperNeo/pull/1' }];
-    expect(extractNeoWorkPrUrls('Merged https://github.com/lsm/hyperneo/pull/1.', tracked)).toEqual(
-      ['https://github.com/lsm/HyperNeo/pull/1']
-    );
-  });
-
-  test('keeps the pull requests a card already tracks ahead of new links', () => {
-    const tracked = [{ url: 'https://github.com/lsm/HyperNeo/pull/1' }];
-    expect(
-      extractNeoWorkPrUrls('Opened https://github.com/lsm/HyperNeo/pull/2 too.', tracked)
-    ).toEqual(['https://github.com/lsm/HyperNeo/pull/1', 'https://github.com/lsm/HyperNeo/pull/2']);
-  });
-});
 
 describe('summarizeNeoWorkPr', () => {
   test('keeps when a closed PR was closed', () => {
@@ -134,23 +105,6 @@ describe('neoWorkPrVerdict', () => {
     ['green checks, no review yet', { checks: 'passing' }, 'pending'],
   ])('%s', (_label, overrides, verdict) => {
     expect(neoWorkPrVerdict({ ...pr, ...overrides })).toBe(verdict);
-  });
-});
-
-describe('shouldReadNeoWorkPrs', () => {
-  const stored = { prs: [pr], readAt: 0, readOkAt: 0 };
-  const late = 2 * 60_000;
-
-  test.each<[string, typeof stored | null, string[], number, boolean]>([
-    ['a report with no links', null, [], late, false],
-    ['a first report', null, [pr.url], 0, true],
-    ['a new pull request', stored, [pr.url, 'https://github.com/lsm/HyperNeo/pull/7'], 0, true],
-    ['an open PR read moments ago', stored, [pr.url], late - 1, false],
-    ['the same PR spelled in another case', stored, [pr.url.toLowerCase()], late - 1, false],
-    ['an open PR read a while ago', stored, [pr.url], late, true],
-    ['a merged PR', { ...stored, prs: [{ ...pr, state: 'MERGED' }] }, [pr.url], late, false],
-  ])('%s', (_case, row, urls, now, read) => {
-    expect(shouldReadNeoWorkPrs(row, urls, now)).toBe(read);
   });
 });
 
@@ -507,24 +461,6 @@ describe('readGithubPrs REST check rollup', () => {
       .map((args) => args[args.indexOf('--hostname') + 1]);
     expect(hostnames.length).toBeGreaterThan(0);
     expect(new Set(hostnames)).toEqual(new Set(['ghe.example.com']));
-  });
-});
-
-describe('mergeNeoWorkPrReads', () => {
-  test("matches a report's URL to gh's canonical one whatever its case, once", () => {
-    expect(mergeNeoWorkPrReads([pr.url.toUpperCase(), pr.url], [pr])).toEqual([pr]);
-  });
-
-  test('keeps the stored copy of a pull request this read missed, in URL order', () => {
-    const other = {
-      ...pr,
-      url: 'https://github.com/lsm/HyperNeo/pull/43',
-      state: 'MERGED' as const,
-    };
-    const fresh = { ...pr, checks: 'passing' as const };
-    expect(
-      mergeNeoWorkPrReads([other.url, pr.url, 'https://x/pull/1'], [fresh], [pr, other])
-    ).toEqual([other, fresh]);
   });
 });
 

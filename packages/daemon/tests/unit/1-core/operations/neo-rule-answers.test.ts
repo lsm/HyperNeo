@@ -68,6 +68,13 @@ async function propose(requestId = 'request', change = edit) {
   return (result as { value: { questionId: string } }).value.questionId;
 }
 describe('human-approved standing rules', () => {
+  test('a warmed settings cache exposes the human-approved rule answer', async () => {
+    const questionId = await propose('cache-rule-answer');
+    expect(saved()).toContain('Old synthetic rule.');
+    await invoke('neo.question.answer', { questionId, answer: APPLY }, human);
+    expect(saved()).toContain('Ask before publishing.');
+    expect(saved()).not.toContain('Old synthetic rule.');
+  });
   test('a consumed human approval saves paraphrased rules with a durable message reference', async () => {
     await invoke('neo.rule.save', { remove: edit.remove }, human);
     const questionId = await propose('linked-consent', { add: edit.add, remove: [] });
