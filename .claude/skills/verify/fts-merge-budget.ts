@@ -52,25 +52,47 @@ copyFileSync(seedPath, workerPath);
 const worker = new Worker(
   new URL('../../../packages/daemon/src/lib/message-search-merge-worker.ts', import.meta.url).href
 );
-let receipt: { ok: boolean; lifecycle: { mergeMs: number } };
+const checked = new Database(workerPath);
+checked.exec("INSERT INTO message_search_fts(message_search_fts, rank) VALUES('crisismerge', 1000)");
+const totalChanges = () => (checked.query('SELECT total_changes() AS n').get() as { n: number }).n;
+const segments = () =>
+  (checked.query('SELECT count(DISTINCT segid) AS n FROM message_search_fts_idx').get() as { n: number }).n;
+const initialSegments = segments();
+const receipts = [];
+let remainingChanges = 0;
 try {
-  receipt = await new Promise((done, fail) => {
-    worker.onerror = fail;
-    worker.onmessage = (event) => {
-      if ('ok' in event.data) done(event.data);
-    };
-    worker.postMessage({ dbPath: workerPath });
-  });
+  for (let round = 0; round < 32; round++) {
+    checked.transaction(() => {
+      const add = checked.prepare('INSERT INTO message_search_fts(title, body) VALUES (?, ?)');
+      for (let row = 0; row < 100; row++) add.run('incoming', 'backlog-marker '.repeat(256));
+    })();
+    const receipt = await new Promise<{ ok: boolean; lifecycle: { mergeMs: number } }>((done, fail) => {
+      worker.onerror = fail;
+      worker.onmessage = (event) => {
+        if ('ok' in event.data) done(event.data);
+      };
+      worker.postMessage({ dbPath: workerPath });
+    });
+    assert(receipt.ok);
+    receipts.push(receipt);
+    checked.exec('BEGIN');
+    const previous = totalChanges();
+    checked.exec("INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', 64)");
+    remainingChanges = totalChanges() - previous;
+    checked.exec('ROLLBACK');
+    if (remainingChanges < 2) break;
+  }
+  assert.deepEqual(matches(checked), before);
 } finally {
   worker.terminate();
 }
-assert(receipt.ok);
-const checked = new Database(workerPath);
-assert.deepEqual(matches(checked), before);
+const finalSegments = segments();
 checked.close();
-const report = { rows: 510000, wordsPerBody: 256, before, samples, worker: receipt };
+const report = { rows: 510000, wordsPerBody: 256, before, samples, initialSegments, finalSegments, remainingChanges, workerRuns: receipts.length, receipts };
 writeFileSync(join(run, 'evidence/merge.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report));
 if (mode === 'verify') {
-  assert(receipt.lifecycle.mergeMs < samples[2].lockMs * 0.6, 'worker merge must release its writer substantially sooner than rank 1024');
+  assert(samples[0].lockMs < samples[2].lockMs * 0.6, 'rank 64 must hold the writer substantially less than rank 1024');
+  assert(remainingChanges < 2, 'background worker must drain eligible backlog despite incoming writes');
+  assert(finalSegments < initialSegments, 'segment backlog must shrink');
 }

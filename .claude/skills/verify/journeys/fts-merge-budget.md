@@ -12,8 +12,16 @@ The helper creates 510,000 synthetic 256-word search documents in fifteen
 segments. It copies only that generated database for identical rank 64, 128 and
 1024 comparisons. Each timed BEGIN IMMEDIATE through COMMIT span owns the write
 lock. It then invokes the actual background merge worker on another synthetic
-copy and checks search match counts survive every merge. The worker must finish
-in less than 60% of the rank-1024 lock span. `reproduce` saves the same measurements
+copy and checks search match counts survive every merge. The rank-64 lock span must be
+less than 60% of the rank-1024 lock span. `reproduce` saves the same measurements
 without that assertion for baseline investigation. Evidence is `merge.json`.
 This measures a deliberately large eligible segment backlog. It does not impose
 a wall-clock upper bound on arbitrary indexes or attribute historical stalls.
+
+The backlog check repeatedly invokes the same real worker, adding 100 synthetic
+256-word documents before each run, for at most 32 runs. It raises crisismerge
+only on this synthetic copy to prevent foreground inserts from hiding a stalled
+background merger. After each run a rolled-back merge probes for eligible work
+using SQLite's documented total_changes delta, so the probe never drains data.
+Pass requires no eligible work left, fewer segments, and unchanged search matches.
+The rank-64 versus rank-1024 comparison still measures individual lock spans.
