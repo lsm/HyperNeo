@@ -33,6 +33,7 @@ type Refusal =
   | 'target_unverified'
   | 'target_mismatch'
   | 'app_action_not_authorized'
+  | 'app_action_declined'
   | 'guards_unavailable';
 type Context = { reason: Refusal; class?: string; app_id?: string };
 const explanations: Record<string, string> = {
@@ -44,6 +45,8 @@ const explanations: Record<string, string> = {
   target_mismatch: 'The addressed process, window or app does not match the verified target.',
   app_action_not_authorized:
     'The owner has not approved this action class for this app. Approval is waiting in a dialog on the Mac.',
+  app_action_declined:
+    'The owner declined this action class for this app on the Mac. It will not be asked again for 10 minutes.',
   driver_unavailable: 'The desktop driver is not available.',
   driver_error: 'The desktop driver failed after the call was sent.',
 };

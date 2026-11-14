@@ -13,7 +13,7 @@ refused, and no dialog opens.
 cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml \
   --bin desktop-driver-fixture -- --cfg test
 python3 packages/desktop/tests/worker-drivers.py \
-  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture -k grant -k answer -k owner_yes
+  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture -k grant -k answer -k owner_yes -k dialog_names
 ```
 
 Signed host, on a Mac with the Developer ID identity in its keychain and the
@@ -26,7 +26,9 @@ APPLE_SIGNING_IDENTITY=<identity name or SHA-1> \
 ```
 
 Pass means `grant-approval.txt` ends in `OK` with `signed_host=True`, a
-same-user keychain add returns -34018, a declined dialog records nothing, and an
+same-user keychain add returns -34018, a declined dialog records nothing and
+puts that app and class on a 10-minute `app_action_declined` cooldown, the dialog
+text names no focus, idle or revoke check, and an
 allowed dialog grants only Finder/pointer. The tests answer the dialog through
 the fixture seam and remove their fixture grants.
 

@@ -20,5 +20,5 @@ codesign -f -s "$APPLE_SIGNING_IDENTITY" -o runtime -i io.hyperneo.app \
     --entitlements "$root/packages/desktop/src-tauri/SignedEntitlements.plist" "$app"
 "$app/Contents/MacOS/desktop-driver-fixture" >/dev/null 2>&1 || true
 python3 "$root/packages/desktop/tests/worker-drivers.py" "$app/Contents/MacOS/desktop-driver-fixture" \
-    -k grant -k answer -k owner_yes 2>&1 | tee "$out/grant-approval.txt"
+    -k grant -k answer -k owner_yes -k dialog_names 2>&1 | tee "$out/grant-approval.txt"
 exit "${PIPESTATUS[0]}"

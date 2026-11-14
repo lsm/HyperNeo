@@ -7,9 +7,15 @@ use security_framework::{
         PasswordOptions,
     },
 };
-use std::{collections::BTreeSet, sync::Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 static PENDING: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+pub(super) static DECLINED: Mutex<BTreeMap<String, Instant>> = Mutex::new(BTreeMap::new());
+const DECLINE_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 #[cfg(test)]
 pub(super) static FIXTURE_DIALOG: Mutex<(&str, u64)> = Mutex::new(("deny", 0));
 
@@ -58,7 +64,23 @@ pub(super) fn record(
     result.map_err(|error| format!("grant_store_refused: {}", error.code()))
 }
 
+pub(super) fn dialog_text(bundle_id: &str, class: &str) -> Option<String> {
+    let action = match class {
+        "observe" => "see its windows",
+        "launch" => "open it",
+        "pointer" => "click and scroll in it",
+        "keyboard" => "type into it",
+        _ => return None,
+    };
+    Some(format!(
+        "A HyperNeo worker asked to {action}.\n\nApp: {bundle_id}\n\nIf you allow it, HyperNeo workers can do this in this app without asking again."
+    ))
+}
+
 fn owner_allows(bundle_id: &str, class: &str) -> bool {
+    let Some(message) = dialog_text(bundle_id, class) else {
+        return false;
+    };
     #[cfg(test)]
     {
         let mut fixture = FIXTURE_DIALOG.lock().unwrap();
@@ -67,15 +89,6 @@ fn owner_allows(bundle_id: &str, class: &str) -> bool {
             return fixture.0 == "allow";
         }
     }
-    let action = match class {
-        "observe" => "see its windows",
-        "launch" => "open it",
-        "pointer" => "click and scroll in it",
-        _ => "type into it",
-    };
-    let message = format!(
-        "A HyperNeo worker asked to {action}.\n\nApp: {bundle_id}\n\nThis lasts until you revoke it. Each action still checks the app, focus and idle time."
-    );
     dispatch2::run_on_main(|mtm| {
         let alert = NSAlert::new(mtm);
         alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
@@ -88,13 +101,17 @@ fn owner_allows(bundle_id: &str, class: &str) -> bool {
     })
 }
 
-pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) {
+pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'static str {
     if bundle_id == "io.hyperneo.app" {
-        return;
+        return "app_action_not_authorized";
     }
     let key = format!("{class}\n{requirement}");
+    let declined = DECLINED.lock().unwrap().get(&key).copied();
+    if declined.is_some_and(|at| at.elapsed() < DECLINE_COOLDOWN) {
+        return "app_action_declined";
+    }
     if !PENDING.lock().unwrap().insert(key.clone()) {
-        return;
+        return "app_action_not_authorized";
     }
     let (bundle_id, requirement, class) = (
         bundle_id.to_owned(),
@@ -103,10 +120,14 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) {
     );
     std::thread::spawn(move || {
         if owner_allows(&bundle_id, &class) {
+            DECLINED.lock().unwrap().remove(&key);
             if let Err(error) = record(&bundle_id, &requirement, &class, true) {
                 log::warn!("Desktop grant was approved but not stored: {error}");
             }
+        } else {
+            DECLINED.lock().unwrap().insert(key.clone(), Instant::now());
         }
         PENDING.lock().unwrap().remove(&key);
     });
+    "app_action_not_authorized"
 }

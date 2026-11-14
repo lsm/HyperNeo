@@ -258,12 +258,25 @@ impl Drivers {
         #[cfg(test)]
         if request.action == "fixture-dialog" {
             let mut fixture = grants::FIXTURE_DIALOG.lock().unwrap();
-            fixture.0 = match request.tool.as_deref() {
-                Some("allow") => "allow",
-                Some("real") => "real",
-                _ => "deny",
-            };
-            return Ok(json!({"dialogs": fixture.1}));
+            if let Some(mode) = request.tool.as_deref() {
+                fixture.0 = match mode {
+                    "allow" => "allow",
+                    "real" => "real",
+                    _ => "deny",
+                };
+                grants::DECLINED.lock().unwrap().clear();
+            }
+            let texts: serde_json::Map<String, Value> =
+                ["observe", "launch", "pointer", "keyboard", "other"]
+                    .map(|class| {
+                        (
+                            class.to_owned(),
+                            json!(grants::dialog_text("com.apple.finder", class)),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+            return Ok(json!({"dialogs": fixture.1, "texts": texts}));
         }
         #[cfg(test)]
         if request.action == "fixture-slots" {
@@ -286,9 +299,11 @@ impl Drivers {
                 match request.action.as_str() {
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
-                            if reason == "app_action_not_authorized" {
-                                grants::ask_owner(bundle, requirement, class);
-                            }
+                            let reason = if reason == "app_action_not_authorized" {
+                                grants::ask_owner(bundle, requirement, class)
+                            } else {
+                                reason
+                            };
                             result = json!({"reason": reason, "class": class, "bundle_id": bundle});
                         }
                     }
