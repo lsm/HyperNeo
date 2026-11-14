@@ -15,7 +15,8 @@ bash .claude/skills/verify/resource-check.sh && (
   cd packages/daemon
   env -i PATH="$PATH" HOME="$RUN/home" TMPDIR="$RUN/tmp" NODE_ENV=test \
     HYPERNEO_SPACE=on HYPERNEO_DATA_DIR="$RUN/data" \
-    bun test tests/unit/4-space-storage/storage/global-settings-cache.test.ts
+    bun test tests/unit/4-space-storage/storage/global-settings-cache.test.ts \
+      tests/unit/1-core/operations/neo-rule-answers.test.ts
 )
 status=$?
 printf 'EXIT_CODE=%s\n' "$status"
@@ -29,3 +30,11 @@ worker patch, compensation, WebSocket settings update, Neo mute and tool-default
 transition. Each next read must expose the committed value. Caller mutation of a
 returned nested object must leave subsequent reads intact. The daemon, socket
 and synthetic database close in finally. This proves RPC and facade behavior.
+
+Warm-cache regressions must also expose a human-approved standing rule through
+`neo.question.answer`, startup tool-choice migration and the original committed
+value after a transaction reads its own write and rolls back. Low-level settings
+writes advance a connection-local revision even without a reactive notifier.
+Reads inside SQL transactions discard and bypass the facade cache, preventing
+uncommitted values from surviving rollback. Worker commits retain reactive
+invalidation. These checks use synthetic data only.

@@ -44,7 +44,7 @@ import {
   type SendStatus,
 } from './repositories/sdk-message-repository.ts';
 import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts';
-import { SettingsRepository } from './repositories/settings-repository.ts';
+import { globalSettingsRevision, SettingsRepository } from './repositories/settings-repository.ts';
 import type { SpaceSessionPort } from '../lib/agent/space-session-port.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
@@ -651,7 +651,13 @@ export class Database {
   }
 
   getGlobalSettings(): GlobalSettings {
-    const version = this.reactiveDb?.getTableVersion('global_settings') ?? 0;
+    const raw = this.core.getDb();
+    if ('inTransaction' in raw ? raw.inTransaction : raw.isTransaction) {
+      this.globalSettingsCache = undefined;
+      return this.settingsRepo.getGlobalSettings();
+    }
+    const version =
+      (this.reactiveDb?.getTableVersion('global_settings') ?? 0) + globalSettingsRevision(raw);
     if (!this.globalSettingsCache || this.globalSettingsCache.version !== version) {
       this.globalSettingsCache = { version, settings: this.settingsRepo.getGlobalSettings() };
     }
@@ -660,13 +666,10 @@ export class Database {
 
   saveGlobalSettings(settings: GlobalSettings): void {
     this.settingsRepo.saveGlobalSettings(settings);
-    this.globalSettingsCache = undefined;
   }
 
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
-    const settings = this.settingsRepo.updateGlobalSettings(updates);
-    this.globalSettingsCache = undefined;
-    return settings;
+    return this.settingsRepo.updateGlobalSettings(updates);
   }
 
   getDatabase(): BunDatabase {
