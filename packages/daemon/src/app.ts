@@ -733,6 +733,28 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
+    const credentialWriteListeners = new Set<(providerId: string) => void>();
+    credentialManager.setCredentialWriteHooks({
+      onCredentialsWritten: (providerId) => {
+        oauthRefreshScheduler.resetClock(providerId);
+        for (const listener of credentialWriteListeners) listener(providerId);
+        for (const session of sessionManager?.getCachedSessions() ?? []) {
+          if (session.providerId() !== providerId) continue;
+          db.getJobQueueRepo().wakeParkedDeliveries(session.getSessionData().id, Date.now());
+        }
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      },
+    });
+    const loginRecoveryPort: Parameters<SessionManager['setLoginRecovery']>[0] = {
+      refresh: (providerId) => oauthRefreshScheduler.refreshNow(providerId),
+      refreshState: (providerId) => oauthRefreshScheduler.clock(providerId),
+      needsLoginAt: (providerId) => db.providers.getNeedsLoginAt(providerId),
+      setNeedsLogin: (providerId, at) => db.providers.setNeedsLogin(providerId, at),
+      onCredentialsWritten: (callback) => {
+        credentialWriteListeners.add(callback);
+        return () => credentialWriteListeners.delete(callback);
+      },
+    };
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
     const commandBus = createInternalCommandBus<DaemonCommandMap>();
@@ -812,6 +834,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
     );
 
+    sessionManager.setLoginRecovery(loginRecoveryPort);
     sessionManager.start();
 
     startupTimer.start('state projection service');

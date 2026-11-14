@@ -28,7 +28,7 @@ class ProviderRpcRepository extends ProviderRepository {
     this.authDb
       .prepare(
         `UPDATE providers
-         SET auth_type = ?, health_status = ?, updated_at = ?
+         SET auth_type = ?, health_status = ?, needs_login_at = NULL, updated_at = ?
          WHERE provider_id = ? OR id = ?`
       )
       .run(authType, healthStatus, Date.now(), providerId, providerId);

@@ -98,6 +98,8 @@ export interface ResolvedQuestion {
 
 export type ProcessingWaiting = 'model' | 'reconnecting';
 
+export type RateLimitHoldReason = 'network' | 'login' | 'limit' | 'overloaded';
+
 export type AgentProcessingState =
   | { status: 'idle' }
   | { status: 'queued'; messageId: string }
@@ -119,7 +121,7 @@ export type AgentProcessingState =
       retryAt: number;
       messageId?: string;
       manualRetry?: boolean;
-      reason?: 'network';
+      reason?: RateLimitHoldReason;
     }
   | { status: 'interrupted' };
 

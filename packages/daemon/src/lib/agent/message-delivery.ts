@@ -160,6 +160,7 @@ export type DeliveryLoadResult = {
 };
 
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
+export const LOGIN_HOLD_PARK_MS = 5 * 60_000;
 
 export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
 

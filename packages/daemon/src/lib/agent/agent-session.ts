@@ -47,6 +47,11 @@ import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import {
+  createLoginRecovery,
+  type LoginRecoveryFacts,
+  type LoginRefreshState,
+} from './login-recovery.ts';
 import { Logger } from '../logger.ts';
 import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
@@ -162,6 +167,18 @@ export interface AgentSessionRuntimeOptions {
   spaceScopeResolver?: SessionScopeResolver;
   autoReplayPendingMessages?: boolean;
 
+  loginRecovery?: {
+    refresh(
+      providerId: string
+    ): Promise<import('../credentials/oauth-refresh-scheduler.ts').RefreshNowOutcome>;
+    refreshState(
+      providerId: string
+    ): import('../credentials/oauth-refresh-scheduler.ts').ProviderRefreshClock;
+    needsLoginAt(providerId: string): number | null;
+    setNeedsLogin(providerId: string, at: number | null): void;
+    onCredentialsWritten(callback: (providerId: string) => void): () => void;
+  };
+
   hardReset?: (
     session: AgentSession,
     options: { restartQuery: boolean }
@@ -220,6 +237,7 @@ import {
   DeliveryEnqueueRejectedError,
   deliverMessage,
   deliveryConsumptionTimeoutOrDefault,
+  LOGIN_HOLD_PARK_MS,
   MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
@@ -419,7 +437,10 @@ export class AgentSession
 
   private rateLimitWatchdog: RateLimitWatchdog;
   private networkPause: NetworkOutagePause;
+  private loginRecovery: ReturnType<typeof createLoginRecovery> | null = null;
+  private loginUnsubscribes: Array<() => void> = [];
   private authRejected = false;
+  private loginRetriedInTurn = false;
   private interruptedAt = 0;
 
   queryObject: QueryLike | null = null;
@@ -794,6 +815,19 @@ export class AgentSession
       },
       log: (line) => this.logger.info(line),
     });
+
+    this.loginRecovery = this.createLoginRecoveryPort();
+    const loginPort = this.runtimeOptions.loginRecovery;
+    if (loginPort) {
+      this.loginUnsubscribes.push(
+        loginPort.onCredentialsWritten((providerId) => {
+          if (providerId !== this.providerId()) return;
+          void this.onCredentialsWritten(providerId).catch((error: unknown) =>
+            this.logger.warn(`Resuming a login hold failed: ${String(error)}`)
+          );
+        })
+      );
+    }
 
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
@@ -2865,6 +2899,7 @@ export class AgentSession
       this.networkPause.endOutage();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
       this.authRejected = false;
+      this.loginRetriedInTurn = false;
       const wasPending = this.rateLimitWatchdog.isPending();
       this.rateLimitWatchdog.reset();
       if (wasPending && this.stateManager.getState().status === 'rate_limit_cooldown') {
@@ -2903,6 +2938,110 @@ export class AgentSession
 
   endNetworkOutage(): void {
     this.networkPause.endOutage();
+  }
+
+  private loginFacts(): LoginRecoveryFacts {
+    return {
+      retried: this.loginRetriedInTurn,
+      needsLoginAt: this.loginNeedsLoginAt(),
+      refresh: this.loginRefreshClock(),
+    };
+  }
+
+  private loginRefreshClock(): LoginRefreshState {
+    return (
+      this.runtimeOptions.loginRecovery?.refreshState(this.providerId()) ?? {
+        nextRefreshAt: 0,
+        attempt: 0,
+        lastOutcome: 'none',
+      }
+    );
+  }
+
+  private loginNeedsLoginAt(): number | null {
+    return this.runtimeOptions.loginRecovery?.needsLoginAt(this.providerId()) ?? null;
+  }
+
+  private createLoginRecoveryPort() {
+    const port = this.runtimeOptions.loginRecovery;
+    return createLoginRecovery({
+      facts: () => this.loginFacts(),
+      refresh: () => port?.refresh(this.providerId()) ?? Promise.resolve('skipped' as const),
+      enterSignIn: async () => {
+        port?.setNeedsLogin(this.providerId(), Date.now());
+        const failure = { errorKind: 'credential' as const, message: 'Claude login is required' };
+        recordClassifiedProviderFailure(this.providerId(), failure);
+      },
+      enterTransient: () => {},
+      timer: {
+        now: () => Date.now(),
+        schedule: (run, delayMs) => {
+          const timer = setTimeout(run, delayMs);
+          timer.unref?.();
+          return () => clearTimeout(timer);
+        },
+        hold: (delayMs, prompt) =>
+          this.stateManager.setRateLimitCooldown({
+            retryCount: 0,
+            maxRetries: 0,
+            retryAt: Date.now() + delayMs,
+            reason: 'login',
+            ...(prompt ? { messageId: prompt.uuid, heldPrompt: prompt } : {}),
+          }),
+        resume: async (prompt) => {
+          this.loginRetriedInTurn = true;
+          await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+          if (prompt)
+            await this.lifecycleManager.startQueryAndEnqueue(
+              prompt.uuid,
+              prompt.content,
+              undefined,
+              {
+                prepend: true,
+              }
+            );
+        },
+        log: (line) => this.logger.info(line),
+      },
+    });
+  }
+
+  private async onCredentialsWritten(providerId: string): Promise<void> {
+    if (providerId !== this.providerId() || !this.loginRecovery) return;
+    await this.loginRecovery.maybeResume(providerId);
+  }
+
+  isLoginHeld(): boolean {
+    return this.loginRecovery?.isHeld(this.providerId()) ?? false;
+  }
+
+  hasLoginRecovery(): boolean {
+    return !!this.runtimeOptions.loginRecovery;
+  }
+
+  async onLoginRejected(prompt: { uuid: string; content: string | MessageContent[] } | null) {
+    if (!this.loginRecovery) return 'sign_in' as const;
+    const plan = await this.loginRecovery.recover(
+      this.providerId(),
+      prompt,
+      this.loginRetriedInTurn
+    );
+    if (plan === 'retry') this.loginRetriedInTurn = true;
+    return plan;
+  }
+
+  private async enterLoginHoldForWaitingMessage(messageUuid: string): Promise<void> {
+    const stored = this.db
+      .getSDKMessageRepo()
+      .getStoredPromptsByUuid(this.session.id, messageUuid)[0] as
+      | { message?: { content?: unknown } }
+      | undefined;
+    const content = stored?.message?.content as string | MessageContent[] | undefined;
+    await this.loginRecovery?.recover(
+      this.providerId(),
+      content === undefined ? null : { uuid: messageUuid, content },
+      this.loginRetriedInTurn
+    );
   }
 
   async onNetworkOutage(
@@ -3121,6 +3260,11 @@ export class AgentSession
 
           if (this.networkPause.isActive()) await this.resumeNetworkPauseFor(messageUuid);
 
+          if (this.loginNeedsLoginAt() !== null && !this.isLoginHeld()) {
+            await this.enterLoginHoldForWaitingMessage(messageUuid);
+            return { outcome: 'blocked', retryAt: Date.now() + LOGIN_HOLD_PARK_MS };
+          }
+
           if (!this.messageQueue.isRunning()) {
             const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
             if (startResult === 'blocked') {
@@ -3164,6 +3308,7 @@ export class AgentSession
             });
           }
 
+          this.loginRetriedInTurn = false;
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
           return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
         },
@@ -3719,6 +3864,9 @@ export class AgentSession
     this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();
     this.networkPause.stop();
+    for (const unsubscribe of this.loginUnsubscribes) unsubscribe();
+    this.loginUnsubscribes = [];
+    this.loginRecovery?.stop(this.providerId());
     await this.lifecycleManager.cleanup();
   }
 }

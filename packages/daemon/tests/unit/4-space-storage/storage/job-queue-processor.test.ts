@@ -488,6 +488,24 @@ describe('JobQueueProcessor', () => {
     });
   });
 
+  describe('wakeParkedDeliveries', () => {
+    it("moves only that session's parked deliveries forward", () => {
+      repo.enqueue({ queue: 'message_delivery', payload: { sessionId: 's1' }, runAt: 9_000 });
+      repo.enqueue({ queue: 'message_delivery', payload: { sessionId: 's2' }, runAt: 9_000 });
+      repo.enqueue({ queue: 'message_delivery', payload: { sessionId: 's1' }, runAt: 0 });
+
+      expect(repo.wakeParkedDeliveries('s1', 1_000)).toBe(1);
+      const rows = db
+        .prepare(`SELECT payload, run_at AS runAt FROM job_queue ORDER BY run_at`)
+        .all() as { payload: string; runAt: number }[];
+      expect(rows.map((row) => [JSON.parse(row.payload).sessionId, row.runAt])).toEqual([
+        ['s1', 0],
+        ['s1', 1_000],
+        ['s2', 9_000],
+      ]);
+    });
+  });
+
   describe('park accounting (requeueParked)', () => {
     it('requeueParked returns a processing job to pending without touching retry_count', () => {
       repo.enqueue({ queue: 'delivery-q', payload: { sessionId: 's1' }, maxRetries: 8 });

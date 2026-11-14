@@ -6025,6 +6025,37 @@ describe('QueryRunner', () => {
       }
     });
 
+    it('retries the turn when login recovery says a refresh worked', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      const plans: string[] = ['retry', 'sign_in'];
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        onLoginRejected: async () => (plans.shift() ?? 'sign_in') as 'retry' | 'sign_in',
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('holds instead of restarting when the refresh is still failing', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        onLoginRejected: async () => 'refresh_pending',
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(JSON.stringify(handleErrorSpy.mock.calls)).not.toContain('Query stopped');
+    });
+
     it('restarts once for Claude 401 then reports a terminal authentication error', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 

@@ -1,6 +1,7 @@
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
+import { clearProviderFailure } from '../providers/provider-failure-store.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { providerRpcWrites } from '../../storage/repositories/provider-rpc-writes.ts';
 import {
@@ -29,16 +30,26 @@ const PROVIDER_ENV_OAUTH_KEYS: Record<string, string[]> = {
   anthropic: ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'],
 };
 
+export interface CredentialWriteHooks {
+  onCredentialsWritten?: (providerId: string) => void;
+}
+
 export class ProviderCredentialManager {
   static create(db: Database, env: NodeJS.ProcessEnv = process.env): ProviderCredentialManager {
     return new ProviderCredentialManager(createCredentialStore(db), db, env);
   }
+
+  private hooks: CredentialWriteHooks = {};
 
   constructor(
     private readonly store: CredentialStore,
     private readonly db: Database,
     private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
+
+  setCredentialWriteHooks(hooks: CredentialWriteHooks): void {
+    this.hooks = hooks;
+  }
 
   getCredentialStore(): CredentialStore {
     return this.store;
@@ -52,6 +63,7 @@ export class ProviderCredentialManager {
       JSON.stringify(credentials)
     );
     await this.updateProviderAuth(providerId, 'api_key', 'healthy');
+    this.afterCredentialWrite(providerId);
   }
 
   async storeOAuthTokens(
@@ -65,6 +77,7 @@ export class ProviderCredentialManager {
       JSON.stringify(credentials)
     );
     await this.updateProviderAuth(providerId, 'oauth', 'healthy');
+    this.afterCredentialWrite(providerId);
   }
 
   async getCredentials(providerId: string): Promise<ProviderCredentials | null> {
@@ -100,6 +113,11 @@ export class ProviderCredentialManager {
   async listCredentialProviderIds(): Promise<string[]> {
     const services = await this.store.listServices('neokai.provider.');
     return services.map((service) => service.replace(/^neokai\.provider\./, ''));
+  }
+
+  private afterCredentialWrite(providerId: string): void {
+    clearProviderFailure(providerId);
+    this.hooks.onCredentialsWritten?.(providerId);
   }
 
   markProviderHealth(providerId: string, healthStatus: 'unknown' | 'healthy' | 'unhealthy'): void {

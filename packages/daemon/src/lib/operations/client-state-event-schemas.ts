@@ -41,7 +41,7 @@ const AgentState = z.discriminatedUnion('status', [
     retryAt: z.number(),
     messageId: z.string().optional(),
     manualRetry: z.boolean().optional(),
-    reason: z.literal('network').optional(),
+    reason: z.enum(['network', 'login', 'limit', 'overloaded']).optional(),
   }),
   z.object({ status: z.literal('interrupted') }),
 ]);

@@ -31,6 +31,7 @@ export interface QueryRetryEnvironment {
   isCleaningUp: boolean;
   isSuperseded: boolean;
   hasRateLimitHandoff: boolean;
+  hasLoginRecovery?: boolean;
   useProviderFallback?: boolean;
   recoveryState: { rateLimitCooldownScheduled: boolean };
   rateLimitHandoffResult?: QueryRetryHandoffResult;
@@ -86,7 +87,10 @@ export interface QueryRetryFinalizer {
 export interface QueryRetryDecision {
   route: QueryRetryRoute;
   finalizer: QueryRetryFinalizer;
+  hold: QueryRetryHold;
 }
+
+export type QueryRetryHold = 'login' | 'limit' | 'overloaded' | 'network' | 'none';
 
 function isQueryInterrupted(
   signal: QueryRetryErrorSignal,
@@ -195,7 +199,7 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     isClaudeAuthenticationError(errorSignal.rawText) &&
     !isQueryInterrupted(errorSignal, env.lifecycle)
   )
-    return env.attempt === 0
+    return env.hasLoginRecovery || env.attempt === 0
       ? { action: 'claude_auth_retry' }
       : {
           action: 'terminal',
@@ -260,6 +264,19 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   };
 }
 
+export function classifyQueryRetryHold(
+  signal: QueryRetryErrorSignal,
+  env: QueryRetryEnvironment
+): QueryRetryHold {
+  if (isQueryInterrupted(signal, env.lifecycle)) return 'none';
+  if (env.providerFamily === 'anthropic' && isClaudeAuthenticationError(signal.rawText))
+    return 'login';
+  if (signal.isNetworkUnreachable || signal.isStreamStall) return 'network';
+  if (signal.isRateLimit) return 'limit';
+  if (signal.isRetryableProviderError && env.attempt >= env.maxProviderRetries) return 'overloaded';
+  return 'none';
+}
+
 function makeFinalizer(overrides: Partial<QueryRetryFinalizer>): QueryRetryFinalizer {
   return {
     skipQueueClear: false,
@@ -292,11 +309,11 @@ function skipFinalizerIdleDueToLifecycle(env: QueryRetryEnvironment): boolean {
 
 const skipFinalizerIdleAlways = () => true;
 
-function resolveDecision(
+function resolveFinalizer(
   route: QueryRetryRoute,
   env: QueryRetryEnvironment,
   errorSignal?: QueryRetryErrorSignal
-): QueryRetryDecision {
+): { route: QueryRetryRoute; finalizer: QueryRetryFinalizer } {
   const handoff = env.rateLimitHandoffResult ?? null;
   if (route.action === 'rate_limit_handoff') {
     if (handoff === 'accepted') {
@@ -341,7 +358,7 @@ function resolveDecision(
             category: ErrorCategory.RATE_LIMIT,
             messageHint: undefined,
           } as QueryRetryRoute);
-      return resolveDecision(recomputedRoute, nonHandoffEnv, errorSignal);
+      return resolveFinalizer(recomputedRoute, nonHandoffEnv, errorSignal);
     }
     return {
       route,
@@ -473,7 +490,8 @@ export function mapQueryRetryArm(
   input: QueryRetryRouteInput,
   route: QueryRetryRoute
 ): QueryRetryDecision {
-  return resolveDecision(route, input.env, input.errorSignal);
+  const resolved = resolveFinalizer(route, input.env, input.errorSignal);
+  return { ...resolved, hold: classifyQueryRetryHold(input.errorSignal, input.env) };
 }
 
 export const decideQueryRetry = (superpipe({})('query-retry-arm') as PipelineAPI)

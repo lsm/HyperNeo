@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { Provider, TokenRefreshOutcome } from '@hyperneo/shared/provider';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
-import { OAuthRefreshScheduler } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
+import {
+  OAuthRefreshScheduler,
+  refreshDelayMs,
+} from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import {
   clearProviderFailureRecords,
   recordClassifiedProviderFailure,
@@ -61,7 +64,7 @@ function createProvider(refreshResult: TokenRefreshOutcome | Error): Provider {
 }
 
 describe('OAuthRefreshScheduler', () => {
-  it('refreshNow waits its turn behind a running tick', async () => {
+  it('refreshNow waits its turn behind a running tick, then reuses that refresh', async () => {
     const manager = new FakeCredentialManager();
     const registry = new ProviderRegistry();
     let running = 0;
@@ -86,7 +89,8 @@ describe('OAuthRefreshScheduler', () => {
     const scheduler = new OAuthRefreshScheduler(manager as never, { registry });
     await Promise.all([scheduler.tick(), scheduler.refreshNow(provider.id)]);
     expect(overlapped).toBe(false);
-    expect(manager.stored).toHaveLength(2);
+    expect(manager.stored).toHaveLength(1);
+    expect(scheduler.clock(provider.id).lastOutcome).toBe('refreshed');
   });
 
   it('runs an initial tick when started', async () => {
@@ -765,6 +769,127 @@ describe('OAuthRefreshScheduler', () => {
       expect(attempts).toBe(1);
       expect(manager.health.get('oauth-provider')).toBe('unhealthy');
       expect(changed).toEqual(['oauth-provider']);
+    });
+  });
+});
+
+describe('refresh clock', () => {
+  it('doubles the wait after each transient outcome, capped at an hour', () => {
+    expect(refreshDelayMs(1)).toBe(5 * 60_000);
+    expect(refreshDelayMs(2)).toBe(10 * 60_000);
+    expect(refreshDelayMs(3)).toBe(20 * 60_000);
+    expect(refreshDelayMs(4)).toBe(40 * 60_000);
+    expect(refreshDelayMs(5)).toBe(60 * 60_000);
+    expect(refreshDelayMs(20)).toBe(60 * 60_000);
+  });
+
+  it('records the wait and attempt per provider after a transient failure', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider('transient'));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    let now = 0;
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => now,
+      refreshWindowMs: 10_000,
+    });
+
+    expect(await scheduler.refreshNow('oauth-provider')).toBe('transient');
+    expect(scheduler.clock('oauth-provider')).toEqual({
+      nextRefreshAt: 5 * 60_000,
+      attempt: 1,
+      lastOutcome: 'transient',
+    });
+
+    now += 5 * 60_000;
+    expect(await scheduler.refreshNow('oauth-provider')).toBe('transient');
+    expect(scheduler.clock('oauth-provider')).toMatchObject({
+      nextRefreshAt: now + 10 * 60_000,
+      attempt: 2,
+    });
+  });
+
+  it('keeps the last outcome while the clock has not come round', async () => {
+    const registry = new ProviderRegistry();
+    let refreshes = 0;
+    const provider = createProvider('transient');
+    provider.refreshToken = async () => {
+      refreshes += 1;
+      return 'transient';
+    };
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    await scheduler.refreshNow('oauth-provider');
+    await scheduler.refreshNow('oauth-provider');
+
+    expect(refreshes).toBe(1);
+  });
+
+  it('refreshes on a 401 even when no expiry is known and no failure was recorded', async () => {
+    const registry = new ProviderRegistry();
+    const provider = createProvider('refreshed');
+    provider.getCredentials = () => ({
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+    });
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    expect(await scheduler.refreshNow('oauth-provider')).toBe('refreshed');
+  });
+
+  it('a credential write resets the provider refresh clock', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider('transient'));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    await scheduler.refreshNow('oauth-provider');
+    scheduler.resetClock('oauth-provider');
+
+    expect(scheduler.clock('oauth-provider')).toEqual({
+      nextRefreshAt: 0,
+      attempt: 0,
+      lastOutcome: 'none',
     });
   });
 });
