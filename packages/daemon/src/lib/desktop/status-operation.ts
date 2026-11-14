@@ -7,7 +7,7 @@ import { defineOperation } from '../operations/registry.ts';
 import { readProcessIdentity, type ProcessIdentity } from '../runtime-process-identity.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { desktopOptIn, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
-import { desktopRecordMissing, readDesktopDriverRecord } from './stop-operation.ts';
+import { desktopPidGone, desktopRecordMissing, readDesktopDriverRecord } from './stop-operation.ts';
 
 const State = z.enum(['off', 'unavailable', 'running', 'stopped', 'stop_unconfirmed']);
 type Options = {
@@ -39,8 +39,10 @@ async function driverState(dataDir: string, worker: string, options: Options) {
     const alive =
       now?.seconds === driver.startedAt.seconds &&
       now.microseconds === driver.startedAt.microseconds;
-    if (desktopRecordMissing(join(directory, 'stopped'))) return alive ? 'running' : 'stopped';
-    return alive ? 'stop_unconfirmed' : 'stopped';
+    if (!alive && (now || desktopPidGone(driver.pid))) return 'stopped';
+    return alive && desktopRecordMissing(join(directory, 'stopped'))
+      ? 'running'
+      : 'stop_unconfirmed';
   } catch {
     return 'stop_unconfirmed';
   }
