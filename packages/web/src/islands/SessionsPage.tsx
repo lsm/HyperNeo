@@ -129,6 +129,7 @@ export function SessionsPage() {
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [project, setProject] = useState<string | null>(initialSelection.project);
   const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
   const [gitLoading, setGitLoading] = useState(false);
@@ -185,7 +186,10 @@ export function SessionsPage() {
   const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
     getWorkspaceHistory()
-      .then(setHistory)
+      .then((entries) => {
+        setHistory(entries);
+        setHistoryLoaded(true);
+      })
       .catch(() => {});
   }, [historyVersion]);
 
@@ -279,14 +283,21 @@ export function SessionsPage() {
       setManualProjectError('Enter an absolute folder path.');
       return;
     }
-    if (history.length > 0 && !history.some((entry) => entry.path === target)) {
+    setManualProjectBusy(true);
+    setManualProjectError(null);
+    let current: WorkspaceHistoryEntry[];
+    try {
+      current = await getWorkspaceHistory();
+    } catch {
+      current = history;
+    }
+    if (historyLoaded && !current.some((entry) => entry.path === target)) {
+      setManualProjectBusy(false);
       setManualProjectError(
-        `${owningProjectName(target, history)} is no longer a project. Add the folder as a project instead.`
+        `${owningProjectName(target, current)} is no longer a project. Add the folder as a project instead.`
       );
       return;
     }
-    setManualProjectBusy(true);
-    setManualProjectError(null);
     try {
       await addFolderToProject(target, trimmed);
       setManualProjectPath('');
