@@ -310,8 +310,10 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
         runLagPhase('scanner:claude_code', () => readClaudeCodeFolders(projectsDir, cache))
       )
     : async () => [];
-  const listed = deps.liveSessionsListed ?? deps.liveSessions;
-  const liveSessionsListed = listed ? shareInFlight(listed) : undefined;
+  const liveSessions = deps.liveSessions ? shareInFlight(deps.liveSessions) : undefined;
+  const liveSessionsListed = deps.liveSessionsListed
+    ? shareInFlight(deps.liveSessionsListed)
+    : liveSessions;
   const status: WorkAdapter['status'] = liveSessionsListed
     ? (ref, since, receipt) =>
         readClaudeCliStatus(ref, since, receipt, {
@@ -333,8 +335,9 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
       }
     : undefined;
   const sendInbox = deps.sendInbox;
+  const sendDeps = { ...deps, liveSessions: deps.liveSessions ? liveSessions : liveSessionsListed };
   const send: WorkAdapter['send'] = sendInbox
-    ? (ref, message, context) => sendClaudeCodeMessage(ref, message, context, deps)
+    ? (ref, message, context) => sendClaudeCodeMessage(ref, message, context, sendDeps)
     : undefined;
   return {
     id: 'claude-code',
