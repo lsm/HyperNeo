@@ -123,7 +123,7 @@ export class InterruptHandler {
           this.deferredReplaySuppressed = true;
         }
         if (currentState.status === 'interrupted' && currentState.reason === 'restart') {
-          await stateManager.setInterrupted();
+          await stateManager.dropRestartResume();
         }
         return;
       }

@@ -336,6 +336,18 @@ export class ProcessingStateManager {
     await this.setState({ status: 'interrupted' });
   }
 
+  async dropRestartResume(): Promise<void> {
+    this.processingState = { status: 'interrupted' };
+    await this.db.updateSession(this.sessionId, {
+      processingState: JSON.stringify(this.processingState),
+    });
+    await this.internalEventBus.publish('session.updated', {
+      sessionId: this.sessionId,
+      source: 'processing-state',
+      processingState: this.processingState,
+    });
+  }
+
   async setWaitingForInput(pendingQuestion: PendingUserQuestion): Promise<void> {
     await this.setState({ status: 'waiting_for_input', pendingQuestion });
   }
