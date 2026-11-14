@@ -14,7 +14,12 @@ import type {
   NeoTodoEntry,
   NeoTodoPriority,
 } from '@hyperneo/shared/types/neo-ask';
-import { NEO_TODO_PRIORITIES, type NeoTodoControl, neoTodoControllable } from './todo-controls.ts';
+import {
+  NEO_TODO_PRIORITIES,
+  type NeoTodoControl,
+  neoTodoControllable,
+  neoTodoHoldable,
+} from './todo-controls.ts';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -358,11 +363,15 @@ function TodoRow({
               position="right"
               items={[
                 { label: t('todo.markDone'), onClick: () => control({ kind: 'done' }), disabled },
-                {
-                  label: t(todo.startedAt === null ? 'todo.hold' : 'todo.pause'),
-                  onClick: () => control({ kind: 'hold' }),
-                  disabled,
-                },
+                ...(neoTodoHoldable(todo)
+                  ? [
+                      {
+                        label: t(todo.startedAt === null ? 'todo.hold' : 'todo.pause'),
+                        onClick: () => control({ kind: 'hold' }),
+                        disabled,
+                      },
+                    ]
+                  : []),
                 { type: 'divider' as const },
                 ...NEO_TODO_PRIORITIES.map((priority) => ({
                   label: t('todo.priorityItem', { priority: t(PRIORITY_LABELS[priority]) }),

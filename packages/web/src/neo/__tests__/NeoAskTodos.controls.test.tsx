@@ -2,7 +2,7 @@ import type { NeoAskEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos } from '../NeoAskTodos.tsx';
-import { neoTodoControlCall } from '../todo-controls.ts';
+import { neoTodoControlCall, neoTodoHoldable } from '../todo-controls.ts';
 
 afterEach(() => {
   cleanup();
@@ -127,6 +127,23 @@ describe('NeoAskTodos step controls', () => {
     expect(row.querySelector('[aria-hidden="true"]')?.textContent).toBe('‖');
   });
 
+  it('a failed step offers no Pause, since the daemon would refuse it', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('failed', { state: 'failed', startedAt: 2, status: 'Not done' })],
+        })}
+        onAnswer={vi.fn()}
+        onControl={vi.fn(async () => {})}
+      />
+    );
+    step(app, 'Todo failed');
+    const items = app.getAllByRole('menuitem').map((item) => item.textContent?.trim());
+    expect(items).toContain('Mark done');
+    expect(items).not.toContain('Pause');
+    expect(items).not.toContain('Hold');
+  });
+
   it('a refused control shows the daemon reason on its step', async () => {
     const onControl = vi.fn(async () => {
       throw new Error('already_waiting: this todo already waits on an open card; answer that one.');
@@ -162,5 +179,19 @@ describe('neoTodoControlCall', () => {
       name: 'neo.todo.edit',
       input: { todoId: 't', priority: 'low' },
     });
+  });
+});
+
+describe('neoTodoHoldable', () => {
+  it('matches the states the daemon holds or pauses', () => {
+    const at = (patch: Partial<NeoTodoEntry>) => neoTodoHoldable(todo('t', patch));
+    expect(at({})).toBe(true);
+    expect(at({ state: 'blocked', blockedBy: 'question' })).toBe(true);
+    expect(at({ state: 'doing', startedAt: 2 })).toBe(true);
+    expect(at({ state: 'blocked', blockedBy: 'needs-human', startedAt: 2 })).toBe(true);
+    expect(at({ state: 'failed', startedAt: 2 })).toBe(false);
+    expect(at({ state: 'blocked', blockedBy: 'worker', startedAt: 2 })).toBe(false);
+    expect(at({ state: 'blocked', blockedBy: 'check' })).toBe(false);
+    expect(at({ statusCodes: [{ code: 'todo.held', params: {} }] })).toBe(false);
   });
 });

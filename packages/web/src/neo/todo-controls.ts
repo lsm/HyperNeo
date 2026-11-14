@@ -1,4 +1,4 @@
-import type { NeoTodo, NeoTodoPriority } from '@hyperneo/shared/types/neo-ask';
+import type { NeoTodo, NeoTodoEntry, NeoTodoPriority } from '@hyperneo/shared/types/neo-ask';
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
 
 export type NeoTodoControl =
@@ -11,6 +11,15 @@ export const NEO_TODO_PRIORITIES: readonly NeoTodoPriority[] = ['urgent', 'high'
 
 export const neoTodoControllable = (todo: Pick<NeoTodo, 'state'>) =>
   ['todo', 'doing', 'blocked', 'failed'].includes(todo.state);
+
+export const neoTodoHoldable = (
+  todo: Pick<NeoTodoEntry, 'state' | 'blockedBy' | 'startedAt' | 'statusCodes'>
+) =>
+  !todo.statusCodes?.some((code) => ['todo.held', 'todo.paused'].includes(code.code)) &&
+  (todo.startedAt === null
+    ? todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question')
+    : todo.state === 'doing' ||
+      (todo.state === 'blocked' && ['question', 'needs-human'].includes(todo.blockedBy ?? '')));
 
 export function neoTodoControlCall(
   todo: Pick<NeoTodo, 'id' | 'startedAt'>,
