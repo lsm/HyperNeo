@@ -87,6 +87,7 @@ export function NeoVoice({
   latest.current = recorder;
   const liveStream = useRef<VoiceLiveStream | null>(null);
   const owned = useRef(false);
+  const opening = useRef(false);
   const interim = useRef(onInterim);
   const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
   const captureDraft = (): VoiceSendSnapshot => ({
@@ -262,7 +263,8 @@ export function NeoVoice({
           }
         } else if (result.outcome.reason) onError(result.outcome.reason);
       } else if (result.kind === 'silent-recording') {
-        if (!quiet) onError('I didn’t hear anything. Try speaking closer to the microphone.');
+        if (!quiet || task.intent === 'send')
+          onError('I didn’t hear anything. Try speaking closer to the microphone.');
       } else
         onError(
           `${result.message}${result.persisted && !result.dequeued ? ' Your recording is saved below. You can retry.' : ''}`
@@ -333,9 +335,16 @@ export function NeoVoice({
   }, [recorder.durationLimitHit]);
 
   useEffect(() => {
+    opening.current = false;
+  }, [live?.on, live?.speaking]);
+  useEffect(() => {
+    if (phase === 'recording') opening.current = false;
     if (!enabled || !isVoiceRecordingSupported()) return;
     if (live?.on && !live.speaking) {
-      if (phase === 'idle' && connected) void start(true);
+      if (phase === 'idle' && connected && !opening.current) {
+        opening.current = true;
+        void start(true);
+      }
     } else if ((live?.speaking || owned.current) && recorder.isRecording && !pending.current)
       void transcribe('draft');
   }, [live?.on, live?.speaking, phase, connected, enabled]);
