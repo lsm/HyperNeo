@@ -1,6 +1,7 @@
 import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
+import * as nativeWrites from '../../../../src/lib/drivers/claude-native-writes';
 import { prepareWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { requireClaudeReplyDestination } from '../../../../src/lib/drivers/claude-inbox-submit';
@@ -1084,6 +1085,21 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned[0].args).not.toContain('--settings');
       expect(spawned[0].args).not.toContain('--append-system-prompt');
       expect(spawned[0].args.join(' ')).not.toContain('HYPERNEO_');
+    });
+
+    test('a reopened HyperNeo worker is told to attach a PR opened off its branch', async () => {
+      const worker = vi
+        .spyOn(nativeWrites, 'readClaudeWorkerSandbox')
+        .mockResolvedValue({} as Awaited<ReturnType<typeof nativeWrites.readClaudeWorkerSandbox>>);
+      try {
+        expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
+        const args = spawned[0].args;
+        expect(args[args.indexOf('--append-system-prompt') + 1]).toContain(
+          "Open the PR on the session's own branch; if it was opened on another branch, immediately attach it with ccd_pr bind_pr, then turn on auto_fix and address_comments with ccd_pr set_monitor."
+        );
+      } finally {
+        worker.mockRestore();
+      }
     });
 
     test('runs the message as a CLI turn on the session, in its own mode, and confirms it', async () => {
