@@ -77,33 +77,40 @@ pub(super) fn dialog_text(bundle_id: &str, class: &str) -> Option<String> {
     ))
 }
 
-fn owner_allows(bundle_id: &str, class: &str) -> bool {
+fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {
     let Some(message) = dialog_text(bundle_id, class) else {
-        return false;
+        return Some(false);
     };
     #[cfg(test)]
-    {
+    let fail = {
         FIXTURE_DIALOG.lock().unwrap().1 += 1;
         loop {
             let mode = FIXTURE_DIALOG.lock().unwrap().0;
             match mode {
                 "hold" => {}
-                "panic" => panic!("fixture dialog failed"),
-                "real" => break,
-                mode => return mode == "allow",
+                "panic" => break true,
+                "real" => break false,
+                mode => return Some(mode == "allow"),
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-    }
+    };
     dispatch2::run_on_main(|mtm| {
-        let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
-        alert.setInformativeText(&NSString::from_str(&message));
-        alert.addButtonWithTitle(&NSString::from_str("Don't Allow"));
-        alert.addButtonWithTitle(&NSString::from_str("Allow"));
-        #[allow(deprecated)]
-        NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
-        alert.runModal() == 1001
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(test)]
+            if fail {
+                panic!("fixture dialog failed");
+            }
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
+            alert.setInformativeText(&NSString::from_str(&message));
+            alert.addButtonWithTitle(&NSString::from_str("Don't Allow"));
+            alert.addButtonWithTitle(&NSString::from_str("Allow"));
+            #[allow(deprecated)]
+            NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+            alert.runModal() == 1001
+        }))
+        .ok()
     })
 }
 
@@ -133,9 +140,8 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         class.to_owned(),
     );
     std::thread::spawn(move || {
-        let answer = std::panic::catch_unwind(|| owner_allows(&bundle_id, &class));
-        let allowed = answer.as_ref().is_ok_and(|allowed| *allowed);
-        if allowed {
+        let answer = owner_allows(&bundle_id, &class);
+        if answer == Some(true) {
             if let Err(error) = record(&bundle_id, &requirement, &class, true) {
                 log::warn!("Desktop grant was approved but not stored: {error}");
             }
@@ -143,9 +149,9 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
         let mut asks = ASKS.lock().unwrap();
         let (pending, declined) = &mut *asks;
         match answer {
-            Ok(true) => _ = declined.remove(&key),
-            Ok(false) => _ = declined.insert(key.clone(), Instant::now()),
-            Err(_) => {}
+            Some(true) => _ = declined.remove(&key),
+            Some(false) => _ = declined.insert(key.clone(), Instant::now()),
+            None => {}
         }
         pending.remove(&key);
     });
