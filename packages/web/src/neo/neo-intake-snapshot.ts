@@ -164,8 +164,9 @@ const encode = (superpipe({})('neo-intake-snapshot-encode') as PipelineAPI)
 export const neoIntakeSnapshots = {
   voiceContext(value: unknown): boolean {
     return (
-      shape(value, 'images,quote,suffix,attachmentIds') &&
+      shape(value, 'images,quote,suffix,attachmentIds,inputMode') &&
       text(value.suffix, MAX_JSON) &&
+      (value.inputMode === undefined || value.inputMode === 'live_voice') &&
       Array.isArray(value.attachmentIds) &&
       value.attachmentIds.every((id) => text(id, 200, true)) &&
       (value.images === undefined ||

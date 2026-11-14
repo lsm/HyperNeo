@@ -47,6 +47,7 @@ export function NeoVoice({
   door,
   previewContext,
   onPreviewCapture,
+  live,
 }: {
   previewContext?: NeoPreviewReference;
   onPreviewCapture?: () => void;
@@ -61,6 +62,7 @@ export function NeoVoice({
   onSendHandle: (finish: ((intent: 'draft' | 'send') => void) | null) => void;
   onError: (message: string) => void;
   onPhase: (phase: VoicePhase) => void;
+  live?: { on: boolean; speaking: boolean };
 }) {
   const enabled = useNeoVoiceSettings();
   const [transcribing, setTranscribing] = useState<string | null>(null);
@@ -84,6 +86,7 @@ export function NeoVoice({
   const latest = useRef(recorder);
   latest.current = recorder;
   const liveStream = useRef<VoiceLiveStream | null>(null);
+  const heard = useRef('');
   const interim = useRef(onInterim);
   const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
   const captureDraft = (): VoiceSendSnapshot => ({
@@ -129,6 +132,7 @@ export function NeoVoice({
   }, []);
 
   async function start() {
+    heard.current = '';
     setStreamFormat(null);
     recordingDraft.current = captureDraft();
     onPreviewCapture?.();
@@ -137,17 +141,24 @@ export function NeoVoice({
       const hub = connectionManager.getHubIfConnected();
       if (!hub || !latest.current.isRecording) return;
       dropLiveStream();
-      const live = openVoiceStream(hub, (text) => interim.current?.(text), {
-        onFormat: (format) => {
-          if (mounted.current) setStreamFormat(format);
+      const live = openVoiceStream(
+        hub,
+        (text) => {
+          heard.current = text;
+          interim.current?.(text);
         },
-        onError: (error) => {
-          if (mounted.current)
-            onError(
-              `Live transcription failed: ${error.message}. The recording will use batch transcription.`
-            );
-        },
-      });
+        {
+          onFormat: (format) => {
+            if (mounted.current) setStreamFormat(format);
+          },
+          onError: (error) => {
+            if (mounted.current)
+              onError(
+                `Live transcription failed: ${error.message}. The recording will use batch transcription.`
+              );
+          },
+        }
+      );
       liveStream.current = live;
       voiceRecorderStore.setPcmTap(live.push);
     } catch (error) {
@@ -325,6 +336,16 @@ export function NeoVoice({
   useEffect(() => {
     if (recorder.durationLimitHit) void transcribe('draft');
   }, [recorder.durationLimitHit]);
+
+  useEffect(() => {
+    if (!live?.on || !enabled || !isVoiceRecordingSupported()) return;
+    if (!live.speaking) {
+      if (phase === 'idle' && connected) void start();
+    } else if (recorder.isRecording && !pending.current)
+      void (heard.current.trim() || !liveStream.current || streamFormat === 'batch'
+        ? transcribe('draft')
+        : cancel());
+  }, [live?.on, live?.speaking, phase, connected, enabled]);
 
   finishFromComposer.current = (intent) => {
     const task = pending.current;

@@ -23,6 +23,7 @@ export type NeoDraft = {
   images?: readonly MessageImage[];
   quote?: NeoQuote;
   previewContext?: NeoPreviewReference;
+  inputMode?: 'live_voice';
 };
 type Submission = NeoDraft & { requestId: string };
 type PendingSubmission = { submission: Submission; flight?: Promise<IntakeReceipt> };
@@ -193,6 +194,7 @@ export function neoDraftPayload(submission: Submission, thumbnails: readonly Neo
       : text,
     ...(images?.length && thumbnails.length ? { thumbnails: [...thumbnails] } : {}),
     ...(submission.quote?.replyTo ? { replyTo: submission.quote.replyTo } : {}),
+    ...(submission.inputMode ? { inputMode: submission.inputMode } : {}),
     ...(submission.previewContext
       ? {
           previewContext: {

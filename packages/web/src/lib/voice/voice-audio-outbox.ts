@@ -178,6 +178,7 @@ export async function submitVoiceSendIntent(
               text: settled,
               ...(record.sendContext?.images ? { images: record.sendContext.images } : {}),
               ...(record.sendContext?.quote ? { quote: record.sendContext.quote } : {}),
+              ...(record.sendContext?.inputMode ? { inputMode: record.sendContext.inputMode } : {}),
               ...(record.previewContext ? { previewContext: record.previewContext } : {}),
             },
             async () => hub

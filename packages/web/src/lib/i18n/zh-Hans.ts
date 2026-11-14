@@ -270,6 +270,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'composer.removePreview': '移除预览关联',
   'composer.realtimeVoice': '实时语音',
   'composer.realtimeVoiceStop': '停止实时语音',
+  'composer.realtimeVoiceInterrupt': '让 Neo 停下',
   'composer.voiceRepliesNotConfigured': '这台 daemon 还没有配置语音合成。',
   'composer.voiceRepliesUnavailable': '语音回复暂时不可用。',
   'composer.recordingDraft': '正在录音 · 停止后加入草稿，和{context}一起发送',

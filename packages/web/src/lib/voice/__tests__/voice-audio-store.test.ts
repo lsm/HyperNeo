@@ -144,6 +144,13 @@ describe('voice audio record store', () => {
     expect(await listVoiceRecords()).toHaveLength(1);
   });
 
+  it('keeps a live voice send context', async () => {
+    const sendContext = { suffix: '', attachmentIds: [], inputMode: 'live_voice' as const };
+    expect(await putVoiceRecord({ ...makeEntry('live', NOW), sendContext })).toBe(true);
+    resetVoiceAudioStore();
+    expect((await getVoiceRecord('live'))?.sendContext).toEqual(sendContext);
+  });
+
   it('lists records sorted by createdAt ascending regardless of put order', async () => {
     await putVoiceRecord(makeEntry('newer', NOW + 5_000));
     await putVoiceRecord(makeEntry('older', NOW));

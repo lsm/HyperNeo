@@ -3,7 +3,7 @@ import { neoIntakeSnapshots } from '../../neo/neo-intake-snapshot.ts';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
 import { readNeoPreviewReference } from '../../neo/neo-preview-context.ts';
 
-export type VoiceSendContext = Pick<NeoDraft, 'images' | 'quote'> & {
+export type VoiceSendContext = Pick<NeoDraft, 'images' | 'quote' | 'inputMode'> & {
   suffix: string;
   attachmentIds: string[];
 };

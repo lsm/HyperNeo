@@ -271,6 +271,7 @@ export const en = {
   'composer.removePreview': 'Remove Preview context',
   'composer.realtimeVoice': 'Realtime voice',
   'composer.realtimeVoiceStop': 'Stop realtime voice',
+  'composer.realtimeVoiceInterrupt': 'Stop Neo speaking',
   'composer.voiceRepliesNotConfigured': 'Voice replies are not set up on this daemon.',
   'composer.voiceRepliesUnavailable': 'Voice replies are unavailable right now.',
   'composer.recordingDraft': 'Recording · Stop adds it to your draft; send it with {context}',

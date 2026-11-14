@@ -28,6 +28,7 @@ export interface NeoSpeechPlayer {
 interface NeoSpeechPlayerOptions {
   createContext?: () => AudioContext;
   onStop?: () => void;
+  onSpeaking?: (speaking: boolean) => void;
 }
 
 const STALL_MS = 30_000;
@@ -43,10 +44,17 @@ export function openNeoSpeechPlayer(
   let queue: Utterance[] = [];
   let playhead = 0;
   let audible = true;
+  let speaking = false;
   let stall: ReturnType<typeof setTimeout> | undefined;
 
   const ack = (id: string, state: 'playing' | 'played' | 'cancelled' | 'failed') => {
     invokeOperation(hub, 'neo.speech.ack', { sessionId, id, state }).catch(() => {});
+  };
+
+  const report = () => {
+    if (!!queue[0]?.started === speaking) return;
+    speaking = !speaking;
+    options.onSpeaking?.(speaking);
   };
 
   const silence = (utterance: Utterance) => {
@@ -82,6 +90,7 @@ export function openNeoSpeechPlayer(
     if (!utterance.started) {
       utterance.started = true;
       ack(utterance.id, 'playing');
+      report();
     }
   };
 
@@ -96,6 +105,7 @@ export function openNeoSpeechPlayer(
 
   const pump = () => {
     clearTimeout(stall);
+    report();
     const utterance = queue[0];
     if (!utterance) return;
     for (let chunk = utterance.chunks.get(utterance.next); chunk; ) {
@@ -123,6 +133,7 @@ export function openNeoSpeechPlayer(
   const drop = () => {
     queue.forEach(silence);
     queue = [];
+    report();
   };
   const unwatch = hub.onConnection((state) => {
     if (state !== 'connected') drop();
@@ -172,6 +183,7 @@ export function openNeoSpeechPlayer(
       silence(utterance);
       ack(utterance.id, 'cancelled');
     }
+    report();
   };
 
   return {

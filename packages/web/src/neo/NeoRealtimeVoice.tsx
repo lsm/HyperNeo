@@ -13,13 +13,16 @@ export function NeoRealtimeVoice({
   sessionId,
   connected,
   onError,
+  onLive,
 }: {
   collapsed: boolean;
   sessionId: string;
   connected: boolean;
   onError: (message: string) => void;
+  onLive?: (live: { on: boolean; speaking: boolean }) => void;
 }) {
   const [on, setOn] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const live = useRef<{ player: NeoSpeechPlayer; stop: (disable: boolean) => void } | null>(null);
   const disabling = useRef<Promise<unknown> | null>(null);
 
@@ -27,12 +30,14 @@ export function NeoRealtimeVoice({
     live.current?.stop(disable);
     live.current = null;
     setOn(false);
+    setSpeaking(false);
   };
 
   useEffect(() => {
     if (!connected) stop();
   }, [connected]);
   useEffect(() => stop, [sessionId]);
+  useEffect(() => onLive?.({ on, speaking }), [on, speaking]);
 
   const start = async () => {
     const hub = connectionManager.getHubIfConnected();
@@ -44,6 +49,9 @@ export function NeoRealtimeVoice({
     const player = openNeoSpeechPlayer(hub, sessionId, {
       onStop: () => {
         if (live.current === session && current) stop(false);
+      },
+      onSpeaking: (value) => {
+        if (live.current === session) setSpeaking(value);
       },
     });
     const session = {
@@ -86,7 +94,13 @@ export function NeoRealtimeVoice({
     }
   };
 
-  const label = t(on ? 'composer.realtimeVoiceStop' : 'composer.realtimeVoice');
+  const label = t(
+    speaking
+      ? 'composer.realtimeVoiceInterrupt'
+      : on
+        ? 'composer.realtimeVoiceStop'
+        : 'composer.realtimeVoice'
+  );
   return (
     <Button
       type="button"
@@ -96,7 +110,9 @@ export function NeoRealtimeVoice({
       aria-pressed={on}
       title={label}
       disabled={!connected}
-      onClick={() => (live.current ? stop() : void start())}
+      onClick={() =>
+        speaking ? live.current?.player.interrupt() : live.current ? stop() : void start()
+      }
       class="h-11 w-11 min-w-11 shrink-0 px-0 !rounded-full"
     >
       <NeoIcon name="voice" class={collapsed ? '!size-6' : '!size-7'} />

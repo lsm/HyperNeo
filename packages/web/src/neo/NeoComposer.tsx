@@ -41,13 +41,14 @@ export function neoEnterSends(
 }
 
 const snapshotVoiceSend = (superpipe({})('neo.voice-send-snapshot') as PipelineAPI)
-  .input(['draft', 'files', 'quote', 'preview'])
+  .input(['draft', 'files', 'quote', 'preview', 'liveVoice'])
   .pipe(
     (
       draft: string,
       files: NeoAttachment[],
       quote: NeoQuote | undefined,
-      preview: NeoPreviewReference | undefined
+      preview: NeoPreviewReference | undefined,
+      liveVoice: boolean
     ) => {
       const captured = structuredClone(files);
       return {
@@ -57,18 +58,20 @@ const snapshotVoiceSend = (superpipe({})('neo.voice-send-snapshot') as PipelineA
           images: captured.flatMap((file) => (file.kind === 'image' ? [file.image] : [])),
           attachmentIds: captured.map((file) => file.id),
           ...(quote ? { quote: structuredClone(quote) } : {}),
+          ...(liveVoice ? { inputMode: 'live_voice' as const } : {}),
         },
         previewContext: preview ? { ...preview } : undefined,
       };
     },
-    ['draft', 'files', 'quote', 'preview'],
+    ['draft', 'files', 'quote', 'preview', 'liveVoice'],
     'snapshot'
   )
   .end('snapshot') as (
   draft: string,
   files: NeoAttachment[],
   quote: NeoQuote | undefined,
-  preview: NeoPreviewReference | undefined
+  preview: NeoPreviewReference | undefined,
+  liveVoice: boolean
 ) => Pick<VoiceRecordEntry, 'sendDraft' | 'sendContext' | 'previewContext'>;
 
 export function NeoComposer({
@@ -182,6 +185,7 @@ export function NeoComposer({
     []
   );
   const connected = connectionState.value === 'connected';
+  const [live, setLive] = useState({ on: false, speaking: false });
   async function send() {
     if (recordingVoice || voicePhase === 'drafting') {
       if (attachments.reading) {
@@ -532,7 +536,10 @@ export function NeoComposer({
               draftText={draft}
               onTranscript={onTranscript}
               onInterim={setInterim}
-              onPrepareSend={() => snapshotVoiceSend(draft, attachments.files, quote, boundPreview)}
+              onPrepareSend={() =>
+                snapshotVoiceSend(draft, attachments.files, quote, boundPreview, live.on)
+              }
+              live={live}
               onSendVoice={async (text, recordId) => {
                 const record = await getVoiceRecord(recordId);
                 if (!record) return { kind: 'unconfirmed' } as const;
@@ -547,6 +554,7 @@ export function NeoComposer({
               sessionId={sessionId}
               connected={connected}
               onError={onError}
+              onLive={setLive}
             />
           </div>
           {showStop && (
