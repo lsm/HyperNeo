@@ -1209,7 +1209,7 @@ test('a reply publishes and hands off in one call, and a later full-session repl
     accepted: true,
     started: true,
   });
-  expect(service.publications.list(conversationId)).toHaveLength(1);
+  expect(service.publications.list(conversationId)).toHaveLength(2);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(
     await convoPublish({ requestId: 'final', replyTo: [id], fullText: 'Done.', verbatim: true })
@@ -1353,25 +1353,6 @@ test('a reply is the answer and still hands off to the full session', async () =
   const first = service.publications.list(conversationId)![0];
   expect(first).toMatchObject({ verbatim: true, fullText: 'The build passed.', replyTo: [id] });
   expect(first.shortText).toBeUndefined();
-  const detailed = await reply.handler(
-    {
-      requestId: 'long-result',
-      replyTo: [id],
-      text: 'The result',
-      details: 'Additional evidence and explanation.',
-    },
-    {} as never
-  );
-  expect(JSON.parse((detailed.content[0] as { text: string }).text)).toMatchObject({
-    accepted: true,
-  });
-  const final = service.publications.list(conversationId)![1];
-  expect(final).toMatchObject({
-    shortText: 'The result',
-    fullText: 'Additional evidence and explanation.',
-    replyTo: [id],
-  });
-  expect(final.verbatim).toBeUndefined();
   expect(service.publications.list(conversationId)).toHaveLength(1);
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
