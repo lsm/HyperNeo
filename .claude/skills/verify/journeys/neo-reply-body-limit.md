@@ -16,8 +16,9 @@ words with longer details. The first four are
 refused as `reply_needs_details` with the explained reason ending "the rest in
 details"; the fifth as `reply_summary_too_long` with "shrink text". The reader
 then has no publication. A one-sentence summary with the long text in details
-and a three-line Markdown body are accepted, and the reader shows exactly those
-two, in order.
+and a three-line Markdown body are accepted. A long drafted email sent with
+`deliverable: true` is exempt from the limit and accepted. The reader shows
+exactly those three, in order.
 
 The front's `reply` tool runs the same check; its refusal is covered by the
 front-flow unit test, not by this daemon proof. On the test-first commit this

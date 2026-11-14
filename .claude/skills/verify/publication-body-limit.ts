@@ -29,8 +29,8 @@ try {
   const repo = new NeoRepository(app.db.getDatabase());
   repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: root, role: 'neo' }));
-  const publish = async (requestId: string, text: string, details?: string) =>
-    JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, text, ...(details ? { details } : {}) } })).content[0].text);
+  const publish = async (requestId: string, text: string, details?: string, extra: Record<string, unknown> = {}) =>
+    JSON.parse((await invoke({ name: 'neo.publication.publish', input: { requestId, text, ...(details ? { details } : {}), ...extra } })).content[0].text);
   const credential = readLocalCredential(join(run, 'data/local-rpc.credential'));
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${credential}` } } as unknown as string[]);
   await new Promise((resolve, reject) => { ws!.onopen = resolve; ws!.onerror = reject; });
@@ -64,12 +64,16 @@ try {
   evidence.short = await publish('short', '**Merged**\n- CI green\n- 已部署');
   assert.equal((evidence.split as { accepted: boolean }).accepted, true);
   assert.equal((evidence.short as { accepted: boolean }).accepted, true);
+  const email = `Dear Sam,\n\n${long}\n\nThanks,\nMarc`;
+  evidence.deliverable = await publish('deliverable', email, undefined, { deliverable: true });
+  assert.equal((evidence.deliverable as { accepted: boolean }).accepted, true);
   const after = await read();
   evidence.after = after;
-  assert.equal(after.items.length, 2);
+  assert.equal(after.items.length, 3);
   assert.deepEqual(after.items.map((item) => [item.shortText, item.fullText]), [
     ['Merged and CI is green.', long],
     [undefined, '**Merged**\n- CI green\n- 已部署'],
+    [undefined, email],
   ]);
   evidence.passed = true;
 } finally {

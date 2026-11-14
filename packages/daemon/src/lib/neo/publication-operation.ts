@@ -46,6 +46,12 @@ export const NeoPublicationDraft = NeoPublicationObject.omit({
     ...NeoPublicationReplyFields,
     requestId: z.string().min(1).max(160),
     progress: z.literal(true).optional(),
+    deliverable: z
+      .literal(true)
+      .describe(
+        'text is a copyable deliverable (translation, drafted email or message, text to paste) and is exempt from the body length limit.'
+      )
+      .optional(),
     spoken: z.string().trim().min(1).max(500).optional(),
     session: NeoPublicationObject.shape.session.nullable(),
     links: z
@@ -168,7 +174,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (draft: Draft) => {
         const body = foldPublicationDetails({ text: draft.text, details: draft.details });
-        const refusal = replyBodyRefusal(body);
+        const refusal = draft.deliverable ? undefined : replyBodyRefusal(body);
         return refusal
           ? { reason: { accepted: false as const, reason: refusal } }
           : { value: draft };
@@ -320,6 +326,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
           requestId,
           spoken: _spoken,
           progress,
+          deliverable: _deliverable,
           text: _rawText,
           details: _rawDetails,
           ...message
