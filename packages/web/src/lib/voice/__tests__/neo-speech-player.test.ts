@@ -309,6 +309,23 @@ describe('openNeoSpeechPlayer', () => {
     expect(onSpeaking.mock.calls).toEqual([[true], [false], [true], [false]]);
   });
 
+  it('keeps speaking between replies already queued', () => {
+    const { hub, emit } = fakeHub();
+    const sound = fakeAudio();
+    const onSpeaking = vi.fn();
+    openNeoSpeechPlayer(hub, 'neo', { createContext: sound.create, onSpeaking });
+    emit(say(ID_A));
+    emit(say(ID_B));
+    emit(audio(ID_A, 0, pcm(16384)));
+    emit(end(ID_A, 1));
+    sound.finish(0);
+    expect(onSpeaking.mock.calls).toEqual([[true]]);
+    emit(audio(ID_B, 0, pcm(16384)));
+    emit(end(ID_B, 1));
+    sound.finish(1);
+    expect(onSpeaking.mock.calls).toEqual([[true], [false]]);
+  });
+
   it('tells its owner when the daemon stops listening to it', () => {
     const { hub, emit } = fakeHub();
     const sound = fakeAudio();
