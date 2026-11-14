@@ -116,6 +116,36 @@ describe('workspace project folders', () => {
     expect(repo.get(third)).toBeNull();
   });
 
+  test('refuses to add a folder to a project that was just removed', async () => {
+    const anchor = join(dir, 'anchor');
+    const member = join(dir, 'member');
+    const standalone = join(dir, 'standalone');
+    const extra = join(dir, 'extra');
+    for (const folder of [anchor, member, standalone, extra]) mkdirSync(folder);
+    const registry = createOperationRegistry([createProjectFolderOperation(repo)]);
+    const invoke = (projectPath: string, path: string) =>
+      invokeOperation(registry, 'work.project.addFolder', { projectPath, path }, { source: 'rpc' });
+    repo.upsert(anchor);
+    expect(await invoke(anchor, member)).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true },
+    });
+    for (const folder of repo.projects()[0].folders) repo.remove(folder);
+    expect(repo.projects()).toEqual([]);
+    expect(await invoke(anchor, extra)).toEqual({
+      kind: 'completed',
+      value: { accepted: false, reason: 'Project no longer exists.' },
+    });
+    expect(repo.projects()).toEqual([]);
+    expect(repo.get(anchor)).toBeNull();
+    repo.upsert(standalone);
+    expect(await invoke(standalone, extra)).toEqual({
+      kind: 'completed',
+      value: { accepted: true },
+    });
+    expect(repo.projects()[0].folders).toEqual([standalone, extra]);
+  });
+
   test('adds to a persisted project after its first member vanished but still validates the new directory', async () => {
     const first = join(dir, 'a');
     const second = join(dir, 'b');
