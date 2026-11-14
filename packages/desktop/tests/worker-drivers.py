@@ -483,7 +483,7 @@ class WorkerDrivers(unittest.TestCase):
         base.mkdir()
         self.assertGreaterEqual(len(str(base / 'desktop/control.sock').encode()), 104)
         process = subprocess.Popen(
-            [str(RUNNER), str(base), str(self.binary), self.path, 'unapproved'],
+            [str(RUNNER), str(base), str(self.binary), self.path],
             env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:

@@ -7,15 +7,14 @@ mod record;
 #[path = "desktop_target.rs"]
 mod target;
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex as StdMutex,
-    },
+    sync::{Arc, Mutex as StdMutex},
     time::Duration,
 };
 use tempfile::TempDir;
@@ -48,7 +47,6 @@ struct Drivers {
     workers: Mutex<BTreeMap<String, Arc<Mutex<Option<Worker>>>>>,
     binary: PathBuf,
     verification_path: String,
-    starts_enabled: AtomicBool,
     records: PathBuf,
 }
 #[derive(serde::Deserialize)]
@@ -137,7 +135,6 @@ impl Control {
             workers: Mutex::new(BTreeMap::new()),
             binary,
             verification_path,
-            starts_enabled: AtomicBool::new(false),
             records: directory,
         });
         let state = drivers.clone();
@@ -197,10 +194,6 @@ impl Control {
             socket,
             _lock: lock,
         }))
-    }
-    #[cfg(test)]
-    pub(crate) fn enable_fixture_starts(&self) {
-        self.drivers.starts_enabled.store(true, Ordering::Relaxed);
     }
     pub(crate) async fn shutdown(&self) {
         let task = self.task.lock().unwrap().take();
@@ -338,16 +331,6 @@ impl Drivers {
         }
         if request.action == "start" {
             record::ensure_enabled(&directory)?;
-        }
-        if !self.starts_enabled.load(Ordering::Relaxed) {
-            let reason = "Driver control unavailable until worker authorization is enforced";
-            return match request.action.as_str() {
-                "start" => Err(reason.into()),
-                "status" | "stop" => {
-                    Ok(json!({"state": "unavailable", "reason": reason, "pid": null}))
-                }
-                _ => Err("Unknown Desktop control action".into()),
-            };
         }
         let worker_id = request.worker.clone();
         let slot = {

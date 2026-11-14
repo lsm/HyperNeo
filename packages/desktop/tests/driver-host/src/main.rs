@@ -43,12 +43,6 @@ async fn serve() {
         desktop_drivers::inject_accept_failure();
     }
     let control = desktop_drivers::Control::setup(base, binary, args[3].clone()).await;
-    #[cfg(test)]
-    if args.get(4).map(String::as_str) != Some("unapproved") {
-        if let Some(control) = &control {
-            control.enable_fixture_starts();
-        }
-    }
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");
