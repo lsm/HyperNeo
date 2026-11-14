@@ -104,6 +104,11 @@ try {
       .waitFor({ timeout: 5000 })
       .then(() => true)
       .catch(() => false);
+    result.addedFolderInSidebar = await page
+      .locator(`div[title$="/projects/assets-${scheme}"]`)
+      .waitFor({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-folder-added.png` });
     await page.keyboard.press('Escape');
@@ -121,6 +126,7 @@ try {
     assert.match(result.chipText ?? '', /alpha/);
     assert.equal(result.addProjectForms, 0);
     assert.equal(result.addedFolderInMenu, true);
+    assert.equal(result.addedFolderInSidebar, true);
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);

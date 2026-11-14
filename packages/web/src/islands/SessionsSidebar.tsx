@@ -9,7 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { navigateToSession, navigateToSessions } from '../lib/router.ts';
 import { sessions } from '../lib/state.ts';
-import { newChatProjectSignal } from '../lib/signals.ts';
+import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
   addWorkspaceToHistory,
@@ -133,11 +133,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [addProjectBusy, setAddProjectBusy] = useState(false);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
 
+  const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
     getWorkspaceHistory()
       .then(setHistory)
       .catch(() => {});
-  }, []);
+  }, [historyVersion]);
 
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);

@@ -10,7 +10,7 @@ import type {
 } from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
-import { newChatProjectSignal } from '../lib/signals.ts';
+import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   createSession,
   getWorkspaceHistory,
@@ -280,6 +280,7 @@ export function SessionsPage() {
     setManualProjectError(null);
     try {
       await addFolderToProject(project, trimmed);
+      workspaceHistoryVersionSignal.value += 1;
       setHistory(await getWorkspaceHistory());
       setManualProjectPath('');
       setManualProjectOpen(false);
