@@ -22,7 +22,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { isUserSession } from '../lib/session-utils.ts';
-import { listProjectPaths, owningProjectName } from '../lib/projects.ts';
+import { judgeFolderTarget, listProjectPaths, owningProjectName } from '../lib/projects.ts';
 import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
@@ -285,17 +285,14 @@ export function SessionsPage() {
     }
     setManualProjectBusy(true);
     setManualProjectError(null);
-    let current: WorkspaceHistoryEntry[];
+    let fresh: WorkspaceHistoryEntry[] | null = null;
     try {
-      current = await getWorkspaceHistory();
-    } catch {
-      current = history;
-    }
-    if (historyLoaded && !current.some((entry) => entry.path === target)) {
+      fresh = await getWorkspaceHistory();
+    } catch {}
+    const verdict = judgeFolderTarget(target, fresh, history, historyLoaded);
+    if (verdict.decision === 'refuse') {
       setManualProjectBusy(false);
-      setManualProjectError(
-        `${owningProjectName(target, current)} is no longer a project. Add the folder as a project instead.`
-      );
+      setManualProjectError(verdict.message);
       return;
     }
     try {
