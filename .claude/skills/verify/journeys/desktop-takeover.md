@@ -20,10 +20,11 @@ Pass means:
 
 - `status-before.json` reads `running` and `status-after.json` reads `stopped`;
 - `web-observations.json` shows the drawer with one Stop button while running,
-  then the session view with no button after the stop;
+  its todo title opening the worker's session in Neo, then the session view
+  with no button after the stop;
 - `driver.txt` reports the stand-in exited with 143 (SIGTERM from `desktop.stop`);
 - `worker-dir.txt` lists the `stopped` latch;
-- screenshots `drawer-running.png`, `session-running.png`,
+- screenshots `drawer-running.png`, `drawer-opened-session.png`, `session-running.png`,
   `session-running-dark.png` and `session-stopped.png`.
 
 Not covered: a real Cua driver and the real HyperNeo Desktop control channel.
