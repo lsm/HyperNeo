@@ -18,33 +18,39 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 
 The control socket has no answer or approve action, and requests with unknown fields are rejected. A worker therefore cannot submit, replay or reuse an answer. The host never offers a grant for its own app and refuses it with `app_not_grantable`, so driver input cannot be pointed at its own dialog.
 
-Only the daemon asks the host to act. Today the worker's `desktop-mcp` process reaches the host only for the read-only `resolve` guard and has no input path at all: dispatch throws, so the proxy answers `driver_unavailable`. The forwarding action below takes input, so it moves behind the daemon: the proxy submits a call to the daemon's operations door and the daemon is the only client accepted for the dispatch action. The four layers below are what has to hold before that action exists.
+Only the daemon asks the host to act. Today the worker's `desktop-mcp` process calls the host's `resolve` guard, which sends no driver input but can open the approval dialog, and it has no input path at all: dispatch throws, so the proxy answers `driver_unavailable`. The forwarding action below sends input, so it moves behind the daemon: the proxy submits a call to the daemon's operations door and the daemon is the only client accepted for the dispatch action. The four layers below are what has to hold before that action exists.
 
 ## Host forwarding
 
 The host already starts, stops and reports a driver, and resolves a verified app and action class for a call. What is missing is the action that forwards a resolved tool call to that driver. It is added only behind all four layers below, and no other action reaches a driver with input.
 
-### 1. Only the daemon can open the port
+### 1. Only a daemon in the host's own bundle can open the port
 
 The host accepts a control connection only from a client that proves possession of a port key. The key is a generic password item in the Data Protection keychain group the host already uses (`P5R65T296V.io.hyperneo.app`, from the signed entitlements), so only code signed for that team can reach the group at all. The key item carries a user-presence access control: even a team-signed process reads it only after the owner approves that read in the system prompt. The existing grant items use after-first-unlock protection with no presence flag, so they prove nothing here.
 
-The daemon reads the key at connect and answers a fresh host nonce; the host refuses any connection without the correct answer. The worker's proxy never holds the key and never reads the group. A same-user process on the same account therefore cannot stand in for the daemon, which the 0700 directory and the socket's user ownership never prevented.
+The daemon reads the key at connect and answers a fresh host nonce; the host refuses any connection without the correct answer. The worker's proxy never holds the key and never reads the group. A same-user process without the key therefore cannot stand in for the daemon, which the 0700 directory and the socket's user ownership never prevented.
+
+**Signing prerequisite.** The group is reachable only by a binary signed with that team's identity and the `keychain-access-groups` entitlement. Today only the app bundle carries it: `cua-driver-bundle.json` applies `SignedEntitlements.plist` to the bundle, and `tauri.conf.json` gives the `binaries/hyperneo` sidecar the plain `Entitlements.plist`. So forwarding needs the bundled sidecar signed with the group entitlement and a provisioning profile that allows it, which the build does not do yet. That is a prerequisite of this layer, not a follow-on.
+
+**Attach-first.** The host attaches to any daemon that advertises itself in `runtime.json` before it starts its own, and an attached CLI or launchd daemon is not in the bundle and can never hold the group. Desktop control is therefore unavailable in that state: the host stays at `guards_unavailable`, the status says the running daemon was not started by this app, and desktop control turns on only against the app's own signed sidecar. Falling back to a weaker check for an attached daemon is not an option, because that check is what keeps a worker's proxy from standing in for the daemon.
 
 ### 2. The daemon speaks only for an opted-in task
 
-The daemon issues a forwarding token per call, and only when the target task's todo is in `doing` with desktop control on in `named`, the binding the proxy already resolves as `todo_id`, `worker_id` and `driver_instance_id`. The token names the task, the session, the target app (bundle ID plus its anchored signing requirement), the action class and a short expiry. The host checks the expiry and matches the token's task, session and app against the driver instance the request names.
+The daemon issues a forwarding token per call, and only when the target task's todo is in `doing` with desktop control on in `named`, the binding the proxy already resolves as `todo_id`, `worker_id` and `driver_instance_id`. The token names the task, the session, the target app (bundle ID plus its anchored signing requirement), the action class and a short expiry.
+
+The host checks the expiry, matches the token's task, session and app against the driver instance the request names, and matches the token's class to the class it resolves for the actual call. A token asking for `pointer` does not dispatch a call the host classifies as `keyboard`; the mismatch refuses as `target_mismatch`. The class the host resolved is the one the grant check uses, so a token cannot name a granted class to send an ungranted one.
 
 A token is not a grant. A worker cannot mint one, widen one or reuse one for another app, session or task. The proxy has no route that carries a caller-supplied token.
 
 ### 3. The owner approves each app once
 
-The existing dialog stays the only approval path, and a forwarding token must also match a stored grant. When a task first targets an app and class, the host refuses with `app_action_not_authorized` and opens the dialog; allow records the grant, decline records nothing and holds for 10 minutes. A token whose app or class has no stored grant is refused before the driver sees anything, even when the token is well formed and unexpired.
+The existing dialog stays the only approval path, and a forwarding token must also match a stored grant. When a task first targets an app and class, the host refuses with `app_action_not_authorized` and opens the dialog; allow records the grant, decline records nothing and holds for 10 minutes. The grant check uses the app and the class the host resolved for this call, never the token's claims, so a token whose app or class has no stored grant is refused before the driver sees anything, even when the token is well formed and unexpired.
 
 ### 4. Every action is recorded, and input has no other route
 
-The daemon writes one audit record per forwarded call: task, session, worker, driver instance, app, action class, tool, time, decision, result and whether the driver was reached. The host writes its own record for every dispatch it performs, refusals and driver errors included, from the verified token claims and what actually happened, so a daemon fault cannot hide an action.
+The daemon writes one audit record per forwarded call: task, session, worker, driver instance, app, action class, tool, time, decision, result and whether the driver was reached. The daemon commits that record before it answers the worker, and it answers the worker only after the call has returned, so the record covers the outcome the worker sees. If the record cannot be committed the daemon refuses the call and does not forward, with a reason the worker can report; a call that was not forwarded cannot produce a reply. The host writes its own record for every dispatch it performs, refusals and driver errors included, from the verified token claims and what actually happened, and commits it before replying, so a daemon fault cannot hide an action.
 
-Input reaches a driver only through the host's dispatch action, and dispatch writes its record before replying. There is no direct socket to the driver, no second entry point and no path that returns a result without a record.
+Input reaches a driver only through the host's dispatch action. There is no direct socket to the driver, no second entry point and no path that returns a result without a record on both sides.
 
 ## What this does not protect against
 
@@ -55,7 +61,8 @@ Input reaches a driver only through the host's dispatch action, and dispatch wri
 - **Replay inside the expiry.** A leaked token can be replayed for the same task and app until it expires. Session and lease bounds shrink that window; they do not close it.
 - **What the driver does after input.** These layers decide whether one tool call may be issued. They do not limit what an allowlisted tool does inside the app, and they do not cover file access a worker has without the host.
 - **Values, screenshots and secrets.** Records carry identities, the tool name and the result; no typed values, no field contents and no images.
-- **Other builds and machines.** Desktop control needs the signed host running with this build. Nothing here protects an install without the port key or with an unsigned host, which stay at `guards_unavailable`.
+- **A daemon this app did not start.** An attached CLI or launchd daemon cannot hold the port key, so desktop control stays off while one is attached. The signed sidecar and its signing prerequisite are not an edge case here; they are what the feature runs on.
+- **Builds without the signed sidecar.** Nothing here protects an install without the port key or with an unsigned host, which stay at `guards_unavailable`.
 
 ## Limits of this slice
 
