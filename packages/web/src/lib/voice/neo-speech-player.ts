@@ -17,6 +17,7 @@ interface Utterance {
   carry: Uint8Array;
   sources: Set<AudioBufferSourceNode>;
   started: boolean;
+  heard: number;
 }
 
 export interface NeoSpeechPlayer {
@@ -74,6 +75,7 @@ export function openNeoSpeechPlayer(
     utterance.sources.add(source);
     source.onended = () => {
       utterance.sources.delete(source);
+      utterance.heard = Date.now();
       pump();
     };
     if (!utterance.started) {
@@ -105,11 +107,14 @@ export function openNeoSpeechPlayer(
     if (utterance.sources.size) return;
     if (utterance.end !== null && utterance.next >= utterance.end)
       return finish(utterance, 'played');
-    stall = setTimeout(() => {
-      if (queue[0] !== utterance) return;
-      ack(utterance.id, 'failed');
-      finish(utterance);
-    }, STALL_MS);
+    stall = setTimeout(
+      () => {
+        if (queue[0] !== utterance) return;
+        ack(utterance.id, 'failed');
+        finish(utterance);
+      },
+      utterance.heard + STALL_MS - Date.now()
+    );
   };
 
   const drop = () => {
@@ -141,13 +146,16 @@ export function openNeoSpeechPlayer(
         carry: new Uint8Array(0),
         sources: new Set(),
         started: false,
+        heard: Date.now(),
       });
     } else if (!utterance) return;
     else if (event.type === 'failed') return finish(utterance);
-    else if (event.type === 'audio') {
-      if (event.seq >= utterance.next && !utterance.chunks.has(event.seq))
+    else {
+      utterance.heard = Date.now();
+      if (event.type === 'end') utterance.end = event.seq;
+      else if (event.seq >= utterance.next && !utterance.chunks.has(event.seq))
         utterance.chunks.set(event.seq, decode(event.pcm));
-    } else utterance.end = event.seq;
+    }
     pump();
   });
 
