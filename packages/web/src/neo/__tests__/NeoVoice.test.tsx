@@ -716,6 +716,48 @@ describe('Neo voice', () => {
     expect(voice.submit.mock.calls[0][0]).toMatchObject({ intent: 'draft' });
   });
 
+  it('tries the mic once when it fails to open, until Neo speaks again', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    const view = render(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+    voice.starting = true;
+    view.rerender(liveVoice({ on: true, speaking: false }));
+    voice.starting = false;
+    view.rerender(liveVoice({ on: true, speaking: false }));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(voice.start).toHaveBeenCalledTimes(1);
+    view.rerender(liveVoice({ on: true, speaking: true }));
+    view.rerender(liveVoice({ on: true, speaking: false }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(2));
+  });
+
+  it('still says it heard nothing when the person sends a silent live recording', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementation(async () => {
+      voice.recording = true;
+    });
+    voice.openStream.mockReturnValue({ push: vi.fn(), close: vi.fn(), finish: vi.fn() });
+    voice.submit.mockImplementation(async () => {
+      voice.recording = false;
+      return { kind: 'silent-recording' };
+    });
+    const onError = vi.fn();
+    let send: ((intent: 'draft' | 'send') => void) | null = null;
+    const onSendHandle = (handle: typeof send) => {
+      send = handle;
+    };
+    render(liveVoice({ on: true, speaking: false }, { onError, onSendHandle }));
+    await waitFor(() => expect(voice.start).toHaveBeenCalledTimes(1));
+    act(() => send?.('send'));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(
+        'I didn’t hear anything. Try speaking closer to the microphone.'
+      )
+    );
+  });
+
   it('leaves dictation the person started alone when live voice stops', async () => {
     voice.enabled = true;
     voice.recording = true;
@@ -730,7 +772,11 @@ describe('Neo voice', () => {
 
 function liveVoice(
   live: { on: boolean; speaking: boolean },
-  props: { onTranscript?: (text: string) => void; onError?: (message: string) => void } = {}
+  props: {
+    onTranscript?: (text: string) => void;
+    onError?: (message: string) => void;
+    onSendHandle?: (handle: ((intent: 'draft' | 'send') => void) | null) => void;
+  } = {}
 ) {
   return (
     <NeoVoice
@@ -739,7 +785,7 @@ function liveVoice(
       draftText=""
       onTranscript={props.onTranscript ?? vi.fn()}
       onSendVoice={vi.fn()}
-      onSendHandle={vi.fn()}
+      onSendHandle={props.onSendHandle ?? vi.fn()}
       onError={props.onError ?? vi.fn()}
       onPhase={vi.fn()}
       live={live}
