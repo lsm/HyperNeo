@@ -44,7 +44,7 @@ describe('neoIntakeMessage', () => {
         message: {
           ...initial.message,
           content: initial.message.content.filter(
-            (block) =>
+            (block: { text?: string }) =>
               block.text !== `[message id: ${input.requestId}]` &&
               block.text !== `<human-message id="${input.requestId}">` &&
               block.text !== '</human-message>'
