@@ -254,14 +254,14 @@ describe('publication speech follows the committed version', () => {
       fullText: 'Ready',
       cardReply,
     });
-    for (const [requestId, text, details] of [
-      ['card-text-over', 'x'.repeat(4001), undefined],
-      ['card-folded-over', 'x'.repeat(3900), 'd'.repeat(200)],
+    const long = Array(61).fill('word').join(' ');
+    for (const [requestId, text, details, reason] of [
+      ['card-text-over', long, undefined, 'reply_needs_details: '],
+      ['card-folded-over', long, 'd'.repeat(200), 'reply_summary_too_long: '],
     ] as const) {
       const refused = await send({ ...textOnly, requestId, text, details, cardReply });
       expect(refused).toMatchObject({ accepted: false });
-      expect(String(refused.reason)).toContain('reply_summary_too_long');
-      expect(String(refused.reason)).toContain('4000');
+      expect(String(refused.reason)).toStartWith(reason);
     }
     expect(ledger.list(conversationId)).toHaveLength(1);
   });

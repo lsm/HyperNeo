@@ -6,6 +6,7 @@ import {
   NEO_PACK_CODING_WORKER_RULES,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  neoToolDescription,
 } from '@hyperneo/prompts';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -180,12 +181,14 @@ describe('root Neo system prompt', () => {
       expect(prompt).toContain(rule);
   });
 
-  test('gives questions and publications the same concise Markdown guidance', () => {
+  test('gives Neo the reply length rule the check enforces', () => {
+    const rule =
+      'Keep text to at most 5 lines including the title, about 60 words or 150 Chinese characters, and at most 500 characters. For anything longer, or for any structured report, multi-topic update, sectioned explanation, list, table or long report, put a standalone summary in text and details that add new information; never repeat text in details.';
+    expect(neoToolDescription('neo.publication.publish')).toContain(rule);
     const prompt = neoPrompt([]);
-    expect(prompt).toContain('For neo.question.ask text and publication text, use Markdown');
-    expect(prompt).toContain('a short title line, then a few bullets or a small comparison table');
-    expect(prompt).toContain('Bold the key choice');
-    expect(prompt).toContain('Avoid walls of text');
+    expect(prompt).not.toContain('a few bullets or a small comparison table');
+    expect(prompt).not.toContain('keep detail in publication details');
+    expect(prompt).not.toContain('Bold the key choice');
     expect(prompt).toContain('Preserve required proposal text, path and hash');
   });
 
@@ -196,6 +199,9 @@ describe('root Neo system prompt', () => {
     );
     expect(prompt).toContain('any lead-in line is a separate normal message or is skipped');
     expect(prompt).toContain('One message per deliverable');
+    expect(prompt).toContain(
+      'Publish each with deliverable: true; deliverables are exempt from the body length limit.'
+    );
     expect(prompt).toContain(
       'Plain text for emails and translations; Markdown or code only when the human wants it'
     );

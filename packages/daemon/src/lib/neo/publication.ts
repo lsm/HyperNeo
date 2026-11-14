@@ -111,27 +111,32 @@ export function foldPublicationDetails(value: { text: string; details?: string }
   text: string;
   details?: string;
 } {
-  return value.details !== undefined && value.details.length < value.text.length
-    ? { text: `${value.text}\n\n${value.details}` }
-    : value;
+  if (value.details === undefined || value.details.length >= value.text.length) return value;
+  const folded = { text: `${value.text}\n\n${value.details}` };
+  return replyBodyRefusal(folded) ? value : folded;
 }
 
 const wordSegments = new Intl.Segmenter(undefined, { granularity: 'word' });
 
-export function wordCount(text: string): number {
+const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+
+function wordCount(text: string): number {
   let count = 0;
   for (const segment of wordSegments.segment(text)) if (segment.isWordLike) count++;
   return count;
 }
 
-export const SUMMARY_WORD_LIMIT = 300;
-export const SUMMARY_CHAR_LIMIT = 4000;
-
-export function replySummaryTooLong(body: { text: string; details?: string }): boolean {
-  return (
-    body.details !== undefined &&
-    (wordCount(body.text) > SUMMARY_WORD_LIMIT || body.text.length > SUMMARY_CHAR_LIMIT)
-  );
+export function replyBodyRefusal({
+  text,
+  details,
+}: {
+  text: string;
+  details?: string;
+}): 'reply_needs_details' | 'reply_summary_too_long' | undefined {
+  const lines = text.split('\n').filter((line) => line.trim()).length;
+  const share = (text.match(cjk)?.length ?? 0) / 150 + wordCount(text.replace(cjk, ' ')) / 60;
+  if (lines <= 5 && share <= 1 && text.length <= 500) return undefined;
+  return details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

@@ -32288,6 +32288,11 @@
             ],
             "type": "object"
           },
+          "deliverable": {
+            "const": true,
+            "description": "text is a copyable deliverable (translation, drafted email or message, text to paste) and is exempt from the body length limit.",
+            "type": "boolean"
+          },
           "details": {
             "maxLength": 16000,
             "type": "string"

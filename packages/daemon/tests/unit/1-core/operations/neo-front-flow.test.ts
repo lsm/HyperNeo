@@ -1403,6 +1403,24 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
+test('a front reply over the shared body limit is told to shorten, not to add details', async () => {
+  const { id } = await deliveredConvoInput();
+  for (const [requestId, text] of [
+    ['six-lines', 'Status\n- a\n- b\n- c\n- d\n- e'],
+    ['long-han', '中'.repeat(151)],
+  ]) {
+    const refused = await convoPublish({
+      requestId,
+      replyTo: [id],
+      fullText: text,
+      verbatim: true,
+    });
+    expect(refused.accepted).toBe(false);
+    expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
+  }
+  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+});
+
 test('the front reply is short, and its rules live only in the front prompt', async () => {
   const { job } = await accept();
   await createNeoFrontHandler(service)(job);

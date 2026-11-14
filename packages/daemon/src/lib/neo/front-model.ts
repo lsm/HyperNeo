@@ -9,6 +9,7 @@ import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
+import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 
 const FRONT_REPLY_MAX_CHARS = 300;
 
@@ -19,6 +20,11 @@ const Read = {
 const result = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
 });
+const overLimit = new Set(['reply_needs_details', 'reply_summary_too_long']);
+const frontReceipt = <T extends { accepted: boolean; reason?: string }>(receipt: T) =>
+  !receipt.accepted && overLimit.has(receipt.reason ?? '')
+    ? explainNeoRefusal({ accepted: false, reason: 'front_reply_too_long' })
+    : receipt;
 
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
@@ -129,7 +135,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         async ({ text, ...input }) => {
           const body = { text };
           const targets = input.replyTo ?? [];
-          if (!targets.length) return result(await publish({ ...input, ...body }));
+          if (!targets.length) return result(frontReceipt(await publish({ ...input, ...body })));
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ accepted: false, reason: 'unknown_reply_target' });
@@ -140,7 +146,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             return result({ accepted: false, reason: 'front_not_speaking' });
           const receipt = await publish({ ...input, ...body });
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
-          if (!receipt.accepted && !second) return result(receipt);
+          if (!receipt.accepted && !second) return result(frontReceipt(receipt));
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
