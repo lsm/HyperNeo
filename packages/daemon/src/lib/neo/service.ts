@@ -369,7 +369,6 @@ export class NeoService {
               this.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [id]).length > 0
           : !!receivedNeoHumanInput(this, sessionId, id);
       },
-      currentHumanInputs: (sessionId) => this.currentInputIds(sessionId),
       sourceSession: (sessionId) => {
         const conversation = this.repo.conversationId();
         if (!conversation) return undefined;

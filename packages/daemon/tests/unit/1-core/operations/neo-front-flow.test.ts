@@ -1396,6 +1396,13 @@ test('a front reply after the handoff delivers', async () => {
 test('Neo answers a message the front already answered', async () => {
   const { id } = await deliveredConvoInput();
   await convoPublish({ requestId: 'front', replyTo: [id], fullText: 'Front.', verbatim: true });
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'enqueued'
+  );
+  const sdk = db.getSDKMessageRepo();
+  sdk.updateMessageStatus([sdk.findMessageIdByUuid(root, id)!], 'consumed');
   const neo = { source: 'mcp' as const, role: 'neo' as const, sessionId: root };
   expect(
     await service.publish({ requestId: 'neo', replyTo: [id], text: 'Neo answer.' }, neo)
