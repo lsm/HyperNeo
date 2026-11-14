@@ -155,16 +155,16 @@ describe('neo.message.send replyTo', () => {
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const blocks = raw.message.content;
-    expect(blocks[0].text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
-    expect(blocks[1].text).toStartWith(`<human-message id="${requestId}"`);
-    expect(blocks.at(-1)?.text).toEndWith('</human-message>');
-    const inside = blocks.slice(2, -1);
-    return {
-      ...raw,
-      reference: inside[0]?.text?.startsWith('<reference') ? inside[0].text : '',
-      words: inside.at(-1)?.text ?? '',
-    };
+    const text = raw.message.content.map((block) => block.text ?? '').join('');
+    expect(text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)\n/);
+    expect(text).toContain(`\n<human-message id="${requestId}"`);
+    expect(text).toEndWith('</human-message>');
+    const reference = text.match(/<reference[^>]*>\n([\s\S]*?)\n<\/reference>/)?.[1] ?? '';
+    const after = reference
+      ? text.slice(text.indexOf('</reference>') + '</reference>'.length)
+      : text.slice(text.indexOf('>\n') + 2);
+    const words = after.replace(/<\/human-message>$/, '').trim();
+    return { ...raw, reference, words, text };
   };
   const ledger = (requestId: string) =>
     JSON.parse(
@@ -180,18 +180,11 @@ describe('neo.message.send replyTo', () => {
     expect(await send(id, '在做 / 做完', { kind: 'question', id: 'q1' })).toMatchObject({
       value: { ok: true, created: true },
     });
-    expect(prompt(id)).toMatchObject({
-      session_id: root,
-      replyTo: { kind: 'question', id: 'q1' },
-      reference:
-        '<reference question="q1" ask="ask">\nThe human answered your question "What should the status say?":\n</reference>\n\n',
-      words: '在做 / 做完',
-      message: {
-        content: expect.arrayContaining([
-          { type: 'text', text: `<human-message id="${id}" ask="ask" question="q1">\n` },
-        ]),
-      },
-    });
+    const sent = prompt(id);
+    expect(sent).toMatchObject({ session_id: root, replyTo: { kind: 'question', id: 'q1' } });
+    expect(sent.reference).toBe('The human answered your question "What should the status say?":');
+    expect(sent.words).toBe('在做 / 做完');
+    expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
     expect(ledger(id)).toMatchObject({
       content: [{ type: 'text', text: '在做 / 做完' }],
       replyTo: { kind: 'question', id: 'q1' },
@@ -456,8 +449,7 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: { kind: 'ask', id: 'ask' },
-      reference:
-        '<reference ask="ask">\nThe human replied to the work card "iOS card":\n</reference>\n\n',
+      reference: 'The human replied to the work card "iOS card":',
       words: 'Where is this stuck?',
       humanContent: [{ type: 'text', text: 'Where is this stuck?' }],
     });
@@ -468,17 +460,12 @@ describe('neo.message.send replyTo', () => {
     mailbox.db.prepare('UPDATE neo_asks SET session_id = ?').run(holder);
     const id = crypto.randomUUID();
     await send(id, '在做', { kind: 'question', id: 'q1' });
-    expect(prompt(id)).toMatchObject({
-      session_id: root,
-      message: {
-        content: [
-          { type: 'text', text: expect.stringMatching(/^\(local time: /) },
-          { type: 'text', text: `<human-message id="${id}" ask="ask" question="q1">\n` },
-          { type: 'text', text: '在做' },
-          { type: 'text', text: '\n</human-message>' },
-        ],
-      },
-    });
+    const sent = prompt(id);
+    expect(sent.session_id).toBe(root);
+    expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
+    expect(sent.words).toBe('在做');
+    expect(sent.reference).toBe('');
+    expect(sent.text).toMatch(/[^>\n]\n<\/human-message>$/);
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
@@ -521,8 +508,7 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: snapshot,
-      reference:
-        '<reference>\nThe human replied to the Neo message "Card is redone.":\n</reference>\n\n',
+      reference: 'The human replied to the Neo message "Card is redone.":',
       words: 'Thanks',
     });
     expect(ledger(id)).toEqual(

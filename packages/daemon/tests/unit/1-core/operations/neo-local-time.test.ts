@@ -10,6 +10,9 @@ describe('neoLocalTimeLine', () => {
   });
 });
 
+const joined = (message: ReturnType<typeof neoIntakeMessage>) =>
+  (message.message.content as { text: string }[]).map((block) => block.text).join('');
+
 describe('neoIntakeMessage', () => {
   const input = {
     sessionId: 'neo',
@@ -24,27 +27,32 @@ describe('neoIntakeMessage', () => {
       null,
       '(local time: Sun 2026-10-18 21:10 EDT)'
     );
-    expect(message.message.content).toEqual([
-      { type: 'text', text: '(local time: Sun 2026-10-18 21:10 EDT)' },
-      { type: 'text', text: `<human-message id="${input.requestId}">\n` },
-      {
-        type: 'text',
-        text: '<reference>\nThe human replied to the Neo message "Ready?":\n</reference>\n\n',
-      },
-      { type: 'text', text: 'Ship it' },
-      { type: 'text', text: '\n\n</human-message>' },
-    ]);
+    expect(joined(message)).toBe(
+      [
+        '(local time: Sun 2026-10-18 21:10 EDT)',
+        `<human-message id="${input.requestId}">`,
+        '<reference>',
+        'The human replied to the Neo message "Ready?":',
+        '</reference>',
+        '',
+        'Ship it',
+        '',
+        '</human-message>',
+      ].join('\n')
+    );
     expect(message.humanContent).toEqual([{ type: 'text', text: 'Ship it' }]);
   });
 
   test('with no quote, the words sit alone between a newline each side of the tag', () => {
     const message = neoIntakeMessage(input, 'neo', null, '(local time: Sun 2026-10-18 21:10 EDT)');
-    expect((message.message.content as { text: string }[]).map((block) => block.text)).toEqual([
-      '(local time: Sun 2026-10-18 21:10 EDT)',
-      `<human-message id="${input.requestId}">\n`,
-      'Ship it',
-      '\n</human-message>',
-    ]);
+    expect(joined(message)).toBe(
+      [
+        '(local time: Sun 2026-10-18 21:10 EDT)',
+        `<human-message id="${input.requestId}">`,
+        'Ship it',
+        '</human-message>',
+      ].join('\n')
+    );
   });
 
   test.each([null, '(local time: Sun 2026-10-18 21:10 EDT)'])(
@@ -143,15 +151,74 @@ describe('neoIntakeMessage order', () => {
       null,
       '<already-said>\n<said replyTo="q1">On it.</said>\n</already-said>'
     );
-    expect(texts(message)).toEqual([
-      '<already-said>\n<said replyTo="q1">On it.</said>\n</already-said>',
-      '(local time: Sun 2026-10-18 21:10 EDT) [input: text]',
-      `<human-message id="${requestId}" ask="a1" question="q1">\n`,
-      `<reference question="q1" ask="a1">\nThe human answered your question "${question.text}" with B (later):\n</reference>\n\n`,
-      'B',
-      '\n\n</human-message>',
-    ]);
+    expect(joined(message)).toBe(
+      [
+        '<already-said>',
+        '<said replyTo="q1">On it.</said>',
+        '</already-said>',
+        '(local time: Sun 2026-10-18 21:10 EDT) [input: text]',
+        `<human-message id="${requestId}" ask="a1" question="q1">`,
+        '<reference question="q1" ask="a1">',
+        `The human answered your question "${question.text}" with B (later):`,
+        '</reference>',
+        '',
+        'B',
+        '',
+        '</human-message>',
+      ].join('\n')
+    );
     expect(message.humanContent).toEqual([{ type: 'text', text: 'B' }]);
+  });
+
+  test('lays a card reply out as one tag per line with blank lines around the words', () => {
+    const message = neoIntakeMessage(
+      {
+        sessionId: session,
+        requestId,
+        content: 'B',
+        replyTo: { kind: 'question', id: 'q1', author: 'neo', excerpt: 'Deploy plan' },
+        inputMode: 'text',
+      },
+      session,
+      reply as never,
+      '(local time: Sun 2026-10-18 21:10 EDT)',
+      undefined,
+      null,
+      '<already-said>\n<said replyTo="q1" work_on="true">On it.</said>\n</already-said>'
+    );
+    expect(texts(message).join('')).toBe(
+      [
+        '<already-said>',
+        '<said replyTo="q1" work_on="true">On it.</said>',
+        '</already-said>',
+        '(local time: Sun 2026-10-18 21:10 EDT) [input: text]',
+        `<human-message id="${requestId}" ask="a1" question="q1">`,
+        '<reference question="q1" ask="a1">',
+        `The human answered your question "${question.text}" with B (later):`,
+        '</reference>',
+        '',
+        'B',
+        '',
+        '</human-message>',
+      ].join('\n')
+    );
+  });
+
+  test('lays a plain message out with the words between a newline each side', () => {
+    const message = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it', inputMode: 'dictation' },
+      session,
+      null,
+      '(local time: Sun 2026-10-18 21:10 EDT)'
+    );
+    expect(texts(message).join('')).toBe(
+      [
+        '(local time: Sun 2026-10-18 21:10 EDT) [input: dictation]',
+        `<human-message id="${requestId}">`,
+        'Ship it',
+        '</human-message>',
+      ].join('\n')
+    );
   });
 
   test('carries the message id once, on the human-message tag', () => {
@@ -247,7 +314,7 @@ describe('neoIntakeMessage order', () => {
       first
     );
     expect(retry).toEqual(first);
-    expect(texts(retry)[0]).toBe(said);
+    expect(joined(retry).startsWith(said)).toBe(true);
     expect(neoRetryLocalTime(retry, 'fresh')).toBe('(local time: Sun 2026-10-18 21:10 EDT)');
   });
 });

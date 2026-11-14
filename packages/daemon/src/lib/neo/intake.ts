@@ -135,7 +135,12 @@ export function neoIntakeMessage(
       (block: { type: string; text?: string }) =>
         block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
-  const legacy = stored !== undefined && !has('<human-message');
+  const enveloped =
+    storedBlocks?.some(
+      (block: { type: string; text?: string }) =>
+        block.type === 'text' && block.text?.includes('<human-message ') === true
+    ) === true;
+  const legacy = stored !== undefined && !enveloped;
   const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
     (block: { type: string; text?: string }) =>
@@ -162,10 +167,12 @@ export function neoIntakeMessage(
       ...(facts.length ? { humanContent: content } : {}),
     };
   }
-  const opening = [[localTime, sourceFact].filter(Boolean).join(' '), previewFact].flatMap(
-    (text) => (text ? [{ type: 'text' as const, text }] : [])
-  );
-  const context = fact ? [fact] : [];
+  const storedHead = enveloped ? (storedBlocks?.[0] as { text?: string } | undefined)?.text : null;
+  const head =
+    storedHead ??
+    [said, [localTime, sourceFact].filter(Boolean).join(' '), previewFact]
+      .filter(Boolean)
+      .join('\n');
   const askId = reply?.question?.askId ?? reply?.ask?.id ?? null;
   const questionId = reply?.question?.id ?? null;
   const reference = [
@@ -190,19 +197,18 @@ export function neoIntakeMessage(
     message: {
       role: 'user',
       content: [
-        ...(said ? [{ type: 'text' as const, text: said }] : []),
-        ...opening,
-        { type: 'text' as const, text: `<human-message ${envelope}>\n` },
-        ...(context.length
+        ...(head ? [{ type: 'text' as const, text: head }] : []),
+        { type: 'text' as const, text: `${head ? '\n' : ''}<human-message ${envelope}>\n` },
+        ...(fact
           ? [
               {
                 type: 'text' as const,
-                text: `<reference${reference}>\n${escapeSessionText(context.join('\n\n'))}\n</reference>\n\n`,
+                text: `<reference${reference}>\n${escapeSessionText(fact)}\n</reference>\n\n`,
               },
             ]
           : []),
         ...human,
-        { type: 'text' as const, text: `${context.length ? '\n\n' : '\n'}</human-message>` },
+        { type: 'text' as const, text: `${fact ? '\n\n' : '\n'}</human-message>` },
       ],
     },
     inputKind: 'human',
@@ -216,10 +222,14 @@ export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string)
   if (!stored) return fresh;
   const content = stored.type === 'user' ? stored.message.content : null;
   if (!Array.isArray(content)) return null;
-  const time = content.find(
-    (block) => block.type === 'text' && block.text.startsWith('(local time: ')
-  );
-  return time?.type === 'text' ? time.text : null;
+  for (const block of content) {
+    if (block.type !== 'text') continue;
+    const line = block.text
+      .split('\n')
+      .find((candidate: string) => candidate.startsWith('(local time: '));
+    if (line) return line;
+  }
+  return null;
 }
 
 export type NeoReply = {
