@@ -93,6 +93,29 @@ describe('SessionsPage', () => {
     expect(folderChip().textContent).toContain('code');
   });
 
+  it('adds the folder to the project whose menu opened the form after the sidebar switches', async () => {
+    newChatProjectSignal.value = '/code';
+    render(<SessionsPage />);
+    await waitFor(() => expect(folderChip().textContent).toContain('code'));
+    fireEvent.click(folderChip());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add folder to code…' }));
+    newChatProjectSignal.value = '/other';
+    await waitFor(() =>
+      expect(
+        screen.getAllByText((_, element) => element?.getAttribute('title') === '/other' || false)[0]
+          .textContent
+      ).toContain('other')
+    );
+    expect(screen.getByText(/Adds a folder to code/)).toBeTruthy();
+    fireEvent.input(screen.getByPlaceholderText('Folder path'), {
+      target: { value: '/assets' },
+    });
+    mockAddFolderToProject.mockResolvedValue(undefined);
+    fireEvent.submit(screen.getByPlaceholderText('Folder path').closest('form'));
+    await waitFor(() => expect(mockAddFolderToProject).toHaveBeenCalledWith('/code', '/assets'));
+    expect(mockAddFolderToProject).not.toHaveBeenCalledWith('/other', '/assets');
+  });
+
   it('keeps the folder form open with the reason when the daemon refuses', async () => {
     newChatProjectSignal.value = '/code';
     render(<SessionsPage />);
