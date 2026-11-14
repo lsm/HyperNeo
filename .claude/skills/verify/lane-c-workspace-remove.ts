@@ -61,7 +61,7 @@ try{
  const history=()=>hub.request<{entries:Entry[]}>('workspace.history',{});
  const remove=(path:string)=>hub.request<{success:boolean}>('workspace.remove',{path});
  const has=async(path:string)=>(await history()).entries.some(e=>e.path===path);
- const seed=(name:string,shared=false)=>{const path=join(run,'workspace',name);mkdirSync(path,{recursive:true});writeFileSync(join(path,'retained.txt'),'synthetic retained workspace bytes');const second=shared?join(run,'workspace',name+'-second'):path;if(shared)mkdirSync(second,{recursive:true});assert(repo.addProjectFolder(path,second,'Synthetic project'));const project=repo.projects().find(p=>p.folders.includes(path))!;return{path,second,projectId:project.id};};
+ const seed=(name:string,shared=false)=>{const path=join(run,'workspace',name);mkdirSync(path,{recursive:true});writeFileSync(join(path,'retained.txt'),'synthetic retained workspace bytes');const second=shared?join(run,'workspace',name+'-second'):path;if(shared)mkdirSync(second,{recursive:true});repo.upsert(path);assert.deepEqual(repo.addProjectFolder(path,second,'Synthetic project'),{accepted:true});const project=repo.projects().find(p=>p.folders.includes(path))!;return{path,second,projectId:project.id};};
  const projectExists=(id:string)=>!!main!.prepare('SELECT 1 FROM workspace_projects WHERE id=?').get(id);
  const wait=async(predicate:()=>boolean)=>{const deadline=performance.now()+4000;while(!predicate()){assert(performance.now()<deadline,'workspace removal observation deadline exceeded');await new Promise(done=>setTimeout(done,5));}};
  const first=seed('first');const cached=main.prepare('DELETE FROM workspace_history WHERE path=?');measuring=true;
