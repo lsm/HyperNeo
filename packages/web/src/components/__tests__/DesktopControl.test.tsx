@@ -107,4 +107,31 @@ describe('DesktopControl', () => {
       vi.useRealTimers();
     }
   });
+
+  it('names the agent the same way in Chinese', async () => {
+    locale.value = 'zh-Hans';
+    statuses('running');
+    render(<DesktopControl worker="worker-a" />);
+    expect(await screen.findByText('智能体可以使用电脑')).toBeTruthy();
+  });
+
+  it('says so when the stop request does not reach the daemon', async () => {
+    statuses('running');
+    invoke.mockRejectedValueOnce(new Error('offline'));
+    statuses('running');
+    render(<DesktopControl worker="worker-a" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and take over' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'The stop request failed. Try again.'
+    );
+    expect(screen.getByRole('button', { name: 'Stop and take over' })).toBeTruthy();
+  });
+
+  it('opens the worker session from the drawer row', async () => {
+    invoke.mockResolvedValue({ workers: [entry('running')] });
+    const open = vi.fn();
+    render(<DesktopControl onOpen={open} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Book the dentist' }));
+    expect(open).toHaveBeenCalledWith('worker-a', 'Book the dentist');
+  });
 });
