@@ -182,7 +182,7 @@ describe('neo.message.send replyTo', () => {
     });
     const sent = prompt(id);
     expect(sent).toMatchObject({ session_id: root, replyTo: { kind: 'question', id: 'q1' } });
-    expect(sent.reference).toBe('The human answered your question "What should the status say?":');
+    expect(sent.reference).toBe('What should the status say?');
     expect(sent.words).toBe('在做 / 做完');
     expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
     expect(ledger(id)).toMatchObject({
@@ -341,9 +341,9 @@ describe('neo.message.send replyTo', () => {
     );
     const id = crypto.randomUUID();
     await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
-    expect(prompt(id).reference).toContain(
-      'The human replied about your start question "Start "Todo rows"?" (it stays open; only its Start button starts todos):'
-    );
+    const start = prompt(id).reference;
+    expect(start.startsWith('Start "Todo rows"?')).toBe(true);
+    expect(start).toContain('It stays open; only its Start button starts todos.');
     expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
     expect(store.getTodo('t1')?.state).toBe('todo');
   });
@@ -414,7 +414,7 @@ describe('neo.message.send replyTo', () => {
       await send(id, words, { kind: 'question', id: `c${index}` });
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
       expect(prompt(id).reference).toContain(
-        `The human answered your question "Which layout?" with ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}):`
+        `The human picked ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}).`
       );
     }
     choice('many', true);

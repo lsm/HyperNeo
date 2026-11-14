@@ -253,11 +253,16 @@ export function readNeoReply(
 
 export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
   const picked = neoChoiceByLetter(words, reply?.question ?? null);
-  if (reply?.question && picked)
-    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}:`;
-  if (reply?.question?.kind === 'start')
-    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
-  if (reply?.question) return `The human answered your question "${reply.question.text}":`;
+  if (reply?.question) {
+    const answer = picked
+      ? `\n\nThe human picked ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}.`
+      : '';
+    const open =
+      reply.question.kind === 'start'
+        ? '\n\nIt stays open; only its Start button starts todos.'
+        : '';
+    return `${reply.question.text}${answer}${open}`;
+  }
   if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
   return reply?.replyTo.kind === 'ask' && reply.ask
     ? `The human replied to the work card "${reply.ask.title}":`
