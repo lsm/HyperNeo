@@ -9,7 +9,9 @@ import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
-import { foldPublicationDetails, replySummaryTooLong } from './publication.ts';
+
+// One or two short sentences; the full session answers in depth.
+const FRONT_REPLY_MAX_CHARS = 300;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -120,16 +122,13 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one reply per human message. text is the reply; add details only for more than five sentences or any structured report, list, table or multi-topic update, and make them add information beyond text. If your reads answer the message, reply with the answer; otherwise say in one brief line what will be done, without claiming it is done. Every message also goes on to be handled in full, so never promise what you cannot check. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
+        'Send one short reply per human message, one or two sentences. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
         {
           ...replyFields,
-          text: z.string().trim().min(1).max(16000),
-          details: z.string().trim().min(1).max(16000).optional(),
+          text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
         },
-        async ({ text, details, ...input }) => {
-          const body = foldPublicationDetails({ text, details });
-          if (replySummaryTooLong(body))
-            return result({ accepted: false, reason: 'reply_summary_too_long' });
+        async ({ text, ...input }) => {
+          const body = { text };
           const targets = input.replyTo ?? [];
           if (!targets.length) return result(await publish({ ...input, ...body }));
           const asks = targets.map((id) => service.asks.find(conversationId, id));
@@ -148,7 +147,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             : null;
           if (second && !existing)
             return result({ accepted: false, reason: 'publication_conflict' });
-          const said = existing?.fullText ?? body.details ?? body.text;
+          const said = existing?.fullText ?? text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,
