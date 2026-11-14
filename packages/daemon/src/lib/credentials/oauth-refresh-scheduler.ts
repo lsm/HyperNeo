@@ -1,4 +1,4 @@
-import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import type { Provider, ProviderCredentials, TokenRefreshOutcome } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
 import { clearProviderFailure, getProviderFailure } from '../providers/provider-failure-store.js';
 import type { ProviderRecoveryOutcome } from '../model-service.js';
@@ -8,6 +8,8 @@ import { decideRefreshDue } from './refresh-due-gate.js';
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_RETRIES = 3;
+
+export type RefreshNowOutcome = TokenRefreshOutcome | 'skipped';
 
 export interface OAuthRefreshSchedulerOptions {
   intervalMs?: number;
@@ -21,7 +23,7 @@ export interface OAuthRefreshSchedulerOptions {
 
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private activeTick: Promise<void> | null = null;
+  private activeTick: Promise<unknown> | null = null;
   private readonly retryCounts = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
@@ -69,24 +71,22 @@ export class OAuthRefreshScheduler {
     return this.inTurn(() => this.runTick());
   }
 
-  private async inTurn(work: () => Promise<void>): Promise<void> {
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
     const prior = this.activeTick ?? Promise.resolve();
-    const promise = prior.catch(() => {}).then(work);
-    this.activeTick = promise;
-    try {
-      await promise;
-    } finally {
-      if (this.activeTick === promise) {
+    const tracked = prior.catch(() => {}).then(work);
+    this.activeTick = tracked;
+    return tracked.finally(() => {
+      if (this.activeTick === tracked) {
         this.activeTick = null;
       }
-    }
+    });
   }
 
-  refreshNow(providerId: string): Promise<void> {
+  refreshNow(providerId: string): Promise<RefreshNowOutcome> {
     const provider = this.registry.get(providerId);
     return provider
       ? this.inTurn(() => this.refreshProviderIfNeeded(provider, true))
-      : Promise.resolve();
+      : Promise.resolve('skipped');
   }
 
   private async runTick(): Promise<void> {
@@ -95,10 +95,14 @@ export class OAuthRefreshScheduler {
     );
   }
 
-  private async refreshProviderIfNeeded(provider: Provider, force = false): Promise<void> {
-    if (!provider.refreshToken) return;
+  private async refreshProviderIfNeeded(
+    provider: Provider,
+    force = false
+  ): Promise<RefreshNowOutcome> {
+    if (!provider.refreshToken) return 'skipped';
     const credentials = await this.credentialsForProvider(provider);
-    if (!credentials || credentials.type !== 'oauth') return;
+    if (!credentials || credentials.type !== 'oauth') return 'skipped';
+    if (force && !credentials.refreshToken) return 'skipped';
 
     const due = decideRefreshDue({
       expiresAt: credentials.expiresAt,
@@ -106,19 +110,19 @@ export class OAuthRefreshScheduler {
       refreshWindowMs: force ? Number.POSITIVE_INFINITY : this.refreshWindowMs,
       failureKind: getProviderFailure(provider.id)?.errorKind,
     });
-    if ('reason' in due) return;
+    if ('reason' in due) return 'skipped';
 
     const retryKey = this.retryKey(provider.id, credentials);
-    if (!force && (this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
+    if (!force && (this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return 'skipped';
 
-    let refreshed = false;
+    let outcome: TokenRefreshOutcome;
     try {
-      refreshed = await provider.refreshToken();
+      outcome = await provider.refreshToken();
     } catch {
-      refreshed = false;
+      outcome = 'transient';
     }
 
-    if (refreshed) {
+    if (outcome === 'refreshed') {
       this.retryCounts.delete(retryKey);
       if (due.value === 'credential_failure') clearProviderFailure(provider.id);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
@@ -128,7 +132,7 @@ export class OAuthRefreshScheduler {
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
       this.onProviderChanged?.(provider.id);
-      return;
+      return 'refreshed';
     }
 
     const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
@@ -137,6 +141,7 @@ export class OAuthRefreshScheduler {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
       this.onProviderChanged?.(provider.id);
     }
+    return outcome;
   }
 
   private async recoverDormant(providerId: string): Promise<void> {

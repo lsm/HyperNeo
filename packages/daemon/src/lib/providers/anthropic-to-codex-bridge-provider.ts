@@ -11,6 +11,7 @@ import type {
   ProviderOAuthFlowData,
   ListRemoteModelsOptions,
   ProviderUsageResult,
+  TokenRefreshOutcome,
   UsageWindow,
 } from '@hyperneo/shared/provider';
 import { type CodexAppServer, startCodexBootstrapServer } from '../drivers/codex-app-server.ts';
@@ -107,6 +108,8 @@ interface StoredCredentials {
   planType?: string;
   isFedrampAccount?: boolean;
 }
+
+type StoredRefreshAttempt = StoredCredentials | 'transient' | 'definitive';
 
 export interface OpenAIOAuthToken {
   access_token: string;
@@ -231,7 +234,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private discoveryGeneration = 0;
 
-  private credentialRefreshInFlight: Promise<StoredCredentials | undefined> | null = null;
+  private credentialRefreshInFlight: Promise<StoredRefreshAttempt> | null = null;
 
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
@@ -432,7 +435,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       const isAuthRejection = error instanceof Error && error.message.includes('(HTTP 401)');
       if (isAuthRejection && retryOn401 && auth.source === 'chatgpt_oauth') {
         const refreshed = await this.refreshStoredOauthCredentials();
-        if (refreshed?.access) {
+        if (typeof refreshed === 'object' && refreshed.access) {
           const refreshedAuth = this.toBridgeAuth(refreshed);
           if (refreshedAuth) {
             return this.fetchAndPersistDiscoveredModels(refreshedAuth, isStaleAttempt, false);
@@ -542,7 +545,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
       refreshAuthTokens: async () => {
         const refreshed = await this.refreshStoredOauthCredentials();
-        if (!refreshed?.access) return null;
+        if (typeof refreshed !== 'object' || !refreshed.access) return null;
         const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
         if (!refreshedAccountId) return null;
         return {
@@ -595,19 +598,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return codexModels;
   }
 
-  private refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+  private refreshStoredOauthCredentials(): Promise<StoredRefreshAttempt> {
     if (this.credentialRefreshInFlight) return this.credentialRefreshInFlight;
     const attempt = this.refreshStoredOauthCredentialsUncached().finally(() => {
       if (this.credentialRefreshInFlight === attempt) this.credentialRefreshInFlight = null;
-    }) as Promise<StoredCredentials | undefined>;
+    }) as Promise<StoredRefreshAttempt>;
     this.credentialRefreshInFlight = attempt;
     return attempt;
   }
 
-  private async refreshStoredOauthCredentialsUncached(): Promise<StoredCredentials | undefined> {
+  private async refreshStoredOauthCredentialsUncached(): Promise<StoredRefreshAttempt> {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
-      return undefined;
+      return 'definitive';
     }
 
     const result = await this.tryRefreshCodexToken(credentials.refresh);
@@ -622,7 +625,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
           'AnthropicToCodexBridgeProvider: OAuth token refresh transient failure — preserving credentials'
         );
       }
-      return undefined;
+      return result.definitive ? 'definitive' : 'transient';
     }
 
     const newCreds: StoredCredentials = {
@@ -1141,12 +1144,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return response.json() as Promise<OpenAIOAuthToken>;
   }
 
-  async refreshToken(): Promise<boolean> {
-    const credentials = await this.loadCredentials();
-    if (!credentials?.refresh) return false;
-
+  async refreshToken(): Promise<TokenRefreshOutcome> {
     const result = await this.refreshStoredOauthCredentials();
-    return result !== undefined;
+    return typeof result === 'object' ? 'refreshed' : result;
   }
 
   async logout(): Promise<void> {
