@@ -7,6 +7,7 @@ import { Database as BunDatabase } from '../storage/sqlite-compat.ts';
 import { withBusyRetry } from '../storage/busy-retry.ts';
 
 const FTS_MERGE_RANK = 64;
+const FTS_MERGE_BUDGET_MS = 250;
 
 type MergeWorkerRequest = {
   dbPath: string;
@@ -32,7 +33,7 @@ publishSQLiteWorkerLogs(
   () => ({ workerOperation: 'message_search_merge', workerRequestId })
 );
 
-worker.onmessage = (event) => {
+worker.onmessage = async (event) => {
   const { dbPath } = event.data;
   workerRequestId = event.data.requestId;
   let db: BunDatabase | null = null;
@@ -44,11 +45,17 @@ worker.onmessage = (event) => {
     db = new BunDatabase(dbPath, { queryObservability: event.data.queryObservability });
     db.exec(`PRAGMA busy_timeout = 5000`);
     const mergeStart = performance.now();
-    withBusyRetry(() => {
-      db?.exec(
-        `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', ${FTS_MERGE_RANK})`
-      );
-    });
+    const changes = db.prepare('SELECT total_changes() AS n');
+    do {
+      const before = (changes.get() as { n: number }).n;
+      withBusyRetry(() => {
+        db?.exec(
+          `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', ${FTS_MERGE_RANK})`
+        );
+      });
+      if ((changes.get() as { n: number }).n - before < 2) break;
+      await new Promise((done) => setTimeout(done, 0));
+    } while (performance.now() - mergeStart < FTS_MERGE_BUDGET_MS);
     mergeMs = performance.now() - mergeStart;
     result = { ok: true };
   } catch (error) {
