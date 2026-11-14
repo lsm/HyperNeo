@@ -1,3 +1,4 @@
+import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -7,6 +8,8 @@ import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
+import { neoStartRetryDue } from './daemon-cards.ts';
+import { neoDaemonCardWrite } from '../../storage/repositories/neo-daemon-card-write.ts';
 import {
   neoCancelledPrerequisiteKey,
   neoCancelledPrerequisiteNote,
@@ -15,7 +18,7 @@ import {
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -103,6 +106,7 @@ export interface NeoTodoRunnerDeps {
   ): Promise<void>;
   changed(): void;
   limits(): { running: number; perGroup: number };
+  readSource?(ref: WorkRef): Promise<NeoQuestionSource | null>;
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -267,9 +271,6 @@ const neoTodoStallNote = (todo: Pick<NeoTodo, 'title'>, reason: string) =>
 const neoTodoUnreachableNote = (todo: Pick<NeoTodo, 'id' | 'title'>) =>
   `Todo "${todo.title}" (${todo.id}) has nobody working on it and the daemon cannot restart it. Continue it, remove it, or ask the human with neo.question.ask only if they must decide.`;
 
-const neoTodoBlockerReminder = (todo: Pick<NeoTodo, 'id' | 'title' | 'blockedReason'>) =>
-  `Todo "${todo.title}" (${todo.id}) still waits on its worker's blocker: ${todo.blockedReason}\nAnswer the worker. If only the human can decide, use neo.question.relay for a worker question waiting on this todo, otherwise neo.question.ask (a choice to confirm or choose, or a reply) linked to this todo.`;
-
 const neoTodoMovedNote = (todo: Pick<NeoTodo, 'title'>, minutes: number) =>
   `Todo "${todo.title}" sat idle ${minutes} min with no progress, so the daemon moved it to a fresh worker.`;
 
@@ -426,23 +427,36 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return next;
   };
 
+  const startFailed = async (todo: NeoTodo, ask: NeoAsk, failure: string) => {
+    const now = Date.now();
+    const reason = `Could not start: ${failure}`;
+    if (sessions.readStartInterrupted(todo.id))
+      return {
+        ok: true as const,
+        todo: await finish(todo, ask, planNeoTodoFailure(todo, reason, now), now),
+      };
+    if (neoStartRetryDue(sessions.readRetries(todo.id))) {
+      await recompute(todo, { state: 'failed', reason, finishedAt: now }, now);
+      return retry(todo.id, true);
+    }
+    await deps.write(neoDaemonCardWrite, {
+      kind: 'retries',
+      todoId: todo.id,
+      reason: failure,
+      now,
+    });
+    deps.changed();
+    const blocked = store.getTodo(todo.id) ?? todo;
+    await deps.tell(ask, blocked, neoTodoNote(blocked));
+    return { ok: true as const, todo: blocked };
+  };
+
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
       target.verb === 'start' ? await prepare?.workerStartExclusions?.(todo) : undefined;
-    if (exclusions && 'reason' in exclusions) {
-      const now = Date.now();
-      return {
-        ok: true as const,
-        todo: await finish(
-          todo,
-          ask,
-          planNeoTodoFailure(todo, `Could not start: ${exclusions.reason}`, now),
-          now
-        ),
-      };
-    }
+    if (exclusions && 'reason' in exclusions) return startFailed(todo, ask, exclusions.reason);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
     card.instruction = workerBrief(
       todo,
@@ -504,20 +518,20 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       : deliver());
     const result = readDriverOutcome(target, outcome);
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
+    if (!('ref' in result) && result.reason !== 'needs_you')
+      return startFailed(todo, ask, result.failure);
     if (!('ref' in result))
       return {
         ok: true as const,
         todo: await finish(
           todo,
           ask,
-          result.reason === 'needs_you'
-            ? planNeoTodoBlocked(
-                todo,
-                'failure',
-                `Could not start: ${result.failure}`,
-                'Ask the human to open Claude Desktop, then retry this todo.'
-              )
-            : planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
+          planNeoTodoBlocked(
+            todo,
+            'failure',
+            `Could not start: ${result.failure}`,
+            'Ask the human to open Claude Desktop, then retry this todo.'
+          ),
           Date.now()
         ),
       };
@@ -537,6 +551,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
           : null,
     });
+    sessions.clearRetries(todo.id);
     if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
@@ -1073,16 +1088,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('todo') as (todo: NeoTodo, now: number) => Promise<NeoTodo | null>;
 
-  const remindBlocker = async (id: string, now: number) => {
+  const cardBlocker = async (id: string, now: number) => {
     const due = workerBlockerReminderDue(store, sessions, id, now);
-    const ask = due && store.getAsk(due.askId);
+    const ref = sessions.readRef(id);
     const incident = sessions.readNudge(id);
-    if (!due || !ask || !incident?.blockerReport) return;
-    await deps.tell(ask, due, neoTodoBlockerReminder(due), `neo-todo-blocker:${id}`);
+    if (!due || !ref || !incident?.blockerReport) return;
+    const source = (await deps.readSource?.(ref)) ?? {
+      ...workerIdentity(ref, null),
+      provider: workerEngine(ref.adapter),
+      link: null,
+    };
+    await deps.write(neoDaemonCardWrite, { kind: 'blocker', todoId: id, source, now });
     sessions.recordNudge(id, {
       ...incident,
       blockerReport: { ...incident.blockerReport, remindedAt: now },
     });
+    deps.changed();
   };
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
@@ -1608,6 +1629,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: store.getTodo(todo.id)! };
   };
 
+  const retry = async (todoId: string, automatic = false) => {
+    const gate = requireNeoTodoRetryable(read(todoId));
+    if ('reason' in gate) return gate.reason;
+    if (automatic) sessions.recordRetry(todoId);
+    else sessions.clearRetries(todoId);
+    if (sessions.readRef(todoId))
+      return proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
+    store.updateTodo(gate.value, { state: 'todo', startedAt: null, finishedAt: null }, Date.now());
+    return start(todoId);
+  };
+
   type StopContext = NonNullable<ReturnType<NeoTodoSessionRepository['stopContext']>>;
   const stop = (superpipe({})('neo.todo.stop-current-worker') as PipelineAPI)
     .input(['todo'])
@@ -1659,22 +1691,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recompute,
     proceed,
     stop,
-    async retry(todoId: string) {
-      const gate = requireNeoTodoRetryable(read(todoId));
-      if ('reason' in gate) return gate.reason;
-      if (sessions.readRef(todoId)) {
-        const result = await proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
-        if (result.ok) sessions.recordRetry(todoId);
-        return result;
-      }
-      sessions.recordRetry(todoId);
-      store.updateTodo(
-        gate.value,
-        { state: 'todo', startedAt: null, finishedAt: null },
-        Date.now()
-      );
-      return start(todoId);
-    },
+    retry: (todoId: string) => retry(todoId),
     async checkNow(
       selection: readonly string[] | { questionId: string },
       warn: (message: string, error: unknown) => void
@@ -1739,8 +1756,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       }
       for (const todo of await store.read('listCheckable')) {
         if (todo.blockedBy === 'needs-human')
-          await remindBlocker(todo.id, Date.now()).catch((error) =>
-            warn('Worker blocker reminder pending', error)
+          await cardBlocker(todo.id, Date.now()).catch((error) =>
+            warn('Worker blocker card pending', error)
           );
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)

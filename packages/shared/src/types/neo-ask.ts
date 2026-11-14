@@ -112,6 +112,7 @@ export interface NeoQuestion {
   document?: string | null;
   replyTo?: string[];
   cause?: string | null;
+  actionsAppliedAt?: number | null;
   id: string;
   askId: string;
   text: string;

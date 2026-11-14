@@ -56,7 +56,7 @@ describe('core todo starts respect pack worker exclusions', () => {
     }
   });
 
-  test('missing required binding fails before any send, receipt or binding', async () => {
+  test('missing required binding ends on a retries card before any send, receipt or binding', async () => {
     const world = setup();
     try {
       await world.open();
@@ -66,9 +66,12 @@ describe('core todo starts respect pack worker exclusions', () => {
         ...world.draft('Requires identity', ['missing']),
       });
       expect(result.todo).toMatchObject({
-        state: 'failed',
+        state: 'blocked',
         reason: expect.stringContaining('missing_worker_binding'),
       });
+      expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state, q.todos])).toEqual([
+        ['retries_exhausted', 'open', [result.todo.id]],
+      ]);
       expect(world.calls).toEqual([]);
       expect(world.sessions.readRef(result.todo.id)).toBeNull();
       expect(world.sessions.inputs.list(result.todo.id)).toEqual([]);
@@ -135,12 +138,15 @@ describe('core todo starts respect pack worker exclusions', () => {
         askId: ask.id,
         ...world.draft('Independent work', [author.todo.id]),
       });
-      expect(failed.todo.state).toBe('failed');
+      expect(failed.todo.state).toBe('blocked');
       expect(world.calls).toEqual([]);
       world.bind(author.todo.id, 'author');
       const retried = await world.invoke('neo.todo.retry', { todoId: failed.todo.id });
       expect(retried.todo.state).toBe('doing');
-      expect(world.checked).toEqual([failed.todo.id, failed.todo.id]);
+      expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state])).toEqual([
+        ['retries_exhausted', 'retired'],
+      ]);
+      expect(world.checked).toEqual(Array(4).fill(failed.todo.id));
       expect(world.calls[0].input.excludeRefs).toEqual([{ adapter: 'fixture', id: 'author' }]);
       expect(world.sessions.readRef(failed.todo.id)?.id).toBe('prior');
       expect(world.sessions.inputs.list(failed.todo.id)).toHaveLength(1);

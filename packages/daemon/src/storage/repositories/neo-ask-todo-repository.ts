@@ -166,7 +166,7 @@ export type NeoQuestionDraft = Pick<
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -206,9 +206,11 @@ const toQuestion = ({
   sourceSessionJson,
   todoId,
   cause,
+  actionsAppliedAt,
   ...row
 }: QuestionRow): NeoQuestion => ({
   ...(cause ? { cause } : {}),
+  ...(actionsAppliedAt ? { actionsAppliedAt } : {}),
   ...(answerProvenanceJson
     ? { answerProvenance: JSON.parse(answerProvenanceJson) as NeoAnswerProvenance }
     : {}),
@@ -880,11 +882,6 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
-      if (result.changes) {
-        const current = this.getTodo(todo.id)!;
-        if (current.state !== 'todo' || current.instruction?.trim() || !current.check)
-          new NeoTodoSessionRepository(this.db, this.changes).cancelCheckOnlyReminder(todo.id);
-      }
       if (result.changes && patch.state && prune) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
@@ -986,6 +983,10 @@ export class NeoAskTodoRepository {
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;
+  }
+
+  markCardActionsApplied(id: string, now: number): void {
+    this.changeQuestion(id, { actions_applied_at: now }, 'answered');
   }
 
   listQuestions(askId: string): NeoQuestion[] {
@@ -1308,7 +1309,7 @@ export class NeoAskTodoRepository {
         'UPDATE neo_questions SET start_todos = ?, todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
       )
       .run(
-        JSON.stringify(plan.kept),
+        question.startTodos && JSON.stringify(plan.kept),
         JSON.stringify(plan.kept),
         plan.text,
         plan.state,

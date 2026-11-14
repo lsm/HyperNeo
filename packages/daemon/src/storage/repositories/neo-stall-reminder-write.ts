@@ -1,6 +1,12 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import {
+  NEO_CHECK_OVERDUE,
+  neoCheckOverdue,
+  neoDaemonCardDraft,
+} from '../../lib/neo/daemon-cards.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
+import { openHumanCard } from '../../lib/neo/human-card.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import type { FollowThroughIncident } from '../../lib/work-queue/follow-through.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
@@ -18,7 +24,6 @@ type Context = {
   todo: ReminderTodo;
   incident: FollowThroughIncident;
   reminder: Reminder;
-  field: 'stallReminder' | 'checkOnlyReminder';
 };
 
 const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
@@ -29,14 +34,12 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
         since: todo.since,
         nudges: 0,
       };
-      const field = todo.state === 'todo' ? 'checkOnlyReminder' : 'stallReminder';
       return {
         todo,
         incident,
-        field,
         reminder:
-          incident[field]?.since === todo.since
-            ? { ...incident[field]! }
+          incident.stallReminder?.since === todo.since
+            ? { ...incident.stallReminder }
             : { since: todo.since, delivered: [] },
       };
     },
@@ -60,8 +63,6 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
         });
         if (receipt?.status === 'consumed') {
           reminder.delivered.push({ id: pending, at: receipt.timestamp });
-          if (context.field === 'checkOnlyReminder')
-            reminder.delivered = reminder.delivered.slice(-1);
           delete reminder.pending;
         } else if (
           receipt?.status === 'failed' ||
@@ -74,12 +75,11 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
       if (pending !== reminder.pending || delivered !== reminder.delivered.length)
         new NeoTodoSessionRepository(db).recordNudge(todo.id, {
           ...context.incident,
-          [context.field]: reminder,
+          stallReminder: reminder,
         });
       return !reminder.pending &&
-        (context.field === 'checkOnlyReminder' || reminder.delivered.length < 3) &&
-        now - (reminder.delivered.at(-1)?.at ?? todo.since) >=
-          (context.field === 'checkOnlyReminder' ? DAY : INTERVAL)
+        reminder.delivered.length < 3 &&
+        now - (reminder.delivered.at(-1)?.at ?? todo.since) >= INTERVAL
         ? { value: context }
         : { reason: null };
     },
@@ -96,20 +96,14 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
           to: { kind: 'session', sessionId: todo.sessionId },
           origin: `session:${todo.sessionId}`,
           messageUuid,
-          deliveryMode:
-            due.field === 'checkOnlyReminder' || reminder.delivered.length > 0
-              ? 'defer'
-              : 'immediate',
+          deliveryMode: reminder.delivered.length > 0 ? 'defer' : 'immediate',
           message: {
             type: 'user',
             parent_tool_use_id: null,
             inputKind: 'system',
             neoWakeEvent: true,
             message: {
-              content:
-                due.field === 'checkOnlyReminder'
-                  ? `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} has a check but no instruction or target and has waited at least 24 hours. Give it an instruction and a target, or hold/remove the todo. This reminder repeats once per day while it stays queued with neither.`
-                  : `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled${todo.blockedBy === 'environment' ? ` by environment: ${todo.blockedReason}; retry or escalate this environment failure` : ''}. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered.length + 1} of 3; the todo stays visible after reminders stop.`,
+              content: `Todo "${todo.title}" (${todo.id}) in ask ${todo.askId} is still stalled${todo.blockedBy === 'environment' ? ` by environment: ${todo.blockedReason}; retry or escalate this environment failure` : ''}. Review this todo and continue its work or record the next action. This is reminder ${reminder.delivered.length + 1} of 3; the todo stays visible after reminders stop.`,
             },
           },
         })
@@ -117,7 +111,7 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
       if (outcome.kind === 'rejected') throw new Error(outcome.reason);
       new NeoTodoSessionRepository(db).recordNudge(todo.id, {
         ...due.incident,
-        [due.field]: { ...reminder, pending: messageUuid, sessionId: todo.sessionId },
+        stallReminder: { ...reminder, pending: messageUuid, sessionId: todo.sessionId },
       });
     },
     ['db', 'due'],
@@ -128,17 +122,29 @@ const remindTodo = (superpipe({})('neo.stalled-todo.remind') as PipelineAPI)
 export const neoStallReminderWrite = defineDbOp<{ now: number }, void>({
   name: 'neo.stalledTodoReminders',
   mode: 'write',
-  run(db, { now }) {
-    const store = new NeoAskTodoRepository(db);
+  run(db, { now }, changes) {
+    const store = new NeoAskTodoRepository(
+      db,
+      () => changes.notifyChange('neo_todos'),
+      undefined,
+      undefined,
+      changes
+    );
     for (const todo of store.listCheckable(now - INTERVAL, now - DAY)) {
-      const queued = todo.state === 'todo';
-      if (queued && (!todo.check || new NeoTodoSessionRepository(db).get(todo.id))) continue;
       const ask = store.getAsk(todo.askId)!;
-      remindTodo(
-        db,
-        { ...todo, since: queued ? todo.createdAt : todo.updatedAt, sessionId: ask.sessionId },
-        now
-      );
+      if (todo.state !== 'todo') {
+        remindTodo(db, { ...todo, since: todo.updatedAt, sessionId: ask.sessionId }, now);
+        continue;
+      }
+      if (!todo.check || new NeoTodoSessionRepository(db).get(todo.id)) continue;
+      if (neoCheckOverdue(todo, store.todoCards(todo), now))
+        openHumanCard(
+          store,
+          crypto.randomUUID(),
+          todo.askId,
+          neoDaemonCardDraft(NEO_CHECK_OVERDUE, [todo]),
+          now
+        );
     }
   },
 });

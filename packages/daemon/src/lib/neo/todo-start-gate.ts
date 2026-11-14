@@ -1,5 +1,6 @@
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { planNeoDaemonCardPrune } from './daemon-cards.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
 import { NEO_REMOVED_PREREQUISITE } from './todo-removal.ts';
 import {
@@ -163,6 +164,8 @@ export function planNeoQuestionPrune(
     )
   )
     return { value: { retire: 'nothing left to decide' } };
+  const daemonCard = planNeoDaemonCardPrune(question, family);
+  if (daemonCard) return { value: daemonCard };
   if (question.kind !== 'start') return { reason: 'unchanged' };
   const listed = question.todos;
   const kept = listed.filter((id) => {

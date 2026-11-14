@@ -305,6 +305,16 @@ export const en = {
     '{removed} were removed. Continue {steps} without them, or remove these steps too?',
   'question.removedContinue': 'Continue',
   'question.removedRemove': 'Remove these',
+  'question.workerBlocker':
+    '{steps} is blocked: {reason}. Reply to its worker, mark it done, or remove it?',
+  'question.retriesExhausted':
+    '{steps} could not start after {retries} automatic retries: {reason}. Retry, mark done, or remove?',
+  'question.checkOverdue':
+    "{steps} has waited {hours} hours and its check hasn't passed. Keep waiting, mark it done, or remove it?",
+  'question.daemonMarkDone': 'Mark done',
+  'question.daemonRemove': 'Remove',
+  'question.daemonRetry': 'Retry',
+  'question.daemonKeepWaiting': 'Keep waiting',
   'session.back': 'Back to Neo',
   'session.chat': '{title} chat',
   'session.opening': 'Opening chat…',
