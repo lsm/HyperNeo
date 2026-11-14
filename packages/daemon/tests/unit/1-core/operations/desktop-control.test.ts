@@ -6,7 +6,16 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
+import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import {
+  createTodoCheckPacks,
+  existingTodoTarget,
+  pendingTodoCheck,
+} from '../../helpers/todo-check-packs.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -99,4 +108,99 @@ test('agents and Neo cannot turn desktop control on', async () => {
       kind: 'completed',
     });
   expect(optedIn('worker-a')).toBeNull();
+});
+
+function neoOperations() {
+  const store = new NeoAskTodoRepository(db);
+  const sessions = new NeoTodoSessionRepository(db);
+  const controls = {
+    resolveTarget: existingTodoTarget,
+    recompute: async (todo: Parameters<typeof store.updateTodo>[0], patch: object) =>
+      store.updateTodo(todo, patch, Date.now()),
+    advance: async () => {},
+    proceed: async () => ({ ok: false as const, reason: 'no' }),
+    retry: async () => ({ ok: false as const, reason: 'no' }),
+    stop: async () => null,
+  };
+  return createOperationRegistry([
+    ...createNeoTodoOperations(
+      store,
+      sessions,
+      controls,
+      () => createTodoCheckPacks(db),
+      () => null
+    ),
+    ...createNeoAskRecordOperations(
+      store,
+      sessions,
+      controls,
+      () => null,
+      () => true,
+      () => [],
+      () => createTodoCheckPacks(db),
+      () => null,
+      undefined,
+      { gateway: gatewayFor(db), changed: () => {} }
+    ),
+  ]);
+}
+const neo: OperationCaller = { source: 'mcp', sessionId: 'neo', role: 'neo' };
+const draft = {
+  title: 'Book it',
+  doneWhen: 'Booked',
+  check: pendingTodoCheck,
+  instruction: null,
+  after: [],
+  named: { desktopControl: true },
+};
+const storedOptIns = () =>
+  (db.prepare('SELECT named FROM neo_todos').all() as { named: string | null }[]).filter(
+    (row) => JSON.parse(row.named ?? '{}').desktopControl !== undefined
+  ).length;
+
+test('Neo cannot turn desktop control on when it adds or opens a todo', async () => {
+  const registry = neoOperations();
+  expect(
+    await invokeOperation(registry, 'neo.todo.add', { askId: 'ask', ...draft }, neo)
+  ).not.toMatchObject({ kind: 'completed', value: { ok: true } });
+  expect(
+    await invokeOperation(
+      registry,
+      'neo.ask.open',
+      { title: 'Errand', request: 'Errand', todos: [draft] },
+      neo
+    )
+  ).not.toMatchObject({ kind: 'completed', value: { ok: true } });
+  expect(storedOptIns()).toBe(0);
+});
+
+test('Neo cannot turn desktop control on by editing a todo', async () => {
+  await invokeOperation(
+    neoOperations(),
+    'neo.todo.edit',
+    { todoId: 'dentist', named: { desktopControl: true } },
+    neo
+  );
+  expect(optedIn('worker-a')).toBeNull();
+});
+
+test('a todo stored with desktop control in its draft keeps it off', () => {
+  new NeoAskTodoRepository(db).addTodo(
+    'copied',
+    'ask',
+    {
+      title: 'Copied',
+      doneWhen: 'Done',
+      check: null,
+      instruction: null,
+      named: { desktopControl: true, folder: 'docs' },
+    },
+    2
+  );
+  expect(
+    JSON.parse(
+      (db.prepare("SELECT named FROM neo_todos WHERE id = 'copied'").get() as { named: string })
+        .named
+    )
+  ).toEqual({ folder: 'docs' });
 });
