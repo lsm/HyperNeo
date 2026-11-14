@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import { connectionState } from '../lib/state.ts';
 
 type DesktopState = 'off' | 'unavailable' | 'running' | 'stopped' | 'stop_unconfirmed';
 type DesktopWorker = { worker: string; todo: string | null; state: DesktopState };
@@ -35,8 +36,10 @@ export function DesktopControl({
       'desktop.status',
       worker ? { worker } : {}
     ).catch(() => null);
-    if (live.current) setWorkers((result?.workers ?? []).filter((entry) => entry.state !== 'off'));
+    if (live.current && Array.isArray(result?.workers))
+      setWorkers(result.workers.filter((entry) => entry.state !== 'off'));
   }, [worker]);
+  const connected = connectionState.value === 'connected';
   const active = workers.length > 0;
   useEffect(() => {
     live.current = true;
@@ -44,7 +47,7 @@ export function DesktopControl({
     return () => {
       live.current = false;
     };
-  }, [read]);
+  }, [read, connected]);
   useEffect(() => {
     const timer = setInterval(() => void read(), active ? 5000 : 30000);
     return () => clearInterval(timer);
