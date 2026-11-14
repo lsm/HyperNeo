@@ -687,6 +687,32 @@ describe('NeoAskTodos', () => {
       ),
     });
 
+  it('lets the human turn desktop control on for one unfinished todo', () => {
+    locale.value = 'en';
+    const onDesktopControl = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('a', { state: 'doing' }),
+            todo('b', { state: 'doing', named: { desktopControl: true } }),
+            todo('c', { state: 'done' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+        onDesktopControl={onDesktopControl}
+      />
+    );
+    for (const id of ['a', 'b'])
+      fireEvent.click(app.getByRole('button', { name: `Show details: Todo ${id}` }));
+    const boxes = app.getAllByRole('checkbox', { name: /Let the agent use this computer/ });
+    expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true]);
+    fireEvent.click(boxes[0]);
+    expect(onDesktopControl).toHaveBeenCalledWith('a', true);
+    fireEvent.click(boxes[1]);
+    expect(onDesktopControl).toHaveBeenLastCalledWith('b', false);
+  });
+
   it('expands a todo using its toggle and turns its left hint', () => {
     locale.value = 'en';
     const data = detailed();
