@@ -339,9 +339,6 @@ async function setupSpaceServices(
     (id) => spaceWorkflowRepo.getWorkflow(id),
     agentTemplateResolverFor
   );
-  await spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
-    spaceWorkflowRepo.getWorkflow(id)
-  );
   const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
   const spaceWorkflowManager = new SpaceWorkflowManager(
     spaceWorkflowRepo,

@@ -5,7 +5,7 @@ import type { Session } from '../../../packages/shared/src/mod.ts';
 import { prepareInitialSessionToolSelection, projectSessionToolInputs } from '../../../packages/daemon/src/lib/tools/session-tool-inputs.ts';
 import { changeSessionToolChoice, type SessionToolChoiceChangeDependencies } from '../../../packages/daemon/src/lib/tools/change-session-tool-choice.ts';
 import { translateLegacyToolPreference, projectLegacyToolDefaultUpdate, selectSessionToolDefaults } from '../../../packages/daemon/src/lib/tools/legacy-tool-preferences.ts';
-import { pinnedSlotVetoes } from '../../../packages/daemon/src/storage/repositories/session-tool-selection-migration.ts';
+import { pinnedSlotVetoes } from '../../../packages/daemon/src/storage/repositories/pinned-slot-vetoes.ts';
 import { Client } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { Server } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
 import { InMemoryTransport } from '../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';

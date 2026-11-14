@@ -3,7 +3,6 @@ import { validateSlug } from './slug.ts';
 import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './template-synthesis.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from './worker-long-horizon-mapper.ts';
 import {
-  isLegacyWorkerTemplateKey,
   isRelocationMarkerLabel,
   RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from './long-horizon-templates.ts';
@@ -31,9 +30,6 @@ export function validateTemplateKey(key: string): string | null {
   }
   if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
     return `Template key "${key}" is retired and cannot be reused`;
-  }
-  if (isLegacyWorkerTemplateKey(key)) {
-    return `Template key "${key}" is a retired alias for a built-in agent template`;
   }
   if (
     key === MIGRATED_AGENT_TEMPLATE_KEY_PREFIX ||
