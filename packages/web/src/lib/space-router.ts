@@ -569,12 +569,6 @@ function setSpacesListRoute(): void {
   navSectionSignal.value = 'spaces';
 }
 
-export const getSpaceForgeFromPath = getSpaceEvolveFromPath;
-
-export const createSpaceForgePath = createSpaceEvolvePath;
-
-export const navigateToSpaceForge = navigateToSpaceEvolve;
-
 function applySpacePath(requestedPath: string): boolean {
   let path = requestedPath;
   const legacySessionsMatch = path.match(LEGACY_SPACE_SESSIONS_ROUTE_PATTERN);

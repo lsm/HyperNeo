@@ -3,7 +3,6 @@ import {
   Channels,
   GLOBAL_CHANNEL_WIRE,
   channelRegistry,
-  channelToWire,
   type EventChannel,
 } from '../src/message-hub/channels.ts';
 
@@ -51,11 +50,6 @@ describe('channelRegistry.toWire', () => {
 
   it('serializes task channels using both ids', () => {
     expect(channelRegistry.toWire(Channels.task('sp1', 't1'))).toBe('task:sp1:t1');
-  });
-
-  it('exposes a top-level channelToWire helper that mirrors the registry', () => {
-    const channel: EventChannel = { kind: 'session', sessionId: 's1' };
-    expect(channelToWire(channel)).toBe(channelRegistry.toWire(channel));
   });
 });
 

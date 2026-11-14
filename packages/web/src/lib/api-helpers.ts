@@ -9,7 +9,6 @@ import type {
   GetAuthStatusResponse,
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
-  McpRegistryListResponse,
   McpRegistryCreateResponse,
   McpRegistryUpdateResponse,
   McpRegistryDeleteResponse,
@@ -319,11 +318,6 @@ export async function executeSelectiveRewind(
   );
 }
 
-export async function listAppMcpServers(): Promise<McpRegistryListResponse> {
-  const hub = getHubOrThrow();
-  return await hub.request<McpRegistryListResponse>('mcp.registry.list');
-}
-
 export async function createAppMcpServer(
   req: CreateAppMcpServerRequest
 ): Promise<McpRegistryCreateResponse> {
@@ -421,34 +415,6 @@ export async function setSessionWorkspace(
     session: import('@hyperneo/shared').Session;
   }>('session.setWorkspace', { sessionId, workspacePath, worktreeMode });
   return session;
-}
-
-export async function listCustomEndpoints(): Promise<{
-  endpoints: import('@hyperneo/shared').CustomEndpointConfig[];
-}> {
-  const hub = getHubOrThrow();
-  return await hub.request<{ endpoints: import('@hyperneo/shared').CustomEndpointConfig[] }>(
-    'customEndpoints.list'
-  );
-}
-
-export async function addCustomEndpoint(
-  endpoint: import('@hyperneo/shared').CustomEndpointConfig
-): Promise<{ success: boolean; endpoint: import('@hyperneo/shared').CustomEndpointConfig }> {
-  const hub = getHubOrThrow();
-  return await hub.request('customEndpoints.add', { endpoint });
-}
-
-export async function updateCustomEndpoint(
-  endpoint: import('@hyperneo/shared').CustomEndpointConfig
-): Promise<{ success: boolean; endpoint: import('@hyperneo/shared').CustomEndpointConfig }> {
-  const hub = getHubOrThrow();
-  return await hub.request('customEndpoints.update', { endpoint });
-}
-
-export async function removeCustomEndpoint(id: string): Promise<{ success: boolean }> {
-  const hub = getHubOrThrow();
-  return await hub.request('customEndpoints.remove', { id });
 }
 
 export async function listCustomEndpointModels(data: {

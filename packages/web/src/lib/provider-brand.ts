@@ -59,18 +59,6 @@ function lightBrand(provider: string | undefined | null): string {
     : getProviderBrandColor(provider);
 }
 
-export function providerHeaderStyle(provider: string | undefined | null): {
-  backgroundColor: string;
-  color: string;
-} {
-  const light = resolvedTheme.value === 'light';
-  const brand = light ? getProviderBrandColorLight(provider) : getProviderBrandColor(provider);
-  return {
-    backgroundColor: `color-mix(in srgb, ${brand} 10%, transparent)`,
-    color: light ? brand : providerLogoColor(provider),
-  };
-}
-
 function getProviderBrandColorLight(provider: string | undefined | null): string {
   if (!provider) return DEFAULT_BRAND_COLOR_LIGHT;
   return PROVIDER_BRAND_COLORS_LIGHT[provider] ?? DEFAULT_BRAND_COLOR_LIGHT;

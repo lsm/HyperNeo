@@ -59,11 +59,3 @@ export interface ProviderCallbackRelayResponse {
 export interface ListProviderAuthStatusResponse {
   providers: ProviderAuthStatus[];
 }
-
-export interface OAuthFlowData {
-  type: 'redirect' | 'device';
-  authUrl?: string;
-  userCode?: string;
-  verificationUri?: string;
-  message: string;
-}

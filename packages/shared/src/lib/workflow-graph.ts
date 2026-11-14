@@ -94,18 +94,3 @@ export function isChannelCyclic(
 
   return false;
 }
-
-export function getCyclicChannelIndexes(
-  channels: WorkflowChannel[],
-  nodes: WorkflowNode[]
-): Set<number> {
-  const lookup = buildEndpointNodeIdLookup(nodes);
-  const order = buildNodeOrder(nodes);
-  const result = new Set<number>();
-  for (let i = 0; i < channels.length; i++) {
-    if (isChannelCyclic(i, channels, nodes, lookup, order)) {
-      result.add(i);
-    }
-  }
-  return result;
-}

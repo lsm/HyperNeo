@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
-import { McpRegistryListResponse, McpRegistryCreateResponse } from '@hyperneo/shared';
+import { McpRegistryCreateResponse } from '@hyperneo/shared';
 
 type EventHandler<T = unknown> = (data: T) => void;
 
@@ -398,32 +398,6 @@ describe('AppMcpStore', () => {
 });
 
 describe('MCP API helpers types', () => {
-  it('listAppMcpServers returns McpRegistryListResponse', async () => {
-    const mockResponse: McpRegistryListResponse = {
-      servers: [
-        {
-          id: 'srv-1',
-          name: 'fetch-mcp',
-          sourceType: 'stdio',
-          command: 'npx',
-          args: ['-y', '@tokenizin/mcp-npx-fetch'],
-          env: {},
-          enabled: true,
-          source: 'user',
-        },
-      ],
-    };
-
-    vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
-      request: vi.fn().mockResolvedValue(mockResponse),
-    } as never);
-
-    const { listAppMcpServers } = await import('../api-helpers.js');
-    const result = await listAppMcpServers();
-    expect(result.servers).toHaveLength(1);
-    expect(result.servers[0].id).toBe('srv-1');
-  });
-
   it('createAppMcpServer accepts CreateAppMcpServerRequest', async () => {
     const mockResponse: McpRegistryCreateResponse = {
       server: {
@@ -487,7 +461,7 @@ describe('MCP API helpers types', () => {
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null as never);
 
     const { ConnectionNotReadyError } = await import('../errors.js');
-    const { listAppMcpServers } = await import('../api-helpers.js');
-    await expect(listAppMcpServers()).rejects.toBeInstanceOf(ConnectionNotReadyError);
+    const { deleteAppMcpServer } = await import('../api-helpers.js');
+    await expect(deleteAppMcpServer('srv-1')).rejects.toBeInstanceOf(ConnectionNotReadyError);
   });
 });

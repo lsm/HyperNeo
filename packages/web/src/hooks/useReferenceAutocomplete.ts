@@ -41,17 +41,6 @@ export function extractActiveAtQuery(content: string): string | null {
   return null;
 }
 
-export function insertReferenceMention(
-  content: string,
-  query: string,
-  mention: ReferenceMention
-): string {
-  const atQuery = '@' + query;
-  if (!content.endsWith(atQuery)) return content;
-  const token = `@ref{${mention.type}:${mention.id}} `;
-  return content.slice(0, content.length - atQuery.length) + token;
-}
-
 export function useReferenceAutocomplete({
   content,
   onSelect,
