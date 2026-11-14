@@ -1078,8 +1078,6 @@ export default function ChatContainer({
           />
         )}
 
-      {!readonly && <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />}
-
       {showRecovering && (
         <div
           class="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-xs text-accent-soft"
@@ -1165,6 +1163,8 @@ export default function ChatContainer({
       />
 
       {headerExtra}
+
+      {!readonly && <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />}
 
       <div class="flex-1 relative min-h-0">
         <div
