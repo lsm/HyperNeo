@@ -85,15 +85,15 @@ describe('NeoRealtimeVoice', () => {
 
   it('shows no notice when a refused start was already stopped', async () => {
     let refuse: (value: unknown) => void = () => {};
-    mocks.request.mockImplementation(async (_method: string, data: { name: string }) =>
-      data.name === 'neo.speech.catalog'
-        ? { ok: true }
-        : data.name === 'neo.speech.listen' &&
-            (data as { input: { enabled: boolean } }).input.enabled
-          ? new Promise((resolve) => {
-              refuse = resolve;
-            })
-          : { ok: true }
+    mocks.request.mockImplementation(
+      async (_method: string, data: { name: string; input: { enabled?: boolean } }) =>
+        data.name === 'neo.speech.catalog'
+          ? { ok: true }
+          : data.name === 'neo.speech.listen' && data.input.enabled
+            ? new Promise((resolve) => {
+                refuse = resolve;
+              })
+            : { ok: true }
     );
     const onError = vi.fn();
     render(<NeoRealtimeVoice collapsed={false} sessionId="neo-1" connected onError={onError} />);

@@ -36,7 +36,11 @@ export function NeoRealtimeVoice({
   const start = async () => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return onError(t('composer.reconnecting'));
-    const player = openNeoSpeechPlayer(hub, sessionId);
+    const player = openNeoSpeechPlayer(hub, sessionId, {
+      onStop: () => {
+        if (live.current === session) stop();
+      },
+    });
     const session = {
       player,
       stop: () => {
@@ -65,6 +69,7 @@ export function NeoRealtimeVoice({
         enabled: true,
         audio: true,
       });
+      if (live.current !== session) return;
       if (!listen.ok) return refuse(listen);
       if (live.current === session) setOn(true);
     } catch {
