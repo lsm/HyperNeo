@@ -1029,20 +1029,15 @@ describe('hyperneo adapter start and stop', () => {
     expect(events).toEqual(['drop resume idle', 'archive idle']);
   });
 
-  test('stop interrupts a restart resume that is already running instead of claiming it', async () => {
+  test('stop reports nothing stopped while a claimed restart resume is on its way', async () => {
     db.exec(
       `UPDATE sessions SET processing_state = '{"status":"interrupted","reason":"restart","messageId":"m1"}' WHERE id = 'idle'`
     );
     expect(await adapter().stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
       ok: true,
-      value: { stopped: true },
-    });
-    expect(events).toEqual(['drop resume idle', 'interrupt idle']);
-    const cold = adapter({ interrupt: () => false });
-    expect(await cold.stop?.({ adapter: 'hyperneo', id: 'idle' }, from)).toEqual({
-      ok: true,
       value: { stopped: false },
     });
+    expect(events).toEqual(['drop resume idle']);
   });
 
   test('stop fails when the cleared resume cannot be written', async () => {
