@@ -52,8 +52,9 @@ export function openNeoSpeechPlayer(
   };
 
   const report = () => {
-    if (!!queue[0]?.started === speaking) return;
-    speaking = !speaking;
+    const next = !!queue[0]?.started || (speaking && queue.length > 0);
+    if (next === speaking) return;
+    speaking = next;
     options.onSpeaking?.(speaking);
   };
 
