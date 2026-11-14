@@ -1,5 +1,6 @@
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
+import { anthropicRateLimitEventsRead } from '../repositories/anthropic-usage-read.ts';
 import {
   neoFrontDeliveryWrites,
   neoFrontInputWrites,
@@ -227,6 +228,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoFrontDeliveryWrites,
     neoFrontInputReads,
     neoFrontReads,
+    anthropicRateLimitEventsRead,
     neoAskSettlementReads,
     neoAskSettlementWrites,
     neoAskTurnedSettleReads,
