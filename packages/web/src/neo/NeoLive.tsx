@@ -1103,6 +1103,7 @@ export function NeoLive() {
                         : undefined
                     }
                     onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
+                    onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
                     onTopic={
                       workQuery.trim() &&
                       !sceneEntries.some((loaded) => loaded.ask.topic === entry.ask.topic)

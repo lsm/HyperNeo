@@ -91,6 +91,7 @@ export type NeoTodoPatch = Partial<
     | 'priority'
     | 'dependsOn'
     | 'instruction'
+    | 'named'
     | 'approvedAt'
     | 'approvalQuestionId'
   >
@@ -116,6 +117,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   priority: 'priority',
   dependsOn: 'depends_on',
   instruction: 'instruction',
+  named: 'named',
 };
 
 const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, parent_id AS parentId, session_id AS sessionId,
@@ -875,7 +877,7 @@ export class NeoAskTodoRepository {
         )
         .run(
           ...keys.map((key) =>
-            key === 'check' || key === 'artifacts' || key === 'dependsOn'
+            key === 'check' || key === 'artifacts' || key === 'dependsOn' || key === 'named'
               ? JSON.stringify(patch[key] ?? null)
               : (patch[key] ?? null)
           ),

@@ -131,6 +131,7 @@ export const en = {
   'todo.new': 'New',
   'todo.doneWhen': 'Done when: {doneWhen}',
   'todo.open': 'Open',
+  'todo.desktopControl': 'Let the agent use this computer',
   'todo.showDetails': 'Show details: {title}',
   'todo.hideDetails': 'Hide details: {title}',
   'todo.openTitle': 'Open {title}',

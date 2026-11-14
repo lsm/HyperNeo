@@ -4,6 +4,7 @@ export const CORE_OPERATION_NAMES = [
   'artifact.file.list',
   'artifact.file.read',
   'artifact.reference.resolve',
+  'desktop.control.set',
   'desktop.status',
   'desktop.stop',
   'file.handoff.read',
