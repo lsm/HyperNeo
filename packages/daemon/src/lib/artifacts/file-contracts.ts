@@ -4,7 +4,6 @@ import {
   ARTIFACT_REFUSALS,
   type ArtifactLimits,
   type ArtifactFileMetadata,
-  type ArtifactProjection,
   type ArtifactReadResult,
   type ArtifactRef,
   type ArtifactRefusal,
@@ -54,10 +53,6 @@ export function unregisteredArtifact(
     }) ?? null
   );
 }
-
-export const ArtifactProjectionSchema: z.ZodType<ArtifactProjection> = z.strictObject({
-  artifacts: z.array(ArtifactRefSchema).max(16).optional(),
-});
 
 export const ArtifactRefusalSchema: z.ZodType<ArtifactRefusal> = z.strictObject({
   accepted: z.literal(false),

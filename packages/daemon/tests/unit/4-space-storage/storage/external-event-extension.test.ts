@@ -11,10 +11,7 @@ import type {
   RpcExternalEventExtension,
 } from '../../../../src/lib/external-events/types';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github';
-import {
-  createInternalEventBus,
-  type InternalEventBus,
-} from '../../../../src/lib/internal-event-bus';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
 
@@ -125,7 +122,7 @@ describe('external event extension startup primitives', () => {
 
   beforeEach(() => {
     db = setupDb();
-    bus = createInternalEventBus<Record<string, unknown>>();
+    bus = new InternalEventBus<Record<string, unknown>>();
     service = new ExternalEventService(new ExternalEventStore(db), bus);
     config = createExternalEventConfigStore(db);
   });

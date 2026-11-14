@@ -10,7 +10,6 @@ const suites = [
   'tests/unit/1-core/drivers/copilot-discovery-groups.test.ts',
   'tests/unit/1-core/drivers/copilot-history-find.test.ts',
   'tests/unit/1-core/providers/codex-model-discovery.test.ts',
-  'tests/unit/lib/oap/oap-stdio-client.test.ts',
   'tests/unit/2-handlers/job-handlers/skill-validate.handler.test.ts',
   'tests/unit/2-handlers/github/neo-read-checkout-sync.test.ts',
 ];

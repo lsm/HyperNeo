@@ -11,7 +11,7 @@ import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-
 import { ScheduleService } from '../../../../src/lib/schedule/schedule-service';
 import { SpaceGoalService } from '../../../../../space/src/goals/service';
 import {
-  createInternalEventBus,
+  InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -386,7 +386,7 @@ describe('handleTaskScheduleFire', () => {
   it('emits task and schedule events after a scheduled task fires', async () => {
     const scheduleId = createCronSchedule();
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
-    const internalEventBus = createInternalEventBus<DaemonInternalEventMap>();
+    const internalEventBus = new InternalEventBus<DaemonInternalEventMap>();
     const emitted: Array<{ event: string; taskId?: string; scheduleId?: string }> = [];
 
     internalEventBus.subscribe(

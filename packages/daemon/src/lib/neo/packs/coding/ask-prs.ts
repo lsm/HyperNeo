@@ -1,12 +1,7 @@
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
-import {
-  GITHUB_REF_PATH,
-  githubGraphqlArgs,
-  parseGitHubRefUrl,
-} from '../../../github/parse-pr-url.ts';
+import { GITHUB_REF_PATH, githubGraphqlArgs } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 export type NeoRef = { owner: string; repo: string; number: number };
@@ -33,7 +28,6 @@ const REF_URL = new RegExp(`https://${GITHUB_REF_PATH.source}`, 'g');
 const REF_NAME = /(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d+)\b/g;
 const REF_BARE = /(?<![\w./#-])#(\d+)\b/g;
 const REF_SHORT = /(?<![\w./-])([\w.-]+)#(\d+)\b/g;
-const NEO_ASK_REF_MAX = 10;
 const NOT_A_REF = /could not resolve to (an issue or pull request|a repository)/i;
 const REF_QUERY = `query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){defaultBranchRef{name} issueOrPullRequest(number:$p){__typename ...on PullRequest{url state mergedAt closedAt baseRefName} ...on Issue{url title state stateReason createdAt closedAt parent{url} timelineItems(last:1,itemTypes:[PARENT_ISSUE_ADDED_EVENT]){nodes{...on ParentIssueAddedEvent{createdAt}}} closedByPullRequestsReferences(first:10,includeClosedPrs:true){nodes{url merged mergedAt baseRefName}}}}}}`;
 const GhRefSchema = z.object({
@@ -84,10 +78,6 @@ const NEO_REF_MISSING_MS = 60 * 60_000;
 
 const refKey = (ref: NeoRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
 
-function neoRefFromUrl(url: string): NeoRef | null {
-  return parseGitHubRefUrl(url);
-}
-
 export function codingAskMatter(
   ask: { title: string; request: string },
   repos: readonly string[] = []
@@ -112,59 +102,6 @@ export function codingAskMatter(
     ),
   ]);
   return named.size === 1 ? [...named][0] : null;
-}
-
-export function extractNeoAskRefs(
-  ask: Pick<NeoAsk, 'ask' | 'doneWhen' | 'outcome' | 'evidence' | 'doneItems'>,
-  tracked: readonly string[]
-): NeoRef[] {
-  const text = [
-    ask.ask,
-    ask.doneWhen,
-    ask.outcome,
-    ask.evidence,
-    ...(ask.doneItems ?? []).flatMap((item) => [item.text, item.evidence]),
-  ]
-    .filter(Boolean)
-    .join('\n');
-  const named = [...text.matchAll(REF_URL), ...text.matchAll(REF_NAME)].map(
-    ([, owner, repo, number]) => ({ owner, repo, number: Number(number) })
-  );
-  const cards = tracked.flatMap((url) => neoRefFromUrl(url) ?? []);
-  const repos = new Map(
-    [...named, ...cards].map((ref) => [`${ref.owner}/${ref.repo}`.toLowerCase(), ref] as const)
-  );
-  const only = repos.size === 1 ? [...repos.values()][0] : null;
-  const bare = only
-    ? [...text.matchAll(REF_BARE)].map(([, number]) => ({
-        owner: only.owner,
-        repo: only.repo,
-        number: Number(number),
-      }))
-    : [];
-  const skip = new Set(cards.map(refKey));
-  const refs = new Map(
-    [...named, ...bare].filter((ref) => !skip.has(refKey(ref))).map((ref) => [refKey(ref), ref])
-  );
-  return [...refs.values()].slice(0, NEO_ASK_REF_MAX);
-}
-
-export function extractNeoCardRefs(
-  text: string,
-  repo: Pick<NeoRef, 'owner' | 'repo'> | null
-): NeoRef[] {
-  const named = [...text.matchAll(REF_NAME)].map(([, owner, name, number]) => ({
-    owner,
-    repo: name,
-    number: Number(number),
-  }));
-  const bare = repo
-    ? [...text.matchAll(REF_BARE)].map(([, number]) => ({ ...repo, number: Number(number) }))
-    : [];
-  return [...new Map([...named, ...bare].map((ref) => [refKey(ref), ref])).values()].slice(
-    0,
-    NEO_ASK_REF_MAX
-  );
 }
 
 async function readGithubRefState(
