@@ -25,7 +25,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-ports=$(node -e 'const net=require("node:net"); const servers=[net.createServer(),net.createServer()]; Promise.all(servers.map(s=>new Promise(r=>s.listen(0,"127.0.0.1",r)))).then(()=>{console.log(servers.map(s=>s.address().port).join(" "));servers.forEach(s=>s.close())})')
+ports=$(bun -e 'const net=require("node:net"); const servers=[net.createServer(),net.createServer()]; Promise.all(servers.map(s=>new Promise(r=>s.listen(0,"127.0.0.1",r)))).then(()=>{console.log(servers.map(s=>s.address().port).join(" "));servers.forEach(s=>s.close())})')
 read -r PORT MOCK_PORT <<< "$ports"
 [[ "$PORT" != 8399 && "$PORT" != 8499 && "$MOCK_PORT" != 8399 && "$MOCK_PORT" != 8499 ]]
 VERIFY_MOCK_PORT="$MOCK_PORT" VERIFY_NORMAL_PRIORITY=1 bash .claude/skills/verify/launch.sh "$PORT" "$RUN" &
@@ -35,7 +35,7 @@ SESSION=$("${ENVV[@]}" bun .claude/skills/verify/rpc.ts 'rpc:session.create' '{"
 sleep 900 &
 driver=$!
 bun .claude/skills/verify/desktop-takeover-seed.ts "$RUN" "$SESSION" "$driver" | tee "$OUT/seed.json"
-node -e 'require("node:net").createServer(c=>c.on("data",()=>c.end("{\"ok\":true,\"result\":{\"state\":\"stopped\"}}\n"))).listen(process.argv[1])' "$RUN/data/desktop/control.sock" &
+bun -e 'require("node:net").createServer(c=>c.on("data",()=>c.end("{\"ok\":true,\"result\":{\"state\":\"stopped\"}}\n"))).listen(process.argv[1])' "$RUN/data/desktop/control.sock" &
 app=$!
 for _ in $(seq 50); do [[ -S "$RUN/data/desktop/control.sock" ]] && break; sleep 0.1; done
 "${ENVV[@]}" bun .claude/skills/verify/rpc.ts desktop.status "{\"worker\":\"$SESSION\"}" | tee "$OUT/status-before.json"
