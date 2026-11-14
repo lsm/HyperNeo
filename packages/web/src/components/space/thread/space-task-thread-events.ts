@@ -3,19 +3,6 @@ import type { MessageDeliveryStatus } from '@hyperneo/shared';
 import type { SpaceTaskThreadMessageRow } from '../useSpaceTaskMessages';
 import type { MessageReplacementStatus } from '../../../lib/sdk-message-replacement';
 
-export type SpaceTaskThreadEventKind =
-  | 'thinking'
-  | 'tool'
-  | 'subagent'
-  | 'text'
-  | 'user'
-  | 'system'
-  | 'compact_boundary'
-  | 'result'
-  | 'rate_limit'
-  | 'progress'
-  | 'unknown';
-
 export interface ParsedThreadRow {
   id: string | number;
   sessionId: string | null;
@@ -32,32 +19,6 @@ export interface ParsedThreadRow {
   message: SDKMessage | null;
   fallbackText: string | null;
   replacementStatus?: MessageReplacementStatus;
-}
-
-export interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm: string;
-}
-
-export interface SpaceTaskThreadEvent {
-  id: string;
-  label: string;
-  role: string;
-  nodeExecutionId?: string | null;
-  taskId: string;
-  taskTitle: string;
-  sessionId: string | null;
-  createdAt: number;
-  kind: SpaceTaskThreadEventKind;
-  title: string;
-  summary: string;
-  message?: SDKMessage | null;
-  iconToolName?: string;
-  systemSubtype?: string;
-  resultSubtype?: string;
-  isError?: boolean;
-  todos?: TodoItem[];
 }
 
 export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow {

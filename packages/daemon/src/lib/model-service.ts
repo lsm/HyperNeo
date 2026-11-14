@@ -201,26 +201,10 @@ const providerAppliedSeq = new Map<string, number>();
 
 const refreshModes = new Map<string, boolean>();
 
-const pendingProviderSlices = new Map<string, ModelInfo[]>();
-
 let providerRepositoryRef: ProviderRepository | null = null;
 
 export function setProviderRepository(repo: ProviderRepository | null): void {
   providerRepositoryRef = repo;
-}
-
-function pendingSliceKey(cacheKey: string, providerId: string): string {
-  return `${cacheKey}:${providerId}`;
-}
-
-function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
-  let merged = models;
-  for (const [key, slice] of pendingProviderSlices) {
-    if (!key.startsWith(`${cacheKey}:`)) continue;
-    const providerId = key.slice(cacheKey.length + 1);
-    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
-  }
-  return merged;
 }
 
 export interface ModelsDiscoveryOwner {
@@ -276,7 +260,7 @@ function applyRefreshedModels(
         superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
       modelsCache.set(cacheKey, overlaid);
     } else {
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
+      modelsCache.set(cacheKey, mergedModels);
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
@@ -288,7 +272,7 @@ function applyRefreshedModels(
   const filteredFallbacks = FALLBACK_MODELS.filter(
     (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
   );
-  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+  modelsCache.set(cacheKey, filteredFallbacks);
   cacheTimestamps.set(cacheKey, Date.now());
 }
 
@@ -1043,13 +1027,12 @@ function cancelAllProviderRetries(): void {
 
 function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
   const cacheKey = 'global';
-  const slice = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId)) ?? models;
   const existing = modelsCache.get(cacheKey);
   if (!existing || existing.length === 0) {
-    modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
+    modelsCache.set(cacheKey, mergeWithFallbackModels(models));
     return;
   }
-  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...slice]);
+  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
 }
 
 const PROVIDER_RETRY_PROBE_TIMEOUT_MS = 30_000;
@@ -1291,10 +1274,7 @@ export async function initializeModels(): Promise<void> {
       }
       applyProviderLoadOutcome(pruneSupersededProviders(result));
       if (result.models.length > 0) {
-        const mergedModels = mergePendingProviderSlices(
-          cacheKey,
-          mergeWithFallbackModels(result.models)
-        );
+        const mergedModels = mergeWithFallbackModels(result.models);
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
       } else {
@@ -1306,7 +1286,7 @@ export async function initializeModels(): Promise<void> {
       }
       const registry = getProviderRegistry();
       const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+      modelsCache.set(cacheKey, filteredFallbacks);
       cacheTimestamps.set(cacheKey, Date.now());
     }
   })();
@@ -1347,9 +1327,6 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     refreshInProgress.delete(cacheKey);
     refreshModes.delete(cacheKey);
     scopedCatalogStamps.delete(cacheKey);
-    for (const key of pendingProviderSlices.keys()) {
-      if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
-    }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
     }
@@ -1364,7 +1341,6 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     refreshInProgress.clear();
     refreshModes.clear();
     clearProviderModelCaches();
-    pendingProviderSlices.clear();
     scopedCatalogStamps.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
