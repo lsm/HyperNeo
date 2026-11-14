@@ -41,6 +41,13 @@ try {
   await page.screenshot({ path: join(out, 'drawer-running.png') });
   observations.push({ view: 'drawer', state: 'running', stopButton: await drawer.getByRole('button', { name: 'Stop and take over' }).count() });
 
+  await drawer.getByRole('button', { name: 'Book the dentist on the clinic site' }).click();
+  await drawer.waitFor({ state: 'detached' });
+  await page.getByText('Desktop takeover proof').first().waitFor();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: join(out, 'drawer-opened-session.png') });
+  observations.push({ view: 'drawer', opened: 'session' });
+
   await page.goto(`${base}/session/${sessionId}`);
   const control = page.getByRole('region', { name: 'Desktop control' });
   await control.getByText('The agent can use the desktop').waitFor();
