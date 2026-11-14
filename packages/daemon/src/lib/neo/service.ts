@@ -1176,6 +1176,7 @@ export class NeoService {
       this.todoRunner.recompute,
       warn
     )(questionId).catch(warn);
+    if (questionId) await this.todoRunner.advance().catch(warn);
     if (questionId)
       await this.todoRunner.checkNow({ questionId }, (message, error) =>
         this.log.warn(message, error)

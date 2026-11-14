@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
   NeoAskTodoRepository,
+  NeoQuestionDraft,
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
@@ -15,6 +16,8 @@ import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { neoTodoOnHold, planNeoHoldCard } from './daemon-cards.ts';
+import { openHumanCard } from './human-card.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
 import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
@@ -265,7 +268,7 @@ const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
     (todos: NeoAskTodoRepository, todo: NeoTodo): Gate<NeoTodo> =>
       ['done', 'removed'].includes(todo.state)
         ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
-        : todo.blockedBy === 'held'
+        : todo.blockedBy === 'held' || neoTodoOnHold(todo, todos.todoCards(todo))
           ? fail('todo_held: the human is holding this todo; release it first.')
           : todo.instruction && todo.approvedAt === null
             ? fail(NEO_TODO_NOT_APPROVED)
@@ -837,6 +840,42 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
+  const holdCard = owned(superpipe({})('neo.todo.hold') as PipelineAPI)
+    .pipe(
+      (
+        todo: NeoTodo,
+        input: { reason: string }
+      ): Gate<{ todo: NeoTodo; draft: NeoQuestionDraft }> => {
+        const plan = planNeoHoldCard(todo, todos.todoCards(todo), input.reason);
+        return 'reason' in plan ? fail(plan.reason) : { value: { todo, draft: plan.value } };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async ({ todo, draft }: { todo: NeoTodo; draft: NeoQuestionDraft }) => {
+        const failed = todo.startedAt === null ? null : await controls.stop(todo);
+        if (failed)
+          return {
+            ok: false as const,
+            reason: `${failed}; the todo is unchanged, its session may still run.`,
+          };
+        const card = openHumanCard(todos, crypto.randomUUID(), todo.askId, draft, Date.now());
+        await controls.advance();
+        return {
+          ok: true as const,
+          todo: todos.getTodo(todo.id) ?? todo,
+          records: [`held: card ${card.id} holds it until the human answers.`],
+        };
+      },
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome') as (
+    input: { todoId: string; reason: string },
+    caller: OperationCaller
+  ) => Promise<TodoReceipt | Rejection>;
+
   const proceedPastCancelled = owned(superpipe({})('neo.todo.proceed') as PipelineAPI)
     .pipe(
       (todo: NeoTodo) => planNeoTodoProceed(todo, todos.listFamilyTodos(todo.askId), Date.now()),
@@ -901,7 +940,11 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) =>
-        present(await edit({ todoId: input.todoId, hold: input.reason }, caller)),
+        present(
+          input.reason === null
+            ? await edit({ todoId: input.todoId, hold: null }, caller)
+            : await holdCard({ todoId: input.todoId, reason: input.reason }, caller)
+        ),
     }),
     defineOperation({
       name: 'neo.todo.remove',

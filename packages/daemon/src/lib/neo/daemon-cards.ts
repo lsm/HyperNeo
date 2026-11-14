@@ -1,11 +1,13 @@
 import type { NeoQuestion, NeoStatusCode, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoQuestionDraft } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStatusLine } from './status-codes.ts';
-import { neoTodoCovered } from './todo-state.ts';
+import { neoQuestionCoversTodo, neoTodoCovered } from './todo-state.ts';
 
 export const NEO_WORKER_BLOCKER = 'worker_blocker';
 export const NEO_RETRIES_EXHAUSTED = 'retries_exhausted';
 export const NEO_CHECK_OVERDUE = 'check_overdue';
+export const NEO_HOLD = 'hold';
+export const NEO_PAUSE = 'pause';
 export const NEO_AUTOMATIC_RETRIES = 2;
 export const NEO_CHECK_DEADLINE_MS = 24 * 60 * 60 * 1000;
 
@@ -13,13 +15,22 @@ const MARK_DONE = 'Mark done';
 const REMOVE = 'Remove';
 const RETRY = 'Retry';
 const KEEP_WAITING = 'Keep waiting';
+const START = 'Start';
+const RESUME = 'Resume';
 
-type Cause = typeof NEO_WORKER_BLOCKER | typeof NEO_RETRIES_EXHAUSTED | typeof NEO_CHECK_OVERDUE;
+type Cause =
+  | typeof NEO_WORKER_BLOCKER
+  | typeof NEO_RETRIES_EXHAUSTED
+  | typeof NEO_CHECK_OVERDUE
+  | typeof NEO_HOLD
+  | typeof NEO_PAUSE;
 
 const OPTIONS: Record<Cause, string[]> = {
   [NEO_WORKER_BLOCKER]: [MARK_DONE, REMOVE],
   [NEO_RETRIES_EXHAUSTED]: [RETRY, MARK_DONE, REMOVE],
   [NEO_CHECK_OVERDUE]: [KEEP_WAITING, MARK_DONE, REMOVE],
+  [NEO_HOLD]: [START, REMOVE],
+  [NEO_PAUSE]: [RESUME, REMOVE],
 };
 
 const OPTION_CODES: Record<string, string> = {
@@ -27,6 +38,8 @@ const OPTION_CODES: Record<string, string> = {
   [REMOVE]: 'question.daemonRemove',
   [RETRY]: 'question.daemonRetry',
   [KEEP_WAITING]: 'question.daemonKeepWaiting',
+  [START]: 'question.daemonStart',
+  [RESUME]: 'question.daemonResume',
 };
 
 const DAEMON_EN = {
@@ -36,16 +49,20 @@ const DAEMON_EN = {
     '{steps} could not start after {retries} automatic retries: {reason}. Retry, mark done, or remove?',
   'question.checkOverdue':
     "{steps} has waited {hours} hours and its check hasn't passed. Keep waiting, mark it done, or remove it?",
+  'question.held': '{steps} is on hold: {reason}. Start it, or remove it?',
+  'question.paused': '{steps} is paused: {reason}. Resume it, or remove it?',
 } as const;
 
 const TEXT_CODES: Record<Cause, keyof typeof DAEMON_EN> = {
   [NEO_WORKER_BLOCKER]: 'question.workerBlocker',
   [NEO_RETRIES_EXHAUSTED]: 'question.retriesExhausted',
   [NEO_CHECK_OVERDUE]: 'question.checkOverdue',
+  [NEO_HOLD]: 'question.held',
+  [NEO_PAUSE]: 'question.paused',
 };
 
 type Row = Pick<NeoTodo, 'id' | 'title' | 'state' | 'blockedReason' | 'updatedAt'>;
-type Covered = Row & Pick<NeoTodo, 'blockedBy' | 'check'>;
+type Covered = Row & Pick<NeoTodo, 'blockedBy' | 'check' | 'startedAt'>;
 type Card = Pick<
   NeoQuestion,
   'id' | 'state' | 'cause' | 'todos' | 'text' | 'answer' | 'answeredAt' | 'options'
@@ -61,13 +78,13 @@ const live = (todo: Pick<NeoTodo, 'state'>) =>
 const quoted = (todos: readonly Pick<Row, 'title'>[]) =>
   todos.map((todo) => `"${todo.title}"`).join(', ');
 
-function daemonLine(cause: Cause, covered: readonly Row[]) {
+function daemonLine(cause: Cause, covered: readonly Row[], reason?: string) {
   return neoStatusLine(DAEMON_EN, [
     {
       code: TEXT_CODES[cause],
       params: {
         steps: quoted(covered),
-        reason: (covered[0]?.blockedReason ?? '').replace(/[.。\s]+$/, ''),
+        reason: (reason ?? covered[0]?.blockedReason ?? '').replace(/[.。\s]+$/, ''),
         retries: String(NEO_AUTOMATIC_RETRIES),
         hours: String(NEO_CHECK_DEADLINE_MS / 3_600_000),
       },
@@ -75,9 +92,25 @@ function daemonLine(cause: Cause, covered: readonly Row[]) {
   ]);
 }
 
-export function neoDaemonCardDraft(cause: Cause, covered: readonly Row[]): NeoQuestionDraft {
+const HELD: readonly string[] = [NEO_HOLD, NEO_PAUSE];
+
+const heldReason = (cause: Cause, covered: readonly Row[], text: string) => {
+  if (!HELD.includes(cause)) return undefined;
+  const [before, after = ''] = daemonLine(cause, covered, '\u0000').status.split('\u0000');
+  return text.startsWith(before) &&
+    text.endsWith(after) &&
+    text.length > before.length + after.length
+    ? text.slice(before.length, text.length - after.length)
+    : undefined;
+};
+
+export function neoDaemonCardDraft(
+  cause: Cause,
+  covered: readonly Row[],
+  reason?: string
+): NeoQuestionDraft {
   return {
-    text: daemonLine(cause, covered).status,
+    text: daemonLine(cause, covered, reason).status,
     kind: 'choice',
     options: OPTIONS[cause],
     multiple: false,
@@ -95,7 +128,11 @@ export function neoDaemonCardCodes(
 ): { textCodes?: NeoStatusCode[]; optionCodes?: NeoStatusCode[] } {
   if (!isCause(question.cause)) return {};
   const covered = question.todos.flatMap((id) => family.filter((todo) => todo.id === id));
-  const line = daemonLine(question.cause, covered);
+  const line = daemonLine(
+    question.cause,
+    covered,
+    heldReason(question.cause, covered, question.text)
+  );
   const standard = question.options?.join('\n') === OPTIONS[question.cause].join('\n');
   return {
     ...(line.status === question.text ? { textCodes: line.statusCodes } : {}),
@@ -118,6 +155,11 @@ const covers: Record<Cause, (todo: Covered) => boolean> = {
   [NEO_RETRIES_EXHAUSTED]: (todo) => blockedBy(todo, 'failure'),
   [NEO_CHECK_OVERDUE]: (todo) =>
     !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
+  [NEO_HOLD]: (todo) =>
+    todo.startedAt === null && (todo.state === 'todo' || blockedBy(todo, 'question')),
+  [NEO_PAUSE]: (todo) =>
+    todo.startedAt !== null &&
+    (todo.state === 'doing' || blockedBy(todo, 'question', 'needs-human')),
 };
 
 export const neoDaemonCardCovers = (cause: string | null | undefined, todo: Covered) =>
@@ -135,7 +177,17 @@ export function planNeoDaemonCardPrune(
   if (kept.length === question.todos.length) return null;
   return {
     kept: kept.map((todo) => todo.id),
-    text: kept.length ? neoDaemonCardDraft(cause, kept).text : question.text,
+    text: kept.length
+      ? neoDaemonCardDraft(
+          cause,
+          kept,
+          heldReason(
+            cause,
+            question.todos.flatMap((id) => family.filter((todo) => todo.id === id)),
+            question.text
+          )
+        ).text
+      : question.text,
     state: kept.length ? ('open' as const) : ('retired' as const),
     retiredReason: kept.length ? null : 'nothing left to decide',
     released: [],
@@ -188,7 +240,7 @@ export function neoCheckOverdue(
 
 export type NeoDaemonCardAction = {
   todoId: string;
-  name: 'neo.todo.done' | 'neo.todo.remove' | 'neo.todo.retry';
+  name: 'neo.todo.done' | 'neo.todo.remove' | 'neo.todo.retry' | 'neo.todo.continue';
   input: Record<string, string>;
 };
 
@@ -208,6 +260,15 @@ export function planNeoDaemonCardActions(card: Card, todos: readonly Row[]): Neo
       name: 'neo.todo.remove',
       input: { todoId: todo.id, reason: 'The human removed it on a card.' },
     }));
+  if (picked === RESUME)
+    return covered.map((todo) => ({
+      todoId: todo.id,
+      name: 'neo.todo.continue',
+      input: {
+        todoId: todo.id,
+        message: 'The human resumed this step. Carry on where you stopped.',
+      },
+    }));
   if (picked !== RETRY) return [];
   const answeredAt = card.answeredAt;
   return covered
@@ -217,3 +278,33 @@ export function planNeoDaemonCardActions(card: Card, todos: readonly Row[]): Neo
     )
     .map((todo) => ({ todoId: todo.id, name: 'neo.todo.retry', input: { todoId: todo.id } }));
 }
+
+export function planNeoHoldCard(
+  todo: Covered,
+  cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[],
+  reason: string
+): { value: NeoQuestionDraft } | { reason: string } {
+  const cause = todo.startedAt === null ? NEO_HOLD : NEO_PAUSE;
+  if (!covers[cause](todo))
+    return {
+      reason: `not_holdable: only a todo that is waiting to start or running can be held; this one is ${todo.state}.`,
+    };
+  if (neoTodoCovered(todo, cards))
+    return { reason: 'already_waiting: this todo already waits on an open card; answer that one.' };
+  return { value: { ...neoDaemonCardDraft(cause, [todo], reason), todoId: todo.id } };
+}
+
+export const neoTodoOnHold = (
+  todo: Pick<NeoTodo, 'id'>,
+  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
+) => cards.some((card) => card.cause === NEO_HOLD && neoQuestionCoversTodo(card, todo));
+
+export const neoTodoHeldBy = (
+  todo: Pick<NeoTodo, 'id'>,
+  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
+): typeof NEO_HOLD | typeof NEO_PAUSE | null => {
+  const card = cards.find(
+    (item) => HELD.includes(item.cause ?? '') && neoQuestionCoversTodo(item, todo)
+  );
+  return card?.cause === NEO_HOLD ? NEO_HOLD : card ? NEO_PAUSE : null;
+};

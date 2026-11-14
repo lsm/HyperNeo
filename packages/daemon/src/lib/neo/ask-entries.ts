@@ -16,7 +16,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { NeoPack } from './pack-contract.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import { neoRemovedPrerequisiteCodes } from './todo-removal.ts';
-import { neoDaemonCardCodes } from './daemon-cards.ts';
+import { neoDaemonCardCodes, neoTodoHeldBy } from './daemon-cards.ts';
 import {
   NeoStatusCodesSchema,
   neoStatusLine,
@@ -45,6 +45,8 @@ const NEO_TODO_STATUS_EN = {
   'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
+  'todo.held': 'On hold',
+  'todo.paused': 'Paused',
   'todo.blocked': 'Blocked: {reason}',
   'todo.waitingResult': 'Waiting for its result',
   'todo.checking': 'Session reported; checking',
@@ -60,7 +62,8 @@ const coded = (code: keyof typeof NEO_TODO_STATUS_EN, params: Record<string, str
 export function neoTodoStatusLine(
   todo: NeoTodo,
   todos: readonly NeoTodo[],
-  packLine: NeoStatusLine | null
+  packLine: NeoStatusLine | null,
+  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[] = []
 ): NeoStatusLine {
   if (todo.state === 'closed_unverified') return coded('todo.closedUnverified');
   if (todo.state === 'removed') {
@@ -73,6 +76,8 @@ export function neoTodoStatusLine(
   }
   if (todo.state === 'failed')
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
+  const held = neoTodoHeldBy(todo, cards);
+  if (held) return coded(held === 'hold' ? 'todo.held' : 'todo.paused');
   if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
@@ -208,7 +213,8 @@ function projectNeoTodoEntries(
   shown: readonly NeoTodo[],
   todos: readonly NeoTodo[],
   links: ReturnType<NeoTodoSessionRepository['readLinksForTodos']>,
-  packs: readonly NeoPack[]
+  packs: readonly NeoPack[],
+  cards: readonly NeoQuestion[]
 ): NeoTodoEntry[] {
   return shown.map((todo) => ({
     ...todo,
@@ -223,7 +229,8 @@ function projectNeoTodoEntries(
     ...neoTodoStatusLine(
       todo,
       todos,
-      packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
+      packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null,
+      cards
     ),
     ...(links.get(todo.id) ?? { worker: null, link: null, remoteLink: null }),
   }));
@@ -242,7 +249,7 @@ export function projectNeoAskEntries(
     return {
       ask,
       state: neoAskEntryState(ask, todos, questions, allQuestions),
-      todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs),
+      todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs, questions),
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
         if (question.kind === 'choice' && question.options)
@@ -370,7 +377,7 @@ export function createNeoDoneTodosOperation(
         facts: ReturnType<NeoAskTodoRepository['doneTodoFacts']>
       ): DonePage => ({
         ok: true,
-        todos: projectNeoTodoEntries(paged.page, todos, facts.links, packs()),
+        todos: projectNeoTodoEntries(paged.page, todos, facts.links, packs(), []),
         doneCount: paged.doneCount,
         nextOffset: paged.nextOffset,
       }),

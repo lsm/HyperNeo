@@ -202,15 +202,17 @@ describe('bind an already running worker without dispatch', () => {
       const todo = opened.todos[0];
       await invoke('neo.todo.hold', { todoId: todo.id, reason: 'The human said wait.' });
       const bound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
-      expect(bound.ok).toBe(false);
-      expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
+      expect(bound).toMatchObject({ ok: false, reason: expect.stringContaining('todo_held') });
+      expect(store.todoCards(store.getTodo(todo.id)!)).toMatchObject([
+        { state: 'open', cause: 'hold' },
+      ]);
       expect(calls).toEqual([]);
     } finally {
       db.close();
     }
   });
 
-  test('hold is its own operation: neo.todo.hold holds and releases, edit refuses hold', async () => {
+  test('hold is its own operation: neo.todo.hold opens a hold card, edit refuses hold', async () => {
     const { db, store, calls, invoke } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
@@ -235,14 +237,19 @@ describe('bind an already running worker without dispatch', () => {
         reason: 'The human said wait.',
       });
       expect(held.ok).toBe(true);
-      expect(store.getTodo(todo.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'held',
-        blockedReason: 'The human said wait.',
-      });
-      const released = await invoke('neo.todo.hold', { todoId: todo.id, reason: null });
-      expect(released.ok).toBe(true);
       expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
+      expect(store.todoCards(store.getTodo(todo.id)!)).toMatchObject([
+        {
+          state: 'open',
+          cause: 'hold',
+          options: ['Start', 'Remove'],
+          text: '"Waiting step" is on hold: The human said wait. Start it, or remove it?',
+        },
+      ]);
+      expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.' })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('already_waiting'),
+      });
       expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: null })).toMatchObject({
         ok: false,
       });
