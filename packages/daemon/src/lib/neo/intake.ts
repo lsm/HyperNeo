@@ -131,15 +131,22 @@ export function neoIntakeMessage(
       (block: { type: string; text?: string }) =>
         block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
+  const opensEnvelope = `<human-message id="${attribute(input.requestId)}"`;
+  const isOpen = (block: { type: string; text?: string } | undefined) =>
+    block?.type === 'text' && block.text?.trimStart().startsWith(opensEnvelope) === true;
+  const isClose = (block: { type: string; text?: string } | undefined) =>
+    block?.type === 'text' && block.text?.trim() === '</human-message>';
+  const blocks = storedBlocks ?? [];
+  const openIndex = isOpen(blocks[0] as { type: string; text?: string })
+    ? 0
+    : isOpen(blocks[1] as { type: string; text?: string })
+      ? 1
+      : -1;
   const enveloped =
-    storedBlocks
-      ?.slice(0, -1)
-      .some(
-        (block: { type: string; text?: string }) =>
-          block.type === 'text' && block.text?.trimStart().startsWith('<human-message ') === true
-      ) === true &&
-    storedBlocks?.at(-1)?.type === 'text' &&
-    storedBlocks.at(-1)?.text?.trim() === '</human-message>';
+    stored !== undefined &&
+    openIndex !== -1 &&
+    openIndex < blocks.length - 1 &&
+    isClose(blocks.at(-1) as { type: string; text?: string });
   const legacy = stored !== undefined && !enveloped;
   const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
