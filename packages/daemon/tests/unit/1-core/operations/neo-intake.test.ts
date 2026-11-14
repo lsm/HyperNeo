@@ -237,6 +237,19 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
   });
+  test('an identical retry with an input mode returns the idempotent receipt', async () => {
+    const voice = { ...input, inputMode: 'dictation' as const };
+    expect(await invoke(voice)).toMatchObject({ value: { ok: true, created: true } });
+    expect(await invoke(voice)).toMatchObject({
+      value: { ok: true, requestId: input.requestId, messageId: input.requestId, created: false },
+    });
+    expect(mailbox.sdkRows()).toHaveLength(1);
+    const stored = JSON.parse(mailbox.sdkRows()[0].sdk_message)
+      .message.content.map((block: { text?: string }) => block.text ?? '')
+      .join('');
+    expect(stored.match(/\[input: dictation\]/g)).toHaveLength(1);
+  });
+
   test('a retry after consumption does not rerun the ask', async () => {
     await invoke();
     const [job] = mailbox.jobQueue.dequeue(MESSAGE_DELIVERY, 1);
