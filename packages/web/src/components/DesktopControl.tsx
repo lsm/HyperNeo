@@ -116,7 +116,7 @@ export function DesktopControl({
                     : t('desktop.stop')}
               </button>
             )}
-            {outcome[entry.worker] === 'failed' && (
+            {outcome[entry.worker] === 'failed' && entry.state !== 'stopped' && (
               <p role="alert" class="w-full text-xs text-danger">
                 {t('desktop.stopFailed')}
               </p>
