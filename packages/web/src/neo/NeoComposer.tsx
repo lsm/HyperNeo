@@ -1,6 +1,6 @@
 import type { NeoFlightOrigin } from './neo-send-flight.ts';
 import './neo-composer.css';
-import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -134,6 +134,50 @@ export function NeoComposer({
   const waitingLine = forSession ? null : neoWaitingLine(agentState);
   const attention = !!store.error.value || noNetwork || !!waitingLine;
   const collapsed = !focused && !preferencesOpen && !draft && !needsDraft && !attention;
+  const pressing = useRef(false);
+  const collapsePending = useRef(false);
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelCollapse = () => {
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    collapseTimer.current = null;
+  };
+  useEffect(
+    () => () => {
+      if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    },
+    []
+  );
+  useEffect(() => {
+    const press = () => {
+      pressing.current = true;
+    };
+    const release = () => {
+      pressing.current = false;
+      if (!collapsePending.current) return;
+      collapsePending.current = false;
+      collapseTimer.current = setTimeout(() => {
+        collapseTimer.current = null;
+        setFocused(false);
+      }, 0);
+    };
+    document.addEventListener('pointerdown', press, true);
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
+    return () => {
+      document.removeEventListener('pointerdown', press, true);
+      document.removeEventListener('pointerup', release, true);
+      document.removeEventListener('pointercancel', release, true);
+    };
+  }, []);
+  const blur = () => {
+    if (pressing.current) collapsePending.current = true;
+    else setFocused(false);
+  };
+  const focusComposer = () => {
+    cancelCollapse();
+    collapsePending.current = false;
+    setFocused(true);
+  };
   const showStop =
     !!onStop && store.isWorking.value && !voiceBusy && !draft.trim() && !hasAttachments;
   const quoteAuthor = quote?.author === 'You' ? t('chat.you') : 'Neo';
@@ -332,9 +376,9 @@ export function NeoComposer({
       onPointerDown={(event) => {
         if (collapsed && (event.target as Element).closest('button')) event.preventDefault();
       }}
-      onFocusIn={() => setFocused(true)}
+      onFocusIn={focusComposer}
       onFocusOut={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) blur();
       }}
       class={`neo-composer-input ${collapsed ? 'is-collapsed' : 'is-focused'} ${voiceBusy ? 'is-recording' : ''} ${frame} pointer-events-auto relative rounded-3xl border bg-surface-raised/95 px-2 ${collapsed ? 'py-1.5' : 'pt-4 pb-1.5'} backdrop-blur-xl transition-colors focus-within:border-accent/60`}
     >
@@ -466,7 +510,7 @@ export function NeoComposer({
               void send();
             }
           }}
-          onFocus={() => setFocused(true)}
+          onFocus={focusComposer}
           rows={1}
           maxLength={16000}
           placeholder={t(
