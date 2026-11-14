@@ -1601,7 +1601,9 @@ test('a front input queued before the upgrade keeps its bytes and its old tool n
   expect(JSON.stringify(delivered(id))).toBe(before);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name)).not.toContain('run_in_background');
-  expect(frontModeNote()).toContain('A message that names run_in_background means work is needed.');
+  expect(frontModeNote()).toContain(
+    'A message that names run_in_background means work is needed, so use work_on: true.'
+  );
 });
 
 test('the front only sees its own replies in its transcript, not in the catch-up', async () => {
@@ -1931,6 +1933,9 @@ test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_FRONT).toContain('the answer goes to the human by itself');
   expect(NEO_FRONT).toContain('never say you cannot');
   expect(NEO_FRONT).not.toMatch(/another session/i);
+  expect(NEO_FRONT).not.toMatch(/\bworkers?\b/i);
+  expect(NEO_ROOT_TURN_END).toContain('work_on="true" one that said what you will do');
+  expect(NEO_ROOT_TURN_END).toContain('worker reports and wakes also get a natural spoken result');
   expect(NEO_ROOT_TURN_END).toContain('already answered it correctly with work_on="false"');
   expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
 });
@@ -1953,7 +1958,7 @@ test('single mode keeps the per-input acknowledgment note', async () => {
 
   expect(content).toContain('[listening: no]');
   expect(content).toContain('Before time-consuming work, publish one short reply first');
-  expect(frontModeNote()).not.toContain('work_on');
+  expect(frontModeNote()).not.toContain('acknowledg');
 });
 
 test('a reply that could not hand off yet settles as pending, not answered', async () => {
