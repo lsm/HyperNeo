@@ -679,6 +679,7 @@ class WorkerDrivers(unittest.TestCase):
     def test_same_user_process_cannot_add_a_grant(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.dialogs('deny')
         requirement = self.resolve('click', {'pid': pid})['value']['requirement']
         self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
         denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
@@ -695,6 +696,7 @@ class WorkerDrivers(unittest.TestCase):
             self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'guards_unavailable')
             return
         self.assertTrue(granted['ok'], granted)
+        self.dialogs('deny')
         self.cleanup()
         self.setUp()
         self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
@@ -705,6 +707,105 @@ class WorkerDrivers(unittest.TestCase):
         self.assertEqual(self.resolve('click', {'pid': dock}, action='resolve'),
                          {'reason': 'app_action_not_authorized', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
         print('grant_after_restart=finder/pointer keyboard=denied other_app=denied')
+
+    def dialogs(self, answer=None):
+        result = self.call('fixture-dialog', **({'tool': answer} if answer else {}))
+        self.assertTrue(result['ok'], result)
+        return result['result']['dialogs']
+
+    def test_worker_answer_cannot_grant(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.call('fixture-revoke', tool='type_text', arguments={'pid': pid})
+        base = self.dialogs('deny')
+        for forged in ({'approved': True}, {'answer': 'allow'}, {'grant': True}):
+            self.assertFalse(self.call('resolve', tool='click', arguments={'pid': pid}, callId='c', **forged)['ok'])
+        for action in ('approve', 'grant', 'answer'):
+            self.assertEqual(self.call(action, tool='click', arguments={'pid': pid}),
+                             {'ok': False, 'error': 'Unknown Desktop control action'})
+        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
+                         {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
+        wait_until(lambda: self.dialogs() == base + (1 if SIGNED else 0))
+        if SIGNED:
+            wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+            self.assertEqual(self.dialogs(), base + 1)
+            self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], denied)
+            wait_until(lambda: self.dialogs() == base + 2)
+            self.dialogs('deny')
+            self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], denied)
+            wait_until(lambda: self.dialogs() == base + 3)
+        print(f'signed_host={SIGNED} forged_answers=refused declined_dialog=no_grant retry={"cooldown" if SIGNED else "no_dialog"} other_class={"new_dialog" if SIGNED else "no_dialog"}')
+
+    def test_retry_overlapping_a_decline_keeps_the_cooldown(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        base = self.dialogs('hold')
+        first = self.resolve('click', {'pid': pid}, action='resolve')['reason']
+        if not SIGNED:
+            self.assertEqual(first, 'guards_unavailable')
+            self.assertEqual(self.dialogs('deny'), base)
+            return
+        self.assertEqual(first, 'app_action_not_authorized')
+        wait_until(lambda: self.dialogs() == base + 1)
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+        self.assertEqual(self.dialogs(), base + 1)
+        print('overlapping_retry=no_second_dialog')
+
+    def test_failed_dialog_does_not_strand_the_ask(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        base = self.dialogs('panic')
+        first = self.resolve('click', {'pid': pid}, action='resolve')['reason']
+        if not SIGNED:
+            self.assertEqual(first, 'guards_unavailable')
+            self.assertEqual(self.dialogs('deny'), base)
+            return
+        wait_until(lambda: self.dialogs() == base + 1)
+        time.sleep(0.2)
+        self.dialogs('deny')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        wait_until(lambda: self.dialogs() == base + 2)
+        print('failed_dialog=no_grant asks_again')
+
+    def test_host_never_offers_a_grant_for_itself(self):
+        base = self.dialogs('allow')
+        reason = self.resolve('click', {'pid': self.process.pid}, action='resolve').get('reason')
+        if SIGNED:
+            self.assertEqual(reason, 'app_not_grantable')
+        else:
+            self.assertIsNotNone(reason)
+        self.assertEqual(self.dialogs('deny'), base)
+        print(f'self_app={reason}')
+
+    def test_dialog_names_only_existing_checks(self):
+        texts = self.call('fixture-dialog')['result']['texts']
+        self.assertEqual(sorted(texts), ['keyboard', 'launch', 'observe', 'other', 'pointer'])
+        self.assertIsNone(texts['other'])
+        for text in (texts[name] for name in ('observe', 'launch', 'pointer', 'keyboard')):
+            self.assertIn('App: com.apple.finder', text)
+            for promise in ('focus', 'idle', 'revoke'):
+                self.assertNotIn(promise, text.lower())
+        print('dialog_text=no_focus_idle_revoke unknown_class=refused')
+
+    def test_owner_yes_grants_exactly_the_shown_pair(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        self.call('fixture-revoke', tool='type_text', arguments={'pid': pid})
+        self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
+        before = self.dialogs('allow')
+        first = self.resolve('click', {'pid': pid}, action='resolve')
+        if not SIGNED:
+            self.assertEqual(first['reason'], 'guards_unavailable')
+            self.assertEqual(self.dialogs(), before)
+            return
+        self.assertEqual(first['reason'], 'app_action_not_authorized')
+        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.dialogs('deny')
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['class'], 'pointer')
+        print('owner_yes=finder/pointer keyboard=still_denied')
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
