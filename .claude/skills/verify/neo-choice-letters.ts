@@ -196,10 +196,7 @@ const prompt = JSON.parse(
 const fact = prompt.message.content.find((block: { text?: string }) =>
   block.text?.startsWith('<reference')
 ).text;
-assert.equal(
-  fact,
-  `<reference question="${single}" ask="synthetic-ask">\nWhich layout?\n\nThe human picked B (${options[1]}).\n</reference>\n\n`
-);
+assert.equal(fact, `<reference question="${single}" ask="synthetic-ask">\nWhich layout?\n</reference>\n\n`);
 const labelledPrompt = JSON.parse(
   (
     db.prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?').get(labelledRequestId) as {
@@ -212,7 +209,7 @@ const labelledFact = labelledPrompt.message.content.find((block: { text?: string
 ).text;
 assert.equal(
   labelledFact,
-  `<reference question="${labelled}" ask="synthetic-ask-labelled">\nApproach B keeps the list, approach A switches to cards. Which approach?\n\nThe human picked B (Switch every card to the compact table layout).\n</reference>\n\n`
+  `<reference question="${labelled}" ask="synthetic-ask-labelled">\nApproach B keeps the list, approach A switches to cards. Which approach?\n</reference>\n\n`
 );
 evidence.push({
   fact,

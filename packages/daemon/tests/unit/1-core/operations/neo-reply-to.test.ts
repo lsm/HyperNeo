@@ -341,9 +341,7 @@ describe('neo.message.send replyTo', () => {
     );
     const id = crypto.randomUUID();
     await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
-    const start = prompt(id).reference;
-    expect(start.startsWith('Start "Todo rows"?')).toBe(true);
-    expect(start).toContain('It stays open; only its Start button starts todos.');
+    expect(prompt(id).reference).toBe('Start "Todo rows"?');
     expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
     expect(store.getTodo('t1')?.state).toBe('todo');
   });
@@ -413,9 +411,7 @@ describe('neo.message.send replyTo', () => {
       const id = crypto.randomUUID();
       await send(id, words, { kind: 'question', id: `c${index}` });
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
-      expect(prompt(id).reference).toContain(
-        `The human picked ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}).`
-      );
+      expect(prompt(id).reference).toBe('Which layout?');
     }
     choice('many', true);
     await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
@@ -439,7 +435,7 @@ describe('neo.message.send replyTo', () => {
   test('a reply about a todo goes to root Neo without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
-    expect(prompt(id).reference).toContain('The human replied about todo t1:');
+    expect(prompt(id).reference).toBe('Todo rows');
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
@@ -449,7 +445,7 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: { kind: 'ask', id: 'ask' },
-      reference: 'The human replied to the work card "iOS card":',
+      reference: 'iOS card',
       words: 'Where is this stuck?',
       humanContent: [{ type: 'text', text: 'Where is this stuck?' }],
     });
@@ -508,7 +504,7 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: snapshot,
-      reference: 'The human replied to the Neo message "Card is redone.":',
+      reference: 'Card is redone.',
       words: 'Thanks',
     });
     expect(ledger(id)).toEqual(
@@ -588,7 +584,7 @@ describe('neoReplySnapshot', () => {
 describe('neoQuoteFact', () => {
   test('quotes the original only when the snapshot has one', () => {
     expect(neoQuoteFact({ kind: 'message', id: 'm', author: 'user', excerpt: 'Ship it' })).toBe(
-      'The human replied to their earlier message "Ship it":'
+      'Ship it'
     );
     expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
   });

@@ -4,11 +4,7 @@ import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import {
-  neoChoiceByLetter,
-  neoLabelledOptions,
-  neoReplyExcerpt,
-} from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByLetter, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
@@ -123,7 +119,7 @@ export function neoIntakeMessage(
       ? [{ type: 'text' as const, text: input.content }]
       : input.content;
   const fact =
-    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
+    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
     neoQuoteFact(input.replyTo);
   const messageId = `[message id: ${input.requestId}]`;
   const storedBlocks =
@@ -136,10 +132,14 @@ export function neoIntakeMessage(
         block.type === 'text' && block.text?.startsWith(text) === true
     ) === true;
   const enveloped =
-    storedBlocks?.some(
-      (block: { type: string; text?: string }) =>
-        block.type === 'text' && block.text?.includes('<human-message ') === true
-    ) === true;
+    storedBlocks
+      ?.slice(0, -1)
+      .some(
+        (block: { type: string; text?: string }) =>
+          block.type === 'text' && block.text?.trimStart().startsWith('<human-message ') === true
+      ) === true &&
+    storedBlocks?.at(-1)?.type === 'text' &&
+    storedBlocks.at(-1)?.text?.trim() === '</human-message>';
   const legacy = stored !== undefined && !enveloped;
   const identifier = !stored || has(messageId) ? messageId : null;
   const storedSaid = storedBlocks?.find(
@@ -254,29 +254,15 @@ export function readNeoReply(
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
-export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
-  const picked = neoChoiceByLetter(words, reply?.question ?? null);
-  if (reply?.question) {
-    const answer = picked
-      ? `\n\nThe human picked ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}.`
-      : '';
-    const open =
-      reply.question.kind === 'start'
-        ? '\n\nIt stays open; only its Start button starts todos.'
-        : '';
-    return `${reply.question.text}${answer}${open}`;
-  }
-  if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
-  return reply?.replyTo.kind === 'ask' && reply.ask
-    ? `The human replied to the work card "${reply.ask.title}":`
-    : null;
+export function neoReplyFact(reply: NeoReply | null): string | null {
+  if (reply?.question) return reply.question.text;
+  if (reply?.todo) return reply.todo.title;
+  return reply?.replyTo.kind === 'ask' && reply.ask ? reply.ask.title : null;
 }
 
 export function neoQuoteFact(replyTo: NeoReplyTo | undefined): string | null {
   if (replyTo?.kind !== 'message' || !replyTo.excerpt) return null;
-  return replyTo.author === 'neo'
-    ? `The human replied to the Neo message "${replyTo.excerpt}":`
-    : `The human replied to their earlier message "${replyTo.excerpt}":`;
+  return replyTo.excerpt;
 }
 
 export function neoReplySnapshot(
