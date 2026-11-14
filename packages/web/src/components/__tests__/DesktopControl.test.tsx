@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesktopControl } from '../DesktopControl.tsx';
 import { locale } from '../../lib/i18n/index.ts';
+import { connectionState } from '../../lib/state.ts';
 
 const { invoke, hub } = vi.hoisted(() => ({ invoke: vi.fn(), hub: {} }));
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -133,5 +134,36 @@ describe('DesktopControl', () => {
     render(<DesktopControl onOpen={open} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Book the dentist' }));
     expect(open).toHaveBeenCalledWith('worker-a', 'Book the dentist');
+  });
+
+  it('keeps the last known Stop when a status read fails', async () => {
+    vi.useFakeTimers();
+    try {
+      statuses('running');
+      invoke.mockRejectedValue(new Error('offline'));
+      render(<DesktopControl worker="worker-a" />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole('button', { name: 'Stop and take over' })).toBeTruthy();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(invoke).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('button', { name: 'Stop and take over' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads the status again once the connection is back', async () => {
+    connectionState.value = 'disconnected';
+    invoke.mockResolvedValue({ workers: [entry('running')] });
+    render(<DesktopControl worker="worker-a" />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    act(() => {
+      connectionState.value = 'connected';
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
   });
 });
