@@ -20,10 +20,10 @@ export function NeoRealtimeVoice({
   onError: (message: string) => void;
 }) {
   const [on, setOn] = useState(false);
-  const live = useRef<{ player: NeoSpeechPlayer; stop: () => void } | null>(null);
+  const live = useRef<{ player: NeoSpeechPlayer; stop: (disable: boolean) => void } | null>(null);
 
-  const stop = () => {
-    live.current?.stop();
+  const stop = (disable = true) => {
+    live.current?.stop(disable);
     live.current = null;
     setOn(false);
   };
@@ -38,14 +38,15 @@ export function NeoRealtimeVoice({
     if (!hub) return onError(t('composer.reconnecting'));
     const player = openNeoSpeechPlayer(hub, sessionId, {
       onStop: () => {
-        if (live.current === session) stop();
+        if (live.current === session) stop(false);
       },
     });
     const session = {
       player,
-      stop: () => {
+      stop: (disable: boolean) => {
         player.close();
-        invokeOperation(hub, 'neo.speech.listen', { sessionId, enabled: false }).catch(() => {});
+        if (disable)
+          invokeOperation(hub, 'neo.speech.listen', { sessionId, enabled: false }).catch(() => {});
       },
     };
     live.current = session;
@@ -62,8 +63,8 @@ export function NeoRealtimeVoice({
     };
     try {
       const catalog = await invokeOperation<Receipt>(hub, 'neo.speech.catalog', {});
-      if (!catalog.ok) return refuse(catalog);
       if (live.current !== session) return;
+      if (!catalog.ok) return refuse(catalog);
       const listen = await invokeOperation<Receipt>(hub, 'neo.speech.listen', {
         sessionId,
         enabled: true,
@@ -71,9 +72,9 @@ export function NeoRealtimeVoice({
       });
       if (live.current !== session) return;
       if (!listen.ok) return refuse(listen);
-      if (live.current === session) setOn(true);
+      setOn(true);
     } catch {
-      refuse({ ok: false });
+      if (live.current === session) refuse({ ok: false });
     }
   };
 
