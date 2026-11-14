@@ -126,15 +126,15 @@ function wordCount(text: string): number {
   return count;
 }
 
-export function replyBodyRefusal(body: {
+export function replyBodyRefusal(sent: {
   text: string;
   details?: string;
 }): 'reply_needs_details' | 'reply_summary_too_long' | undefined {
-  const lines = body.text.split('\n').filter((line) => line.trim()).length;
-  const share =
-    (body.text.match(cjk)?.length ?? 0) / 150 + wordCount(body.text.replace(cjk, ' ')) / 60;
-  if (lines <= 5 && share <= 1 && body.text.length <= 500) return undefined;
-  return body.details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
+  const { text } = foldPublicationDetails(sent);
+  const lines = text.split('\n').filter((line) => line.trim()).length;
+  const share = (text.match(cjk)?.length ?? 0) / 150 + wordCount(text.replace(cjk, ' ')) / 60;
+  if (lines <= 5 && share <= 1 && text.length <= 500) return undefined;
+  return sent.details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 
 export const NeoPublicationSchema = NeoPublicationObject.superRefine(publicationTextRule);

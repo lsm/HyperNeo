@@ -173,8 +173,9 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(
       (draft: Draft) => {
-        const body = foldPublicationDetails({ text: draft.text, details: draft.details });
-        const refusal = draft.deliverable ? undefined : replyBodyRefusal(body);
+        const refusal = draft.deliverable
+          ? undefined
+          : replyBodyRefusal({ text: draft.text, details: draft.details });
         return refusal
           ? { reason: { accepted: false as const, reason: refusal } }
           : { value: draft };

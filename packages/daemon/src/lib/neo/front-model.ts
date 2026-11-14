@@ -129,7 +129,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         },
         async ({ text, details, ...input }) => {
           const body = foldPublicationDetails({ text, details });
-          const refusal = replyBodyRefusal(body);
+          const refusal = replyBodyRefusal({ text, details });
           if (refusal) return result(explainNeoRefusal({ accepted: false, reason: refusal }));
           const targets = input.replyTo ?? [];
           if (!targets.length) return result(await publish({ ...input, ...body }));
