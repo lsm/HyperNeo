@@ -2,7 +2,6 @@ import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-c
 import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../sqlite-compat.ts';
-import { invalidateGlobalSettings } from './settings-repository.ts';
 import type { SQLiteValue } from '../types.ts';
 
 export type ToolPreferenceKey =
@@ -89,7 +88,6 @@ export function commitToolDefaultUpdate(
   selection: SessionToolSelection,
   writeLegacy: () => boolean
 ): 'won' | 'superseded' {
-  invalidateGlobalSettings(db);
   return commitToolPreferenceRows(db, [target, ...guards], () => {
     if (!target.row) return false;
     const column = target.key.table === 'spaces' ? 'config' : 'settings';
