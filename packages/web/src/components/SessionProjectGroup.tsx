@@ -1,12 +1,15 @@
-import { CloseGlyph } from './icons/common-glyphs.tsx';
+import { QueueTrashIcon } from './icons/panel-icons.tsx';
 import type { Session } from '@hyperneo/shared';
 import { SessionConversationGroup } from './SessionConversationGroup.tsx';
+
+const ROW_ICON_BUTTON =
+  'inline-flex h-[26px] w-[26px] flex-shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-fill hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60';
 
 interface SessionProjectGroupProps {
   name: string;
   path: string;
   folders?: string[];
-  onAddFolder?: () => void;
+  onNewSession?: () => void;
   sessions: Session[];
   collapsed: boolean;
   onToggle: () => void;
@@ -20,7 +23,7 @@ export function SessionProjectGroup({
   name,
   path,
   folders,
-  onAddFolder,
+  onNewSession,
   sessions,
   collapsed,
   onToggle,
@@ -33,7 +36,7 @@ export function SessionProjectGroup({
 
   return (
     <div>
-      <div class="group/project flex items-center rounded-lg transition-colors hover:bg-fill-soft">
+      <div class="group/project flex items-center gap-0.5 rounded-lg pr-1 transition-colors hover:bg-fill-soft">
         <button
           type="button"
           data-testid="project-group-header"
@@ -69,15 +72,22 @@ export function SessionProjectGroup({
           </span>
           <span class="flex-1 min-w-0 truncate text-left font-medium">{name}</span>
         </button>
-        {onAddFolder && (
+        {onNewSession && (
           <button
             type="button"
-            onClick={onAddFolder}
-            aria-label={`Add folder to ${name}`}
-            title="Add folder"
-            class="p-1 text-xs text-fg-faint hover:text-fg"
+            onClick={onNewSession}
+            aria-label={`New session in ${name}`}
+            title="New session"
+            class={`${ROW_ICON_BUTTON} [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/project:opacity-100 [@media(hover:hover)]:group-focus-within/project:opacity-100`}
           >
-            +
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
           </button>
         )}
         {onRemove && (
@@ -87,9 +97,9 @@ export function SessionProjectGroup({
             onClick={onRemove}
             title="Remove project"
             aria-label={`Remove project ${name}`}
-            class="opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 mr-1 p-1 rounded text-fg-faint hover:text-danger hover:bg-fill transition-colors"
+            class={`${ROW_ICON_BUTTON} opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100`}
           >
-            <CloseGlyph class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" />
+            <QueueTrashIcon />
           </button>
         )}
       </div>

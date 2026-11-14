@@ -10,17 +10,19 @@ import type {
 } from '@hyperneo/shared';
 import { connectionState, globalSettings, sessions } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
+import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   createSession,
   getWorkspaceHistory,
   getGitBranches,
   addWorkspaceToHistory,
+  addFolderToProject,
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { isUserSession } from '../lib/session-utils.ts';
-import { listProjectPaths } from '../lib/projects.ts';
+import { judgeFolderTarget, listProjectPaths, owningProjectName } from '../lib/projects.ts';
 import {
   hasNativeFolderPicker,
   NATIVE_FOLDER_PICKER_TIMEOUT_MS,
@@ -127,12 +129,15 @@ export function SessionsPage() {
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [project, setProject] = useState<string | null>(initialSelection.project);
   const [gitInfo, setGitInfo] = useState<GitBranchesResponse | null>(null);
   const [gitLoading, setGitLoading] = useState(false);
   const [mode, setMode] = useState<NewChatWorktreeMode>(initialSelection.mode);
   const [baseBranch, setBaseBranch] = useState<string | null>(initialSelection.baseBranch);
   const [manualProjectOpen, setManualProjectOpen] = useState(false);
+  const [addingFolder, setAddingFolder] = useState(false);
+  const [folderProject, setFolderProject] = useState<string | null>(null);
   const [manualProjectPath, setManualProjectPath] = useState('');
   const [manualProjectError, setManualProjectError] = useState<string | null>(null);
   const [manualProjectBusy, setManualProjectBusy] = useState(false);
@@ -178,11 +183,22 @@ export function SessionsPage() {
     setSelectedModel({ id: selectedModelInfo.id, provider: selectedModelInfo.provider });
   }, [selectedModel, selectedModelInfo]);
 
+  const historyVersion = workspaceHistoryVersionSignal.value;
   useEffect(() => {
     getWorkspaceHistory()
-      .then(setHistory)
+      .then((entries) => {
+        setHistory(entries);
+        setHistoryLoaded(true);
+      })
       .catch(() => {});
-  }, []);
+  }, [historyVersion]);
+
+  const requestedProject = newChatProjectSignal.value;
+  useEffect(() => {
+    if (!requestedProject) return;
+    setProject(requestedProject);
+    newChatProjectSignal.value = null;
+  }, [requestedProject]);
 
   useEffect(() => {
     saveNewChatSelection({
@@ -260,7 +276,40 @@ export function SessionsPage() {
     }
   };
 
+  const addFolderToSelectedProject = async (path: string) => {
+    const trimmed = path.trim();
+    const target = folderProject ?? project;
+    if (!target || !trimmed) {
+      setManualProjectError('Enter an absolute folder path.');
+      return;
+    }
+    setManualProjectBusy(true);
+    setManualProjectError(null);
+    let fresh: WorkspaceHistoryEntry[] | null = null;
+    try {
+      fresh = await getWorkspaceHistory();
+    } catch {}
+    const verdict = judgeFolderTarget(target, fresh, history, historyLoaded);
+    if (verdict.decision === 'refuse') {
+      setManualProjectBusy(false);
+      setManualProjectError(verdict.message);
+      return;
+    }
+    try {
+      await addFolderToProject(target, trimmed);
+      setManualProjectPath('');
+      setManualProjectOpen(false);
+      workspaceHistoryVersionSignal.value += 1;
+    } catch (err) {
+      setManualProjectError(err instanceof Error ? err.message : 'Failed to add folder');
+    } finally {
+      setManualProjectBusy(false);
+    }
+  };
+
   const openManualProjectFallback = (message?: string) => {
+    setAddingFolder(false);
+    setFolderProject(null);
     setManualProjectOpen(true);
     setManualProjectError(message ?? null);
   };
@@ -287,7 +336,8 @@ export function SessionsPage() {
 
   const handleManualProjectSubmit = (e: Event) => {
     e.preventDefault();
-    addProjectFromPath(manualProjectPath);
+    if (addingFolder) addFolderToSelectedProject(manualProjectPath);
+    else addProjectFromPath(manualProjectPath);
   };
 
   const handleSubmit = async () => {
@@ -473,8 +523,17 @@ export function SessionsPage() {
               mode={mode}
               baseBranch={baseBranch}
               onSelectProject={handleSelectProject}
+              owningProjectName={(path) => owningProjectName(path, history)}
               onBrowse={handleBrowse}
               onEnterPath={() => {
+                setAddingFolder(false);
+                setFolderProject(null);
+                setManualProjectOpen(true);
+                setManualProjectError(null);
+              }}
+              onAddFolder={() => {
+                setAddingFolder(true);
+                setFolderProject(project);
                 setManualProjectOpen(true);
                 setManualProjectError(null);
               }}
@@ -495,7 +554,7 @@ export function SessionsPage() {
                       setManualProjectPath((e.currentTarget as HTMLInputElement).value);
                       setManualProjectError(null);
                     }}
-                    placeholder="Project path"
+                    placeholder={addingFolder ? 'Folder path' : 'Project path'}
                     autoFocus
                     class="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
                   />
@@ -508,7 +567,9 @@ export function SessionsPage() {
                   </button>
                 </div>
                 <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
-                  Use an absolute path accessible to HyperNeo.
+                  {addingFolder && folderProject
+                    ? `Adds a folder to ${owningProjectName(folderProject, history)}. Use an absolute path accessible to HyperNeo.`
+                    : 'Use an absolute path accessible to HyperNeo.'}
                 </p>
                 {manualProjectError && (
                   <p class="mt-1.5 text-[11px] leading-4 text-danger">{manualProjectError}</p>
