@@ -13,6 +13,7 @@ mkdir -p "$RUN/evidence" "$OUT"
 mkdir -p "$RUN/projects/assets-light" "$RUN/projects/assets-dark"
 mkdir -p "$RUN/projects/assets-light-retarget" "$RUN/projects/assets-dark-retarget"
 mkdir -p "$RUN/projects/gamma-light" "$RUN/projects/gamma-dark"
+mkdir -p "$RUN/projects/gamma-light-assets" "$RUN/projects/gamma-dark-assets"
 for name in alpha beta; do
   mkdir -p "$RUN/projects/$name" && git -C "$RUN/projects/$name" init -q
   bun .claude/skills/verify/rpc.ts rpc:workspace.add "{\"path\":\"$RUN/projects/$name\"}" > /dev/null

@@ -18,6 +18,9 @@ It owns its daemon, adds two projects (`alpha`, `beta`), pairs a browser and cle
 - Select the added secondary folder: the menu still reads `Add folder to alpha…`, never
   `Add folder to <folder>…`, and the form hint names alpha.
 - Add a project from the open page's sidebar: the page's folder menu lists it without a reload.
+- Open `Add folder to <project>…` for a project with no chats, remove that project from the
+  sidebar, then submit the form: it stays open, says the project is no longer a project, adds
+  nothing, and the project does not come back in the folder menu.
 - Touch device (`hover: none`): the button stays visible.
 - Screenshots: `sidebar-{light,dark}-{rest,hover,hover-plus,hover-remove,new-session,folder-menu,folder-added}.png` and
   `sidebar-touch-rest.png`. Run with `TMPDIR=/private/tmp` so folder paths in the sidebar stay generic.

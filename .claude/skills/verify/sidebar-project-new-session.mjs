@@ -169,11 +169,38 @@ try {
     await page.keyboard.press('Escape');
     await page.mouse.move(900, 700);
     await chip.click();
-    result.newProjectInPageMenu = await page
-      .getByRole('menuitem', { name: `gamma-${scheme}` })
+    const gammaItem = page.getByRole('menuitem', { name: `gamma-${scheme}` });
+    result.newProjectInPageMenu = await gammaItem
       .waitFor({ timeout: 5000 })
       .then(() => true)
       .catch(() => false);
+    await gammaItem.click();
+    await page.waitForTimeout(600);
+    await chipFor(page, `/projects/gamma-${scheme}`).click();
+    await page.getByRole('menuitem', { name: `Add folder to gamma-${scheme}…` }).click();
+    const staleInput = page.getByPlaceholder('Folder path');
+    await staleInput.waitFor({ timeout: 5000 });
+    await page.getByTestId('project-group-header').filter({ hasText: `gamma-${scheme}` }).hover();
+    await page.getByRole('button', { name: `Remove project gamma-${scheme}` }).click();
+    await plus(page, `gamma-${scheme}`)
+      .waitFor({ state: 'detached', timeout: 10000 })
+      .catch(() => {});
+    await page.waitForTimeout(800);
+    result.staleFormOpen = await staleInput.count();
+    await staleInput.fill(`${run}/projects/gamma-${scheme}-assets`);
+    await staleInput.press('Enter');
+    await page.waitForTimeout(1000);
+    result.staleFormRefused = await page.getByText(/is no longer a project/).count();
+    result.staleFormStillOpen = await staleInput.count();
+    await page.keyboard.press('Escape');
+    await page.mouse.move(900, 700);
+    await plus(page, 'alpha').hover();
+    await plus(page, 'alpha').click();
+    await chip.waitFor({ timeout: 10000 });
+    await chip.click();
+    result.staleProjectRecreated = await page
+      .getByRole('menuitem', { name: `gamma-${scheme}`, exact: true })
+      .count();
     await page.keyboard.press('Escape');
     result.pageErrors = errors;
     seen[scheme] = result;
@@ -195,6 +222,10 @@ try {
     assert.equal(result.secondaryFolderMenu, 1);
     assert.equal(result.secondaryFolderOwnName, 0);
     assert.equal(result.newProjectInPageMenu, true);
+    assert.equal(result.staleFormOpen, 1);
+    assert.equal(result.staleFormRefused, 1);
+    assert.equal(result.staleFormStillOpen, 1);
+    assert.equal(result.staleProjectRecreated, 0);
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);
