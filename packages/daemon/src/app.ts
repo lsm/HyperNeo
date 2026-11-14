@@ -116,6 +116,8 @@ import {
 } from './lib/providers/factory.js';
 import { releaseSessionKeyBridges } from './lib/providers/provider-key-bridge.js';
 import { getProviderRegistry } from './lib/providers/registry.js';
+import { setRateLimitEventReader } from './lib/providers/anthropic-usage-source.ts';
+import { anthropicRateLimitEventsRead } from './storage/repositories/anthropic-usage-read.ts';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { createGoogleConnectionRefreshLoop } from './lib/connections/refresh-loop.ts';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
@@ -495,6 +497,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    const usageDb = db.getDatabase();
+    setRateLimitEventReader(() => gatewayFor(usageDb).run(anthropicRateLimitEventsRead, 200));
     if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = await db.markRestartInterruptedTurns();
