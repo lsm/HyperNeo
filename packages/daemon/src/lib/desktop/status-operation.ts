@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -29,21 +30,34 @@ function appListening(path: string): Promise<boolean> {
   });
 }
 
-async function driverState(dataDir: string, worker: string, options: Options) {
-  if (!(await appListening(join(dataDir, 'desktop/control.sock')))) return 'unavailable';
+async function driverState(dataDir: string, worker: string, optedIn: boolean, options: Options) {
   const directory = join(dataDir, 'desktop/workers', worker);
+  const recorded = !desktopRecordMissing(join(directory, 'driver.json'));
+  if (!optedIn && !recorded) return 'off';
+  if (optedIn && !(await appListening(join(dataDir, 'desktop/control.sock')))) return 'unavailable';
   const stopped = !desktopRecordMissing(join(directory, 'stopped'));
-  if (desktopRecordMissing(join(directory, 'driver.json'))) return stopped ? 'stopped' : 'running';
+  if (!recorded) return stopped ? 'stopped' : 'running';
   try {
     const driver = readDesktopDriverRecord(directory);
     const now = await (options.readIdentity ?? readProcessIdentity)(driver.pid);
     const alive =
       now?.seconds === driver.startedAt.seconds &&
       now.microseconds === driver.startedAt.microseconds;
-    if (!alive && (now || desktopPidGone(driver.pid))) return stopped ? 'stopped' : 'running';
+    if (!alive && (now || desktopPidGone(driver.pid)))
+      return !optedIn ? 'off' : stopped ? 'stopped' : 'running';
     return alive && !stopped ? 'running' : 'stop_unconfirmed';
   } catch {
     return 'stop_unconfirmed';
+  }
+}
+
+function recordedWorkers(dataDir: string): string[] {
+  try {
+    return readdirSync(join(dataDir, 'desktop/workers')).filter((name) =>
+      /^[A-Za-z0-9_-]{1,64}$/.test(name)
+    );
+  } catch {
+    return [];
   }
 }
 
@@ -52,17 +66,22 @@ export function createDesktopStatusOperation(db: Pick<Database, 'prepare'>, opti
     .input(['input'])
     .pipe((input: { worker?: string }) => readDesktopTodos(db, input.worker), 'input', 'rows')
     .pipe(
-      (input: { worker?: string }, rows: DesktopTodoRow[]) =>
-        Promise.all(
-          (input.worker ? [input.worker] : [...new Set(rows.map((row) => row.worker))]).map(
-            async (worker) => {
-              const todo = desktopOptIn(rows, worker);
-              if (!todo) return { worker, todo: null, state: 'off' as const };
-              const state = await driverState(options.dataDir ?? getDataDir(), worker, options);
-              return { worker, todo: todo.title, state };
-            }
-          )
-        ).then((workers) => ({ workers })),
+      (input: { worker?: string }, rows: DesktopTodoRow[]) => {
+        const dataDir = options.dataDir ?? getDataDir();
+        const workers = input.worker
+          ? [input.worker]
+          : [...new Set([...rows.map((row) => row.worker), ...recordedWorkers(dataDir)])];
+        return Promise.all(
+          workers.map(async (worker) => {
+            const own = rows.some((row) => row.worker === worker)
+              ? rows
+              : readDesktopTodos(db, worker);
+            const optIn = desktopOptIn(own, worker);
+            const todo = optIn?.title ?? own.find((row) => row.worker === worker)?.title ?? null;
+            return { worker, todo, state: await driverState(dataDir, worker, !!optIn, options) };
+          })
+        ).then((result) => ({ workers: result }));
+      },
       ['input', 'rows'],
       'result'
     )

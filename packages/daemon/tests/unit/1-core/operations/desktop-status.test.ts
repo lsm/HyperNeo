@@ -134,7 +134,7 @@ test('without a worker it reads every worker on a running todo', async () => {
     value: {
       workers: [
         { worker, todo: 'Book the dentist', state: 'running' },
-        { worker: 'worker-b', todo: null, state: 'off' },
+        { worker: 'worker-b', todo: 'Plain', state: 'off' },
       ],
     },
   });
