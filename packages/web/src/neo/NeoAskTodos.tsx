@@ -288,6 +288,7 @@ function TodoRow({
               <ArtifactCards artifacts={todo.artifacts} />
               {number === undefined &&
                 onDesktopControl &&
+                !todo.worker?.daemon &&
                 ['todo', 'doing', 'blocked'].includes(todo.state) && (
                   <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
                     <input
