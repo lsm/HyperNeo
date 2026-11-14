@@ -2,11 +2,12 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   reply_needs_details:
     'text is over the body limit (about 60 words or 150 Chinese characters, at most 500 characters and 5 lines with the title): put a one-sentence summary in text and the rest in details.',
   front_reply_too_long:
-    'Shorten the reply to one or two short sentences: about 60 words or 150 Chinese characters, at most 500 characters and 5 lines.',
+    'Shorten the reply to one or two short sentences: at most 150 characters and 5 lines.',
   reply_summary_too_long:
     'text is over the body limit (about 60 words or 150 Chinese characters, at most 500 characters and 5 lines with the title): shrink text to a one-sentence summary.',
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',
+  work_on_needs_reply_to: 'work_on: true needs replyTo with the human message IDs you will act on.',
   front_not_speaking: 'reply is available only while fast replies are on for this conversation.',
   front_model_required: 'Choose a fast reply model before turning on fast replies.',
 

@@ -120,6 +120,7 @@ export interface HyperneoSessionControl {
   chooseWorktree(sessionId: string): Promise<void>;
   announce(sessionId: string): void;
   interrupt(sessionId: string): boolean | Promise<boolean>;
+  dropRestartResume(sessionId: string): Promise<boolean>;
 }
 
 export interface HyperneoAdapterDeps {
@@ -708,6 +709,8 @@ export async function stopHyperneoWork(
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps
 ): Promise<Result<{ stopped: boolean }>> {
+  if (row.processing === 'interrupted_by_restart')
+    return { ok: true, value: { stopped: await deps.sessions.dropRestartResume(row.id) } };
   return {
     ok: true,
     value: { stopped: hyperneoSessionBusy(row) && (await deps.sessions.interrupt(row.id)) },

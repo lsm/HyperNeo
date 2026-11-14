@@ -11,7 +11,7 @@ import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 
-const FRONT_REPLY_MAX_CHARS = 500;
+const FRONT_REPLY_MAX_CHARS = 150;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -64,16 +64,25 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       "Required while the latest fact is [listening: yes]: one or two natural spoken lines in the human's language, consistent with the text, without paths, IDs, hashes, long numbers or Markdown. Omit when [listening: no]."
     ),
   };
-  const publish = async (input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] }) => {
+  const publish = async (
+    input: z.infer<typeof NeoPublicationDraft> & { replyTo?: string[] },
+    workOn?: boolean
+  ) => {
     if (!input.spoken && service.speech.isListening(service.defaultSessionId() ?? sessionId))
       return { accepted: false, reason: 'spoken_required', listening: 'yes' };
     return service.publish(
       { ...input, replyTo: input.replyTo ?? [] },
-      { source: 'mcp', sessionId }
+      { source: 'mcp', sessionId },
+      workOn
     );
   };
-  const handOff = async (asks: NeoConversationAsk[], messageIds: string[], saidText: string) => {
-    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText }]);
+  const handOff = async (
+    asks: NeoConversationAsk[],
+    messageIds: string[],
+    saidText: string,
+    workOn: boolean
+  ) => {
+    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText, workOn }]);
     const reserved = await service.db.gateway.call(
       neoFrontInputWrites,
       'reserve',
@@ -127,15 +136,21 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one short reply per human message, one or two sentences. The reply reaches the human and the full session sees it in <already-said>. While [listening: yes], include spoken.',
+        'Send one short reply per human message, one or two sentences. work_on: false when your reads answered it; true for anything else, with text saying what you will do: that call starts the work, and its answer reaches the human by itself. The reply reaches the human. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
+          work_on: z.boolean(),
         },
-        async ({ text, ...input }) => {
+        async ({ text, work_on: workOn, ...input }) => {
           const body = { text };
           const targets = input.replyTo ?? [];
-          if (!targets.length) return result(frontReceipt(await publish({ ...input, ...body })));
+          if (!targets.length)
+            return result(
+              workOn
+                ? { accepted: false, reason: 'work_on_needs_reply_to' }
+                : frontReceipt(await publish({ ...input, ...body }, workOn))
+            );
           const asks = targets.map((id) => service.asks.find(conversationId, id));
           if (asks.some((ask) => !ask))
             return result({ accepted: false, reason: 'unknown_reply_target' });
@@ -144,19 +159,21 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
-          const receipt = await publish({ ...input, ...body });
+          const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
           if (!receipt.accepted && !second) return result(frontReceipt(receipt));
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
-          if (second && !existing)
+          const sameTargets = (ids: readonly string[] = []) =>
+            [...ids].sort().join() === [...targets].sort().join();
+          if (second && !(existing && sameTargets(existing.replyTo)))
             return result({ accepted: false, reason: 'publication_conflict' });
-          const said = existing?.fullText ?? text;
           const handed = await handOff(
             asks.map((ask) => ask!),
             targets,
-            said
+            existing?.fullText ?? text,
+            existing ? (existing.workOn ?? workOn) : workOn
           );
           return result(
             handed.started

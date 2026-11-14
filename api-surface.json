@@ -27965,6 +27965,9 @@
                               "const": true,
                               "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
                               "type": "boolean"
+                            },
+                            "workOn": {
+                              "type": "boolean"
                             }
                           },
                           "required": [
@@ -32931,6 +32934,9 @@
                     "const": true,
                     "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
                     "type": "boolean"
+                  },
+                  "workOn": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -33525,6 +33531,9 @@
                     "verbatim": {
                       "const": true,
                       "description": "Send the reply as one field: the full content in fullText with no shortText; a request with both is rejected.",
+                      "type": "boolean"
+                    },
+                    "workOn": {
                       "type": "boolean"
                     }
                   },

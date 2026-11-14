@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { NEO_FRONT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
+import { NEO_FRONT, NEO_ROOT_PROMPT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -71,7 +71,7 @@ afterEach(async () => {
 });
 
 test('Front and Neo share speech rules with their own tool names', () => {
-  expect(NEO_FRONT).toContain('Every message also goes on to be handled in full');
+  expect(NEO_FRONT).toContain('That one call tells the human and starts the work.');
   expect(NEO_FRONT).toContain('published through reply.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
   expect(NEO_FRONT).toContain('projects_read');
@@ -1417,7 +1417,7 @@ test('a front reply over the shared body limit is told to shorten, not to add de
     });
     expect(refused.accepted).toBe(false);
     expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
-    expect(refused.reason).toContain('150 Chinese characters, at most 500 characters and 5 lines');
+    expect(refused.reason).toContain('at most 150 characters and 5 lines');
   }
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
@@ -1427,8 +1427,7 @@ test('the front reply is short, and its rules live only in the front prompt', as
   await createNeoFrontHandler(service)(job);
   const prompt = db.getSession(front)!.config.systemPrompt as string;
   expect(prompt).toContain('Reply in one or two short sentences');
-  expect(prompt).toContain('about 60 words or 150 Chinese characters, at most 5 lines');
-  expect(prompt).toContain('say what you knew and that you will check for updates');
+  expect(prompt).toContain('at most 150 characters');
   expect(prompt).not.toContain('five short sentences');
   createFrontTools(service, conversationId);
   const reply = vi
@@ -1437,8 +1436,13 @@ test('the front reply is short, and its rules live only in the front prompt', as
     .tools!.find((tool) => tool.name === 'reply')!;
   const shape = z.object(reply.inputSchema as z.ZodRawShape);
   expect(Object.keys(reply.inputSchema)).not.toContain('details');
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(500) }).success).toBe(true);
-  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(501) }).success).toBe(false);
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(150), work_on: true }).success).toBe(
+    true
+  );
+  expect(shape.safeParse({ requestId: 'r', text: 'a'.repeat(151), work_on: true }).success).toBe(
+    false
+  );
+  expect(shape.safeParse({ requestId: 'r', text: 'Answer.' }).success).toBe(false);
   const intake = JSON.stringify(db.getJobQueueRepo().listJobs({ queue: 'mailbox' }));
   expect(intake).not.toContain('five sentences');
   expect(frontModeNote()).not.toContain('five sentences');
@@ -1616,7 +1620,9 @@ test('a front input queued before the upgrade keeps its bytes and its old tool n
   expect(JSON.stringify(delivered(id))).toBe(before);
   const definitions = vi.mocked(createSdkMcpServer).mock.calls.at(-1)![0].tools!;
   expect(definitions.map((entry) => entry.name)).not.toContain('run_in_background');
-  expect(frontModeNote()).toContain('A message that names run_in_background means work is needed.');
+  expect(frontModeNote()).toContain(
+    'A message that names run_in_background means work is needed, so use work_on: true.'
+  );
 });
 
 test('the front only sees its own replies in its transcript, not in the catch-up', async () => {
@@ -1849,6 +1855,84 @@ test('a reply that answers hands the input to the full session with that answer 
   expect(said).not.toContain('Front');
 });
 
+test('the hand-off tells the full session whether the reply answered or promised work', async () => {
+  for (const workOn of [false, true]) {
+    const { id } = await deliveredConvoInput();
+    expect(
+      await convoPublish({
+        requestId: `work-on-${workOn}`,
+        replyTo: [id],
+        fullText: workOn ? "I'll cancel them." : 'Two todos are open.',
+        verbatim: true,
+        work_on: workOn,
+      })
+    ).toMatchObject({ accepted: true, started: true });
+    const delivered = await db.getSDKMessageRepo().getDeliveryContent(root, id);
+    expect(JSON.stringify(delivered?.content ?? '')).toContain(`work_on=\\"${workOn}\\"`);
+  }
+});
+
+test('a retried reply keeps the work_on decision committed with it', async () => {
+  const { id } = await deliveredConvoInput();
+  const send = (text: string, workOn: boolean) =>
+    convoPublish({
+      requestId: 'retried',
+      replyTo: [id],
+      fullText: text,
+      verbatim: true,
+      work_on: workOn,
+    });
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let failReserve = true;
+  const spy = vi.spyOn(service.db.gateway, 'call').mockImplementation((async (
+    ...args: Parameters<typeof call>
+  ) => {
+    if (failReserve && args[1] === 'reserve') return 'undeliverable';
+    return call(...args);
+  }) as typeof call);
+  expect(await send("I'll cancel them.", true)).toMatchObject({ started: false });
+  failReserve = false;
+  expect(await send('Two todos are open.', false)).toMatchObject({ started: true });
+
+  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(delivered, delivered).toContain('work_on=\\"true\\"');
+  expect(delivered, delivered).toContain("I'll cancel them.");
+  spy.mockRestore();
+});
+
+test('a reused request ID for a different input is refused, not handed off', async () => {
+  const first = await deliveredConvoInput();
+  const second = await deliveredConvoInput();
+  const send = (replyTo: string[], text: string, workOn: boolean) =>
+    convoPublish({
+      requestId: 'reused-id',
+      replyTo,
+      fullText: text,
+      verbatim: true,
+      work_on: workOn,
+    });
+  expect(await send([first.id], 'Two todos are open.', false)).toMatchObject({ started: true });
+  expect(await send([second.id], 'Two todos are open.', false)).toMatchObject({
+    accepted: false,
+    reason: 'publication_conflict',
+  });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
+});
+
+test('a reply without replyTo keeps work_on and cannot promise work it never starts', async () => {
+  await deliveredConvoInput();
+  expect(
+    await convoPublish({ requestId: 'no-target-work', fullText: "I'll check.", work_on: true })
+  ).toMatchObject({ accepted: false, reason: 'work_on_needs_reply_to' });
+  const receipt = await convoPublish({
+    requestId: 'no-target-answer',
+    fullText: 'All quiet.',
+    work_on: false,
+  });
+  expect(receipt).toMatchObject({ accepted: true });
+  expect(receipt.publication.workOn).toBe(false);
+});
+
 test('a reply with two replyTo IDs hands both inputs off', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
@@ -1865,8 +1949,14 @@ test('a reply with two replyTo IDs hands both inputs off', async () => {
 
 test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
-  expect(NEO_FRONT).not.toContain('work_on');
-  expect(NEO_FRONT).toContain('never decide, assign, refuse or promise anything');
+  expect(NEO_FRONT).toContain('the answer goes to the human by itself');
+  expect(NEO_FRONT).toContain('never say you cannot');
+  expect(NEO_FRONT).not.toMatch(/another session/i);
+  expect(NEO_FRONT).not.toMatch(/\bworkers?\b/i);
+  expect(NEO_ROOT_TURN_END).toContain('work_on="true" one that said what you will do');
+  expect(NEO_ROOT_TURN_END).toContain('worker reports and wakes also get a natural spoken result');
+  expect(NEO_ROOT_TURN_END).toContain('already answered it correctly with work_on="false"');
+  expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
 });
 
 test('a dual-mode hand-off keeps the listening fact and carries no acknowledgment note', async () => {
@@ -1887,7 +1977,7 @@ test('single mode keeps the per-input acknowledgment note', async () => {
 
   expect(content).toContain('[listening: no]');
   expect(content).toContain('Before time-consuming work, publish one short reply first');
-  expect(frontModeNote()).not.toContain('work_on');
+  expect(frontModeNote()).not.toContain('acknowledg');
 });
 
 test('a reply that could not hand off yet settles as pending, not answered', async () => {
@@ -1928,7 +2018,10 @@ test('a refused duplicate reply does not claim the refused text was delivered', 
     replyTo: [second.id],
     text: 'An answer the human never saw.',
   });
-  expect(refused, JSON.stringify(refused)).toMatchObject({ accepted: true });
+  expect(refused, JSON.stringify(refused)).toMatchObject({
+    accepted: false,
+    reason: 'publication_conflict',
+  });
 
   const delivered = JSON.stringify(
     db.getSDKMessageRepo().getDeliveryContent(root, second.id) ?? ''

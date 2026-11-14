@@ -657,11 +657,14 @@ export const {
 export const NEO_ROOT_TURN_END = fillPrompt(NEO_ROOT_TURN_END_TEMPLATE, {
   PUBLISH_TOOL: 'neo.publication.publish',
   SAY_TOOL: 'neo.speech.say',
+  WAKE_SPEECH:
+    'When listening is yes, worker reports and wakes also get a natural spoken result alongside the publication, without a human-input acknowledgment. ',
 });
 
 export const NEO_FRONT = fillPrompt(NEO_FRONT_TEMPLATE, {
   PUBLISH_TOOL: 'reply',
   SAY_TOOL: 'speech_say',
+  WAKE_SPEECH: '',
 });
 
 const codingSkill = parseSkillMarkdown(mdneoPacksCodingSkill, 'neo/packs/coding/SKILL.md');

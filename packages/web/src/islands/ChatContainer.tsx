@@ -23,6 +23,7 @@ import { ChatHeader } from '../components/ChatHeader.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
+import { DesktopControl } from '../components/DesktopControl.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 import { ImageDropOverlay } from '../components/ImageDropOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -1162,6 +1163,10 @@ export default function ChatContainer({
       />
 
       {headerExtra}
+
+      {!readonly && /^[A-Za-z0-9_-]{1,64}$/.test(sessionId) && (
+        <DesktopControl worker={sessionId} class="border-b border-line px-4 py-2" />
+      )}
 
       <div class="flex-1 relative min-h-0">
         <div

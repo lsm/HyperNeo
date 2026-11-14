@@ -542,7 +542,12 @@ export function NeoComposer({
               onError={onError}
               onPhase={setVoicePhase}
             />
-            <NeoRealtimeVoice collapsed={collapsed && !voiceBusy} />
+            <NeoRealtimeVoice
+              collapsed={collapsed && !voiceBusy}
+              sessionId={sessionId}
+              connected={connected}
+              onError={onError}
+            />
           </div>
           {showStop && (
             <button
