@@ -351,8 +351,7 @@ export function buildWorkflowCreateParams(
         agentId: '',
         name: a.name,
       };
-      const rawTemplateKey = a.templateKey?.trim() ?? '';
-      const templateKey = rawTemplateKey;
+      const templateKey = a.templateKey?.trim() ?? '';
       if (templateKey) {
         const agentRef = a.agentRef?.trim() ?? '';
         const agentId = agentRef
@@ -361,10 +360,7 @@ export function buildWorkflowCreateParams(
             null)
           : null;
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey =
-            rawTemplateKey === templateKey && relocatedTemplateKey
-              ? relocatedTemplateKey(templateKey)
-              : null;
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
           if (relocatedKey) {
             warnings.push(
               ambiguousTemplateReferenceError(exportedNode.name, templateKey, relocatedKey)
@@ -517,14 +513,10 @@ function validateWorkflowForPreview(
 
   for (const node of exported.nodes) {
     for (const a of node.agents) {
-      const rawTemplateKey = a.templateKey?.trim() ?? '';
-      const templateKey = rawTemplateKey;
+      const templateKey = a.templateKey?.trim() ?? '';
       if (templateKey) {
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey =
-            rawTemplateKey === templateKey && relocatedTemplateKey
-              ? relocatedTemplateKey(templateKey)
-              : null;
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
           if (relocatedKey) {
             errors.push(ambiguousTemplateReferenceError(node.name, templateKey, relocatedKey));
           }
