@@ -298,3 +298,13 @@ export const neoTodoOnHold = (
   todo: Pick<NeoTodo, 'id'>,
   cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
 ) => cards.some((card) => card.cause === NEO_HOLD && neoQuestionCoversTodo(card, todo));
+
+export const neoTodoHeldBy = (
+  todo: Pick<NeoTodo, 'id'>,
+  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
+): typeof NEO_HOLD | typeof NEO_PAUSE | null => {
+  const card = cards.find(
+    (item) => HELD.includes(item.cause ?? '') && neoQuestionCoversTodo(item, todo)
+  );
+  return card?.cause === NEO_HOLD ? NEO_HOLD : card ? NEO_PAUSE : null;
+};

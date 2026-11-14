@@ -16,8 +16,10 @@ High and one Low. A paired headless browser drives the real /neo list at 1280 px
 - Priority: Urgent replaces the Low badge with Urgent; Mark done and Cancel take the
   step out of the open list;
 - Pause on the running step and Hold on a waiting one each open one card with the
-  reason, Resume or Start, and Remove; Start answers the hold card;
+  reason, Resume or Start, and Remove, and the row reads Paused or On hold;
+  Start answers the hold card;
 - Settings > Neo shows Running limits 6 and 3 when unset; 4 and 2 survive a reload.
+  The section is fully opaque with both inputs enabled at both widths.
 
 At 390 px the list, menu and limits fit with no horizontal scroll. The readback reads
 the run's DB: done, removed, urgent, the pause card open, the hold card answered

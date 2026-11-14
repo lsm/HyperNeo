@@ -37,6 +37,15 @@ const settle = (page) =>
         .map((a) => a.finished.catch(() => {}))
     )
   );
+const look = (section) =>
+  section.evaluate((node) => {
+    let opacity = 1;
+    for (let el = node; el; el = el.parentElement) opacity *= Number(getComputedStyle(el).opacity);
+    return {
+      opacity,
+      disabled: [...node.querySelectorAll('input')].map((input) => input.disabled),
+    };
+  });
 async function open(context, width) {
   const page = await context.newPage();
   await page.goto(`${base}/neo`);
@@ -111,7 +120,9 @@ try {
     seen.limitsAfterReload = [await total.inputValue(), await perProject.inputValue()];
     const section = page.locator('section', { hasText: 'Running limits' }).last();
     await section.scrollIntoViewIfNeeded();
-    await section.screenshot({ path: `${out}/limits-1280.png` });
+    await settle(page);
+    seen.limits1280 = await look(section);
+    await page.screenshot({ path: `${out}/limits-1280.png` });
     seen.overflow1280 = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   } finally {
     await desktop.close();
@@ -139,6 +150,8 @@ try {
     const section = page.locator('section', { hasText: 'Running limits' }).last();
     await section.waitFor();
     await section.scrollIntoViewIfNeeded();
+    await settle(page);
+    seen.limits390 = await look(section);
     await section.screenshot({ path: `${out}/limits-390.png` });
   } finally {
     await phone.close();
@@ -162,5 +175,9 @@ assert.deepEqual(seen.limitsAfterReload, ['4', '2']);
 assert.equal(seen.overflow1280, false);
 assert.equal(seen.overflow390, false);
 assert.deepEqual(seen.alerts, []);
+for (const limits of [seen.limits1280, seen.limits390]) {
+  assert.equal(limits.opacity, 1);
+  assert.deepEqual(limits.disabled, [false, false]);
+}
 assert(seen.phoneMenu.some((label) => label.includes('Hold')));
 console.log('human-controls web: PASS');

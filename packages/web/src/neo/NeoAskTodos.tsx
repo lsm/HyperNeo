@@ -186,7 +186,11 @@ function TodoRow({
   onCheck?: (checked: boolean) => void;
   onOpen?: (link: string, title: string) => void;
 }) {
-  const [mark, color] = marks[todo.state];
+  const [mark, color] = todo.statusCodes?.some((code) =>
+    ['todo.held', 'todo.paused'].includes(code.code)
+  )
+    ? (['‖', 'text-warning'] as const)
+    : marks[todo.state];
   const [controlError, setControlError] = useState<string | null>(null);
   const control = (choice: NeoTodoControl) => {
     setControlError(null);

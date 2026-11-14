@@ -41,7 +41,9 @@ export function NeoModelSettings() {
       <div class="mt-4">
         <NeoRulesSettings />
       </div>
-      <NeoTodoLimitsSettings />
+      <div class="mt-4">
+        <NeoTodoLimitsSettings />
+      </div>
       <NeoRelaySendersSettings />
       <NeoMutedSessionsSettings />
       <NeoRelatedSettings />

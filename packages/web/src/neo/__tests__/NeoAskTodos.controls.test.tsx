@@ -112,6 +112,21 @@ describe('NeoAskTodos step controls', () => {
     expect(app.queryByRole('menuitem', { name: 'Pause' })).toBeNull();
   });
 
+  it('a paused step shows Paused with a pause mark, not In progress', () => {
+    const paused = todo('run', {
+      state: 'doing',
+      startedAt: 2,
+      status: 'Paused',
+      statusCodes: [{ code: 'todo.paused', params: {} }],
+    });
+    const app = render(
+      <NeoAskTodos entry={entry({ todos: [paused] })} onAnswer={vi.fn()} onControl={vi.fn()} />
+    );
+    const row = app.container.querySelector('[data-ask-todo="run"]')!;
+    expect(row.querySelector('[data-todo-status]')?.textContent).toBe('Paused');
+    expect(row.querySelector('[aria-hidden="true"]')?.textContent).toBe('‖');
+  });
+
   it('a refused control shows the daemon reason on its step', async () => {
     const onControl = vi.fn(async () => {
       throw new Error('already_waiting: this todo already waits on an open card; answer that one.');

@@ -157,6 +157,8 @@ export const en = {
   'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
+  'todo.held': 'On hold',
+  'todo.paused': 'Paused',
   'todo.blocked': 'Blocked: {reason}',
   'todo.waitingResult': 'Waiting for its result',
   'todo.nextAction': 'Next: {action}',
