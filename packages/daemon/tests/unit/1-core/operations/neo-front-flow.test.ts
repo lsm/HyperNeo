@@ -71,7 +71,7 @@ afterEach(async () => {
 });
 
 test('Front and Neo share speech rules with their own tool names', () => {
-  expect(NEO_FRONT).toContain('Every message also goes on to be handled in full');
+  expect(NEO_FRONT).toContain('That one call tells the human and starts the work.');
   expect(NEO_FRONT).toContain('published through reply.');
   expect(NEO_FRONT).toContain('follow its guidance to call speech_say once');
   expect(NEO_FRONT).toContain('projects_read');
