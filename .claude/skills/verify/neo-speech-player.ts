@@ -168,6 +168,8 @@ try {
 
   const long = await speak('long', 'Long public reply.');
   await wait(() => receipts(long.id).includes('playing'));
+  const heardBefore = played.voiced + 0.2 * played.rate;
+  await wait(async () => (await page.evaluate(() => (window as any).voiced)) >= heardBefore);
   await page.evaluate(() => (window as any).player.interrupt());
   await wait(() => receipts(long.id).includes('cancelled'));
   const interruptedAt = await page.evaluate(() => (window as any).voiced);
@@ -182,7 +184,7 @@ try {
     realChromiumWebAudio: true,
     chunks: types.filter((type) => type === 'audio').length,
     short: { receipts: receipts(short.id), heldMs: Math.round(heldMs), voicedSamples: played.voiced, peak: played.peak },
-    long: { receipts: receipts(long.id), voicedAfterInterrupt: afterInterrupt - interruptedAt },
+    long: { receipts: receipts(long.id), voicedBeforeInterrupt: interruptedAt - played.voiced, voicedAfterInterrupt: afterInterrupt - interruptedAt },
   };
   console.log(JSON.stringify(evidence));
 } finally {

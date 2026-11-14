@@ -28,6 +28,8 @@ interface NeoSpeechPlayerOptions {
   createContext?: () => AudioContext;
 }
 
+const STALL_MS = 30_000;
+
 const decode = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
 export function openNeoSpeechPlayer(
@@ -39,6 +41,7 @@ export function openNeoSpeechPlayer(
   let queue: Utterance[] = [];
   let playhead = 0;
   let audible = true;
+  let stall: ReturnType<typeof setTimeout> | undefined;
 
   const ack = (id: string, state: 'playing' | 'played' | 'cancelled' | 'failed') => {
     invokeOperation(hub, 'neo.speech.ack', { sessionId, id, state }).catch(() => {});
@@ -49,6 +52,7 @@ export function openNeoSpeechPlayer(
       source.onended = null;
       source.stop();
     }
+    if (!utterance.sources.size) return;
     utterance.sources.clear();
     playhead = context.currentTime;
   };
@@ -86,6 +90,7 @@ export function openNeoSpeechPlayer(
   };
 
   const pump = () => {
+    clearTimeout(stall);
     const utterance = queue[0];
     if (!utterance) return;
     for (let chunk = utterance.chunks.get(utterance.next); chunk; ) {
@@ -97,8 +102,14 @@ export function openNeoSpeechPlayer(
       schedule(utterance, bytes);
       chunk = utterance.chunks.get(utterance.next);
     }
-    if (utterance.end !== null && utterance.next >= utterance.end && !utterance.sources.size)
-      finish(utterance, 'played');
+    if (utterance.sources.size) return;
+    if (utterance.end !== null && utterance.next >= utterance.end)
+      return finish(utterance, 'played');
+    stall = setTimeout(() => {
+      if (queue[0] !== utterance) return;
+      ack(utterance.id, 'failed');
+      finish(utterance);
+    }, STALL_MS);
   };
 
   const drop = () => {
@@ -133,8 +144,10 @@ export function openNeoSpeechPlayer(
       });
     } else if (!utterance) return;
     else if (event.type === 'failed') return finish(utterance);
-    else if (event.type === 'audio') utterance.chunks.set(event.seq, decode(event.pcm));
-    else utterance.end = event.seq;
+    else if (event.type === 'audio') {
+      if (event.seq >= utterance.next && !utterance.chunks.has(event.seq))
+        utterance.chunks.set(event.seq, decode(event.pcm));
+    } else utterance.end = event.seq;
     pump();
   });
 
