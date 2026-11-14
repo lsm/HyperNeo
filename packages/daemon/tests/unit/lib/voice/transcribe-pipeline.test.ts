@@ -183,20 +183,9 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('refuses to send API keys over plaintext HTTP endpoints', async () => {
-    const getCredentials = mock(async () => ({
-      type: 'api_key' as const,
-      apiKey: 'stored-key',
-    }));
     await expect(
       transcribe(
-        createDeps(
-          {
-            endpoint: 'http://ai0:9002/v1/audio/transcriptions',
-            apiKeyEndpoint: 'http://ai0:9002/v1/audio/transcriptions',
-          },
-          createVoiceTranscribeLimiters(),
-          { getCredentials } as unknown as Pick<ProviderCredentialManager, 'getCredentials'>
-        )
+        createDeps({ endpoint: 'http://ai0:9002/v1/audio/transcriptions', apiKey: 'sk-test' })
       )
     ).resolves.toEqual({
       action: 'denied',
@@ -374,24 +363,6 @@ describe('voice transcribe pipeline', () => {
     await expect(allRequests).resolves.toEqual(
       Array.from({ length: 4 }, () => ({ action: 'transcribed', text: 'done' }))
     );
-  });
-
-  it('ignores a stored voice.apiKey and sends no authorization header', async () => {
-    let init: RequestInit | undefined;
-    globalThis.fetch = (async (_url: string | URL | Request, requestInit?: RequestInit) => {
-      init = requestInit;
-      return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
-    }) as typeof fetch;
-
-    await transcribe(
-      createDeps({
-        endpoint: 'https://ai0:8090/v1/audio/transcriptions',
-        model: 'qwen3-asr-0.6b',
-        apiKey: 'stored-legacy-key',
-      })
-    );
-
-    expect((init?.headers as Record<string, string>)?.Authorization).toBeUndefined();
   });
 
   it('resolves bearer authorization from the credential manager', async () => {

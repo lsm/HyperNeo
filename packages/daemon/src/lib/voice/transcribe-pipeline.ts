@@ -246,10 +246,13 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
 }
 
 export async function resolveApiKey(
+  legacyApiKey: string | undefined,
   apiKeyEndpoint: string | undefined,
   endpoint: URL,
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
 ): Promise<string | undefined> {
+  const trimmedLegacyKey = legacyApiKey?.trim();
+  if (trimmedLegacyKey) return trimmedLegacyKey;
   if (!apiKeyEndpoint || endpoint.toString() !== normalizeEndpoint(apiKeyEndpoint)) {
     return undefined;
   }
@@ -288,7 +291,12 @@ async function acquireTranscriptionCredentials(
       model = liveVoice.model?.trim() || model;
     }
     return withTimeout(
-      resolveApiKey(liveVoice?.apiKeyEndpoint, endpoint, ctx.deps.credentialManager),
+      resolveApiKey(
+        liveVoice?.apiKey,
+        liveVoice?.apiKeyEndpoint,
+        endpoint,
+        ctx.deps.credentialManager
+      ),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,
       'Voice transcription credential lookup timed out',
       ctx.signal
