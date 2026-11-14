@@ -1867,7 +1867,7 @@ test('a reply with two replyTo IDs hands both inputs off', async () => {
 
 test('the full session prompt carries no dual-mode acknowledgment rule', () => {
   expect(NEO_ROOT_TURN_END).not.toContain('briefly acknowledge the request naturally');
-  expect(NEO_FRONT).toContain('set work_on: true');
+  expect(NEO_FRONT).toContain('the answer goes to the human by itself');
   expect(NEO_FRONT).toContain('never say you cannot');
   expect(NEO_ROOT_PROMPT).toContain('if work_on="false" and right, publish nothing');
 });

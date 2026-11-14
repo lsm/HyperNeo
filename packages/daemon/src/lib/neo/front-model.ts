@@ -126,7 +126,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       ),
       tool(
         'reply',
-        'Send one short reply per human message, one or two sentences. work_on: false when your reads answered it; true when it needs checking or doing, and then say what you will do. The reply reaches the human. While [listening: yes], include spoken.',
+        'Send one short reply per human message, one or two sentences. work_on: false when your reads answered it; true for anything else, with text saying what you will do: that call starts the work, and its answer reaches the human by itself. The reply reaches the human. While [listening: yes], include spoken.',
         {
           ...replyFields,
           text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
