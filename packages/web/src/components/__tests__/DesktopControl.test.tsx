@@ -194,4 +194,15 @@ describe('DesktopControl', () => {
     );
     expect(screen.getByRole('button', { name: 'Try stopping again' })).toBeTruthy();
   });
+
+  it('drops the failure once the status reads stopped', async () => {
+    statuses('running');
+    invoke.mockRejectedValueOnce(new Error('reply lost'));
+    statuses('stopped');
+    render(<DesktopControl worker="worker-a" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and take over' }));
+    expect(await screen.findByText('Stopped. The desktop is yours.')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
 });
