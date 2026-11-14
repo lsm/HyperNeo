@@ -55,6 +55,7 @@ import {
   createClaudeDesktopAdapter,
   readClaudeDesktopRecords,
   readLiveClaudeSessions,
+  reuseLiveSessions,
   type ClaudeDesktopAdapterDeps,
   type ClaudeRecordCache,
 } from '../../drivers/claude-desktop-adapter.ts';
@@ -345,7 +346,7 @@ function claudeCodeAdapters(
           ? readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
           : [],
       projectsDir: join(homedir(), '.claude', 'projects'),
-      liveSessions: () => readLiveClaudeSessions(spawnProcess),
+      liveSessions: reuseLiveSessions(() => readLiveClaudeSessions(spawnProcess), Date.now),
       ownedSessions,
       machine: hostname(),
       searchChats: (text) => searchChats(text, ['claude']),
@@ -380,7 +381,7 @@ function claudeDesktopAdapters(
     prepareExecution,
     projectsDir: join(homedir(), '.claude', 'projects'),
     machine: hostname(),
-    liveSessions: () => readLiveClaudeSessions(spawnProcess),
+    liveSessions: reuseLiveSessions(() => readLiveClaudeSessions(spawnProcess), Date.now),
     spawn: spawnProcess,
     folderExists: existsSync,
     makeFolder: (folder: string) => mkdirSync(folder),

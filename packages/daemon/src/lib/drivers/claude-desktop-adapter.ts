@@ -91,7 +91,7 @@ import {
 } from './claude-session-owner.ts';
 
 const SESSIONS_PER_PLACE = 20;
-const LIVE_TIMEOUT_MS = 5_000;
+const LIVE_TIMEOUT_MS = 90_000;
 const LIVE_REUSE_MS = 5_000;
 const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 const BOOTSTRAP_TIMEOUT_MS = 120_000;
@@ -410,10 +410,28 @@ export function reuseLiveSessions(
   now: () => number,
   freshForMs = LIVE_REUSE_MS
 ): () => Promise<readonly ClaudeLiveSession[]> {
-  let cached: { at: number; sessions: Promise<readonly ClaudeLiveSession[]> } | null = null;
+  let good: { at: number; sessions: readonly ClaudeLiveSession[] } | null = null;
+  let pending: Promise<readonly ClaudeLiveSession[]> | null = null;
+  const refresh = () => {
+    const started = now();
+    const sessions = read().finally(() => {
+      if (pending === sessions) pending = null;
+    });
+    pending = sessions;
+    void sessions
+      .then((listed) => {
+        good = { at: started, sessions: listed };
+      })
+      .catch(() => {});
+    return sessions;
+  };
   return () => {
-    if (!cached || now() - cached.at >= freshForMs) cached = { at: now(), sessions: read() };
-    return cached.sessions;
+    if (good) {
+      if (now() - good.at >= freshForMs) pending ??= refresh();
+      return Promise.resolve(good.sessions);
+    }
+    pending ??= refresh();
+    return pending;
   };
 }
 
