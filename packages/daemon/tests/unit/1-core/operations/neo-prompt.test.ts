@@ -184,7 +184,7 @@ describe('root Neo system prompt', () => {
 
   test('gives Neo the same reply length rule the front reads', () => {
     const rule =
-      'Keep text to at most five short sentences in one brief paragraph. For more than five sentences, or for any structured report, multi-topic update, sectioned explanation, list, table or long report, put a standalone summary in text and details that add new information; never repeat text in details.';
+      'Keep text to at most five short sentences in one brief paragraph and at most 500 characters. For more than five sentences, or for any structured report, multi-topic update, sectioned explanation, list, table or long report, put a standalone summary in text and details that add new information; never repeat text in details.';
     expect(NEO_FRONT).toContain(rule);
     expect(neoToolDescription('neo.publication.publish')).toContain(rule);
     const prompt = neoPrompt([]);
