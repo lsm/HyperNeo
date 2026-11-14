@@ -134,7 +134,7 @@ export function NeoComposer({
   const waitingLine = forSession ? null : neoWaitingLine(agentState);
   const attention = !!store.error.value || noNetwork || !!waitingLine;
   const collapsed = !focused && !preferencesOpen && !draft && !needsDraft && !attention;
-  const pressing = useRef(false);
+  const pressedPointers = useRef(new Set<number>());
   const collapsePending = useRef(false);
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelCollapse = () => {
@@ -148,15 +148,19 @@ export function NeoComposer({
     []
   );
   useEffect(() => {
-    const press = () => {
-      pressing.current = true;
+    const press = (event: PointerEvent) => {
+      pressedPointers.current.add(event.pointerId);
     };
-    const release = () => {
-      pressing.current = false;
-      if (!collapsePending.current) return;
+    const release = (event: PointerEvent) => {
+      pressedPointers.current.delete(event.pointerId);
+      if (pressedPointers.current.size || !collapsePending.current) return;
       collapsePending.current = false;
       collapseTimer.current = setTimeout(() => {
         collapseTimer.current = null;
+        if (pressedPointers.current.size) {
+          collapsePending.current = true;
+          return;
+        }
         setFocused(false);
       }, 0);
     };
@@ -170,7 +174,7 @@ export function NeoComposer({
     };
   }, []);
   const blur = () => {
-    if (pressing.current) collapsePending.current = true;
+    if (pressedPointers.current.size) collapsePending.current = true;
     else setFocused(false);
   };
   const focusComposer = () => {

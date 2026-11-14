@@ -60,6 +60,20 @@ describe('Neo composer collapse on pointer press', () => {
     await waitFor(() => expect(form.className).toContain('is-collapsed'));
   });
 
+  it('waits for every pointer before collapsing', async () => {
+    const input = mount();
+    const form = input.form!;
+    act(() => input.focus());
+    fireEvent.pointerDown(document.body, { pointerType: 'touch', pointerId: 1 });
+    fireEvent.pointerDown(document.body, { pointerType: 'touch', pointerId: 2 });
+    fireEvent.focusOut(input, { relatedTarget: document.body });
+    fireEvent.pointerUp(document.body, { pointerType: 'touch', pointerId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(form.className).toContain('is-focused');
+    fireEvent.pointerUp(document.body, { pointerType: 'touch', pointerId: 2 });
+    await waitFor(() => expect(form.className).toContain('is-collapsed'));
+  });
+
   it('collapses right away when focus leaves without a pointer press', () => {
     const input = mount();
     const form = input.form!;
