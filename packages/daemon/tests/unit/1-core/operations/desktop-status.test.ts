@@ -146,3 +146,29 @@ test('agents and Neo cannot read desktop status', async () => {
   ] as OperationCaller[])
     expect(await status({ worker }, caller)).not.toMatchObject({ kind: 'completed' });
 });
+
+test('a todo still starting without a worker does not break the list', async () => {
+  await openApp();
+  await recordDriver();
+  db.prepare('INSERT INTO neo_todos VALUES(?,?,?,?,?,?)').run(
+    'starting',
+    'ask',
+    'Starting',
+    'doing',
+    1,
+    JSON.stringify({ desktopControl: true })
+  );
+  db.prepare('INSERT INTO neo_todo_sessions VALUES(?,?)').run('starting', null);
+  expect(await status({})).toMatchObject(one('running'));
+});
+
+test('a live driver whose identity cannot be read is not reported stopped', async () => {
+  await openApp();
+  await writeFile(
+    join(directory, 'driver.json'),
+    JSON.stringify({ pid: process.pid, startedAt: identity }),
+    { mode: 0o600 }
+  );
+  alive = false;
+  expect(await status({ worker })).toMatchObject(one('stop_unconfirmed'));
+});
