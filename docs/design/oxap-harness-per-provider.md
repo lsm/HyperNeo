@@ -125,6 +125,18 @@ pipeline). Each start now builds that file from the saved settings, writes it
 with mode 0600 inside the 0700 state directory, then launches. So the saved
 settings are the one record, and the file is only a copy for that start.
 
+At-rest rule: provider keys stay only in the credential store. The file is
+the one place a key is written in plain text, so it never outlives a start:
+
+- The Go hub reads its config once, in `LoadRegistry`, before it serves.
+- The daemon deletes the file as soon as the hub answers its first request.
+  The client's `connect()` resolves at spawn, before the hub has read the
+  file, so connect alone is not enough.
+- Each start also deletes any file a crash left behind before writing the new
+  one.
+- So a key sits on disk only between the write and the hub's first answer.
+  Rows without secrets, like Codex, never write one.
+
 Changing the hub binary, or any provider's harness or harness settings, saves
 settings and then calls a new `OapEngine.restart()`. Today `getHub` throws
 "OAP hub configuration differs from the running hub" when the options change,
