@@ -6025,6 +6025,98 @@ describe('QueryRunner', () => {
       }
     });
 
+    it('retries the turn when login recovery says a refresh worked', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      const plans: string[] = ['retry', 'sign_in'];
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        onLoginRejected: async () => (plans.shift() ?? 'sign_in') as 'retry' | 'sign_in',
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('lands in the sign-in hold when a later rejection follows a credential write', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      let epoch = 0;
+      let writes = 0;
+      const seen: Array<{ epoch: number | undefined; writes: number }> = [];
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        loginCredentialEpoch: () => epoch,
+        onLoginRejected: async (prompt, attemptEpoch) => {
+          seen.push({ epoch: attemptEpoch, writes });
+          writes += 1;
+          if (writes === 1) {
+            epoch += 1;
+            return 'retry';
+          }
+          return attemptEpoch !== undefined && epoch > attemptEpoch ? 'retry' : 'sign_in';
+        },
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(seen).toHaveLength(2);
+      expect(seen[1]?.epoch).toBe(1);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('treats a write that landed during the request as already reflected', async () => {
+      let epoch = 0;
+      let rejectFirst: (() => void) | undefined;
+      let requests = 0;
+      buildSpy.mockImplementation(async () => {
+        requests += 1;
+        if (requests > 1) throw new Error('401 Unauthorized');
+        await new Promise<void>((_resolve, reject) => {
+          rejectFirst = () => reject(new Error('401 Unauthorized'));
+        });
+      });
+      const seen: Array<number | undefined> = [];
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        loginCredentialEpoch: () => epoch,
+        onLoginRejected: async (_prompt, attemptEpoch) => {
+          seen.push(attemptEpoch);
+          return attemptEpoch !== undefined && epoch > attemptEpoch ? 'retry' : 'sign_in';
+        },
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      while (rejectFirst === undefined) await new Promise((done) => setTimeout(done, 0));
+      epoch += 1;
+      (rejectFirst as () => void)();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(seen).toEqual([0, 1]);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(handleErrorSpy.mock.calls)).not.toContain('Query stopped');
+    });
+
+    it('holds instead of restarting when the refresh is still failing', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        onLoginRejected: async () => 'refresh_pending',
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(JSON.stringify(handleErrorSpy.mock.calls)).not.toContain('Query stopped');
+    });
+
     it('restarts once for Claude 401 then reports a terminal authentication error', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 

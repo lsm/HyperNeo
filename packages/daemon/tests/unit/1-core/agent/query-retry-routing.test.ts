@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 import { ErrorCategory } from '../../../../src/lib/error-manager';
 import {
+  classifyQueryRetryHold,
   classifyQueryRetryRoute,
   decideQueryRetry,
   planTurnEndedGeneration,
@@ -1132,5 +1133,72 @@ describe('Claude login recovery', () => {
           .action
       ).not.toBe('claude_auth_retry');
     }
+  });
+});
+
+describe('classifyQueryRetryHold', () => {
+  test('a Claude login rejection is a login hold', () => {
+    expect(classifyQueryRetryHold(signal({ rawText: '401 OAuth token revoked' }), env())).toBe(
+      'login'
+    );
+  });
+
+  test('a provider key rejection is not a login hold', () => {
+    expect(
+      classifyQueryRetryHold(
+        signal({ rawText: '401 unauthorized' }),
+        env({ providerFamily: 'provider' })
+      )
+    ).toBe('none');
+  });
+
+  test('an unreachable network is a network hold', () => {
+    expect(classifyQueryRetryHold(signal({ isNetworkUnreachable: true }), env())).toBe('network');
+  });
+
+  test('a stalled stream is charged like before, not held as a network outage', () => {
+    expect(classifyQueryRetryHold(signal({ isStreamStall: true }), env())).toBe('none');
+  });
+
+  test('a usage limit is a limit hold', () => {
+    expect(classifyQueryRetryHold(signal({ isRateLimit: true }), env())).toBe('limit');
+  });
+
+  test('a provider that stays overloaded past its retries is an overloaded hold', () => {
+    expect(
+      classifyQueryRetryHold(signal({ isRetryableProviderError: true }), env({ attempt: 3 }))
+    ).toBe('overloaded');
+    expect(
+      classifyQueryRetryHold(signal({ isRetryableProviderError: true }), env({ attempt: 1 }))
+    ).toBe('none');
+  });
+
+  test('everything else is no hold', () => {
+    expect(classifyQueryRetryHold(signal(), env())).toBe('none');
+    expect(
+      classifyQueryRetryHold(
+        signal({ isNetworkUnreachable: true }),
+        env({
+          lifecycle: {
+            processingStatus: 'interrupted',
+            abortSignalAborted: false,
+            isLimitRecoveryPending: false,
+          },
+        })
+      )
+    ).toBe('none');
+  });
+});
+
+describe('decideQueryRetry holds', () => {
+  test('reports the hold next to the route and finalizer', () => {
+    expect(
+      decideQueryRetry({ errorSignal: signal({ rawText: '401 OAuth token revoked' }), env: env() })
+        .hold
+    ).toBe('login');
+    expect(decideQueryRetry({ errorSignal: signal({ isRateLimit: true }), env: env() }).hold).toBe(
+      'limit'
+    );
+    expect(decideQueryRetry({ errorSignal: signal(), env: env() }).hold).toBe('none');
   });
 });

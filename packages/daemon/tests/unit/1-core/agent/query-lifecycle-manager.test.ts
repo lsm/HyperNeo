@@ -669,6 +669,17 @@ describe('QueryLifecycleManager', () => {
       expect(startStreamingCalled).toBe(true);
     });
 
+    test('clears login holds before the replacement query starts', async () => {
+      const stopLoginHolds = mock(() => {});
+      const holdingManager = new QueryLifecycleManager(
+        createMockContext({ stopLoginHolds } as Partial<QueryLifecycleManagerContext>)
+      );
+
+      await holdingManager.restart();
+
+      expect(stopLoginHolds).toHaveBeenCalledTimes(1);
+    });
+
     test('clears models cache before starting new query', async () => {
       await manager.restart();
 

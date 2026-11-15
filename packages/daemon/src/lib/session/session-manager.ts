@@ -92,6 +92,7 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
+  private loginRecovery?: AgentSessionRuntimeOptions['loginRecovery'];
   private operationRegistryProvider?: OperationRegistryProvider;
   private callerScopeResolver: CallerScopeResolver = PLAIN_SESSION_SCOPE;
 
@@ -178,6 +179,7 @@ export class SessionManager {
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         oap: this.oapRuntime?.(session),
+        loginRecovery: this.loginRecovery,
         ...runtimeOptions,
         getGithubToken: this.getGithubToken,
         operationRegistryProvider: () => this.getOperationRegistry(),
@@ -536,6 +538,10 @@ export class SessionManager {
 
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
     this.spaceRuntimeMcpProvider = provider;
+  }
+
+  setLoginRecovery(loginRecovery: NonNullable<AgentSessionRuntimeOptions['loginRecovery']>): void {
+    this.loginRecovery = loginRecovery;
   }
 
   setMailboxDeferredReplaySuppressor(suppressor: (sessionId: string) => void): void {

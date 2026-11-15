@@ -425,7 +425,12 @@
                   "type": "string"
                 },
                 "reason": {
-                  "const": "network",
+                  "enum": [
+                    "network",
+                    "login",
+                    "limit",
+                    "overloaded"
+                  ],
                   "type": "string"
                 },
                 "retryAt": {

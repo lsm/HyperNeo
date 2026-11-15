@@ -420,6 +420,12 @@ export interface QueryRunnerContext {
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+  hasLoginRecovery?(): boolean;
+  loginCredentialEpoch?(): number;
+  onLoginRejected?(
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    attemptEpoch?: number
+  ): Promise<'retry' | 'refresh_pending' | 'sign_in'>;
   endNetworkOutage?(): void;
   onNetworkOutage?(
     errorText: string,
@@ -745,6 +751,7 @@ export class QueryRunner {
     }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const loginAttemptEpoch = this.ctx.loginCredentialEpoch?.();
 
     const attemptToken =
       this.ctx.getQueryGeneration() === queryGeneration
@@ -1663,15 +1670,6 @@ export class QueryRunner {
       this.ctx.attemptTokens.invalidate(attemptToken);
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
-      let episode: Session['metadata']['queryFailureEpisode'];
-      if (!cancelled && owns()) {
-        episode =
-          episodeId &&
-          !(error instanceof QueryFailureCapError) &&
-          !isNetworkUnreachableError(errorMessage)
-            ? await this.failures.failure(errorMessage, episodeId)
-            : session.metadata.queryFailureEpisode;
-      }
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');
       const isConversationNotFound = errorMessage.includes('No conversation found');
       const isMessageNotFound = errorMessage.includes('No message found');
@@ -1721,9 +1719,20 @@ export class QueryRunner {
         isCleaningUp: this.ctx.isCleaningUp(),
         isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
         hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
+        hasLoginRecovery: this.ctx.hasLoginRecovery?.() ?? false,
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+      let episode: Session['metadata']['queryFailureEpisode'];
+      if (!cancelled && owns()) {
+        episode =
+          episodeId &&
+          routeDecision.hold === 'none' &&
+          !(error instanceof QueryFailureCapError) &&
+          !isNetworkUnreachableError(errorMessage)
+            ? await this.failures.failure(errorMessage, episodeId)
+            : session.metadata.queryFailureEpisode;
+      }
       if (episode?.failed) {
         const terminal = new QueryFailureCapError(
           `Query stopped after ${episode.failures} failures: ${episode.error}. Send a message to recover.`
@@ -1862,17 +1871,22 @@ export class QueryRunner {
         });
       }
       if (routeDecision.route.action === 'claude_auth_retry') {
-        return await this.runRetryTeardown(queryGeneration, attemptToken, {
-          nextAttempt: 1,
-          recoveryState,
-          resetStartupState: true,
-          idleFirst: true,
-          snapshotLastConsumed: true,
-          snapshotRequeueLabel: 'Claude login retry',
-          terminateProcesses: true,
-          guardAfterExit: true,
-          restartQueue: true,
-        });
+        const plan = this.ctx.hasLoginRecovery?.()
+          ? await this.ctx.onLoginRejected?.(this._lastConsumedUserMessage, loginAttemptEpoch)
+          : 'retry';
+        if (plan === 'retry')
+          return await this.runRetryTeardown(queryGeneration, attemptToken, {
+            nextAttempt: 1,
+            recoveryState,
+            resetStartupState: true,
+            idleFirst: true,
+            snapshotLastConsumed: true,
+            snapshotRequeueLabel: 'Claude login retry',
+            terminateProcesses: true,
+            guardAfterExit: true,
+            restartQueue: true,
+          });
+        return;
       }
       if (routeDecision.route.action === 'stream_stall_retry') {
         logger.warn('Retrying a model request that went silent (1 retry).');

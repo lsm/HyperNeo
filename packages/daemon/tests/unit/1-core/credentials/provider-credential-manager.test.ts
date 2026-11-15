@@ -2,6 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import {
+  clearProviderFailureRecords,
+  getProviderFailure,
+  recordClassifiedProviderFailure,
+} from '../../../../src/lib/providers/provider-failure-store';
+import {
   DatabaseCredentialStore,
   type CredentialStore,
 } from '../../../../src/lib/credentials/credential-store';
@@ -37,6 +42,7 @@ function createDb(): Database {
       auth_type TEXT NOT NULL DEFAULT 'none',
       health_status TEXT NOT NULL DEFAULT 'unknown',
       last_health_check_at INTEGER,
+      needs_login_at INTEGER DEFAULT NULL,
       updated_at INTEGER NOT NULL
     )
   `);
@@ -172,6 +178,34 @@ describe('ProviderCredentialManager', () => {
         .get('glm');
       expect(row).toEqual({ auth_type: 'api_key', health_status: 'healthy' });
     } finally {
+      db.close();
+    }
+  });
+
+  it('clears a recorded credential failure and the sign-in flag on a credential write', async () => {
+    const db = createDb();
+    const store = new MemoryCredentialStore();
+    const manager = new ProviderCredentialManager(store, db);
+    const written: string[] = [];
+    manager.setCredentialWriteHooks({
+      onCredentialsWritten: (providerId) => written.push(providerId),
+    });
+    try {
+      recordClassifiedProviderFailure('glm', { errorKind: 'credential', message: 'HTTP 401' });
+      db.exec("UPDATE providers SET needs_login_at = 1 WHERE provider_id = 'glm'");
+
+      await manager.storeApiKey('glm', 'new-key');
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      const row = db
+        .query<{ needs_login_at: number | null }, [string]>(
+          'SELECT needs_login_at FROM providers WHERE provider_id = ?'
+        )
+        .get('glm');
+      expect(row).toEqual({ needs_login_at: null });
+      expect(written).toEqual(['glm']);
+    } finally {
+      clearProviderFailureRecords();
       db.close();
     }
   });

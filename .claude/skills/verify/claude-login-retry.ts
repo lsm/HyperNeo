@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import type { SDKMessage } from '../../../packages/shared/src/sdk/sdk.d.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
@@ -30,8 +31,12 @@ const proxy = createServer(async (req, res) => {
   const body = Buffer.concat(chunks).toString();
   if (req.url?.includes('/messages') && !req.url.includes('count_tokens') && body.includes('CLAUDE_LOGIN_RECOVERED')) {
     evidence.requests = Number(evidence.requests) + 1;
-    if (scenario === 'fail' || (evidence.processes as unknown[]).length === 1) {
-      (evidence.responses as unknown[]).push({ process: (evidence.processes as unknown[]).length, status: 401 });
+    const processNumber = (evidence.processes as unknown[]).length;
+    const rejected = scenario === 'fail' ||
+      processNumber === 1 ||
+      processNumber > Number(evidence.acceptedProcess ?? Number.POSITIVE_INFINITY);
+    if (rejected) {
+      (evidence.responses as unknown[]).push({ process: processNumber, status: 401 });
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token revoked' } }));
       return;
@@ -49,7 +54,7 @@ const { getConfig } = await import('../../../packages/daemon/src/config.ts');
 const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
 assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
 let web: ReturnType<typeof Bun.serve> | undefined;
 const until = async (check: () => Promise<boolean> | boolean, label: string, timeout = 45000) => {
@@ -75,20 +80,48 @@ try {
     return child;
   } });
   app.internalEventBus.subscribe('session.error', event => { if (event.sessionId === sessionId) (evidence.errors as unknown[]).push(event.error); }, { subscriberName: 'login-proof', sessionId });
+  const sessionState = async () => {
+    const data = await hub.request<{ session: { processingState?: string } }>('session.get', { sessionId });
+    return data.session.processingState ? JSON.parse(data.session.processingState) as { status: string; reason?: string } : { status: 'idle' };
+  };
+  const providerId = 'anthropic';
+  const needsLogin = async () => app.db.providers.getNeedsLoginAt(providerId);
+  const failCase = scenario === 'fail';
+  if (!failCase) evidence.acceptedProcess = 2;
   await hub.request('message.send', { sessionId, content: 'Say CLAUDE_LOGIN_RECOVERED.' });
-  await until(() => Number(evidence.requests) >= 2, '401 did not restart the SDK and retry');
-  if (scenario === 'fail') {
-    await until(() => (evidence.errors as string[]).includes('Claude login failed — sign in again'), 'terminal authentication notice missing');
-    assert.equal((evidence.processes as unknown[]).length, 2);
+  if (failCase) {
+    await until(() => Number(evidence.requests) >= 1, 'the model was never called');
+    await until(async () => (await sessionState()).status === 'rate_limit_cooldown', 'a rejected login did not hold the turn');
+    const held = await sessionState();
+    assert.equal(held.reason, 'login');
+    await until(() => needsLogin().then(value => value !== null), 'a rejected login did not mark the provider for sign-in');
+    evidence.hold = held;
+    evidence.needsLoginAt = await needsLogin();
+    await new Promise(done => setTimeout(done, 2000));
+    assert.equal((evidence.processes as unknown[]).length, 1);
+    assert.equal((evidence.errors as unknown[]).length, 0);
   } else {
+    await until(() => Number(evidence.requests) >= 1, 'the model was never called');
+    await until(async () => (await sessionState()).status === 'rate_limit_cooldown', 'the turn did not hold');
+    const held = await sessionState();
+    assert.equal(held.reason, 'login');
+    await until(() => needsLogin().then(value => value !== null), 'the provider was not marked for sign-in');
+    evidence.hold = held;
+    evidence.needsLoginAt = await needsLogin();
+    assert.equal((evidence.errors as unknown[]).length, 0);
+    const anthropic = (await hub.request<{ providers: Array<{ id: string; providerId: string }> }>('providers.list', {})).providers.find(row => row.providerId === providerId);
+    assert(anthropic, 'the anthropic provider row is missing');
+    await hub.request('providers.update', { id: anthropic.id, params: {}, credentials: { apiKey: 'sk-devproxy-test-key' } });
+    await until(() => needsLogin().then(value => value === null), 'the credential write did not clear the sign-in flag');
+    await until(async () => (await sessionState()).status !== 'rate_limit_cooldown', 'the credential write did not wake the hold');
     await until(async () => {
       const data = await hub.request('message.sdkMessages', { sessionId });
       evidence.messages = data;
       return (data as { sdkMessages: Array<{ type: string; is_error?: boolean }> }).sdkMessages.some(m => m.type === 'result' && m.is_error === false);
-    }, 'replacement SDK did not complete the original prompt');
+    }, 'the resumed turn did not answer');
     assert.equal((evidence.errors as unknown[]).length, 0);
+    assert.equal((evidence.processes as unknown[]).length, 2);
   }
-  assert.equal((evidence.processes as unknown[]).length, 2);
   if (process.argv.includes('--historical-result')) {
     const text = 'Synthetic GLM key rejected (401)';
     assert(await app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',

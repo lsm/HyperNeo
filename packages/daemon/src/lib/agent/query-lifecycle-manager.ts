@@ -68,6 +68,7 @@ export interface QueryLifecycleManagerContext {
   resetTaskNotificationRequery?(): void;
 
   setCleaningUp(value: boolean): void;
+  stopLoginHolds?(): void;
   cleanupEventSubscriptions(): void;
   clearModelsCache(): Promise<void>;
   isRateLimitEpisodeSuperseded?(generation: number): boolean;
@@ -275,6 +276,7 @@ export class QueryLifecycleManager {
     try {
       messageHandler.resetCircuitBreaker();
       this.ctx.resetTaskNotificationRequery?.();
+      this.ctx.stopLoginHolds?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       const sdkRepo = this.ctx.db.getSDKMessageRepo?.();

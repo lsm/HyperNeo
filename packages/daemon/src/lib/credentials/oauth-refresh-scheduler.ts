@@ -11,6 +11,26 @@ const DEFAULT_MAX_RETRIES = 3;
 
 export type RefreshNowOutcome = TokenRefreshOutcome | 'skipped';
 
+export const REFRESH_DELAY_FIRST_MS = 5 * 60 * 1000;
+export const REFRESH_DELAY_MAX_MS = 60 * 60 * 1000;
+
+export interface ProviderRefreshClock {
+  nextRefreshAt: number;
+  attempt: number;
+  lastOutcome: RefreshNowOutcome | 'none';
+}
+
+export function refreshDelayMs(attempt: number): number {
+  const doublings = Math.max(0, attempt - 1);
+  return Math.min(REFRESH_DELAY_FIRST_MS * 2 ** doublings, REFRESH_DELAY_MAX_MS);
+}
+
+const idleClock = (): ProviderRefreshClock => ({
+  nextRefreshAt: 0,
+  attempt: 0,
+  lastOutcome: 'none',
+});
+
 export interface OAuthRefreshSchedulerOptions {
   intervalMs?: number;
   refreshWindowMs?: number;
@@ -24,7 +44,7 @@ export interface OAuthRefreshSchedulerOptions {
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeTick: Promise<unknown> | null = null;
-  private readonly retryCounts = new Map<string, number>();
+  private readonly clocks = new Map<string, ProviderRefreshClock>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
   private readonly maxRetries: number;
@@ -82,11 +102,23 @@ export class OAuthRefreshScheduler {
     });
   }
 
+  clock(providerId: string): ProviderRefreshClock {
+    return this.clocks.get(providerId) ?? idleClock();
+  }
+
+  resetClock(providerId: string): void {
+    this.clocks.delete(providerId);
+  }
+
   refreshNow(providerId: string): Promise<RefreshNowOutcome> {
     const provider = this.registry.get(providerId);
-    return provider
-      ? this.inTurn(() => this.refreshProviderIfNeeded(provider, true))
-      : Promise.resolve('skipped');
+    if (!provider) return Promise.resolve('skipped');
+    return this.inTurn(async () => {
+      const clock = this.clock(providerId);
+      if (this.now() < clock.nextRefreshAt && clock.lastOutcome !== 'none')
+        return clock.lastOutcome;
+      return await this.refreshProviderIfNeeded(provider, true);
+    });
   }
 
   private async runTick(): Promise<void> {
@@ -110,10 +142,10 @@ export class OAuthRefreshScheduler {
       refreshWindowMs: force ? Number.POSITIVE_INFINITY : this.refreshWindowMs,
       failureKind: getProviderFailure(provider.id)?.errorKind,
     });
-    if ('reason' in due) return 'skipped';
+    if ('reason' in due && !force) return 'skipped';
 
-    const retryKey = this.retryKey(provider.id, credentials);
-    if (!force && (this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return 'skipped';
+    const clock = this.clock(provider.id);
+    if (!force && clock.attempt >= this.maxRetries) return 'skipped';
 
     let outcome: TokenRefreshOutcome;
     try {
@@ -123,21 +155,29 @@ export class OAuthRefreshScheduler {
     }
 
     if (outcome === 'refreshed') {
-      this.retryCounts.delete(retryKey);
-      if (due.value === 'credential_failure') clearProviderFailure(provider.id);
+      if ('value' in due && due.value === 'credential_failure') clearProviderFailure(provider.id);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
       if (nextCredentials) {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
       }
+      this.clocks.set(provider.id, {
+        nextRefreshAt: this.now() + REFRESH_DELAY_FIRST_MS,
+        attempt: 0,
+        lastOutcome: 'refreshed',
+      });
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
       this.onProviderChanged?.(provider.id);
       return 'refreshed';
     }
 
-    const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
-    this.retryCounts.set(retryKey, retries);
-    if (retries >= this.maxRetries) {
+    const attempt = clock.attempt + 1;
+    this.clocks.set(provider.id, {
+      nextRefreshAt: this.now() + refreshDelayMs(attempt),
+      attempt,
+      lastOutcome: outcome,
+    });
+    if (attempt >= this.maxRetries) {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
       this.onProviderChanged?.(provider.id);
     }
@@ -169,10 +209,5 @@ export class OAuthRefreshScheduler {
   ): Promise<ProviderCredentials> {
     if (!provider.getCredentials) return fallback;
     return (await provider.getCredentials()) ?? fallback;
-  }
-
-  private retryKey(providerId: string, credentials: ProviderCredentials): string {
-    if (credentials.type !== 'oauth') return providerId;
-    return `${providerId}:${credentials.refreshToken ?? credentials.accessToken ?? ''}:${credentials.expiresAt ?? ''}`;
   }
 }

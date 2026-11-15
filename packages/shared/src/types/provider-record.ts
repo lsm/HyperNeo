@@ -12,6 +12,7 @@ export interface ProviderRecord {
   customEndpointConfigJson?: string;
   healthStatus: 'unknown' | 'healthy' | 'unhealthy';
   lastHealthCheckAt?: number;
+  needsLoginAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -40,4 +41,5 @@ export interface UpdateProviderParams {
   customEndpointConfigJson?: string;
   healthStatus?: 'unknown' | 'healthy' | 'unhealthy';
   lastHealthCheckAt?: number;
+  needsLoginAt?: number | null;
 }

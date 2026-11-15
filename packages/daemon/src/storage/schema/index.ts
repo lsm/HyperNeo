@@ -336,6 +336,7 @@ export function createTables(db: BunDatabase): void {
         custom_endpoint_config_json TEXT,
         health_status TEXT NOT NULL DEFAULT 'unknown' CHECK(health_status IN ('unknown', 'healthy', 'unhealthy')),
         last_health_check_at INTEGER,
+        needs_login_at INTEGER DEFAULT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )

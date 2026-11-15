@@ -9,9 +9,10 @@ export async function verifyClaudeLogin(page, run) {
     for (const [surface, path] of [['neo', '/neo'], ['session', `/session/${sessionId}`]]) {
       await page.goto(`http://127.0.0.1:${port}${path}`);
       const notice = page.getByText('Claude login failed — sign in again', { exact: true }).first();
-      await notice.waitFor();
-      if (surface === 'neo') await page.getByRole('status').filter({ hasText: 'needs you' }).waitFor();
-      await notice.scrollIntoViewIfNeeded();
+      const banner = page.getByText(/Rate limit reached\./, { exact: false }).first();
+      assert.equal(await notice.count(), 0, 'a login hold must not read as a failed login');
+      await banner.waitFor();
+      await banner.scrollIntoViewIfNeeded();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
       await page.screenshot({ path: `${run}/evidence/${surface}-${width}.png`, animations: 'disabled' });
       if (surface === 'session' && historicalResult) {
@@ -22,9 +23,8 @@ export async function verifyClaudeLogin(page, run) {
         assert(await failure.evaluate(el => el.className.includes('text-danger')));
         await page.screenshot({ path: `${run}/evidence/session-result-error-${width}.png`, animations: 'disabled' });
       }
-
     }
   }
-  await writeFile(`${run}/evidence/browser.json`, JSON.stringify({ passed: true, widths: [1280,390], notice: 'Claude login failed — sign in again', neoStatus: 'needs you' },null,2));
+  await writeFile(`${run}/evidence/browser.json`, JSON.stringify({ passed: true, widths: [1280,390], hold: 'Rate limit reached banner', loginNotice: false },null,2));
   await writeFile(`${run}/browser-done`, 'done');
 }

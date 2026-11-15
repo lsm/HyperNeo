@@ -1,4 +1,4 @@
-# A revoked Claude login recovers once or visibly needs the human
+# A rejected Claude login holds the turn until the login is saved
 
 Use **In-process RPC proofs** in ../SKILL.md. Preflight ports 8000/8001.
 Build packages/web first. Run each case with a different fresh RUN/home:
@@ -16,40 +16,42 @@ instrumentation records PIDs only; no environment values or headers are recorded
 All resources close in finally, including the optional web server.
 
 The fake endpoint rejects the first SDK process with 401 authentication_error /
-OAuth token revoked. It accepts the replacement process with the ordinary mock
-200 response. This models credentials cached inside the stale SDK; Claude's own
-probe/retry requests can make multiple HTTP calls per process. Assert exactly
-two subprocesses, replayed original prompt, successful result and no terminal
-notice. Before the fix, one SDK process repeatedly receives 401 and the proof
-fails. `observed.json` records requests, response statuses/process number, PIDs
-and synthetic SDK messages. Credentials and file contents are never inspected.
+OAuth token revoked. The turn is not charged to the failure episode and does not
+latch "stopped": the daemon runs the login path, records `needs_login_at` on the
+provider, and holds the turn in `rate_limit_cooldown` with `reason: 'login'`.
+An API-key provider cannot refresh, so the hold asks for sign-in instead of
+restarting. `recover` then writes a credential over RPC (`providers.update` with
+an apiKey) and asserts the write clears `needs_login_at`, wakes the hold, starts
+the second SDK process and lets the original prompt finish with a successful
+result. `observed.json` records requests, response statuses, PIDs, the hold, the
+sign-in flag and synthetic SDK messages. Credentials and file contents are never
+inspected.
 
-For persistent failure run with `fail --serve`. Both SDK processes get 401; after
-the second rejection the exact user notice must be emitted and no third process
-starts. The helper writes its ephemeral UI port and sessionId to observed.json,
-then waits up to five minutes for browser-done. The web listener serves the actual
-production build, using resolveNeoEntry for /neo and real daemon WebSocket handlers.
-It does not substitute frontend responses or inject an error event.
+`fail` stops before the credential write: after the 401 the same hold must
+appear, no second subprocess may start, and no terminal notice may be emitted.
 
-In persistent headless Playwright import `claude-login-web.mjs` and call
-`verifyClaudeLogin(page, run)`. The browser checks the actual /neo and /session
-at 1280 and 390, including reload, the login notice, Neo's needs you status and
-no horizontal overflow. Inspect all four screenshots independently. The helper
-writes browser.json and browser-done, allowing daemon/mock/server cleanup.
+Before this behavior, one SDK process repeatedly received 401 and the query was
+charged until the third failure latched the episode and cleared the queue.
 
-Use the existing SDK result/handler contracts for subtype success + is_error:
-error styling, no success turn trigger and no errorClear. Retry routing contracts
-also protect interruption and other-provider isolation. No actual OAuth rotation,
-credential refresh, external login or deployed-daemon mutation is claimed; the
-SDK owns authentication discovery in its newly started process.
+`--serve` additionally serves the production build on an ephemeral port. In
+headless Playwright import `claude-login-web.mjs` and call
+`verifyClaudeLogin(page, run)`. Without `--historical-result` it checks that the
+login hold does not read as a failed login on /neo and /session at 1280 and 390,
+with no horizontal overflow. The bottom banner still reads "Rate limit reached"
+until the model-hold line lands; the helper asserts the banner, not the wording.
+Inspect all screenshots independently. The helper writes browser.json and
+browser-done, allowing daemon/mock/server cleanup.
 
 ## Historical result text regression
 
-Add `--historical-result` to `fail --serve` to save one synthetic historical
-SDK payload with subtype success and is_error true in this run’s DB. It is
-separate from the real HTTP failure above. The browser helper opens Result
-details and requires its synthetic GLM rejection text in the red Errors section
-at both widths; inspect session-result-error-1280/390.png. The GLM query contract
-also registers a synthetic available GLM provider, makes SDK option construction
-reject with 401, and checks one attempt with the provider API error notice rather
-than a Claude login retry or remediation. No GLM or Claude credential is used.
+Add `--historical-result` with `--serve` to save one synthetic historical SDK
+payload with subtype success and is_error true in this run’s DB. It is separate
+from the real HTTP failure above. The browser helper then requires the
+`Rate limit reached.` hold banner with no `Claude login failed — sign in again`
+notice on the Neo page and the session page, opens
+Result details and requires its synthetic GLM rejection text in the red Errors
+section at both widths; inspect session-result-error-1280/390.png. The GLM query
+contract also registers a synthetic available GLM provider, makes SDK option
+construction reject with 401, and checks one attempt with the provider API error
+notice rather than a Claude login retry or remediation. No GLM or Claude
+credential is used.

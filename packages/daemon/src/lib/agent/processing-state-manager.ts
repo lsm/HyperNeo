@@ -3,6 +3,7 @@ import type {
   MessageContent,
   PendingUserQuestion,
   ProcessingWaiting,
+  RateLimitHoldReason,
 } from '@hyperneo/shared';
 import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
 import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
@@ -348,7 +349,7 @@ export class ProcessingStateManager {
       retryAt: number;
       messageId?: string;
       manualRetry?: boolean;
-      reason?: 'network';
+      reason?: RateLimitHoldReason;
       heldPrompt?: { uuid: string; content: string | MessageContent[] };
     },
     ownerGeneration?: number

@@ -18,6 +18,7 @@ interface ProviderRow {
   custom_endpoint_config_json: string | null;
   health_status: string;
   last_health_check_at: number | null;
+  needs_login_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -37,6 +38,7 @@ function rowToRecord(row: ProviderRow): ProviderRecord {
     customEndpointConfigJson: row.custom_endpoint_config_json ?? undefined,
     healthStatus: row.health_status as 'unknown' | 'healthy' | 'unhealthy',
     lastHealthCheckAt: row.last_health_check_at ?? undefined,
+    needsLoginAt: row.needs_login_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -97,6 +99,16 @@ export class ProviderRepository {
       | ProviderRow
       | undefined;
     return row ? rowToRecord(row) : null;
+  }
+
+  setNeedsLogin(providerId: string, at: number | null): void {
+    const existing = this.getProviderByProviderId(providerId) ?? this.getProvider(providerId);
+    if (!existing) return;
+    this.updateProvider(existing.id, { needsLoginAt: at });
+  }
+
+  getNeedsLoginAt(providerId: string): number | null {
+    return this.getProviderByProviderId(providerId)?.needsLoginAt ?? null;
   }
 
   isProviderIdTaken(providerId: string, excludeId?: string): boolean {
@@ -202,6 +214,10 @@ export class ProviderRepository {
     if (params.lastHealthCheckAt !== undefined) {
       fields.push('last_health_check_at = ?');
       values.push(params.lastHealthCheckAt);
+    }
+    if ('needsLoginAt' in params) {
+      fields.push('needs_login_at = ?');
+      values.push(params.needsLoginAt ?? null);
     }
 
     if (fields.length > 0) {
