@@ -17,10 +17,14 @@ export function openHumanCard(
 }
 
 export function applyOrKeepCard(text: string, apply: string, keep: string): NeoQuestionDraft {
+  return choiceCard(text, [apply, keep]);
+}
+
+export function choiceCard(text: string, options: string[]): NeoQuestionDraft {
   return {
     text,
     kind: 'choice',
-    options: [apply, keep],
+    options,
     multiple: false,
     noLabel: null,
     yesLabel: null,
