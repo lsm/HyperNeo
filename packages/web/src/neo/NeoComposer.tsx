@@ -18,7 +18,6 @@ import { neoWaitingLine } from './NeoBusyRow.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { type NeoPreference, NeoPreferences } from './NeoPreferences.tsx';
 import { NeoQuoteBar } from './NeoQuoteBar.tsx';
-import { NeoRealtimeVoice } from './NeoRealtimeVoice.tsx';
 import { NeoVoice, type VoicePhase } from './NeoVoice.tsx';
 import {
   attachmentDocuments,
@@ -589,12 +588,6 @@ export function NeoComposer({
               onSendHandle={registerFinishVoice}
               onError={onError}
               onPhase={setVoicePhase}
-            />
-            <NeoRealtimeVoice
-              collapsed={collapsed && !voiceBusy}
-              sessionId={sessionId}
-              connected={connected}
-              onError={onError}
             />
           </div>
           {showStop && (
