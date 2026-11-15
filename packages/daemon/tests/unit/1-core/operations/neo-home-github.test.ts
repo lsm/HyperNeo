@@ -310,7 +310,6 @@ describe('Neo private GitHub home proposal', () => {
           multiple: false,
           noLabel: 'No',
           yesLabel: 'Yes',
-          startTodos: null,
         },
         Date.now()
       );

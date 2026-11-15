@@ -40,7 +40,7 @@ try {
   await new Promise(done=>setTimeout(done,5));
   if(priorQuestion&&kind==='needs_human') {
    const source={...ref,name:null,label:'Synthetic worker',provider:'hyperneo',link:null};
-   const q=service.todos.askQuestion('prior-worker-question',ask.id,{text:'Prior synthetic approval',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,todoId:id,sourceSession:source},at);
+   const q=service.todos.askQuestion('prior-worker-question',ask.id,{text:'Prior synthetic approval',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,todoId:id,sourceSession:source},at);
    service.todos.questionAnswers.bind(q.id,id,source);
   }
   await app.db.saveSDKMessage(worker,{type:'result',subtype:'success',uuid:crypto.randomUUID(),parent_tool_use_id:null,is_error:false,result:message,duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{input_tokens:1,output_tokens:1},modelUsage:{},permission_denials:[]} as SDKMessage);
@@ -64,7 +64,7 @@ try {
   await service.refreshDriverWork();
   report.afterDeadline={todo:service.todos.getTodo('todo-needs_human'),nudge:service.todoSessions.readNudge('todo-needs_human'),questions:service.todos.listQuestions('needs_human')};
   assert.equal(service.todos.listQuestions('needs_human').filter(q=>q.state==='open').length,priorQuestion?1:0);
-  humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')??service.todos.askQuestion('neo-worker-question','needs_human',{text:'Approve the synthetic work?',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,todoId:'todo-needs_human',document:null},Date.now());
+  humanQuestion=service.todos.listQuestions('needs_human').find(q=>q.state==='open')??service.todos.askQuestion('neo-worker-question','needs_human',{text:'Approve the synthetic work?',kind:'reply',options:null,multiple:false,noLabel:null,yesLabel:null,todoId:'todo-needs_human',document:null},Date.now());
   if(!priorQuestion) service.todos.questionAnswers.bind(humanQuestion.id,'todo-needs_human',{...service.todoSessions.readRef('todo-needs_human')!,name:null,label:'Synthetic worker',provider:'hyperneo',link:null});
   app.sessionManager.setOperationRegistryProvider(()=>refused);
   report.answer=await rpc('neo.question.answer',{questionId:humanQuestion.id,answer:'Synthetic approval granted'});

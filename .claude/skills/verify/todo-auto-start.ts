@@ -220,7 +220,7 @@ try {
     };
     const reply = (askId: string) => {
       const id = crypto.randomUUID();
-      store.askQuestion(id, askId, { text: 'Which release?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null }, Date.now());
+      store.askQuestion(id, askId, { text: 'Which release?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now());
       return id;
     };
     const opened = await call('neo.ask.open', { title: 'Chain', request: 'Run the plan in order.', todos: [

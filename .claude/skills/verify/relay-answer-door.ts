@@ -23,7 +23,7 @@ try {
   assert(existsSync(socket), 'the session door must be listening');
   const store = new NeoAskTodoRepository(app.db.getDatabase());
   store.openAsk({ id: 'synthetic-ask', sessionId: 'neo:synthetic-relay', projectId: null, originMessageId: null, title: 'Synthetic card', request: 'Choose a result', createdAt: 1 });
-  const card = (id: string) => store.askQuestion(id, 'synthetic-ask', { text: 'Which one?', kind: 'choice', options: ['Alpha', 'Beta'], multiple: false, noLabel: null, yesLabel: null, startTodos: null }, 1);
+  const card = (id: string) => store.askQuestion(id, 'synthetic-ask', { text: 'Which one?', kind: 'choice', options: ['Alpha', 'Beta'], multiple: false, noLabel: null, yesLabel: null }, 1);
   card('card-allowed');
   card('card-unlisted');
   const configured = await invokeOperation(app.sessionManager.getOperationRegistry(), 'neo.relaySenders.set', { relaySenders: [{ sender: 'synthetic-relay', name: 'Synthetic relay' }] }, { source: 'rpc', principal: 'local' });

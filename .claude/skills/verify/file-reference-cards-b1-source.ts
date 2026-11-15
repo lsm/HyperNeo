@@ -27,7 +27,7 @@ try {
   const db=app.db.getDatabase();
   const store=new NeoAskTodoRepository(db);
   store.openAsk({id:'ask',projectId:null,sessionId:'neo',originMessageId:'original',title:'Synthetic',request:'Synthetic',createdAt:1});
-  const draft={text:'Read `report.md`.',document:'Full report: `detail.md`',kind:'reply' as const,options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null};
+  const draft={text:'Read `report.md`.',document:'Full report: `detail.md`',kind:'reply' as const,options:null,multiple:false,noLabel:null,yesLabel:null};
   const owner={adapter:'hyperneo',id:'worker',name:'metadata-only.md',label:'metadata-only.md',provider:'synthetic',link:null};
   store.askQuestion('worker-question','ask',{...draft,sourceSession:owner},1);
   store.askQuestion('root-question','ask',draft,1);

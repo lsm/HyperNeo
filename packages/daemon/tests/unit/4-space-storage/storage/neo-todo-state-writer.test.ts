@@ -60,7 +60,6 @@ function fixture(state: NeoTodo['state'] = 'doing', humanBlocked = false, askClo
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
     },
     3
   );
@@ -249,7 +248,6 @@ test('a needs-human block does not outlive its retired card', async () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         confirm: null,
         document: null,
         replyTo: null,
@@ -297,7 +295,6 @@ test('a needs-human block waits out an undelivered answer', async () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         confirm: null,
         document: null,
         replyTo: null,

@@ -321,7 +321,6 @@ test('two simultaneous sweeps retire and notify once, while another open card ke
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );

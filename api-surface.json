@@ -21336,19 +21336,6 @@
                             ],
                             "type": "object"
                           },
-                          "startTodos": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "state": {
                             "enum": [
                               "open",
@@ -21413,7 +21400,6 @@
                           "multiple",
                           "noLabel",
                           "yesLabel",
-                          "startTodos",
                           "todos",
                           "state",
                           "answer",
@@ -23874,19 +23860,6 @@
                           ],
                           "type": "object"
                         },
-                        "startTodos": {
-                          "anyOf": [
-                            {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
                         "state": {
                           "enum": [
                             "open",
@@ -23951,7 +23924,6 @@
                         "multiple",
                         "noLabel",
                         "yesLabel",
-                        "startTodos",
                         "todos",
                         "state",
                         "answer",
@@ -30777,19 +30749,6 @@
                             ],
                             "type": "object"
                           },
-                          "startTodos": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "state": {
                             "enum": [
                               "open",
@@ -30854,7 +30813,6 @@
                           "multiple",
                           "noLabel",
                           "yesLabel",
-                          "startTodos",
                           "todos",
                           "state",
                           "answer",
@@ -34318,19 +34276,6 @@
                     ],
                     "type": "object"
                   },
-                  "startTodos": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "state": {
                     "enum": [
                       "open",
@@ -34370,7 +34315,6 @@
                   "multiple",
                   "noLabel",
                   "yesLabel",
-                  "startTodos",
                   "todos",
                   "state",
                   "answer",
@@ -35295,19 +35239,6 @@
                     ],
                     "type": "object"
                   },
-                  "startTodos": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "state": {
                     "enum": [
                       "open",
@@ -35347,7 +35278,6 @@
                   "multiple",
                   "noLabel",
                   "yesLabel",
-                  "startTodos",
                   "todos",
                   "state",
                   "answer",
@@ -36289,19 +36219,6 @@
                     ],
                     "type": "object"
                   },
-                  "startTodos": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "state": {
                     "enum": [
                       "open",
@@ -36341,7 +36258,6 @@
                   "multiple",
                   "noLabel",
                   "yesLabel",
-                  "startTodos",
                   "todos",
                   "state",
                   "answer",
@@ -38528,19 +38444,6 @@
                             ],
                             "type": "object"
                           },
-                          "startTodos": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "state": {
                             "enum": [
                               "open",
@@ -38605,7 +38508,6 @@
                           "multiple",
                           "noLabel",
                           "yesLabel",
-                          "startTodos",
                           "todos",
                           "state",
                           "answer",

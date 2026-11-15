@@ -40,7 +40,7 @@ type Receipt={ok:false;reason:string}|{ok:true;todo?:NeoTodo;todos:NeoTodo[];rec
 const input=(title:string)=>({askId:'ask',title,check:{pack:'core',kind:'evidence',params:{path:'/synthetic/result'}},after:[],priority:'high'});
 const work=(title:string,after:string[])=>({...input(title),instruction:'Do the complete work',target:{verb:'start',adapter:'hyperneo'},after});
 const add=(args:ReturnType<typeof input>)=>hub.request<Receipt>('operation.invoke',{name:'neo.todo.add',input:args});
-const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:{startTodos?:string[]}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
+const visible=()=>hub.request<{ok:boolean;entry:{ask:NeoAsk;todos:NeoTodo[];questions:{todos:string[]}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'ask'}});
 const replay=app.db.gateway.onChanges,runCommand=app.db.gateway.run.bind(app.db.gateway);let held=false,notices=0,commands=0,lockNext=false,reached=()=>{},failNext=false;
 const tables:string[]=[];app.db.gateway.onChanges=events=>{tables.push(...events.map(event=>event.table).filter(table=>/^(neo_asks|neo_todos|neo_questions|neo_todo_sessions)$/.test(table)));replay(events);};
 app.db.gateway.run=(async(op,args)=>{if(op.name==='neo.todoAddWrites'){commands++;if(failNext){failNext=false;throw new Error('synthetic writer failure');}if(lockNext){lockNext=false;db.exec('BEGIN IMMEDIATE');held=true;reached();}}return runCommand(op,args);}) as typeof app.db.gateway.run;

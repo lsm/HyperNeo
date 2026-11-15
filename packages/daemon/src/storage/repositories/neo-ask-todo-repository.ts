@@ -152,7 +152,6 @@ export type NeoQuestionDraft = Pick<
   | 'multiple'
   | 'noLabel'
   | 'yesLabel'
-  | 'startTodos'
   | 'confirm'
   | 'document'
   | 'replyTo'
@@ -163,7 +162,7 @@ export type NeoQuestionDraft = Pick<
   Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
-  yes_label AS yesLabel, start_todos AS startTodos, todos, state, answer, answered_by AS answeredBy,
+  yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, created_at AS createdAt FROM neo_questions`;
 
@@ -172,7 +171,6 @@ type QuestionRow = Omit<
   | 'kind'
   | 'options'
   | 'multiple'
-  | 'startTodos'
   | 'todos'
   | 'answer'
   | 'confirm'
@@ -191,7 +189,6 @@ type QuestionRow = Omit<
   options: string | null;
   labels: string | null;
   multiple: number;
-  startTodos: string | null;
   todos: string;
   answer: string | null;
 };
@@ -228,7 +225,6 @@ const toQuestion = ({
     ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
     : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
   labels: parsed<string[]>(row.labels),
-  startTodos: parsed<string[]>(row.startTodos),
   todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
@@ -1019,7 +1015,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, labels, multiple, no_label, yes_label,
-           start_todos, todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -1031,7 +1027,6 @@ export class NeoAskTodoRepository {
         draft.multiple ? 1 : 0,
         draft.noLabel,
         draft.yesLabel,
-        draft.startTodos ? JSON.stringify(draft.startTodos) : null,
         JSON.stringify(
           draft.todos
             ? draft.todos
@@ -1199,16 +1194,9 @@ export class NeoAskTodoRepository {
   ): boolean {
     this.db
       .prepare(
-        'UPDATE neo_questions SET start_todos = ?, todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
+        'UPDATE neo_questions SET todos = ?, text = ?, state = ?, retired_reason = ? WHERE id = ?'
       )
-      .run(
-        question.startTodos && JSON.stringify(plan.kept),
-        JSON.stringify(plan.kept),
-        plan.text,
-        plan.state,
-        plan.retiredReason,
-        question.id
-      );
+      .run(JSON.stringify(plan.kept), plan.text, plan.state, plan.retiredReason, question.id);
     for (const todo of plan.released) this.writeTodo(todo, { state: 'todo' }, now);
     return true;
   }

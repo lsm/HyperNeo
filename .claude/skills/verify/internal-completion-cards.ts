@@ -71,7 +71,7 @@ try {
   mkdirSync(dirname(report), { recursive: true });
   writeFileSync(report, '# Travel report\n\nA report for the human.');
   const external = await add('Publish the report', { path: report });
-  store.askQuestion('synthetic-start', 'synthetic-ask', { text: 'Ready for these steps?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, todos: [internal.id, external.id] }, Date.now());
+  store.askQuestion('synthetic-start', 'synthetic-ask', { text: 'Ready for these steps?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, todos: [internal.id, external.id] }, Date.now());
   socket = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { socket!.onopen = () => done(); socket!.onerror = () => fail(new Error('WebSocket failed')); });
   const card = await rpc<{ ok: boolean; entry: NeoAskEntry }>('neo.ask.read', { askId: 'synthetic-ask' });

@@ -126,7 +126,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );
@@ -230,7 +229,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       2
     );
@@ -352,7 +350,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todos: ['next'],
         cause: 'removed_prerequisite',
       },
@@ -375,7 +372,6 @@ describe('neo.message.send replyTo', () => {
           multiple,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
         },
         1
       );

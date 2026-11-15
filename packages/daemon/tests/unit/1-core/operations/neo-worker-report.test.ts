@@ -542,7 +542,6 @@ test('an old open card is reused and a failed wake rolls the new card and hold b
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );

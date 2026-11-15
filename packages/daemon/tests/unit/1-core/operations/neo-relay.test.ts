@@ -60,7 +60,6 @@ function card(patch: Partial<NeoQuestion> = {}) {
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       ...patch,
     },
     1

@@ -50,7 +50,7 @@ const reports = (id: string) => entries().filter((entry) => {
 });
 const question = (askId: string, todoId: string) => service.todos.askQuestion(crypto.randomUUID(), askId,
   { text: 'Choose the next action', kind: 'reply', options: null, multiple: false,
-    noLabel: null, yesLabel: null, startTodos: null, todoId }, Date.now());
+    noLabel: null, yesLabel: null, todoId }, Date.now());
 const workerCard = async (todoId: string, ref: { adapter: string; id: string }) => {
   const result = await service.storeWorkerQuestion(ref, { todoId, kind: 'blocked', title: 'Approval required',
     options: ['Continue', 'Stop'], language: 'en', report: 'Approval required' });

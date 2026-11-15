@@ -97,7 +97,7 @@ try {
   const input = { to: root, from: 'session:synthetic-worker', kind: 'blocked', text: 'Original worker blocker', question: { todoId: todo.id, title: 'Choose a destination', options: ['Staging', 'Production'], language: 'en' } };
   if (process.argv[3] === 'old') store.askQuestion('old-card', todo.askId, {
     todoId: todo.id, text: input.question.title, document: input.text, kind: 'choice', options: input.question.options,
-    multiple: false, noLabel: null, yesLabel: null, startTodos: null,
+    multiple: false, noLabel: null, yesLabel: null,
     sourceSession: { ...ref, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: null },
   }, 1);
   let first = await workerSend(input);

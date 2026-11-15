@@ -48,7 +48,6 @@ beforeEach(async () => {
       multiple: false,
       noLabel: 'No',
       yesLabel: 'Yes',
-      startTodos: null,
       confirm: null,
       document: null,
       replyTo: [],
@@ -376,7 +375,6 @@ test.each([
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       ...(scenario.includes('listed')
         ? { todos: [scenario === 'other-listed' ? 'busy' : 'covered'] }
         : {}),

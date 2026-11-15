@@ -54,7 +54,7 @@ try {
   for (const id of ['stalled', 'settled', 'question']) {
     const ask = service!.todos.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title: id, request: 'Synthetic work', createdAt: at });
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
-    if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
+    if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);

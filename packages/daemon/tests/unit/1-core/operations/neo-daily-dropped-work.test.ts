@@ -113,7 +113,6 @@ test('one daily message separates core counts from enabled pack counts and keeps
       multiple: false,
       noLabel: 'No',
       yesLabel: 'Yes',
-      startTodos: null,
       confirm: null,
       document: null,
       replyTo: [],

@@ -47,7 +47,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
     return {kind:'completed',value:{ok:true,value:{delivered:true,ref:(input.ref ?? {adapter:'hyperneo',id:'synthetic-worker'})}}};
   }
 });
-const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'reply',text:'Ready?',todoId,startTodos:null,options:null,multiple:false,yesLabel:null,noLabel:null},2);
+const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'reply',text:'Ready?',todoId,options:null,multiple:false,yesLabel:null,noLabel:null},2);
 const seed=(id:string,askId='ask')=>{
   store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [],title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});

@@ -35,16 +35,19 @@ INSERT INTO neo_questions (id, ask_id, text, kind, created_at) VALUES
   ('q-ask', 'ask-held', 'Which release?', 'reply', $NOW);
 INSERT INTO neo_questions (id, ask_id, text, kind, todo_id, created_at) VALUES
   ('q-one', 'ask-start', 'Is this the right step?', 'reply', 'waiting', $NOW);
+ALTER TABLE neo_questions ADD COLUMN start_todos TEXT;
 INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at) VALUES
   ('q-start', 'ask-start', 'Start this?', 'start', '[\"waiting\"]', $NOW);
 ALTER TABLE neo_questions DROP COLUMN todos;
-DELETE FROM migration_markers WHERE key = 'migration_502';"
+DELETE FROM migration_markers WHERE key IN ('migration_502', 'migration_513');"
 [ "$(sqlite3 -readonly "$DB" "SELECT count(*) FROM pragma_table_info('neo_questions') WHERE name = 'todos'")" = 0 ]
 echo "seeded legacy cards: no todos column, migration 502 marker removed"
 
 "$HERE/launch.sh" "$PORT" "$RUN"
 lists=$(sqlite3 -readonly "$DB" "SELECT id || '=' || todos FROM neo_questions WHERE id IN ('q-ask', 'q-one', 'q-start') ORDER BY id" | tr '\n' ' ')
 echo "after upgrade: $lists"
+[ "$(sqlite3 -readonly "$DB" "SELECT count(*) FROM pragma_table_info('neo_questions') WHERE name = 'start_todos'")" = 0 ]
+echo "the upgrade dropped start_todos after copying it into todos"
 [ "$lists" = 'q-ask=["held"] q-one=["waiting"] q-start=["waiting"] ' ]
 read=$(bun "$HERE/rpc.ts" neo.question.get '{"questionId":"q-ask"}' 2>&1 || true)
 echo "$read" | tr -d '\n ' | grep -q '"ok":true,"question":{"id":"q-ask".*"state":"open"'

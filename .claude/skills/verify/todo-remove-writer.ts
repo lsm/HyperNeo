@@ -62,7 +62,7 @@ const add = (id: string) => {
   todos.openAsk({ id, projectId: null, sessionId: root, originMessageId: null, title: id, request: 'Atomic finalization', createdAt: 1 });
   const todo = todos.addTodo(id, id, { approvedAt: 1, title: id, doneWhen: 'Observed outcome', check: null, instruction: 'Synthetic work', named: null }, 1);
   todos.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
-  todos.askQuestion(`${id}-start`, id, { text: 'Ready?', kind: 'reply', todoId: id, options: null, multiple: false, yesLabel: null, noLabel: null, startTodos: null }, 3);
+  todos.askQuestion(`${id}-start`, id, { text: 'Ready?', kind: 'reply', todoId: id, options: null, multiple: false, yesLabel: null, noLabel: null }, 3);
 };
 try {
   await app.spaceRuntimeService.ready();

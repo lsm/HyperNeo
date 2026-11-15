@@ -512,7 +512,6 @@ describe('goal-owned schedules', () => {
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       1
     );

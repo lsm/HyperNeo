@@ -87,7 +87,7 @@ try {
     }, Date.now());
     store.updateTodo(done, { state: 'done' }, Date.now());
   }
-  store.askQuestion("synthetic-choice", "a-api", { text: "Which synthetic option?", kind: "choice", options: ["Ship", "Wait"], multiple: false, noLabel: null, yesLabel: null, startTodos: null, confirm: null }, Date.now());
+  store.askQuestion("synthetic-choice", "a-api", { text: "Which synthetic option?", kind: "choice", options: ["Ship", "Wait"], multiple: false, noLabel: null, yesLabel: null, confirm: null }, Date.now());
   if (process.argv.includes('--manual')) {
     writeFileSync(process.argv[3], JSON.stringify({ port: front.port, run }));
     const deadline = Date.now() + 300000;

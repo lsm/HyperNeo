@@ -24,7 +24,6 @@ export function applyOrKeepCard(text: string, apply: string, keep: string): NeoQ
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
   };
 }
 

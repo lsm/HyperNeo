@@ -28,7 +28,7 @@ try{
  const store=new NeoAskTodoRepository(db),askId='all-items',now=Date.now();
  store.openAsk({id:askId,title:'Synthetic All items',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic history only',createdAt:now});
  const full='## A settled decision\n\n'+('Synthetic context with **important choices**. ').repeat(60)+'\n\n| Choice | Outcome |\n| --- | --- |\n| Keep | Ready |\n\n[Safe source](https://example.test/decision)\n\n**Final detail 9098**';
- const draft={kind:'reply' as const,text:full,options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,document:'Literal original versions'};
+ const draft={kind:'reply' as const,text:full,options:null,multiple:false,noLabel:null,yesLabel:null,document:'Literal original versions'};
  const answered=store.askQuestion('answered-long',askId,draft,now);store.answerQuestion(answered,'Keep the decision','chat',now+1);
  const retired=store.askQuestion('retired-long',askId,{...draft,text:full.replace('A settled decision','A retired decision')},now+2);store.retireQuestion(retired,'No longer needed',null,now+3);
  const short=store.askQuestion('answered-short',askId,{...draft,text:'**Brief question**',document:undefined},now+4);store.answerQuestion(short,'Brief answer','chat',now+5);

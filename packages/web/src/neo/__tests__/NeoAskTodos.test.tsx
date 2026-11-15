@@ -59,7 +59,6 @@ const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntr
   multiple: false,
   noLabel: null,
   yesLabel: null,
-  startTodos: null,
   todos: [],
   state: 'open',
   answer: null,

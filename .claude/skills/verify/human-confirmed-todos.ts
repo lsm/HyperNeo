@@ -78,7 +78,7 @@ try {
       check: { pack: 'core', kind: 'human_confirmed', params: { questionId } } }, 1);
     store.askQuestion(questionId, askId, { text: 'Approve synthetic work?', kind,
       options: kind === 'choice' ? ['Keep everything', 'Delete the approved synthetic leftovers'] : null,
-      multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, todoId: id }, 2);
+      multiple: false, noLabel: 'No', yesLabel: 'Yes', todoId: id }, 2);
     store.addTodo(next, askId, { approvedAt: 1, title: 'Run the next synthetic step', doneWhen: 'Synthetic output exists',
       instruction: 'Record a synthetic successor dispatch; delete nothing.', named: null,
       check: { pack: 'core', kind: 'evidence', params: { path: join(run, next) } } }, 3);

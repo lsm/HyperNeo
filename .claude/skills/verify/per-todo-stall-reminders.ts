@@ -67,7 +67,7 @@ try {
     service!.todos.addTodo(id, 'busy', { title: id, doneWhen: 'Observed', check: null, instruction: null, named: null }, start);
     service!.todos.commitState(id, id === 'stalled' ? { state: 'blocked', blockedBy: 'stalled', blockedReason: 'Synthetic stopped worker' } : { state: 'doing' }, start, { state: 'no_opinion' });
   }
-  service!.todos.askQuestion('question', 'busy', { text: 'Unrelated question', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, confirm: null, document: null, replyTo: [], todoId: 'doing', artifacts: [] }, start);
+  service!.todos.askQuestion('question', 'busy', { text: 'Unrelated question', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: 'doing', artifacts: [] }, start);
   clock += 2 * hour - 1;
   await refresh(); check('before two hours', 0);
   clock++;

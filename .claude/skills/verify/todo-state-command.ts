@@ -49,7 +49,7 @@ try {
   todos.openAsk({ id: 'state-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Atomic ordered state', request: 'Commit without dispatch', createdAt: 1 });
   for (const todoId of [id, 'next']) todos.addTodo(todoId, 'state-ask', { title: todoId, doneWhen: 'Observed', check: null, instruction: 'Continue synthetic work', named: null }, 1);
   prepare("UPDATE neo_todos SET state='doing', started_at=2, report=? WHERE id=?").run(reportText, id);
-  todos.askQuestion('stale-start', 'state-ask', { text: 'Ready for first?', kind: 'reply', todoId: id, options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null }, 3);
+  todos.askQuestion('stale-start', 'state-ask', { text: 'Ready for first?', kind: 'reply', todoId: id, options: null, multiple: false, noLabel: null, yesLabel: null }, 3);
   const mainQueries: string[] = [];
   db.prepare = ((sql: string) => {
     if (recording && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) mainQueries.push(sql);

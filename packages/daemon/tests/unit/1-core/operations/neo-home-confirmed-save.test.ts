@@ -86,7 +86,6 @@ const proposal = async (value = input, state = 'button') => {
         multiple: false,
         noLabel: 'Keep old',
         yesLabel: 'Use new',
-        startTodos: null,
         confirm,
       },
       Date.now()

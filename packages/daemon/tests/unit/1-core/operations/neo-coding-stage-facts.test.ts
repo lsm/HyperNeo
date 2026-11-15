@@ -282,7 +282,6 @@ describe('provenance preference answers', () => {
             multiple: false,
             noLabel: 'Keep current settings',
             yesLabel: 'Apply these settings',
-            startTodos: null,
           },
           1
         );
