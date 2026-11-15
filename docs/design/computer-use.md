@@ -14,14 +14,18 @@ A HyperNeo session already calls daemon operations in process: every session get
 
 ## Design
 
-1. **One daemon operation, `desktop.call {tool, args}`.** A HyperNeo session calls it through its existing `invoke` tool. The caller session comes from the operation's caller identity, never from the input.
-2. **One superpipe pipeline in the operation:**
-   - read facts: the caller's todo binding (`readDesktopTodos` / `desktopOptIn`: doing, approved, desktop control on), the host's `resolve` answer (app, action class), and whether the tool is in `tool-catalog.json`;
-   - `decideDesktopCall(facts)`: a pure function that returns `allow`, or one existing reason (`tool_not_allowed`, `target_unverified`, `target_mismatch`, `app_action_not_authorized`, ...);
-   - edge: on `allow`, call the host's new `dispatch`; otherwise return the refusal;
-   - edge: write one audit row (todo, session, tool, app, class, decision, reason, dispatched, time).
-3. **The host answers only the daemon process.** On each control connection the host reads the peer PID (tokio `peer_cred`, `LOCAL_PEEREPID` on macOS) and accepts only the daemon's PID. That is either the sidecar it spawned, or the `pid` in `runtime.json` it already reads to attach. Every other process gets `not_daemon`. No key, no prompt, no signing step, and it works with a launchd daemon.
-4. **The host's `dispatch` re-checks.** It sends input only for a target it resolved in that same connection, and only when that app and class have a stored grant. It writes one log line per dispatch.
+1. **One daemon operation, `desktop.call {tool, args}`, in-process callers only.** Its policy admits only `isAgentSessionCaller` (`source: 'mcp'` with a session and a role), which only the in-process operations server produces; RPC and every other source are refused before any host request. The caller session comes from that identity, never from the input.
+2. **One superpipe pipeline in the operation, daemon checks first:**
+   - read facts: the caller's todo binding (`readDesktopTodos` / `desktopOptIn`: doing, approved, desktop control on) and whether `tool` is in `tool-catalog.json`;
+   - `decideDesktopCall(facts)`: a pure function that returns `send` or a refusal (`desktop_not_enabled`, `tool_not_allowed`). The host is not contacted on a refusal, so no owner dialog can open for a call the daemon would refuse;
+   - edge: on `send`, one host `dispatch` request (below);
+   - edge: write one audit row from the host's reply (todo, session, tool, app, class, decision, reason, dispatched, time).
+3. **One host request, `dispatch {worker_id, tool, args}`.** The control socket keeps its one-request, one-response framing. `dispatch` does in that single request what `resolve` does today (verify the target app, classify the action, check the stored grant, open the dialog when there is none), and only when all pass sends the call on the private driver channel. The channel is the worker's existing `Channel` in the host's slot map, selected by `worker_id`, which the daemon sets to the caller session; there is no driver for a worker the daemon did not `start`, and then `dispatch` refuses with `driver_unavailable`. The reply carries the resolved app, class, decision, reason and whether input was sent. The host writes one log line per `dispatch`.
+4. **The host answers only the live daemon process.** On each control connection the host reads the peer PID (tokio `peer_cred`, `LOCAL_PEEREPID` on macOS) and accepts only:
+   - the sidecar it spawned, while it still holds that child unreaped (a PID cannot be reused before it is reaped); or
+   - for an attached daemon, the `pid` in `runtime.json`, read again on every connection, and only when that process started at or before the file's `startedAt` and at most 60 seconds earlier. A recycled PID starts later and is refused; a restarted daemon writes a new file.
+
+   Every other process gets `not_daemon`. No key, prompt or signing step.
 5. **The owner approves each app once,** through the existing dialog and grant store (`desktop_grants.rs`). Unchanged.
 
 ## Cut
@@ -46,5 +50,5 @@ A HyperNeo session already calls daemon operations in process: every session get
 
 Two PRs:
 
-1. Host: the peer-PID check on the control socket, and `dispatch`.
-2. Daemon: `desktop.call` as one pipeline with `decideDesktopCall`, plus the audit row.
+1. Host: the peer-PID check on the control socket, and `dispatch` (resolve, grant check and send in one request). It can be tested alone with a fixture driver and a fake peer.
+2. Daemon: `desktop.call` with its in-process admission, one pipeline with `decideDesktopCall`, and the audit row.
