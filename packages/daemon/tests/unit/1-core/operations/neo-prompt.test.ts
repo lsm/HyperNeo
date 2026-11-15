@@ -12,6 +12,7 @@ import {
   NEO_DELIVERABLE_CHAR_LIMIT,
   NEO_REPLY_CHAR_LIMIT,
   NEO_REPLY_LINE_LIMIT,
+  NEO_REPLY_WORD_LIMIT,
 } from '@hyperneo/shared/types/neo-publication';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -199,8 +200,14 @@ describe('root Neo system prompt', () => {
     const prompt = neoPrompt([]);
     const publish = neoToolDescription('neo.publication.publish');
     expect(publish).toContain(
-      `at most ${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines counting every line including blank ones`
+      `at most ${NEO_REPLY_WORD_LIMIT} words and ${NEO_REPLY_LINE_LIMIT} lines counting every line including blank ones`
     );
+    expect(publish).toContain('a short title line, then a few bullets');
+    expect(publish).toContain(
+      'any decision the human must make in text, with the key choice in bold'
+    );
+    expect(publish).not.toContain('one-sentence summary');
+    expect(publish).not.toContain(`${NEO_REPLY_CHAR_LIMIT} characters`);
     expect(publish).toContain(`at most ${NEO_DELIVERABLE_CHAR_LIMIT} characters`);
     for (const stale of [
       'a few bullets or a small comparison table',
