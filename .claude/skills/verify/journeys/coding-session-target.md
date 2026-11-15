@@ -25,3 +25,10 @@ a `backend` start target:
   target becomes that send;
 - the unreachable feature's slice stays a todo with its start target and a
   `session_unknown` wait reason, and nothing is dispatched.
+
+Last, it checks reservations that never got a session:
+
+- a feature whose owner failed without a session no longer makes the next
+  slice wait;
+- the pack's `workerTargetRefused` hook drops an unstarted todo's unbound
+  reservation, and leaves a started todo's reservation in place.

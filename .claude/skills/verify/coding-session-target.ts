@@ -94,7 +94,25 @@ try {
   assert(held.todo?.reason?.includes('session_unknown'));
   assert.deepEqual(held.target, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
   assert.equal(held.ref, null);
-  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target. Evidence: ${run}/evidence/session-target.json`);
+  const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
+  const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
+  for (const id of ['failed', 'refused'])
+    store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
+  const failed = ready('failed');
+  reserve('failed', failed.id);
+  db.prepare("UPDATE neo_todos SET state = 'failed' WHERE id = ?").run(failed.id);
+  const after = await decide('a sessionless failed owner no longer holds its feature', todo('failed'), { verb: 'start', adapter: 'hyperneo' });
+  assert(!('reason' in after), JSON.stringify(after));
+  assert(pack.workerTargetRefused, 'the coding pack declares workerTargetRefused');
+  const refused = ready('refused');
+  reserve('refused', refused.id);
+  await pack.workerTargetRefused(refused);
+  evidence.push({ surface: 'coding pack workerTargetRefused', label: 'a refused claim drops its unbound reservation', reserved: reserved('refused') });
+  assert.deepEqual(reserved('refused'), []);
+  reserve('refused', reused.todo!.id);
+  await pack.workerTargetRefused(reused.todo!);
+  assert.deepEqual(reserved('refused'), [{ todoId: reused.todo!.id }]);
+  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target; a sessionless failed owner and a refused claim's unbound reservation stop holding their feature, while a started todo keeps its reservation. Evidence: ${run}/evidence/session-target.json`);
 } finally {
   writeFileSync(join(run, 'evidence/session-target.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app.cleanup();
