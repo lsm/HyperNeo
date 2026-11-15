@@ -10,8 +10,9 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
+import { NEO_FRONT_REPLY_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
 
-const FRONT_REPLY_MAX_CHARS = 150;
+const FRONT_REPLY_MAX_CHARS = NEO_FRONT_REPLY_CHAR_LIMIT;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),

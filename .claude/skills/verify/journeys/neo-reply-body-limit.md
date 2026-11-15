@@ -29,5 +29,11 @@ A one-sentence summary with the long text in details and a three-line Markdown
 body are accepted, alongside the deliverable. The human reader shows exactly
 those three, in order, and the delivered deliverable is read back in full.
 
+The limit counts characters, not UTF-16 code units: 200 emoji measure 400 code
+units but exactly 200 characters, so that reply is accepted and read back in
+full, while 201 emoji and 201 plain characters are both refused. The numbers
+live once in the shared publication types, and the refusals and tool description
+are built from them.
+
 The front's own 150-character cap is unchanged and covered by the front-flow
 unit test, not by this daemon proof.
