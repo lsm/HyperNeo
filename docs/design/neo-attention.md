@@ -69,7 +69,7 @@ type Decision =
 - whether the human is the one who must act: `neoTodoAwaitsHuman`;
 - the latest turn report from the same worker.
 
-**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries stays as a failed row, and the 5-minute sweep re-enqueues failed admit jobs. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
+**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. `cleanup()` deletes dead rows only after its retention cutoff, which is far longer than the sweep interval. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
 
 **Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
 1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
@@ -80,7 +80,7 @@ type Decision =
    - A turn report superseded by a newer report from the same worker folds.
 4. `record and enqueue`: one gateway operation, in one transaction. It upserts `neo_attention_items` (revision, state, `told_at`, `told_count`, `next_at`) and writes the outbox row: on `wake`, a `mailbox` job (`enqueueMailboxEntry`, `lib/mailbox/handoff.ts`); on `digest`, a `neo_notes` hold (`NeoWakeQueueRepository.hold`). Actual delivery stays with the existing processors. It does not call `deliverForward`, whose enqueue is asynchronous and runs in its own gateway call (`service.ts` `enqueueDelivery`).
 
-Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`. The episode is the revision's sequence number. A retried job after a lost acknowledgement writes the same uuid, which the existing mailbox and hold de-duplication already refuse (`listActiveByPayload`, `enqueueUniquePending`). An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered at this step from the facts just read, so the stored content for a uuid never changes. A failed fact read writes nothing and fails the job, which retries.
+Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`. The episode is the revision's sequence number. A retried job after a lost acknowledgement writes the same uuid and must not enqueue twice. The hold side already refuses it (`NeoWakeQueueRepository.hold` matches on `messageUuid`). The mailbox side does not: `enqueueMailboxEntry` matches only on the random entry id, and only among active jobs. So a wake goes through the existing once path, `enqueueStage(..., once = true)` in `lib/mailbox/handoff.ts`, whose submission receipt is keyed on the recipient and `messageUuid` and survives the job's completion. An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered at this step from the facts just read, so the stored content for a uuid never changes. A failed fact read writes nothing and fails the job, which retries.
 
 **Pipeline `neo.attention.sweep`.** It runs on the existing 5-minute pack sweep (`pack-sweep.ts`):
 1. Raise the derived kinds that no producer pushes. Core: `ask.idle`. Packs: their `attention.scan(now)` output, such as `coding.pr_merged_outside_todo` and `coding.idle_with_open_pr`.
@@ -97,7 +97,7 @@ Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<ki
 | `subject_type`, `subject_id`, `kind` | primary key |
 | `pack` | null for core |
 | `revision` | last decided revision |
-| `state` | `open`, `told`, `waiting`, `retired` |
+| `state` | `shadow`, `open`, `told`, `waiting`, `retired`. A `shadow` row records a decision only and never counts as told. |
 | `told_at`, `told_count`, `next_at` | repetition clock |
 | `wait_until` | set by Neo's `wait` (below) |
 | `reason` | last drop/retire/wait reason |
