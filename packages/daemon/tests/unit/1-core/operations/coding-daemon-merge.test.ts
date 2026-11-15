@@ -158,3 +158,18 @@ describe('decideCodingDaemonMerge cross-model review for CI-only repositories', 
     ).toEqual({ kind: 'skip', reason: 'cross_model_review_required' });
   });
 });
+
+describe('decideCodingDaemonMerge cross-model review with human sign-off', () => {
+  test('human sign-off still wins over a missing cross-model review', () => {
+    const authored = { ...facts, body: 'Agent: claude-opus-5-5 (effort: medium) via Claude' };
+    expect(
+      decideCodingDaemonMerge(authored, { ...policy, mergePolicy: 'human', crossModelReview: true })
+    ).toEqual({ kind: 'needs_human_signoff' });
+    expect(
+      decideCodingDaemonMerge(
+        { ...authored, labels: ['human-merge'] },
+        { ...policy, humanSignoff: ['label:human-merge'], crossModelReview: true }
+      )
+    ).toEqual({ kind: 'needs_human_signoff' });
+  });
+});

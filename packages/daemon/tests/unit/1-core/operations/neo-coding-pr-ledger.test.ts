@@ -928,3 +928,49 @@ describe('planCodingLedgerRead cross-model review for CI-only repositories', () 
     expect(state([review])).toBe('approved_green');
   });
 });
+
+describe('reconcileCodingPrLedger cross-model review on a GitHub Enterprise host', () => {
+  test('a review recorded under the deployment host clears the hold', async () => {
+    const { db, ledger } = setup();
+    const previous = process.env.GH_HOST;
+    process.env.GH_HOST = 'ghe.example.test';
+    try {
+      for (const [key, value] of Object.entries({
+        mergePolicy: 'review_bot',
+        reviewBot: 'bot',
+        crossModelReview: true,
+      }))
+        db.prepare(
+          `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+        ).run(key, JSON.stringify(value));
+      const pr = node(1, {
+        body: 'Agent: claude-opus-5-5 (effort: medium) via Claude',
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+        },
+      });
+      const read = async () => response([pr]);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+      expect(ledger.list()[0].state).toBe('waiting_cross_review');
+      const url = 'https://ghe.example.test/lsm/hyperneo/pull/1';
+      ledger.stageFacts.observeHead(url, 'h1', 150);
+      expect(
+        ledger.stageFacts.record({
+          url,
+          head: 'h1',
+          stage: 'review',
+          actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+          verdict: 'pass',
+          acceptanceContract: 'contract',
+          evidence: ['ran it'],
+        })
+      ).toBe(true);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 200);
+      expect(ledger.list()[0].state).toBe('approved_green');
+    } finally {
+      if (previous === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = previous;
+      db.close();
+    }
+  });
+});

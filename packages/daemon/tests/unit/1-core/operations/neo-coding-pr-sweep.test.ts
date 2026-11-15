@@ -231,3 +231,21 @@ describe('sweepCodingPrs cross-model review', () => {
     db.close();
   });
 });
+
+describe('sweepCodingPrs cross-model review without an owner', () => {
+  test('an ownerless PR waiting for a cross-model review still wakes Neo once', async () => {
+    const { insert, told, woken, at, db } = setup();
+    insert(10, 'waiting_cross_review', null);
+    await at(20);
+    expect(told).toEqual([]);
+    expect(woken).toEqual([
+      {
+        key: 'neo-pr-sweep:lsm/hyperneo#10:abc1234def:waiting_cross_review:1',
+        text: expect.stringContaining('different model'),
+      },
+    ]);
+    await at(60);
+    expect(woken).toHaveLength(1);
+    db.close();
+  });
+});
