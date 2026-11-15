@@ -15,9 +15,8 @@ static LOGGER: FixtureLogger = FixtureLogger;
 
 fn main() {
     std::thread::spawn(|| {
-        let served = std::panic::catch_unwind(|| {
-            tokio::runtime::Runtime::new().unwrap().block_on(serve())
-        });
+        let served =
+            std::panic::catch_unwind(|| tokio::runtime::Runtime::new().unwrap().block_on(serve()));
         std::process::exit(if served.is_ok() { 0 } else { 101 });
     });
     core_foundation::runloop::CFRunLoop::run_current();
@@ -25,7 +24,7 @@ fn main() {
 
 async fn serve() {
     log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Warn);
+    log::set_max_level(log::LevelFilter::Info);
     let args: Vec<_> = std::env::args().collect();
     let mode = args.get(4).map(String::as_str);
     let base = if mode == Some("missing-data") {
@@ -42,7 +41,8 @@ async fn serve() {
     if mode == Some("accept-error") {
         desktop_drivers::inject_accept_failure();
     }
-    let control = desktop_drivers::Control::setup(base, binary, args[3].clone()).await;
+    let control =
+        desktop_drivers::Control::setup(base, binary, args[3].clone(), Default::default()).await;
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");

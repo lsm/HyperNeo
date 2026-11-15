@@ -56,7 +56,7 @@ pub(super) fn class(tool: &str) -> Option<&'static str> {
     })
 }
 
-fn started_at(pid: i32) -> Option<(u64, u64)> {
+pub(super) fn started_at(pid: i32) -> Option<(u64, u64)> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as i32;
     let read = unsafe {

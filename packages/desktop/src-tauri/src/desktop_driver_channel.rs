@@ -19,6 +19,7 @@ pub(super) struct Channel {
     stream: Option<BufReader<UnixStream>>,
     generation: String,
     next: u64,
+    pub(super) sent: bool,
     pub(super) pid: u32,
 }
 
@@ -59,6 +60,7 @@ impl Channel {
             stream: Some(BufReader::new(UnixStream::from_std(host)?)),
             generation,
             next: 0,
+            sent: false,
             pid,
         };
         let initialization = serde_json::to_value(WorkerInitialization {
@@ -78,7 +80,7 @@ impl Channel {
         })?;
         let ready = timeout(
             Duration::from_secs(10),
-            channel.request("initialize", Some(initialization)),
+            channel.request("initialize", None, Some(initialization)),
         )
         .await
         .unwrap_or_else(|_| Err("Driver startup timed out".into()));
@@ -99,15 +101,17 @@ impl Channel {
     pub(super) async fn request(
         &mut self,
         operation: &str,
+        name: Option<&str>,
         arguments: Option<Value>,
     ) -> Result<Value> {
+        self.sent = false;
         let stream = self.stream.as_mut().ok_or("Driver channel closed")?;
         let request = ChannelRequest {
             protocol_version: PRIVATE_WORKER_PROTOCOL_VERSION,
             request_id: self.next,
             generation: self.generation.clone(),
             operation: operation.into(),
-            name: None,
+            name: name.map(str::to_owned),
             arguments,
             session_handle: None,
         };
@@ -115,6 +119,7 @@ impl Channel {
         let mut line = serde_json::to_vec(&request)?;
         line.push(b'\n');
         stream.get_mut().write_all(&line).await?;
+        self.sent = true;
         let mut reply = String::new();
         (&mut *stream).take(1 << 20).read_line(&mut reply).await?;
         let response: ChannelResponse = serde_json::from_str(&reply)?;

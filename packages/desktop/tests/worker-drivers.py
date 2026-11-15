@@ -172,6 +172,8 @@ with socket.socket(socket.AF_UNIX) as client:
         self.assertTrue(self.call('status')['ok'])
         self.write_daemon_advert(startedAt=1)
         self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.write_daemon_advert(startedAt=int(time.time() * 1000) + 120000)
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
         self.write_daemon_advert()
         self.assertTrue(self.call('status')['ok'])
         (self.root / 'runtime.json').unlink()
@@ -179,7 +181,7 @@ with socket.socket(socket.AF_UNIX) as client:
 
     def test_dispatch_starts_one_private_slot_and_sends_the_tool(self):
         response = self.call('dispatch', work_dir=str(self.work), tool='click',
-                             args={'pid': 123, 'x': 5, 'y': 7})
+                             args={'pid': 123, 'x': 5, 'y': 7, 'fixture_secret': 'fixture_private_value'})
         self.assertTrue(response['ok'], response)
         self.assertTrue(response['result']['dispatched'], response)
         self.assertEqual(response['result']['decision'], 'allow')
@@ -192,6 +194,36 @@ with socket.socket(socket.AF_UNIX) as client:
         self.assertEqual(len(list(self.work.glob('d-*'))), 1)
         self.call('stop')
         self.assertFalse(alive(pid))
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        log = self.process.stderr.read()
+        self.assertEqual(log.count('Desktop dispatch worker='), 2)
+        self.assertNotIn('fixture_private_value', log)
+
+    def test_dispatch_keeps_a_refused_call_off_the_private_channel(self):
+        reply = self.call('dispatch', work_dir=str(self.work), tool='click',
+                          args={'pid': 123, 'fixture_refuse': True})
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['decision'], 'deny')
+        self.assertEqual(reply['result']['reason'], 'app_action_not_authorized')
+        self.assertFalse(reply['result']['dispatched'])
+        pid = self.call('status')['result']['pid']
+        self.pids.append(pid)
+        self.assertEqual([p.read_text().splitlines() for p in self.work.glob('log-*')],
+                         [['initialize']])
+        self.call('stop')
+        self.assertFalse(self.call('dispatch', work_dir=str(self.work), tool='click',
+                                   args={'pid': 123})['ok'])
+
+    def test_concurrent_dispatch_reuses_one_slot(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.call(
+                'dispatch', work_dir=str(self.work), tool='click', args={'pid': 123}), range(2)))
+        self.assertTrue(all(reply['ok'] and reply['result']['dispatched'] for reply in results))
+        self.assertEqual(len({reply['result']['result']['pid'] for reply in results}), 1)
+        self.assertEqual(len(list(self.work.glob('d-*'))), 1)
+        self.pids.append(results[0]['result']['result']['pid'])
+        self.call('stop')
 
     def cleanup(self):
         if self.process.poll() is None:
@@ -207,7 +239,9 @@ with socket.socket(socket.AF_UNIX) as client:
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(20)
             client.connect(str(self.root / 'desktop/control.sock'))
-            client.sendall((json.dumps(dict(action=action, worker=worker, **params)) + '\n').encode())
+            payload = dict(action=action, **params)
+            payload['worker_id' if action == 'dispatch' else 'worker'] = worker
+            client.sendall((json.dumps(payload) + '\n').encode())
             with client.makefile('rb') as stream:
                 return json.loads(stream.readline())
 
