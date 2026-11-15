@@ -959,6 +959,26 @@ describe('neo.preferences.set', () => {
     expect(db.getSession('neo:root')?.config.model).toBe('glm-5');
   });
 
+  test('a return deferred by an active recovery keeps the limit and returns on a later sweep', async () => {
+    const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'neoPreferences', neo);
+    const root = db.getSession('neo:root')!;
+    await db.updateSession('neo:root', {
+      config: { ...root.config, model: 'glm-5', provider: 'glm' },
+      metadata: {
+        ...root.metadata,
+        modelLimits: { [`${flash.provider}/${flash.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
+    });
+    recovering = true;
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual([]);
+    expect(forgotten).toEqual([]);
+    recovering = false;
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual([['neo:root', flash.id, flash.provider]]);
+  });
+
   test('a refused return forgets the limit instead of retrying every sweep', async () => {
     const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
     await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'neoPreferences', neo);
