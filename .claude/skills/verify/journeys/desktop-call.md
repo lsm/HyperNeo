@@ -24,3 +24,7 @@ ambiguous and remote binding cases, host refusals, sent errors, worktree path an
 reply correlation. The real desktop host, Cua driver and owner dialogs remain
 covered by the desktop-driver-private-channel and desktop-grant-approval
 journeys.
+
+Validate the discovery classification and generated API catalog with
+`bun scripts/api-surface.ts --check` after changing this operation. The catalog
+collector also launches its own isolated daemon and must include desktop.call.
