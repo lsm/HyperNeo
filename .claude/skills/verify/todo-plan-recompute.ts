@@ -385,7 +385,7 @@ try {
       store.updateTodo(failed, { state: 'failed', reason: 'Synthetic worker failure' }, Date.now());
       const previousInputs = sessions.inputs.list(failed.id);
       const beforeRetry = starts();
-      evidence.retryReceipt = await rpc('neo.todo.retry', { todoId: failed.id });
+      evidence.retryReceipt = await rpc('neo.todo.continue', { todoId: failed.id });
       assert.equal(evidence.retryReceipt.ok, true);
       assert.equal(evidence.retryReceipt.todo.id, failed.id);
       assert.equal(evidence.retryReceipt.todo.state, 'doing');

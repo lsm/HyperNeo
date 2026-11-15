@@ -18,7 +18,7 @@ send no notice or table notification. Hold a WAL lock: refresh cannot return
 success or emit effects before commit, while health and card reads still
 answer. Release it: the failed Work card must retain its full Unicode report,
 and the runner must announce exactly one committed change and one recovery
-notice. Repeated refreshes stay quiet. The real `neo.todo.retry` operation must
+notice. Repeated refreshes stay quiet. The real `neo.todo.continue` operation must
 warn `start_uncertain` only after successful recovery.
 
 Seed a stale candidate whose worker has since bound: recovery must retain its

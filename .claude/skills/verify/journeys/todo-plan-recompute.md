@@ -61,7 +61,7 @@ Add `--lifecycle` to the command above to exercise todo lifecycle RPCs on the
 same isolated daemon. `neo.question.ask` must return its explicit `todoId`;
 removing that todo through `neo.todo.remove` must retire the bound card after
 recompute, while a general ask question remains open. Marking a previously
-started synthetic todo failed and invoking `neo.todo.retry` must keep its ID,
+started synthetic todo failed and invoking `neo.todo.continue` must keep its ID,
 send one new turn to its existing worker, preserve the old durable input, and
 record a distinct new attempt. Restart the daemon and check that the retired
 card and retry history survive. Evidence is in the same `observed.json` under

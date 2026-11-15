@@ -727,7 +727,7 @@ export function createNeoOperations(
     advance: () => service.todoRunner.advance(),
     refreshIdentity: (todoId) => service.todoRunner.refreshIdentity(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
-    retry: (todoId) => service.todoRunner.retry(todoId),
+    retry: (todoId, message) => service.todoRunner.retry(todoId, message),
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [

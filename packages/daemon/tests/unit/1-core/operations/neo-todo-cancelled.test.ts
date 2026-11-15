@@ -773,12 +773,12 @@ describe('unfinished prerequisites of a started step', () => {
       const continued = await invoke('neo.todo.continue', { todoId: j.id, message: 'Next.' });
       expect(continued).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
       store.updateTodo(store.getTodo(j.id)!, { state: 'failed', reason: 'Lost.' }, Date.now());
-      const retried = await invoke('neo.todo.retry', { todoId: j.id });
+      const retried = await invoke('neo.todo.continue', { todoId: j.id });
       expect(retried).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
       expect(store.getTodo(j.id)?.state).toBe('failed');
       expect(sent).toHaveLength(before);
       store.updateTodo(store.getTodo(a.id)!, { state: 'done' }, Date.now());
-      expect((await invoke('neo.todo.retry', { todoId: j.id })).ok).toBe(true);
+      expect((await invoke('neo.todo.continue', { todoId: j.id })).ok).toBe(true);
       expect(store.getTodo(j.id)?.state).toBe('doing');
       expect(sent).toHaveLength(before + 1);
     } finally {

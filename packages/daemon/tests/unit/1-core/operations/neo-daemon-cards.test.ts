@@ -172,7 +172,7 @@ describe('planNeoDaemonCardActions', () => {
   test('Retry retries only todos untouched since the answer', () => {
     const todos = [row('a'), row('b', { updatedAt: 11 })];
     expect(planNeoDaemonCardActions(answered('retries_exhausted', 'Retry'), todos)).toEqual([
-      { todoId: 'a', name: 'neo.todo.retry', input: { todoId: 'a' } },
+      { todoId: 'a', name: 'neo.todo.continue', input: { todoId: 'a' } },
     ]);
   });
 

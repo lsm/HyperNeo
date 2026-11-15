@@ -141,7 +141,7 @@ describe('core todo starts respect pack worker exclusions', () => {
       expect(failed.todo.state).toBe('blocked');
       expect(world.calls).toEqual([]);
       world.bind(author.todo.id, 'author');
-      const retried = await world.invoke('neo.todo.retry', { todoId: failed.todo.id });
+      const retried = await world.invoke('neo.todo.continue', { todoId: failed.todo.id });
       expect(retried.todo.state).toBe('doing');
       expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state])).toEqual([
         ['retries_exhausted', 'retired'],
