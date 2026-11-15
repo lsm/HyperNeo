@@ -3,8 +3,6 @@ import { DEFAULT_SEED_AGENT_TEMPLATE_KEY } from '@hyperneo/shared';
 import { RESERVED_SPACE_AGENT_HANDLES } from '../../../../src/lib/agents/slug';
 import {
   getLongHorizonAgentTemplates,
-  isLegacyWorkerTemplateKey,
-  normalizeLegacyWorkerTemplateKey,
   WORKER_TEMPLATE_KEY_PREFIX,
 } from '../../../../src/lib/agents/long-horizon-templates';
 
@@ -108,20 +106,17 @@ describe('long-horizon agent templates', () => {
   });
 });
 
-describe('legacy worker template key helpers', () => {
-  test('maps the removed key to its successor', () => {
-    expect(normalizeLegacyWorkerTemplateKey('worker.coder')).toBe('worker.swe');
-    expect(isLegacyWorkerTemplateKey('worker.coder')).toBe(true);
+describe('retired worker.coder alias', () => {
+  test('is no longer exported as a normalization helper', async () => {
+    const mod = await import('../../../../src/lib/agents/long-horizon-templates.ts');
+    expect('normalizeLegacyWorkerTemplateKey' in mod).toBe(false);
+    expect('isLegacyWorkerTemplateKey' in mod).toBe(false);
   });
 
-  test('passes unknown keys through', () => {
-    expect(normalizeLegacyWorkerTemplateKey('worker.qa')).toBe('worker.qa');
-    expect(isLegacyWorkerTemplateKey('worker.qa')).toBe(false);
-  });
-
-  test('does not match inherited prototype properties', () => {
-    expect(normalizeLegacyWorkerTemplateKey('toString')).toBe('toString');
-    expect(isLegacyWorkerTemplateKey('constructor')).toBe(false);
-    expect(isLegacyWorkerTemplateKey('hasOwnProperty')).toBe(false);
+  test('a worker.coder template key is no longer reserved as a retired alias', async () => {
+    const { validateTemplateKey } = await import(
+      '../../../../src/lib/agents/template-field-validation.ts'
+    );
+    expect(validateTemplateKey('worker.coder')).toBeNull();
   });
 });

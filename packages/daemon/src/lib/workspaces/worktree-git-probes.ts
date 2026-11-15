@@ -1,8 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import type { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
-import { encodeRepoPath, getProjectShortKey } from '../worktree-path-utils.ts';
 
 export function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
   let cwdRoot = repoRoot;
@@ -39,38 +37,6 @@ export function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey:
 
 function projectDirKey(commonDir: string): string {
   return basename(commonDir) === '.git' ? dirname(commonDir) : commonDir;
-}
-
-export function legacyWorktreeDirs(
-  worktreeRepo: SpaceWorktreeRepository,
-  repo: { commandCwd: string; dirKey: string },
-  currentProjectDir: string
-): string[] {
-  const candidates = new Set<string>();
-  for (const path of worktreeRepo.listPaths()) {
-    const projectDir = dirname(dirname(path));
-    if (projectDir !== currentProjectDir) candidates.add(projectDir);
-  }
-  const legacyDirKey = join(repo.dirKey, '.git');
-  for (const key of [getProjectShortKey(legacyDirKey), encodeRepoPath(legacyDirKey)]) {
-    const derivedLegacyProjectDir = join(dirname(currentProjectDir), key);
-    if (derivedLegacyProjectDir !== currentProjectDir) candidates.add(derivedLegacyProjectDir);
-  }
-  const dirs: string[] = [];
-  for (const projectDir of candidates) {
-    const sentinel = join(projectDir, '.hyperneo-repo-root');
-    if (!existsSync(sentinel)) continue;
-    try {
-      const stored = readFileSync(sentinel, 'utf8');
-      if (stored && legacySentinelMatches(stored, repo.dirKey)) dirs.push(projectDir);
-    } catch {}
-  }
-  return dirs;
-}
-
-function legacySentinelMatches(stored: string, dirKey: string): boolean {
-  if (stored === dirKey || stored === join(dirKey, '.git')) return true;
-  return resolveRepoRoot(stored).dirKey === dirKey;
 }
 
 export function listWorktreeDirSlugs(worktreesDir: string): string[] {

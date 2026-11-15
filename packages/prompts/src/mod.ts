@@ -319,18 +319,6 @@ import mdworkflowsGuidanceFullstackCodingNochange from './workflows/guidance/ful
 import mdworkflowsGuidanceFullstackQaPostApproval from './workflows/guidance/fullstack-qa-post-approval.md' with {
   type: 'text',
 };
-import mdworkflowsGuidanceRetiredCallActionPreferencePreOperationNames from './workflows/guidance/retired/call-action-preference-pre-operation-names.md' with {
-  type: 'text',
-};
-import mdworkflowsGuidanceRetiredCallActionPreferencePreTaskApprove from './workflows/guidance/retired/call-action-preference-pre-task-approve.md' with {
-  type: 'text',
-};
-import mdworkflowsGuidanceRetiredExternalReviewBotsPreCheckSeeding from './workflows/guidance/retired/external-review-bots-pre-check-seeding.md' with {
-  type: 'text',
-};
-import mdworkflowsGuidanceRetiredExternalReviewBotsPreTypename from './workflows/guidance/retired/external-review-bots-pre-typename.md' with {
-  type: 'text',
-};
 import mdworkflowsGuidanceReviewPolicy from './workflows/guidance/review-policy.md' with {
   type: 'text',
 };
@@ -485,14 +473,6 @@ const registry: Record<string, string> = {
   'workflows/guidance/call-action-preference.md': mdworkflowsGuidanceCallActionPreference,
   'workflows/guidance/codex-reaction-approval.md': mdworkflowsGuidanceCodexReactionApproval,
   'workflows/guidance/external-review-bots.md': mdworkflowsGuidanceExternalReviewBots,
-  'workflows/guidance/retired/call-action-preference-pre-operation-names.md':
-    mdworkflowsGuidanceRetiredCallActionPreferencePreOperationNames,
-  'workflows/guidance/retired/call-action-preference-pre-task-approve.md':
-    mdworkflowsGuidanceRetiredCallActionPreferencePreTaskApprove,
-  'workflows/guidance/retired/external-review-bots-pre-check-seeding.md':
-    mdworkflowsGuidanceRetiredExternalReviewBotsPreCheckSeeding,
-  'workflows/guidance/retired/external-review-bots-pre-typename.md':
-    mdworkflowsGuidanceRetiredExternalReviewBotsPreTypename,
   'workflows/guidance/fullstack-coding-nochange.md': mdworkflowsGuidanceFullstackCodingNochange,
   'workflows/guidance/fullstack-qa-post-approval.md': mdworkflowsGuidanceFullstackQaPostApproval,
   'workflows/guidance/review-policy.md': mdworkflowsGuidanceReviewPolicy,
@@ -630,12 +610,8 @@ export const {
   CODER_OWNED_QA_REVIEW_PROMPT,
   CODER_OWNED_REVIEW_PROMPT,
   CALL_ACTION_PREFERENCE_GUIDANCE,
-  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
-  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   REVIEW_POLICY_GUIDANCE,

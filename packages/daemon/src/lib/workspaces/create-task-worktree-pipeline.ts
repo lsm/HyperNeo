@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
@@ -15,7 +15,6 @@ import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { nodeWorkspaceValidationIo } from './validation-pipeline.ts';
 import {
   isLiveRegisteredWorktree,
-  legacyWorktreeDirs,
   listWorktreeDirSlugs,
   readWorktreeClaim,
   registeredWorktreePaths,
@@ -113,17 +112,12 @@ function isForeignLiveWorktreeDir(
 }
 
 function createComputeSlug(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
-  const legacyDirs = legacyWorktreeDirs(ctx.worktreeRepo, ctx.repo!, dirname(ctx.worktreesDir!));
-  const slugPrefixes = [
-    `${ctx.worktreesDir!}${sep}`,
-    ...legacyDirs.map((dir) => join(dir, 'worktrees') + sep),
-  ];
+  const slugPrefixes = [`${ctx.worktreesDir!}${sep}`];
   const currentDir = ctx.worktreesDir!;
   const registered = registeredWorktreePaths(ctx.repo!.commandCwd);
   const existingSlugs = [
     ...ctx.worktreeRepo.listSlugs(ctx.spaceId),
     ...slugPrefixes.flatMap((prefix) => ctx.worktreeRepo.listSlugsUnderPath(prefix)),
-    ...legacyDirs.flatMap((dir) => listWorktreeDirSlugs(join(dir, 'worktrees'))),
     ...listWorktreeDirSlugs(currentDir).filter((name) =>
       isForeignLiveWorktreeDir(registered, join(currentDir, name), ctx.spaceId, ctx.taskId)
     ),

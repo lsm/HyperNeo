@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  composeGitHubSubscriptionPattern,
-  legacyGitHubTopic,
-} from '../../../../src/lib/external-events/github-subscription-pattern';
+import { composeGitHubSubscriptionPattern } from '../../../../src/lib/external-events/github-subscription-pattern';
 
 describe('composeGitHubSubscriptionPattern', () => {
   describe('fully-qualified source-prefixed topic (5 segments)', () => {
@@ -160,22 +157,5 @@ describe('repo resource (branch_protection_rule, spec row 7)', () => {
         'github/repo/pull_request/branch_protection_created'
       )
     ).toBe('github/*/*/repo/pull_request.branch_protection_created');
-  });
-});
-
-describe('legacyGitHubTopic', () => {
-  test('rewrites a legacy 5-segment dotted topic to the resource.action form', () => {
-    expect(legacyGitHubTopic('github/src/owner/repo/pull_request.closed')).toBe(
-      'github/src/owner/repo.closed'
-    );
-  });
-  test('slices at the first dot in the entity segment', () => {
-    expect(legacyGitHubTopic('github/a/b/c/d.e.f')).toBe('github/a/b/c.e.f');
-  });
-  test('returns null when the entity segment has no dot', () => {
-    expect(legacyGitHubTopic('github/a/b/c/d')).toBeNull();
-  });
-  test('returns null when the topic is not a 5-segment github topic', () => {
-    expect(legacyGitHubTopic('notgithub/a/b/c/d.e')).toBeNull();
   });
 });
