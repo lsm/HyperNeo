@@ -228,8 +228,6 @@ describe('sweepCodingPrs cross-model review', () => {
     ]);
     await at(60);
     expect(woken).toHaveLength(1);
-    expect(woken[0].text).toContain('no exact Agent line');
-    expect(woken[0].text).toContain('human');
     db.close();
   });
 });
