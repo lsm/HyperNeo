@@ -34,7 +34,7 @@ Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/inbox.ts`):
 1. **Facts once.** `todos` is the only link from a card to todos. An empty list means the whole ask. `todo_id` is folded into `todos` and dropped.
 2. **One live card per todo.** A new card is refused (`card_open`) when an `open` or `held` card already covers one of its todos; `replaces` changes it. Cards about the whole ask are not limited. `onlyCard` changes from "per ask" to "per todo".
 3. **A card stops only its todos.** Other todos of the ask keep running. The start gate already holds only the todos a card lists (`todo-start-gate.ts`); the per-ask limit is the only coupling.
-4. **A blocked todo always has its card.** A todo blocked on `question` or `needs-human` is covered by an `open` or `held` card. When its card is answered or retired and the todo is still blocked, the todo's next step becomes Neo's (the owner table in `docs/design/neo-attention.md`), so Neo is woken to unblock it or ask again. That replaces the `check_overdue` card: the daemon stops opening it.
+4. **A blocked todo always has its card.** A todo blocked on `question` or `needs-human` is covered by an `open` or `held` card. When its card is answered or retired and the todo is still blocked, the todo's next step becomes Neo's, under the next-step owner rule of the attention design (`docs/design/neo-attention.md`, in HyperNeo #10684, not yet merged), so its `todo.neo_step` wakes Neo to unblock it or ask again. That replaces the `check_overdue` card: the daemon stops opening it.
 5. **A human step is a needs-human todo with its card.** Its options include "done" and "hold". It is the same item in the inbox as any question.
 
 ## Held cards
@@ -69,7 +69,7 @@ Each step is one PR within the repo's slice budget.
 3. **Build + wire: held cards.** The `held` state, `held_until` and `held_at` columns, `neo.question.hold`, and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
 4. **Build: `neoInbox`** with its tests (state × ask counts, whole-ask cards, held items). **Wire:** add it to the Neo snapshot.
 5. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
-6. **Delete: the `check_overdue` card.** Stop opening it; old rows stay readable. It lands with or after the next-step owner rule of `docs/design/neo-attention.md`.
+6. **Delete: the `check_overdue` card.** Stop opening it; old rows stay readable. This step waits until HyperNeo #10684 is merged and its `todo.neo_step` kind is live, so a todo left blocked after its card ends always has a wake-up path. Until then the `check_overdue` card stays as the safety net.
 
 ## Limits
 
