@@ -6,7 +6,7 @@ About 20 producers write prose straight into Neo's session. Each decides alone w
 
 That fails both ways. Many notices are ones Neo almost never acts on: todo-done notes, notes about todos already waiting on a human card, repeated stalled-ask reminders, "waiting for a worker" notes. Meanwhile facts the daemon holds never reach Neo:
 - a PR merged or closed outside a todo is told only to its owner (`deliverCodingPrEvents`, `pr-events.ts`);
-- a todo with an idle worker and an open PR gets no reminder, because the coding `waiting` hook exits the nudge pipeline (`todo-prs.ts:151`);
+- a todo with an idle worker and an open PR gets no reminder, because the coding `waiting` hook exits the nudge pipeline (hook at `todo-prs.ts:533`, exit in `todo-runner.ts`);
 - work done by a session the ask does not track has no event;
 - turn reports for old turns arrive as new, with nothing checking for a newer report from the same worker;
 - a failed todo is told once, and the cancelled-prerequisite note is de-duplicated only in memory;
@@ -69,7 +69,7 @@ type Decision =
 - whether the human is the one who must act: `neoTodoAwaitsHuman`;
 - the latest turn report from the same worker.
 
-**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. Today both cleanup queries delete dead rows of every queue after the retention cutoff: the hourly `jobs.cleanup` op (`cleanupJobs`, run through `cleanupJobsInBatches`) and its fallback `JobQueueRepository.cleanup()`. This design adds one clause to both so they keep dead admit jobs; completed admit jobs are cleaned up as usual. A dead admit job therefore stays until a later admission succeeds, even after downtime longer than the retention cutoff. Retrying is bounded by meaning, not count: only a failed fact read for a registered kind fails the job. An event whose kind is no longer registered (a pack removed or a kind renamed) completes at once as dropped with reason `unknown_kind`, so nothing retries forever. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
+**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. Today both cleanup queries delete dead rows of every queue after the retention cutoff: the hourly `jobs.cleanup` op (`cleanupJobs`, run through `cleanupJobsInBatches`) and its fallback `JobQueueRepository.cleanup()`. This design adds one clause to both so they keep dead admit jobs; completed admit jobs are cleaned up as usual. A dead admit job therefore stays until a later admission succeeds, even after downtime longer than the retention cutoff. Retrying is bounded. An event whose kind is no longer registered (a pack removed or a kind renamed) completes at once as dropped with reason `unknown_kind`. A registered kind whose read keeps failing is retired after 7 days from the event's `at`: the sweep completes the job as dropped with reason `read_failed`, and it is counted like any drop. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
 
 **Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
 1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
@@ -210,11 +210,11 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
    - Tests: a dead admit job older than the cleanup retention survives cleanup and is delivered once by the next sweep; the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
    - Reachable through the sweep in shadow only.
 3. **Wire (shadow): core todo notes.** One call site: `tell` in `service.ts` (`createNeoTodoRunner`), which every `todo-runner.ts` note goes through.
-   - `todo.follow_up_missing` lands before this rung, in core, without the pipeline. Its parts: a `producesFollowUp` flag on `neo_todos` that Neo sets on `neo.todo.add`; a pure check over the ask's todos; a refusal of `done` in `neo.ask.settle` and in auto-settle, rechecked at commit as HyperNeo #10665 already does; and a wake from the existing 5-minute pack sweep.
+   - `todo.follow_up_missing` lands before this rung, in core, without the pipeline, as two PRs. Build: a `producesFollowUp` flag on `neo_todos`, a pure check over the ask's todos, and a refusal of `done` in `neo.ask.settle` and in auto-settle, rechecked at commit as HyperNeo #10665 already does; nothing sets the flag yet. Wire: `neo.todo.add` accepts the flag, and the existing 5-minute pack sweep wakes Neo.
    - HyperNeo #10665 is being reworked from a coding-pack, `docs/design/` path check to this core flag. After the rework the coding pack has no design logic.
    - Moving the kind onto the pipeline changes neither the pure check nor the settle refusal. The kind's `stillTrue` is that check, the sweep's direct wake is deleted, and the kind gains the 1 h / 4 h / 24 h repeat.
 4. **Wire (shadow): turn reports, stalled asks, health.** Three call sites, each in its own PR.
-5. **Build + Wire: coding pack `attention`.** Two PRs: (a) merge held/failing and unowned behind kinds; (b) `scan` for `pr_merged_outside_todo` and `idle_with_open_pr`.
+5. **Coding pack `attention`.** Build: the kinds for merge held/failing and unowned, and `scan` for `pr_merged_outside_todo` and `idle_with_open_pr`, registered but not called. Wire, one PR per producer: route those producers through `admit` in shadow.
 6. **Wire: digest renderer and `neo.attention.wait`.** One prompt line in `root-turn-end.md`, about digest items and `wait`.
 7. **Read the shadow week.** Then switch kinds live, one PR per producer, each a few lines. Shadow rows never count as told: going live starts every item at `open`. Each live switch carries its cutover:
    - The kind's `read` also reads the producer's old receipt (for example `stalled_wake_at`, `pack_coding_daemon_merge_notices`, turn-report receipts) as "already told at". An incident told before the switch is not told again.
@@ -223,6 +223,7 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
    - Tests: an incident told before the switch is not re-told; a queued old notice whose receipt was never written is delivered once and gets no attention notice.
 8. **Delete**, at least one release after the last kind went live, so a rollback still finds the old receipts. A rollback in that window can re-tell an incident first told by the new code once; that is accepted. Remove these, one PR each:
    - `stalled_wake_at` use, `pack_coding_daemon_merge_notices`, the unowned pending slot and the in-memory `noted` sets;
+   - the Neo-facing nudge fields in `neo_todo_sessions` (`unreachableToldAt`, the turn-question stage) and the turn-report receipts' Neo-delivery part;
    - the per-producer `neoWakeEvent` flags, now set only by `admit`;
    - the check-overdue card for todos already waiting on the human.
 
