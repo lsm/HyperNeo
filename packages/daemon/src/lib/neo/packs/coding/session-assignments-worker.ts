@@ -13,7 +13,7 @@ const RELEASED = (row: string) =>
   `NOT EXISTS (SELECT 1 FROM neo_todo_sessions r WHERE r.todo_id = ${row}.todo_id
      AND COALESCE(r.ref, json_extract(r.target, '$.ref')) IS NOT NULL)
    AND NOT EXISTS (SELECT 1 FROM neo_todos t WHERE t.id = ${row}.todo_id
-     AND t.state NOT IN ('done', 'closed_unverified', 'removed'))`;
+     AND t.state IN ('todo', 'doing'))`;
 
 class CodingSessionAssignments {
   constructor(private readonly db: Database) {}
