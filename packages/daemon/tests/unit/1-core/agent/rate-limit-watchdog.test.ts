@@ -1629,6 +1629,19 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('reports an overloaded hold as a rate limit, never a usage limit', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry(
+        '529 overloaded',
+        { uuid: 'm1', content: 'hi' },
+        { hold: 'overloaded' }
+      );
+      await flush();
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'rate_limit' });
+      watchdog.cancel();
+    });
+
     it('holds the turn as overloaded for five minutes, then resumes it', async () => {
       jest.useFakeTimers();
       try {
