@@ -490,7 +490,9 @@ export class RateLimitWatchdog {
       this.logger.info('Cooldown scheduling aborted: the originating query was superseded.');
       return false;
     }
-    const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
+    const kind =
+      this.lastHint?.kind ??
+      (this.lastHint?.hold ? 'rate_limit' : classifyLimitKind(errorMessage, decision));
     this.limitKind = kind;
 
     const retryAt = decision.retryAtMs;
