@@ -650,7 +650,7 @@ test('a todo detail carries the pack rows pinned to it as packFacts', async () =
   expect(page.items.every((item) => !('packFacts' in item))).toBe(true);
   expect(text(await readTool.handler({ id: 'missing' }, {} as never))).toEqual({
     found: false,
-    reason: 'No todos has id missing. Call todos_read without id to page through them.',
+    reason: 'Nothing in todos has id missing. Call todos_read without id to page through them.',
   });
 });
 

@@ -52,7 +52,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         if (input.id && value === null)
           return result({
             found: false,
-            reason: `No ${kind} has id ${input.id}. Call ${kind}_read without id to page through them.`,
+            reason: `Nothing in ${kind} has id ${input.id}. Call ${kind}_read without id to page through them.`,
           });
         if (kind === 'todos' && value !== null && !('items' in value)) {
           const packFacts = service.packs().flatMap(
