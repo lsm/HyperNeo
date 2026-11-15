@@ -117,7 +117,7 @@ function setup(
       },
       1
     );
-  return { db, store, call, asked, daemonStart, seeded, told, started, refused, fix, rows };
+  return { db, store, ops, call, asked, daemonStart, seeded, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
@@ -734,13 +734,16 @@ describe("Neo's start question", () => {
     expect(store.listQuestions('ask')).toHaveLength(1);
   });
 
-  test('is refused when no start question is open, and opens none', async () => {
-    const { store, call } = setup();
-    expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
-      ok: false,
-      reason:
-        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a choice card (one option to confirm) before adding the work.',
-    });
+  test('start is no longer a card kind Neo can ask', () => {
+    const { store, ops } = setup();
+    expect(
+      ops['neo.question.ask'].inputSchema.safeParse({
+        askId: 'ask',
+        kind: 'start',
+        text: 'Go?',
+        retireWhen: pendingTodoCheck,
+      }).success
+    ).toBe(false);
     expect(store.listQuestions('ask')).toEqual([]);
   });
 });
