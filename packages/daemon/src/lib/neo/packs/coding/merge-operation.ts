@@ -11,7 +11,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation } from '../../../operations/registry.ts';
-import { codingReviewerPolicy } from './stage-facts.ts';
+import { codingCrossModelReviewed, codingReviewerPolicy } from './stage-facts.ts';
 import { codingReviewerProvenance } from './pr-ledger.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
@@ -158,6 +158,11 @@ export function createCodingMergeOperation(deps: Deps) {
           review.actor ?? { kind: 'human', id: 'bot-route' }
         );
         if (!provenance.qualifies) return { accepted: false, reason: provenance.reason };
+        if (
+          state.policy.crossModelReview &&
+          !codingCrossModelReviewed(pr.body, pr.headRefOid, state.facts)
+        )
+          return { accepted: false, reason: 'cross_model_review_required' };
         const route = await deps.review(
           {
             head: pr.headRefOid,
