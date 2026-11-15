@@ -1113,7 +1113,7 @@ export class AgentSession
         void this.loginRecovery
           .hold(this.providerId(), prompt)
           .then((held) => {
-            if (!held && prompt) void this.stateManager.setIdle().catch(() => {});
+            if (!held && prompt) void this.resumeLoginPrompt(prompt);
           })
           .catch((error: unknown) =>
             this.logger.warn(`Restoring a login hold failed: ${String(error)}`)
@@ -3066,6 +3066,17 @@ export class AgentSession
       this.loginRetryPromptUuid = prompt?.uuid ?? null;
     }
     return plan;
+  }
+
+  private async resumeLoginPrompt(prompt: { uuid: string; content: string | MessageContent[] }) {
+    this.loginRetriedInTurn = true;
+    this.loginRetryPromptUuid = prompt.uuid;
+    await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+    await this.lifecycleManager
+      .startQueryAndEnqueue(prompt.uuid, prompt.content, undefined, { prepend: true })
+      .catch((error: unknown) =>
+        this.logger.warn(`Resuming a restored login prompt failed: ${String(error)}`)
+      );
   }
 
   private async enterLoginHoldForWaitingMessage(

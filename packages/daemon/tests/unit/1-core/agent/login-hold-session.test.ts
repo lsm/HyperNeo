@@ -33,7 +33,7 @@ interface Harness {
 let availability: Array<{ mockRestore(): void }> = [];
 
 async function harness(
-  options: { processingState?: string; needsLoginAt?: number } = {}
+  options: { processingState?: string; needsLoginAt?: number | null } = {}
 ): Promise<Harness> {
   availability.forEach((spy) => spy.mockRestore());
   availability = initializeProviders()
@@ -333,6 +333,32 @@ describe('login hold', () => {
     expect(await h.deliver()).toBeDefined();
     expect(await h.agent.onLoginRejected(prompt)).toBe('sign_in');
 
+    await h.agent.cleanup();
+  });
+
+  it('a restart during a transient hold re-drives the prompt it saved', async () => {
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        messageId: 'human-login',
+        heldPrompt: { uuid: 'human-login', content: 'do the thing' },
+      }),
+      needsLoginAt: null,
+    });
+
+    expect(h.agent.isLoginHeld()).toBe(false);
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+
+    expect(h.resume).toHaveBeenCalledTimes(1);
+    expect(h.resume).toHaveBeenCalledWith('human-login', 'do the thing', undefined, {
+      prepend: true,
+    });
+    expect(h.agent.getProcessingState().status).not.toBe('rate_limit_cooldown');
     await h.agent.cleanup();
   });
 

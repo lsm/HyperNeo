@@ -137,7 +137,13 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
       }
       return existing;
     }
-    const state: LoginHoldState = { prompt, cancel: null, active: true, awaitingSignIn };
+    const state: LoginHoldState = {
+      prompt,
+      cancel: null,
+      active: true,
+      resumed: false,
+      awaitingSignIn,
+    };
     holds.set(providerId, state);
     return state;
   }
@@ -189,8 +195,9 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     const facts = deps.facts(providerId, false);
     if (mayResume(facts)) return false;
     const state = startHold(providerId, prompt, facts.needsLoginAt !== null);
-    if (state.active) await arm(providerId, state);
-    return state.active;
+    if (!state.active) return true;
+    await arm(providerId, state);
+    return holds.get(providerId) === state || state.resumed;
   }
 
   async function maybeResume(providerId: string): Promise<boolean> {
@@ -206,6 +213,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
 
   async function resume(providerId: string, state: LoginHoldState): Promise<void> {
     const prompt = state.prompt;
+    state.resumed = true;
     stop(providerId);
     deps.timer.log('login recovery: the provider is usable again; resuming the turn');
     await deps.timer.resume(prompt);
@@ -240,5 +248,6 @@ interface LoginHoldState {
   prompt: HeldPrompt | null;
   cancel: (() => void) | null;
   active: boolean;
+  resumed: boolean;
   awaitingSignIn: boolean;
 }
