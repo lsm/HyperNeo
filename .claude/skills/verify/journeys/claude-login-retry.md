@@ -47,7 +47,8 @@ browser-done, allowing daemon/mock/server cleanup.
 Add `--historical-result` with `--serve` to save one synthetic historical SDK
 payload with subtype success and is_error true in this run’s DB. It is separate
 from the real HTTP failure above. The browser helper then requires the
-`Claude login failed — sign in again` notice and Neo's `needs you` status, opens
+`Rate limit reached.` hold banner with no `Claude login failed — sign in again`
+notice on the Neo page and the session page, opens
 Result details and requires its synthetic GLM rejection text in the red Errors
 section at both widths; inspect session-result-error-1280/390.png. The GLM query
 contract also registers a synthetic available GLM provider, makes SDK option
