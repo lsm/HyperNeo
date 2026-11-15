@@ -105,6 +105,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The same prerequisite card is listed more than once. Name each prerequisite once.',
   duplicate_setting:
     'The proposal lists the same pack, scope and key more than once. Include each setting once.',
+  duplicate_alternative:
+    'Two alternatives are the same or would show the same option. Give each alternative different values.',
   head_changed_or_failed_stage:
     'The PR head changed or this stage already failed. Read the current assignment and findings; validate the current head rather than replacing a failure with a pass.',
   epic_unavailable:
