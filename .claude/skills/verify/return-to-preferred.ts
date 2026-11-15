@@ -12,6 +12,7 @@ import type { Session } from '@hyperneo/shared';
 
 const run = resolve(process.argv.at(-1)!);
 const role = process.argv.includes('--front') ? 'front' : 'neo';
+const restart = process.argv.includes('--restart');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -126,31 +127,37 @@ const { frontSessionId } = await import('../../../packages/daemon/src/lib/neo/fr
 const { MessageHub, WebSocketClientTransport } = await import(
   '../../../packages/shared/src/mod.ts'
 );
-const app = await createDaemonApp({
-  config: {
-    ...getConfig({
-      host: '127.0.0.1',
-      port: 0,
-      dbPath: join(run, 'data/daemon.db'),
-      workspaceRoot: join(run, 'workspace'),
-    }),
-    disableWorktrees: true,
-    disableGoalProcessing: true,
-  },
-  verbose: false,
-});
-assert.notEqual(app.server.port, 8399);
-const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({
-  createSocket: createLocalSocket,
-  url: `ws://127.0.0.1:${app.server.port}/ws`,
-  autoReconnect: false,
-});
-hub.registerTransport(transport);
+const boot = async () => {
+  const daemon = await createDaemonApp({
+    config: {
+      ...getConfig({
+        host: '127.0.0.1',
+        port: 0,
+        dbPath: join(run, 'data/daemon.db'),
+        workspaceRoot: join(run, 'workspace'),
+      }),
+      disableWorktrees: true,
+      disableGoalProcessing: true,
+    },
+    verbose: false,
+  });
+  assert.notEqual(daemon.server.port, 8399);
+  const client = new MessageHub({ defaultSessionId: 'global' });
+  const socket = new WebSocketClientTransport({
+    createSocket: createLocalSocket,
+    url: `ws://127.0.0.1:${daemon.server.port}/ws`,
+    autoReconnect: false,
+  });
+  client.registerTransport(socket);
+  await socket.initialize();
+  return { daemon, client, socket };
+};
+let { daemon: app, client: hub, socket: transport } = await boot();
 const evidence: Record<string, unknown> = {
   surface: 'message.send, session.get and message.sdkMessages RPC; Neo sweep return',
   scriptedSdk: true,
   role,
+  restart,
   passed: false,
   starts,
 };
@@ -163,7 +170,6 @@ const until = async (check: () => boolean | Promise<boolean>, label: string, tim
 };
 let service: ReturnType<typeof createNeoService> | undefined;
 try {
-  await transport.initialize();
   await hub.request('providers.create', {
     params: {
       providerId: 'anthropic',
@@ -225,6 +231,22 @@ try {
   evidence.beforeReset = { model: (await read()).config.model };
   assert((evidence.beforeReset as { model: string }).model.includes('sonnet'));
 
+  if (restart) {
+    await agent().replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });
+    await service.dispose();
+    await transport.close();
+    await app.cleanup();
+    ({ daemon: app, client: hub, socket: transport } = await boot());
+    service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+    evidence.afterRestart = {
+      model: (await read()).config.model,
+      storedLimits: app.db.getSession(sessionId)?.metadata.modelLimits,
+      loaded: app.sessionManager.getSession(sessionId) !== null,
+    };
+    assert((evidence.afterRestart as { model: string }).model.includes('sonnet'));
+    assert(app.db.getSession(sessionId)?.metadata.modelLimits?.['anthropic/haiku']);
+  }
+
   await until(() => Date.now() > resetAt, 'Reset time never passed', 10000);
   await service.returnToPreferredModels();
   await until(async () => (await read()).config.model === 'haiku', 'Session did not return');
@@ -247,7 +269,7 @@ try {
   globalThis.fetch = originalFetch;
   evidence.resourcesStopped = true;
   writeFileSync(
-    join(run, `evidence/return-to-preferred-${role}.json`),
+    join(run, `evidence/return-to-preferred-${role}${restart ? '-restart' : ''}.json`),
     JSON.stringify(evidence, null, 2).replaceAll(run, '<synthetic-run>')
   );
 }
