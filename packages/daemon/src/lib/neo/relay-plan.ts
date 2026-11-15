@@ -18,7 +18,19 @@ export function planNeoRelayAnswer(
   settings: NeoSettings | undefined,
   question: NeoRelayQuestion | null,
   input: NeoRelayInput
-) {
+):
+  | { reason: string }
+  | {
+      answer: string | string[];
+      provenance: {
+        words: string;
+        via: string;
+        viaName: string;
+        where: string;
+        when: string;
+        at: number;
+      };
+    } {
   const relay = settings?.relaySenders?.find(({ sender }) => sender === input.sender);
   if (!relay) return { reason: 'sender_not_allowed: this sender may not relay human answers.' };
   if (!question || question.state !== 'open')
