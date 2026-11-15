@@ -264,7 +264,7 @@ export class RateLimitWatchdog {
       this.chain = chain;
     }
 
-    if (this.chain.length > 0) {
+    if (this.chain.length > 0 && this.lastHint?.hold !== 'overloaded') {
       const availability = new Map<FallbackModelEntry, boolean>();
       const canonicalKey = new Map<FallbackModelEntry, string>();
       await Promise.all(
