@@ -9,6 +9,7 @@ import {
   MAX_RESET_HORIZON_MS,
   RESET_BUFFER_MS,
 } from '../../../../src/lib/agent/fallback-recovery';
+import { overloadHoldHint } from '../../../../src/lib/agent/limit-error-classifier';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   RateLimitWatchdog,
@@ -226,6 +227,42 @@ describe('RateLimitWatchdog', () => {
         .calls[0][0];
       expect(cooldownArgs.retryAt).toBe(resetAt + RESET_BUFFER_MS);
       expect(watchdog.getState().retryCount).toBe(0);
+      watchdog.cancel();
+    });
+
+    it('holds an exhausted overload for 5 minutes, then resumes the held prompt', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const resumed = mock(async () => true);
+      watchdog.setRetryCallback(resumed);
+      const timers: Array<{ run: () => void; delay: number }> = [];
+      const realSetTimeout = globalThis.setTimeout;
+      const now = Date.now();
+      globalThis.setTimeout = ((run: () => void, delay: number) => {
+        timers.push({ run, delay });
+        return realSetTimeout(() => {}, 0);
+      }) as unknown as typeof setTimeout;
+      try {
+        expect(
+          await watchdog.scheduleRetry(
+            '529 overloaded',
+            { uuid: 'm1', content: 'x' },
+            overloadHoldHint(now)
+          )
+        ).toBe(true);
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+      }
+      const cooldownArgs = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+        .calls[0][0];
+      expect(cooldownArgs).toMatchObject({ reason: 'overloaded', retryAt: now + 5 * 60_000 });
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(timers.at(-1)?.delay).toBeLessThanOrEqual(5 * 60_000);
+      expect(resumed).not.toHaveBeenCalled();
+      timers.at(-1)?.run();
+      await flush();
+      expect(resumed).toHaveBeenCalledTimes(1);
+      expect(resumed.mock.calls[0]?.[0]).toEqual({ uuid: 'm1', content: 'x' });
       watchdog.cancel();
     });
 

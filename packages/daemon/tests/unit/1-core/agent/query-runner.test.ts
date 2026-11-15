@@ -16,6 +16,7 @@ import {
   resetSdkStartupGateForTests,
 } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
+import { RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -5963,6 +5964,31 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('never latches stopped on repeated 529 and holds for 5 minutes when retries run out', async () => {
+      buildSpy.mockRejectedValue(
+        new Error('529 {"type":"error","error":{"type":"overloaded_error"}}')
+      );
+      const holds: Array<{ hint?: LimitRetryHint; at: number }> = [];
+      const ctx = createContext({
+        onRateLimitExhausted: mock(async (_error, _prompt, hint) => {
+          holds.push({ hint, at: Date.now() });
+          return true;
+        }),
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+      expect(mockSession.metadata.queryFailureEpisode?.failures ?? 0).toBe(0);
+      expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).not.toContain('Query stopped');
+      expect(holds).toHaveLength(1);
+      expect(holds[0].hint).toMatchObject({ kind: 'rate_limit', hold: 'overloaded' });
+      const heldFor = (holds[0].hint?.resetAtMs ?? 0) + RESET_BUFFER_MS - holds[0].at;
+      expect(heldFor).toBeLessThanOrEqual(5 * 60_000);
+      expect(heldFor).toBeGreaterThan(5 * 60_000 - 1000);
     });
 
     it('should retry up to the cap on a 503 service unavailable error', async () => {
