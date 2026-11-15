@@ -142,7 +142,8 @@ Each item carries its attention id. One new core operation, `neo.attention.wait 
 | `todo.blocked` other (needs-human without card, environment, check) | digest once per blocker revision | todo blocker, cards | 4 h, 24 h, then stop | blocker changes or clears |
 | `todo.failed` | wake | todo, dependents, retries | 1 h, 4 h, 24 h | todo leaves `failed`; ask closed |
 | `todo.unworked`, waiting for a worker or capacity | wait ("daemon starts it") | queue reasons (`planWorkQueue`) | — | starts |
-| `todo.unworked`, not approved / no instruction / nothing runs it | digest | todo, approval | 24 h | approved, started or removed |
+| `todo.unworked`, not approved / no instruction | digest | todo, approval | 24 h | approved, started or removed |
+| `todo.neo_step` (new, core): an approved todo whose next step is Neo's and not taken: ready but no worker assigned, a worker idle with nothing to wait on, or a prerequisite removed | wake | pure `nextStepOwner(todo, deps, session, cards)`: `daemon`, `worker`, `human` or `neo`; raised only for `neo` | 1 h, 4 h, 24 h | the owner is no longer Neo |
 | `todo.stalled` (idle, unreachable, rescued) | wake | nudge incident, live status | 4 h | progress or state change |
 | `todo.prereq_cancelled` | digest | family | 24 h | proceed, remove, or replaced |
 | `ask.idle` (open ask, nothing running) | digest only if a Neo-decidable step exists: a startable todo needs a decision, or no todo remains | ask, todos, cards | 24 h (today 4 h) | a todo starts or the ask settles |
@@ -163,6 +164,10 @@ Linking a PR outside a todo to an ask uses, in order:
 4. Otherwise, one line with no ask, listing the candidate asks.
 
 The owner-history link alone can put a merge on the wrong ask (the owner's last tracked todo may be elsewhere), so the repo rule comes first.
+
+## Every open todo has one owner of its next step
+
+The sweep computes `nextStepOwner` for each approved, unfinished todo. Exactly one of these moves it next: the daemon (start, retry, resume), its worker (working), the human (an open card), or Neo (assign, decide, fix a removed prerequisite). When the owner is Neo and nothing changes, `todo.neo_step` wakes Neo until it acts. That is how approved work moves while the human is away. The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
 
 ## Repetition and death
 
