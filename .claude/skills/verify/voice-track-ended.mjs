@@ -61,6 +61,13 @@ try {
     exact: true,
   });
   await stop.waitFor();
+  const submit = form.locator('button[type=submit]');
+  await wait(
+    async () =>
+      (await stop.isEnabled()) &&
+      (await submit.getAttribute('aria-label')) === 'Stop recording and send the message',
+    'Recorder must finish starting before the track ends'
+  );
   await page.waitForTimeout(600);
   result.tracks = await page.evaluate(() => {
     for (const track of window.__voiceTracks) track.dispatchEvent(new Event('ended'));
@@ -80,8 +87,9 @@ try {
   await page.screenshot({ path: `${run}/evidence/draft.png` });
   result.pass =
     result.tracks > 0 &&
+    result.asr.received === 1 &&
     result.asr.bytes > 0 &&
-    result.draft.includes('Typed first') &&
+    result.draft === 'Typed first\nSpoken before the mic went away' &&
     result.sends === 0;
   assert(result.pass, 'An ended mic track must leave its words in the draft without sending');
 } catch (error) {

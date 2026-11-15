@@ -89,12 +89,30 @@ describe('voiceRecorderStore', () => {
     const track = { stop: vi.fn(), onended: null };
     navigator.mediaDevices.getUserMedia.mockResolvedValueOnce({ getTracks: () => [track] });
     await voiceRecorderStore.start('owner-a', 's1');
-    track.onended?.();
+    workletNode.onaudioprocess({
+      inputBuffer: { getChannelData: () => new Float32Array(48_000).fill(0.5) },
+    });
+    const ended = track.onended;
+    ended?.();
+    ended?.();
     expect(voiceRecorderStore.isRecording.value).toBe(false);
     expect(voiceRecorderStore.durationLimitHit.value).toBe(true);
     expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-a');
     const recording = await voiceRecorderStore.stop();
-    expect(recording.audioBase64).toBeTruthy();
+    expect(recording.peakLevel).toBeGreaterThan(0.4);
+    expect(recording.hitDurationLimit).toBe(false);
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(track.onended).toBeNull();
+    expect(fakeContext.close).toHaveBeenCalledOnce();
+  });
+
+  it('finishes the clip when the mic track already ended while recording started', async () => {
+    const track = { stop: vi.fn(), onended: null, readyState: 'ended' };
+    navigator.mediaDevices.getUserMedia.mockResolvedValueOnce({ getTracks: () => [track] });
+    await voiceRecorderStore.start('owner-a', 's1');
+    expect(voiceRecorderStore.isRecording.value).toBe(false);
+    expect(voiceRecorderStore.durationLimitHit.value).toBe(true);
+    const recording = await voiceRecorderStore.stop();
     expect(recording.hitDurationLimit).toBe(false);
   });
 
