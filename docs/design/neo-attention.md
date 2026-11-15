@@ -173,16 +173,17 @@ The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished t
 |---|---|
 | an open card covers the todo | human |
 | the todo is failed, or a prerequisite is failed or removed | neo |
+| a prerequisite is still unfinished | that prerequisite's owner (no item for this todo) |
 | live status unknown | daemon (reconcile first, no wake) |
 | worker running | worker |
 | a pack says it is waiting (for example an open PR) | pack (its own kind, such as `coding.idle_with_open_pr`) |
-| a start target exists and the queue holds it (capacity, busy worker, scheduled retry) | daemon |
+| a start target exists and the queue holds it (`planWorkQueue`: total or per-project limit reached, assigned worker busy, in priority order; or a scheduled retry) | daemon |
 | a start target exists and the queue would start it now | daemon |
 | no start target, or a worker idle with nothing to wait on | neo |
 
 When the owner is `neo`, one `todo.neo_step` item carries the reason (failed, prerequisite failed or removed, no worker, idle worker). It is the only Neo-facing item for that todo, so a failed idle todo or a removed prerequisite wakes Neo once, with one repeat clock. It keeps waking (1 h, 4 h, 24 h, then every 24 h) while the owner is Neo; a card or Neo's `wait` still silences it. That is how approved work moves while the human is away. The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
 
-Tests give the owner for each row, including a target with a queue hold (daemon), an idle worker with an open PR (pack), unknown live status (daemon), and a failed todo with an idle worker (one `neo` item); and an unchanged Neo-owned todo still wakes after the last ladder step.
+Tests give the owner for each row, including a todo waiting on an unfinished prerequisite (no item), a target with a queue hold (daemon), an idle worker with an open PR (pack), unknown live status (daemon), and a failed todo with an idle worker (one `neo` item); and an unchanged Neo-owned todo still wakes after the last ladder step.
 
 ## Repetition and death
 
