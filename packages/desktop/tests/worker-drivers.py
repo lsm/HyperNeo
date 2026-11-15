@@ -40,7 +40,10 @@ with channel.makefile('rwb') as stream:
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
             'driver_version': '0.44.0', 'contract_version': '0.8.0'},
             'name': request.get('name'), 'arguments': request.get('arguments')}
-        stream.write((json.dumps({'protocol_version': 1, 'request_id': request['request_id'],
+        if name is not None and request.get('arguments', {}).get('fixture_delay'):
+            time.sleep(0.3)
+        reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
+        stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
             'generation': generation, 'ok': request['generation'] == generation,
             'completion': 'completed', 'result': result}) + '\\n').encode())
         stream.flush()
@@ -927,6 +930,65 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(again['result']['dispatched'])
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_daemon_advert_uses_the_process_birth_even_after_a_long_suite(self):
+        from unittest.mock import patch
+        with patch('time.time', return_value=time.time() + 120):
+            self.daemon()
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_large_dispatch_frame_gets_a_response(self):
+        reply = self.dispatch('kill_app', {'text': 'x' * 20000}, workDir=str(self.work))
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['reason'], 'tool_not_allowed')
+
+    def test_oversized_frame_gets_an_explicit_error(self):
+        reply = self.dispatch('click', {'text': 'x' * (2 << 20)}, workDir=str(self.work))
+        self.assertEqual(reply, {'ok': False, 'error': 'request_too_large'})
+
+    def test_failed_reply_retires_the_slot_and_preserves_sent(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_bad_reply': True}, workDir=str(self.work))
+        self.assertTrue(reply['result']['dispatched'], reply)
+        self.assertIsNotNone(reply['result']['reason'])
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+
+    def test_timeout_retires_the_slot_and_preserves_sent(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_delay': True}, workDir=str(self.work))
+        self.assertEqual(reply['result']['reason'], 'driver call timed out')
+        self.assertTrue(reply['result']['dispatched'])
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+
+    def test_target_exit_during_startup_prevents_input(self):
+        target = subprocess.Popen(['/bin/sleep', '60'])
+        self.addCleanup(target.wait)
+        self.addCleanup(target.kill)
+        self.call('fixture-admit', tool='click', arguments={'pid': target.pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.dispatch, 'click', {'pid': target.pid}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            target.kill()
+            target.wait()
+            next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
+            reply = future.result(timeout=15)
+        self.assertEqual(reply['result']['reason'], 'target_mismatch')
+        self.assertFalse(reply['result']['dispatched'])
+        self.assertNotIn('call click', ''.join(p.read_text() for p in slow.glob('log-*')))
+
+    def test_dispatch_log_is_visible_without_arguments(self):
+        self.dispatch('kill_app', {'text': 'private-fixture-text'}, workDir=str(self.work))
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        log = self.process.stderr.read()
+        self.assertEqual(log.count('Desktop dispatch'), 1)
+        self.assertNotIn('private-fixture-text', log)
 
 
 if __name__ == '__main__':

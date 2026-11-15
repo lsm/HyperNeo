@@ -630,3 +630,24 @@ impl Drivers {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod peer_tests {
+    use super::*;
+    #[test]
+    fn reaped_sidecar_is_not_authorized() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id();
+        let directory = tempfile::tempdir().unwrap();
+        let drivers = Drivers {
+            workers: Mutex::new(BTreeMap::new()),
+            binary: PathBuf::new(),
+            verification_path: String::new(),
+            records: directory.path().into(),
+            descriptor: directory.path().join("missing-runtime.json"),
+            sidecar: Arc::new(StdMutex::new(Some(pid))),
+        };
+        child.wait().unwrap();
+        assert!(!drivers.authorized(pid));
+    }
+}
