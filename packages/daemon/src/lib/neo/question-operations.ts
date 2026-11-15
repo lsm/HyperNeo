@@ -1,7 +1,6 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { coreTodoPolicy } from './core-todo-checks.ts';
 import { planNeoTodoDraft, type NeoTodoPolicy } from './todo-operations.ts';
-import { neoTodoDependencyNodes, neoTodoReady } from './todo-dependencies.ts';
 import { isNeoTodoStalledCard } from './todo-state.ts';
 import { openHumanCard, replaceHumanCard, requireHumanCard } from './human-card.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -319,17 +318,6 @@ const AskKinds = z.discriminatedUnion('kind', [
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
-  z.object({
-    askId: Text,
-    text: Text,
-    kind: z.literal('start'),
-    retireWhen: Asked.retireWhen,
-    sourceSession: Asked.sourceSession,
-    focused: Asked.focused,
-    artifacts: Artifacts,
-    confirm: Confirmation.optional(),
-    replyTo: Asked.replyTo,
-  }),
 ]);
 const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input.input), {
   message: 'Pass input for a human request, or askId for follow-up work.',
@@ -404,7 +392,7 @@ export const NeoQuestionSchema = z.object({
   id: z.string(),
   askId: z.string(),
   text: z.string(),
-  kind: z.enum(['yesno', 'choice', 'reply', 'start']),
+  kind: z.enum(['yesno', 'choice', 'reply']),
   options: z.array(z.string()).nullable(),
   labels: z.array(z.string()).nullable().optional(),
   multiple: z.boolean(),
@@ -514,7 +502,6 @@ const QuestionResult = z.union([
 type QuestionPlan = {
   ask: NeoAsk;
   draft: NeoQuestionDraft;
-  reworded: NeoQuestion | null;
   records?: string[];
 };
 
@@ -588,24 +575,8 @@ export function planNeoQuestion(
     startTodos: null,
     confirm,
   };
-  if (input.kind !== 'start') return { value: { ask, draft, reworded: null, ...records } };
-  const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
-  return open
-    ? {
-        value: {
-          ask,
-          draft: { ...draft, startTodos: open.todos },
-          reworded: open,
-          ...records,
-        },
-      }
-    : fail(
-        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a choice card (one option to confirm) before adding the work.'
-      );
+  return { value: { ask, draft, ...records } };
 }
-
-const START_QUESTION =
-  "start_question: the daemon's start question carries the human's go-ahead; only the human answers it.";
 
 export function requireNeoQuestionReplaceable(
   replaced: NeoQuestion | null,
@@ -616,7 +587,6 @@ export function requireNeoQuestionReplaceable(
   if (!replaced) return fail(`not_found: no question ${replaces}.`);
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
-  if (replaced.kind === 'start') return fail(START_QUESTION);
   return { value: replaced.state === 'open' ? replaced : null };
 }
 
@@ -633,16 +603,14 @@ export function planNeoQuestionAnswer(
       ? typeof answer === 'string' && (answer === 'no' || answer === 'yes')
       : question.kind === 'reply'
         ? typeof answer === 'string' && answer.trim().length > 0
-        : picked.every((value) =>
-            (question.kind === 'choice' ? question.options : question.todos)?.includes(value)
-          ) &&
+        : picked.every((value) => question.options?.includes(value)) &&
           (question.kind !== 'choice' || question.multiple || picked.length === 1);
   if (!allowed)
     return fail(`answer_invalid: that is not an answer to this ${question.kind} question.`);
   return {
     value: {
       question,
-      answer: question.kind === 'choice' || question.kind === 'start' ? picked : answer,
+      answer: question.kind === 'choice' ? picked : answer,
     },
   };
 }
@@ -656,19 +624,12 @@ export function requireNeoQuestionAnswered(written: {
     : fail('question_closed: this question was answered already.');
 }
 
-export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[]): string {
+export function neoQuestionAnsweredNote(question: NeoQuestion): string {
   const answer = question.answer ?? '';
   const said =
     question.kind === 'yesno'
       ? `${answer} (${answer === 'yes' ? question.yesLabel : question.noLabel})`
-      : question.kind === 'start'
-        ? `start ${
-            [answer]
-              .flat()
-              .map((id) => todos.find((todo) => todo.id === id)?.title ?? id)
-              .join(', ') || 'none'
-          }`
-        : neoLabelledOptions(question.options ?? [], [answer].flat(), question.labels) || 'none';
+      : neoLabelledOptions(question.options ?? [], [answer].flat(), question.labels) || 'none';
   return isAgentResolvedQuestion(question)
     ? `Neo resolved "${question.text}": ${said}. ${question.retiredReason}`
     : `The human answered "${question.text}": ${said}.`;
@@ -677,7 +638,6 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
 export function createNeoQuestionOperations(
   store: NeoAskTodoRepository,
   told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>,
-  start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>,
   receivedHumanInput: (caller: OperationCaller, messageId: string) => boolean = () => false,
   artifact: ArtifactRefReader = () => null,
   readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null> = async () => null,
@@ -830,11 +790,10 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (plan: QuestionPlan, input: z.infer<typeof Ask>) => {
-        const replaces = input.kind === 'start' ? undefined : input.replaces;
         const replaced = requireNeoQuestionReplaceable(
-          replaces ? store.getQuestion(replaces) : null,
+          input.replaces ? store.getQuestion(input.replaces) : null,
           plan.ask,
-          replaces
+          input.replaces
         );
         return 'reason' in replaced ? replaced : { value: { ...plan, replaced: replaced.value } };
       },
@@ -848,33 +807,15 @@ export function createNeoQuestionOperations(
       ): QuestionReceipt | Rejection => {
         let reason = 'question_closed: the question to replace is no longer open.';
         const question = store.writeCardReply(reply.context, reply.mutationId, () => {
-          const card =
-            plan.draft.kind === 'start'
-              ? null
-              : requireHumanCard(
-                  plan.draft,
-                  store.listQuestions(plan.ask.id),
-                  plan.replaced,
-                  language()
-                );
-          if (card && 'reason' in card) {
+          const card = requireHumanCard(
+            plan.draft,
+            store.listQuestions(plan.ask.id),
+            plan.replaced,
+            language()
+          );
+          if ('reason' in card) {
             reason = card.reason.reason;
             return null;
-          }
-          if (plan.reworded) {
-            const { id, todos } = plan.reworded;
-            store.extendStartQuestion(
-              id,
-              todos,
-              plan.draft.text,
-              Date.now(),
-              plan.draft.replyTo,
-              plan.draft.artifacts,
-              plan.draft.sourceSession,
-              plan.draft.retireWhen
-            );
-            const question = store.getQuestion(id);
-            return question?.state === 'open' ? question : null;
           }
           const id = reply.mutationId;
           return plan.replaced
@@ -909,7 +850,6 @@ export function createNeoQuestionOperations(
       (input: z.infer<typeof Retire>): Gate<NeoQuestion> => {
         const question = store.getQuestion(input.questionId);
         if (!question) return fail('not_found: no such question.');
-        if (question.kind === 'start') return fail(START_QUESTION);
         return { value: question };
       },
       'input',
@@ -1006,44 +946,7 @@ export function createNeoQuestionOperations(
     .pipe(requireNeoQuestionAnswered, 'written', 'result:outcome')
     .pipe(
       async (answered: { question: NeoQuestion; ask: NeoAsk }): Promise<QuestionReceipt> => {
-        const refused: string[] = [];
-        const ticked =
-          answered.question.kind === 'start' ? [answered.question.answer ?? []].flat() : [];
-        const waiting = ticked.filter(
-          (id) => !neoTodoReady(store.listFamilyTodos(answered.ask.id), id)
-        );
-        for (const todoId of ticked.filter((id) => !waiting.includes(id))) {
-          const started = await start(todoId);
-          if (!started.ok)
-            refused.push(`${store.getTodo(todoId)?.title ?? todoId}: ${started.reason}`);
-        }
-        await told(
-          answered.ask,
-          answered.question,
-          [
-            neoQuestionAnsweredNote(answered.question, store.listTodos(answered.ask.id)),
-            ...(refused.length ? [`These did not start: ${refused.join(' ')}`] : []),
-            ...(waiting.length
-              ? [
-                  `Waiting for earlier steps: ${waiting.map((id) => store.getTodo(id)?.title ?? id).join(', ')}.`,
-                ]
-              : []),
-            ...waiting.flatMap((id) => {
-              const family = store.listFamilyTodos(answered.ask.id);
-              const held = (
-                neoTodoDependencyNodes(family).find((node) => node.id === id)?.dependsOn ?? []
-              )
-                .map((dep) => family.find((todo) => todo.id === dep))
-                .filter((todo) => todo?.blockedBy === 'held')
-                .map((todo) => todo!.title);
-              return held.length
-                ? [
-                    `${store.getTodo(id)?.title ?? id} waits for held steps: ${held.join(', ')}. Ask the human whether to release them (neo.todo.hold reason: null).`,
-                  ]
-                : [];
-            }),
-          ].join('\n')
-        );
+        await told(answered.ask, answered.question, neoQuestionAnsweredNote(answered.question));
         await deliverAnswers(answered.question.id);
         return { ok: true, question: answered.question };
       },

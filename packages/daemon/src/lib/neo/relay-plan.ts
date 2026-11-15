@@ -37,12 +37,7 @@ export function planNeoRelayAnswer(
     return { reason: 'question_not_open: relay needs an open card.' };
   if (!input.where.trim() || !input.when.trim() || !input.words.trim())
     return { reason: 'relay_incomplete: where, when and words are required.' };
-  if (
-    question.kind === 'start' ||
-    question.confirm ||
-    question.ruleProposal ||
-    question.preferenceProposal
-  )
+  if (question.confirm || question.ruleProposal || question.preferenceProposal)
     return { reason: 'direct_human_required: this card needs the human’s own action.' };
   const words = input.words.trim();
   return {

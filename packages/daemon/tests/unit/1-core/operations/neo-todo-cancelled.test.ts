@@ -113,23 +113,6 @@ function setup() {
   });
   const target = { verb: 'send' as const, ref: { adapter: 'hyperneo', id: 'w' } };
   const work = { target, instruction: 'Perform the approved step.' };
-  const seedLegacy = (todo: NeoTodo) => {
-    store.updateTodo(todo, { state: 'blocked', blockedBy: 'question' }, Date.now());
-    store.askQuestion(
-      crypto.randomUUID(),
-      todo.askId,
-      {
-        text: 'Start legacy step?',
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: [todo.id],
-      },
-      Date.now()
-    );
-  };
   return {
     db,
     store,
@@ -142,7 +125,6 @@ function setup() {
     told,
     target,
     work,
-    seedLegacy,
   };
 }
 
@@ -382,33 +364,6 @@ describe('cancelled prerequisites', () => {
         state: 'retired',
         retiredReason: 'nothing left to decide',
       });
-    } finally {
-      db.close();
-    }
-  });
-
-  test('an open legacy card still answers, and Neo is not told about it', async () => {
-    const { db, store, invoke, step, runner, told, work, seedLegacy } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Legacy card',
-        request: 'A, then D.',
-        todos: [step('A', []), { ...step('D', [0]), ...work }],
-      });
-      const [a, d] = opened.todos;
-      store.updateTodo(a, { state: 'removed' }, Date.now());
-      seedLegacy(store.getTodo(d.id)!);
-      await runner.refresh(() => {});
-      expect(told.filter((item) => item.todo === d.id)).toHaveLength(0);
-      const approval = store.getTodo(d.id)!.approvedAt;
-      const question = card(store, d)!;
-      store.answerQuestion(question, [d.id], 'button', Date.now());
-      expect(store.getTodo(d.id)).toMatchObject({
-        approvalQuestionId: question.id,
-        approvedAt: approval,
-      });
-      await runner.refresh(() => {});
-      expect(store.getTodo(d.id)?.state).toBe('doing');
     } finally {
       db.close();
     }

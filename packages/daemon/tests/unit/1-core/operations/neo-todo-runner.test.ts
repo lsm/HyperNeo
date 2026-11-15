@@ -2011,7 +2011,6 @@ describe('neo todo runner', () => {
         const op = createNeoQuestionOperations(
           h.store,
           async () => {},
-          async () => ({ ok: true }),
           undefined,
           undefined,
           async (source) => ({
@@ -3473,33 +3472,6 @@ describe('current explicit removal behavior before recompute', () => {
       role: 'neo',
     });
   };
-
-  test('removal prunes only its pending start choice and cannot be applied twice', async () => {
-    const h = setup();
-    try {
-      const removed = h.add(),
-        remaining = h.add();
-      for (const todo of [removed, remaining])
-        h.store.updateTodo(todo, { approvedAt: null }, Date.now());
-      h.store.joinStartQuestion(removed, Date.now());
-      h.store.joinStartQuestion(remaining, Date.now());
-      const question = h.store.listQuestions('ask').find((question) => question.kind === 'start')!;
-      expect(question.startTodos).toEqual([removed.id, remaining.id]);
-      expect(await remove(h, removed.id)).toMatchObject({ ok: true, todo: { state: 'removed' } });
-      expect(h.store.getQuestion(question.id)).toMatchObject({
-        state: 'open',
-        startTodos: [remaining.id],
-      });
-      expect(h.store.listTodos('ask').map(({ id, state }) => ({ id, state }))).toEqual([
-        { id: removed.id, state: 'removed' },
-        { id: remaining.id, state: 'todo' },
-      ]);
-      expect(await remove(h, removed.id)).toMatchObject({ ok: false });
-      expect(h.store.getQuestion(question.id)?.startTodos).toEqual([remaining.id]);
-    } finally {
-      h.db.close();
-    }
-  });
 
   test('a stop refusal leaves the working todo and its complete report unchanged', async () => {
     const h = setup();

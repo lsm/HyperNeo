@@ -71,7 +71,7 @@ export function createNeoQuestionAnswerDelivery(
           JSON.stringify([plan.route.id, plan.ref.adapter, plan.ref.id, plan.ref.daemon])
         );
         const question = store.getQuestion(plan.route.questionId)!;
-        const note = neoQuestionAnsweredNote(question, []);
+        const note = neoQuestionAnsweredNote(question);
         const marker = `[worker-answer:${key}]`;
         const text = plan.ref.adapter === 'hyperneo' ? `${note}\n${marker}` : `${marker}\n${note}`;
         return { ...plan, key, note, text };

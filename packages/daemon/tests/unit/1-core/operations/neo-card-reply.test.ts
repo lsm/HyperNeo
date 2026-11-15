@@ -32,7 +32,6 @@ function setup() {
   const ops = createNeoQuestionOperations(
     store,
     async () => {},
-    async () => ({ ok: true }),
     (_caller, id) => [human1, human2].includes(id),
     undefined,
     undefined,
@@ -167,35 +166,6 @@ describe('card reply notices', () => {
       const question = f.store.getQuestion(f.rows()[0].cardReply!.questionId)!;
       f.store.answerQuestion(question, ['Keep'], 'button', 4);
       expect(f.rows()).toHaveLength(1);
-    } finally {
-      f.db.close();
-    }
-  });
-  test('in-place start rewording coalesces and a stale retry cannot undo the current card', async () => {
-    const f = setup();
-    try {
-      f.store.askQuestion(
-        'start',
-        'ask',
-        {
-          text: 'Start?',
-          kind: 'start',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: ['todo'],
-        },
-        1
-      );
-      const first = { kind: 'start', text: 'Start the reviewed work?', replyTo: [human1] };
-      const second = { ...first, text: 'Start the revised work?' };
-      expect((await f.ask(first)).ok).toBe(true);
-      expect((await f.ask(second)).ok).toBe(true);
-      expect(f.rows()).toHaveLength(1);
-      await f.ask(first);
-      expect(f.store.getQuestion('start')?.text).toBe(second.text);
-      expect(f.rows()[0].cardReply?.questionId).toBe('start');
     } finally {
       f.db.close();
     }

@@ -153,13 +153,12 @@ describe('NeoAskTodos', () => {
     );
   });
 
-  it('omits the completion line when a start todo has an empty completion string', () => {
+  it('omits the completion line when a todo has an empty completion string', () => {
     locale.value = 'en';
     const app = render(
       <NeoAskTodos
         entry={entry({
           todos: [todo('internal', { doneWhen: '' })],
-          questions: [question('start', { kind: 'start', todos: ['internal'] })],
         })}
         onAnswer={vi.fn()}
       />
@@ -438,47 +437,36 @@ describe('NeoAskTodos', () => {
     ).toBe('todo');
   });
 
-  it.each(['retired', 'start'])(
-    'keeps %s focused discussion navigation on the card without a header pill',
-    (state) => {
-      locale.value = 'en';
-      const onOpen = vi.fn();
-      const focusedSession = {
-        adapter: 'hyperneo',
-        id: 'discussion',
-        name: 'Positioning discussion',
-        label: 'HyperNeo · Positioning discussion',
-        provider: 'Anthropic',
-        link: '/session/discussion',
-      };
-      const original = entry({
-        questions: [
-          question(
-            'prepared',
-            state === 'retired'
-              ? { state: 'retired', retiredReason: 'Discuss directly' }
-              : { kind: 'start', todos: ['prepared-todo'] }
-          ),
-        ],
-        todos: state === 'start' ? [todo('prepared-todo', { link: focusedSession.link })] : [],
-      });
-      const app = render(
-        <NeoAskTodos
-          entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
-          onOpen={onOpen}
-          onAnswer={vi.fn()}
-        />
-      );
-      expect(app.container.querySelector('[data-ask-question]') !== null).toBe(state === 'start');
-      expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
-      expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
-      const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
-      expect(open.textContent).toBe('Open');
-      expect(open.querySelector('svg')).toBeTruthy();
-      fireEvent.click(open);
-      expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
-    }
-  );
+  it('keeps retired focused discussion navigation on the card without a header pill', () => {
+    locale.value = 'en';
+    const onOpen = vi.fn();
+    const focusedSession = {
+      adapter: 'hyperneo',
+      id: 'discussion',
+      name: 'Positioning discussion',
+      label: 'HyperNeo · Positioning discussion',
+      provider: 'Anthropic',
+      link: '/session/discussion',
+    };
+    const original = entry({
+      questions: [question('prepared', { state: 'retired', retiredReason: 'Discuss directly' })],
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...original, ask: { ...original.ask, ...{ focusedSession } } }}
+        onOpen={onOpen}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(app.container.querySelector('[data-ask-question]')).toBeNull();
+    expect(app.getByText('Positioning discussion · Anthropic')).toBeTruthy();
+    expect(app.container.querySelector('[data-ask-focused-session] button')).toBeNull();
+    const open = app.getByRole('button', { name: 'Open session: Positioning discussion' });
+    expect(open.textContent).toBe('Open');
+    expect(open.querySelector('svg')).toBeTruthy();
+    fireEvent.click(open);
+    expect(onOpen).toHaveBeenCalledWith('/session/discussion', focusedSession.label);
+  });
 
   it.each(['question', 'todo'])('does not duplicate the visible %s session opener', (surface) => {
     locale.value = 'en';
@@ -942,56 +930,6 @@ describe('NeoAskTodos', () => {
     ).toBe(new Date(1).toISOString());
   });
 
-  it('lists the todos of a start question with ticks and starts only the ticked ones', () => {
-    const onAnswer = vi.fn();
-    const app = render(
-      <NeoAskTodos
-        entry={entry({
-          state: 'waiting',
-          todos: [todo('a'), todo('b'), todo('c', { state: 'doing', status: '在做' })],
-          questions: [question('q', { kind: 'start', text: '开始这 2 件？', todos: ['a', 'b'] })],
-        })}
-        onAnswer={onAnswer}
-      />
-    );
-    expect(app.getByText('等你')).toBeTruthy();
-    expect(app.container.querySelectorAll('[data-ask-todo="a"]')).toHaveLength(1);
-    fireEvent.click(app.getByRole('checkbox', { name: '开始 Todo b' }));
-    fireEvent.click(app.getByRole('button', { name: '开始' }));
-    expect(onAnswer).toHaveBeenCalledWith('q', ['a']);
-    fireEvent.click(app.getByRole('button', { name: '先不做' }));
-    expect(onAnswer).toHaveBeenLastCalledWith('q', []);
-  });
-
-  it('ticks a todo appended to a start question on screen and keeps the human unticks', () => {
-    const onAnswer = vi.fn();
-    const start = (startTodos: string[]) =>
-      entry({
-        state: 'waiting',
-        todos: [todo('a'), todo('b')],
-        questions: [question('q', { kind: 'start', text: '开始', todos: startTodos })],
-      });
-    const app = render(<NeoAskTodos entry={start(['a'])} onAnswer={onAnswer} />);
-    fireEvent.click(app.getByRole('checkbox', { name: '开始 Todo a' }));
-    app.rerender(<NeoAskTodos entry={start(['a', 'b'])} onAnswer={onAnswer} />);
-    fireEvent.click(app.getByRole('button', { name: '开始' }));
-    expect(onAnswer).toHaveBeenCalledWith('q', ['b']);
-  });
-
-  it('drops a todo the daemon prunes from a start question out of the answer', () => {
-    const onAnswer = vi.fn();
-    const start = (startTodos: string[]) =>
-      entry({
-        state: 'waiting',
-        todos: [todo('a'), todo('b')],
-        questions: [question('q', { kind: 'start', text: '开始', todos: startTodos })],
-      });
-    const app = render(<NeoAskTodos entry={start(['a', 'b'])} onAnswer={onAnswer} />);
-    app.rerender(<NeoAskTodos entry={start(['b'])} onAnswer={onAnswer} />);
-    fireEvent.click(app.getByRole('button', { name: '开始' }));
-    expect(onAnswer).toHaveBeenCalledWith('q', ['b']);
-  });
-
   it('puts no on the left and yes on the right, and offers a chat reply', () => {
     const onAnswer = vi.fn();
     const onReply = vi.fn();
@@ -1287,26 +1225,6 @@ describe('NeoAskTodos', () => {
     expect(line.id).toBe('neo-ref-todo-d');
   });
 
-  it('shows removed start-question work in All with unique anchors', async () => {
-    const app = render(
-      <NeoAskTodos
-        entry={entry({
-          todos: [todo('d', { state: 'removed', status: '不要了' })],
-          questions: [question('q', { kind: 'start', state: 'open', todos: ['d'] })],
-        })}
-        onAnswer={() => {}}
-      />
-    );
-    expect(app.queryByRole('button', { name: /^全部 ·/ })).toBeTruthy();
-    expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
-    toggleAll(app);
-    expect(app.getByRole('list', { name: '已移除' }).textContent).toContain('Todo d');
-    expect(app.baseElement.querySelectorAll('#neo-ref-todo-d')).toHaveLength(1);
-    expect(app.baseElement.querySelector('#all-neo-ref-todo-d')).toBeTruthy();
-    const ids = [...app.baseElement.querySelectorAll('[id]')].map((element) => element.id);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
   it('shows All for active work without closed history', () => {
     const app = render(
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
@@ -1349,11 +1267,12 @@ describe('NeoAskTodos', () => {
           todos: [todo('a', { state: 'done' })],
           questions: [
             question('q', {
-              kind: 'start',
-              text: '开始这 1 件？',
+              kind: 'choice',
+              text: '先做哪一件？',
+              options: ['Todo a'],
               state: 'answered',
               todos: ['a'],
-              answer: ['a'],
+              answer: ['Todo a'],
               answeredBy: 'button',
             }),
           ],
@@ -1363,8 +1282,8 @@ describe('NeoAskTodos', () => {
     );
     expect(app.queryByText('已回答')).toBeNull();
     toggleAll(app);
-    await waitFor(() => expect(app.getByText('开始这 1 件？')).toBeTruthy());
-    expect(app.getByText('— 开始 Todo a')).toBeTruthy();
+    await waitFor(() => expect(app.getByText('先做哪一件？')).toBeTruthy());
+    expect(app.getByText('— Todo a')).toBeTruthy();
   });
 });
 
@@ -1372,13 +1291,10 @@ describe('neoQuestionAnswerLabel', () => {
   it('says chat answers in the human words and an empty multiple choice as none', () => {
     expect(
       neoQuestionAnswerLabel(
-        question('q', { kind: 'yesno', answer: '用新会话', answeredBy: 'chat' }),
-        []
+        question('q', { kind: 'yesno', answer: '用新会话', answeredBy: 'chat' })
       )
     ).toBe('用新会话');
-    expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }), [])).toBe(
-      '都不要'
-    );
+    expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }))).toBe('都不要');
     expect(
       neoQuestionAnswerLabel(
         question('q', {
@@ -1387,8 +1303,7 @@ describe('neoQuestionAnswerLabel', () => {
           optionLabels: ['A', 'B', 'C'],
           answer: ['Keep', 'Table'],
           answeredBy: 'chat',
-        }),
-        []
+        })
       )
     ).toBe('Keep、Table');
   });

@@ -268,53 +268,6 @@ describe('queued todos start themselves', () => {
     expect(w.started).toHaveLength(1);
   });
 
-  test('a todo the human left unticked in the start answer is held, not queued', async () => {
-    const w = (current = world());
-    const ask = w.approved();
-    const [ticked, unticked] = [w.add(ask), w.add(ask)];
-    for (const id of [ticked, unticked]) {
-      w.store.updateTodo(w.store.getTodo(id)!, { approvedAt: null }, 2);
-      w.store.joinStartQuestion(w.store.getTodo(id)!, 2);
-      w.store.updateTodo(
-        w.store.getTodo(id)!,
-        { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
-        2
-      );
-    }
-    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
-    w.store.answerQuestion(question, [ticked], 'button', 3);
-    expect(w.store.getTodo(unticked)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'held',
-      blockedReason: 'Not ticked in the start answer.',
-    });
-    await w.finish(ticked);
-    await w.tick();
-    expect(w.state(unticked)).toBe('blocked');
-  });
-
-  test('a withdrawn start question leaves its todos held, not queued', async () => {
-    const w = (current = world());
-    const ask = w.approved();
-    const todo = w.add(ask);
-    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
-    w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
-    w.store.updateTodo(
-      w.store.getTodo(todo)!,
-      { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
-      2
-    );
-    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
-    w.store.retireQuestion(question, 'Neo withdrew it', null, 3);
-    expect(w.store.getTodo(todo)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'held',
-      blockedReason: 'Start question withdrawn.',
-    });
-    await w.tick();
-    expect(w.started).toEqual([]);
-  });
-
   test('an urgent todo starts before older normal work when one slot is free', async () => {
     const w = (current = world({ running: 1, perGroup: 1 }));
     const older = w.add(w.approved());
@@ -439,17 +392,5 @@ describe('queued todos start themselves', () => {
     expect(w.told[0].note).toContain('target');
     await w.tick();
     expect(w.told).toHaveLength(1);
-  });
-
-  test('an ask whose start question the human answered may start released steps', async () => {
-    const w = (current = world());
-    const ask = w.ask();
-    const todo = w.add(ask);
-    w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 2);
-    w.store.joinStartQuestion(w.store.getTodo(todo)!, 2);
-    const question = w.store.listQuestions(ask).find((item) => item.kind === 'start')!;
-    w.store.answerQuestion(question, [todo], 'button', 3);
-    await w.tick();
-    expect(w.state(todo)).toBe('doing');
   });
 });

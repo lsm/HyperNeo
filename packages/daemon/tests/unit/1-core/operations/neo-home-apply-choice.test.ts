@@ -51,11 +51,7 @@ async function call(name: string, input: unknown, caller = human) {
       },
       home
     ),
-    ...createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => ({ ok: true })
-    ),
+    ...createNeoQuestionOperations(store, async () => {}),
   ]);
   const result = await invokeOperation(registry, name, input, caller);
   if (result.kind !== 'completed') throw new Error(result.message);

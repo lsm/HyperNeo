@@ -41,7 +41,6 @@ for (const phase of ['initial', 'reopen']) {
     if (phase === 'initial') {
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Record bookkeeping', createdAt: 1 });
       const todo = store.addTodo('waiting', ask.id, { title: 'Waiting work', doneWhen: 'Observed result', instruction: 'Work', check: null, named: null }, 1);
-      store.joinStartQuestion(todo, 2);
       const before = store.getTodo(todo.id), cards = store.listQuestions(ask.id);
       await call('neo.todo.continue', { todoId: todo.id, message: 'Follow up' }, 'not_started');
       assert.deepEqual(store.getTodo(todo.id), before); assert.deepEqual(store.listQuestions(ask.id), cards);

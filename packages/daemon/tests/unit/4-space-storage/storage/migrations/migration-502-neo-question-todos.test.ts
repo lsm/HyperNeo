@@ -128,7 +128,7 @@ describe('NeoAskTodoRepository.askQuestion', () => {
     db.close();
   });
 
-  test('a card for one todo lists that todo, and a Start card lists its steps', () => {
+  test('a card for one todo lists that todo', () => {
     const { db, store, ask, step } = world();
     ask('ask');
     step('first', 'ask');
@@ -136,11 +136,6 @@ describe('NeoAskTodoRepository.askQuestion', () => {
     expect(store.askQuestion('one', 'ask', { ...draft, todoId: 'second' }, 3).todos).toEqual([
       'second',
     ]);
-    expect(
-      store.askQuestion('start', 'ask', { ...draft, kind: 'start', startTodos: ['first'] }, 3).todos
-    ).toEqual(['first']);
-    store.extendStartQuestion('start', ['first', 'second'], 'Start both?', 4);
-    expect(store.getQuestion('start')?.todos).toEqual(['first', 'second']);
     db.close();
   });
 });

@@ -335,7 +335,6 @@ export function recordNeoReplyAnswer(
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
-    reply.question.kind !== 'start' &&
     reply.ask?.sessionId === sessionId
   ) {
     const answer = neoChoiceByLetter(words, reply.question) ?? words;
