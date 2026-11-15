@@ -193,17 +193,15 @@ try {
       ],
     },
     fallbackModels: [{ provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think24k' }],
-    ...(role
-      ? {
-          neo: {
-            preferences: { provider: 'anthropic', model: 'haiku', thinkingLevel: 'off', fallbacks: [ownFallback] },
-            front: { model: { provider: 'anthropic', model: 'haiku', thinkingLevel: 'off', fallbacks: [ownFallback] } },
-          },
-        }
-      : {}),
   });
   let roleSessionId: string | undefined;
   if (role) {
+    const { globalSettingsWrites } = await import(
+      '../../../packages/daemon/src/storage/repositories/global-settings-writes.ts'
+    );
+    const own = { provider: 'anthropic', model: 'haiku', thinkingLevel: 'off' as const, fallbacks: [ownFallback] };
+    await app.db.gateway.call(globalSettingsWrites, role === 'neo' ? 'neoPreferences' : 'neoFrontModel', own);
+    evidence.ownFallbacks = app.db.getGlobalSettings().neo;
     const { NeoRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-repository.ts');
     const { frontSessionId } = await import('../../../packages/daemon/src/lib/neo/front-mode.ts');
     const db = app.db.getDatabase();
