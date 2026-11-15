@@ -169,6 +169,7 @@ const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, ki
 
 type QuestionRow = Omit<
   NeoQuestion,
+  | 'kind'
   | 'options'
   | 'multiple'
   | 'startTodos'
@@ -180,6 +181,7 @@ type QuestionRow = Omit<
   | 'sourceSession'
   | 'retireWhen'
 > & {
+  kind: NeoQuestion['kind'] | 'start';
   answerProvenanceJson: string | null;
   retireWhenJson: string | null;
   artifactsJson: string | null;
@@ -222,9 +224,10 @@ const toQuestion = ({
   ...(todoId ? { todoId } : {}),
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
-  options: parsed<string[]>(row.options),
+  ...(row.kind === 'start'
+    ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
+    : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
   labels: parsed<string[]>(row.labels),
-  multiple: row.multiple === 1,
   startTodos: parsed<string[]>(row.startTodos),
   todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),

@@ -1291,10 +1291,13 @@ describe('neoQuestionAnswerLabel', () => {
   it('says chat answers in the human words and an empty multiple choice as none', () => {
     expect(
       neoQuestionAnswerLabel(
-        question('q', { kind: 'yesno', answer: '用新会话', answeredBy: 'chat' })
+        question('q', { kind: 'yesno', answer: '用新会话', answeredBy: 'chat' }),
+        []
       )
     ).toBe('用新会话');
-    expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }))).toBe('都不要');
+    expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }), [])).toBe(
+      '都不要'
+    );
     expect(
       neoQuestionAnswerLabel(
         question('q', {
@@ -1303,9 +1306,16 @@ describe('neoQuestionAnswerLabel', () => {
           optionLabels: ['A', 'B', 'C'],
           answer: ['Keep', 'Table'],
           answeredBy: 'chat',
-        })
+        }),
+        []
       )
     ).toBe('Keep、Table');
+    expect(
+      neoQuestionAnswerLabel(
+        question('old', { kind: 'choice', multiple: true, options: ['a'], answer: ['a'] }),
+        [todo('a')]
+      )
+    ).toBe('Todo a');
   });
 });
 

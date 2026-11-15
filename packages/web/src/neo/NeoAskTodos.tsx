@@ -72,12 +72,16 @@ const marks = {
 const choiceClass =
   'flex min-w-0 max-w-full items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-left text-xs font-semibold text-fg [overflow-wrap:anywhere] hover:border-accent/40 hover:text-accent focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50';
 
-export function neoQuestionAnswerLabel(question: NeoQuestionEntry) {
+export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
   if (question.kind === 'yesno' && question.answeredBy === 'button')
     return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
-  return Array.isArray(answer) ? answer.join(t('list.separator')) || t('question.none') : answer;
+  return Array.isArray(answer)
+    ? answer
+        .map((value) => todos.find((todo) => todo.id === value)?.title ?? value)
+        .join(t('list.separator')) || t('question.none')
+    : answer;
 }
 
 function readExpanded(key: string): string[] {
@@ -1090,7 +1094,7 @@ export function NeoAskTodos({
                       <NeoTime at={question.createdAt} />
                     </div>
                     <SettledQuestionBody question={question} />
-                    <p>— {neoQuestionAnswerLabel(question)}</p>
+                    <p>— {neoQuestionAnswerLabel(question, todos)}</p>
                     {question.answerProvenance && (
                       <div class="mt-2 space-y-1 border-l-2 border-line pl-3">
                         <p class="text-xs font-medium text-fg-soft">

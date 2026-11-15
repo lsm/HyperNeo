@@ -511,6 +511,23 @@ describe('neo.question operations', () => {
 });
 
 describe("Neo's start question", () => {
+  test('an old answered start row reads as the multiple choice it was', async () => {
+    const { db, store, call } = setup();
+    db.prepare(
+      `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, start_todos, todos, state, answer, answered_by, answered_at, created_at)
+       VALUES ('old', 'ask', 'Start these 2?', 'start', NULL, 0, '["t1","t2"]', '["t1","t2"]', 'answered', '["t1"]', 'button', 2, 2)`
+    ).run();
+    expect(store.getQuestion('old')).toMatchObject({
+      kind: 'choice',
+      multiple: true,
+      options: ['t1', 't2'],
+      answer: ['t1'],
+    });
+    expect(await call('neo.question.get', { questionId: 'old' })).toMatchObject({
+      question: { id: 'old', kind: 'choice' },
+    });
+  });
+
   test('start is no longer a card kind Neo can ask', () => {
     const { store, ops } = setup();
     expect(
