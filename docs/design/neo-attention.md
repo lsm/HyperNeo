@@ -140,13 +140,13 @@ Each item carries its attention id. One new core operation, `neo.attention.wait 
 | `ask.finished` (all todos finished) | wake once per finish | ask, todos | 24 h | ask settled or a todo added |
 | `todo.blocked` waiting on a human card | drop ("covered by card") | `neoTodoAwaitsHuman`, covering card | — | — |
 | `todo.blocked` other (needs-human without card, environment, check) | digest once per blocker revision | todo blocker, cards | 4 h, 24 h, then stop | blocker changes or clears |
-| `todo.failed` | wake | todo, dependents, retries | 1 h, 4 h, 24 h | todo leaves `failed`; ask closed |
+| `todo.failed` | a reason of `todo.neo_step`, not its own item | — | — | — |
 | `todo.unworked`, waiting for a worker or capacity | wait ("daemon starts it") | queue reasons (`planWorkQueue`) | — | starts |
 | `todo.unworked`, not approved / no instruction | digest | todo, approval | 24 h | approved, started or removed |
-| `todo.neo_step` (new, core): an approved todo whose next step is Neo's and not taken: ready but no worker assigned, a worker idle with nothing to wait on, or a prerequisite removed | wake | pure `nextStepOwner(todo, deps, session, cards)`: `daemon`, `worker`, `human` or `neo`; raised only for `neo` | 1 h, 4 h, 24 h | the owner is no longer Neo |
-| `todo.stalled` (idle, unreachable, rescued) | wake | nudge incident, live status | 4 h | progress or state change |
-| `todo.prereq_cancelled` | digest | family | 24 h | proceed, remove, or replaced |
-| `ask.idle` (open ask, nothing running) | digest only if a Neo-decidable step exists: a startable todo needs a decision, or no todo remains | ask, todos, cards | 24 h (today 4 h) | a todo starts or the ask settles |
+| `todo.neo_step` (new, core): the one Neo-facing incident per todo whose next step is Neo's (table below) | wake | the facts in the table below, read outside the pure function | 1 h, 4 h, 24 h, then every 24 h while the owner is Neo | the owner is no longer Neo |
+| `todo.stalled` (unreachable, rescued) | wake | nudge incident, live status | 4 h | progress or state change |
+| `todo.prereq_cancelled` | a reason of `todo.neo_step`, not its own item | — | — | — |
+| `ask.idle` (open ask, nothing running) | digest only if no todo remains; a todo that needs Neo is already a `todo.neo_step` | ask, todos, cards | 24 h (today 4 h) | a todo starts or the ask settles |
 | `card.check_overdue` on a todo already waiting on another human card | drop and retire that daemon card | covering cards | — | — |
 | Session error on a todo worker | wake | worker, todo | via `todo.stalled` | worker running |
 | Driver health stalled (core); GitHub health stalled (`coding.github_health`) | digest | health incident | 24 h | recovered (a `recovered` retires the `stalled` item, and both drop if they land in one digest window) |
@@ -167,12 +167,27 @@ The owner-history link alone can put a merge on the wrong ask (the owner's last 
 
 ## Every open todo has one owner of its next step
 
-The sweep computes `nextStepOwner` for each approved, unfinished todo. Exactly one of these moves it next: the daemon (start, retry, resume), its worker (working), the human (an open card), or Neo (assign, decide, fix a removed prerequisite). When the owner is Neo and nothing changes, `todo.neo_step` wakes Neo until it acts. That is how approved work moves while the human is away. The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
+The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished todo. The facts are read outside it: the todo, its target and worker ref, the worker's live status, the work queue's decision (`capacity.ts`), a scheduled retry, the pack's `waiting` answer, open cards covering the todo, and its prerequisites. The first matching row wins:
+
+| Facts | Owner |
+|---|---|
+| an open card covers the todo | human |
+| the todo is failed, or a prerequisite is failed or removed | neo |
+| live status unknown | daemon (reconcile first, no wake) |
+| worker running | worker |
+| a pack says it is waiting (for example an open PR) | pack (its own kind, such as `coding.idle_with_open_pr`) |
+| a start target exists and the queue holds it (capacity, busy worker, scheduled retry) | daemon |
+| a start target exists and the queue would start it now | daemon |
+| no start target, or a worker idle with nothing to wait on | neo |
+
+When the owner is `neo`, one `todo.neo_step` item carries the reason (failed, prerequisite failed or removed, no worker, idle worker). It is the only Neo-facing item for that todo, so a failed idle todo or a removed prerequisite wakes Neo once, with one repeat clock. It keeps waking (1 h, 4 h, 24 h, then every 24 h) while the owner is Neo; a card or Neo's `wait` still silences it. That is how approved work moves while the human is away. The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
+
+Tests give the owner for each row, including a target with a queue hold (daemon), an idle worker with an open PR (pack), unknown live status (daemon), and a failed todo with an idle worker (one `neo` item); and an unchanged Neo-owned todo still wakes after the last ladder step.
 
 ## Repetition and death
 
 - A kind with no `repeat` retires as soon as it is told, so the sweep stops re-reading one-shot facts.
-- An item repeats only if `stillTrue`, the revision is unchanged, it is not `waiting`, and `next_at` has passed. The backoff comes from the kind (1 h / 4 h / 24 h). It stops after the last step and stays visible in the work snapshot as "unhandled since …".
+- An item repeats only if `stillTrue`, the revision is unchanged, it is not `waiting`, and `next_at` has passed. The backoff comes from the kind (1 h / 4 h / 24 h). It stops after the last step, except where a kind says otherwise (`todo.neo_step`), and stays visible in the work snapshot as "unhandled since …".
 - Neo's own action is never tracked directly. Anything Neo does changes the facts: a todo edit, a card, a send, a settle. That makes the condition false (retire) or the revision new (decide again). This keeps "record each fact once": the facts that already exist decide.
 - A new revision is a new episode: A → B → A notifies again, as in the earlier root design.
 - Stale items die in the sweep, never at render time. An item read but not yet rendered is re-read at render. A failed read keeps the old state and defers.
