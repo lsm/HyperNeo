@@ -41,6 +41,7 @@ import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-ha
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
+import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 
 const OVERLOADED =
   '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
@@ -190,7 +191,9 @@ describe('QueryRunner overload hold', () => {
   });
 
   it('never latches "stopped" on repeated 529s and holds the turn once retries run out', async () => {
-    const onRateLimitExhausted = mock(async () => true);
+    const onRateLimitExhausted = mock(
+      async (_error: string, _prompt: unknown, _hint?: LimitRetryHint) => true
+    );
     const { runner, ctx } = createRunner(onRateLimitExhausted);
     runner.start();
 

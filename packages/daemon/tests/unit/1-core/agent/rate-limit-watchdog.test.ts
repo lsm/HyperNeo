@@ -12,6 +12,7 @@ import {
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   RateLimitWatchdog,
+  type RateLimitRetryCallback,
   type RateLimitWatchdogDeps,
 } from '../../../../src/lib/agent/rate-limit-watchdog';
 
@@ -1629,10 +1630,10 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('holds the turn as overloaded for five minutes, then resumes it', async () => {
-      jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      jest.useFakeTimers();
       try {
         const { deps, notifyResume } = createMockDeps({ chain: [] });
-        const retryCallback = mock(async () => true);
+        const retryCallback = mock(async (_message: Parameters<RateLimitRetryCallback>[0]) => true);
         const watchdog = new RateLimitWatchdog('s', stateManager, deps);
         watchdog.setRetryCallback(retryCallback);
         const heldAt = Date.now();

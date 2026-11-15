@@ -1171,15 +1171,6 @@ describe('classifyQueryRetryHold', () => {
       ).toBe('overloaded');
   });
 
-  test('an overloaded provider past its retries hands the turn to the watchdog', () => {
-    expect(
-      classifyQueryRetryRoute({
-        errorSignal: signal({ rawText: '529 overloaded', isRetryableProviderError: true }),
-        env: env({ attempt: 3, hasRateLimitHandoff: true }),
-      })
-    ).toEqual({ action: 'rate_limit_handoff', hint: { hold: 'overloaded' } });
-  });
-
   test('everything else is no hold', () => {
     expect(classifyQueryRetryHold(signal(), env())).toBe('none');
     expect(
@@ -1194,6 +1185,17 @@ describe('classifyQueryRetryHold', () => {
         })
       )
     ).toBe('none');
+  });
+});
+
+describe('classifyQueryRetryRoute overload exhaustion', () => {
+  test('an overloaded provider past its retries hands the turn to the watchdog', () => {
+    expect(
+      classifyQueryRetryRoute({
+        errorSignal: signal({ rawText: '529 overloaded', isRetryableProviderError: true }),
+        env: env({ attempt: 3, hasRateLimitHandoff: true }),
+      })
+    ).toEqual({ action: 'rate_limit_handoff', hint: { hold: 'overloaded' } });
   });
 });
 
