@@ -52,20 +52,20 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
 
 ## The inbox projection
 
-`neoHumanQueue({questions, asks, todos, now})` is pure. Each todo and each card lands in exactly one state bucket, first match wins:
+`neoHumanQueue({questions, asks, todos, delivering, now})` is pure. `delivering` is the set of todos whose answered card is still being delivered (`question-answer-delivery.ts`). Each todo and each card lands in exactly one state bucket, first match wins:
 1. **waiting on you**: an open card without a hold (one item per card, with the titles of its todos, or "the whole ask");
 2. **held**: an open card with a hold;
-3. **running**: a todo in `doing`, or in `todo` that no card covers;
-4. **recent results**: a todo finished in the last 7 days, shown once even if it had an answered card.
+3. **in progress**: every other unfinished todo (`todo`, `doing`, `blocked`, `failed`) that no card covers. Each item says whose step it is, first match: `delivering` when the todo is in `delivering`; `running` or `queued` from the existing `neoTodoPlace` (`lib/neo/todo-state.ts`); otherwise `neo` (rule 4: Neo unblocks it or asks again);
+4. **recent results**: a todo `done` or `removed` in the last 7 days, shown once even if it had an answered card.
 
-A todo covered by a card appears only under its card. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); a whole-ask card.
+A todo covered by a card appears only under its card. Nothing unfinished can fall outside bucket 3. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); a whole-ask card; an answered card still being delivered with its blocked todo (in progress, `delivering`) next to an uncovered blocked check todo (in progress, `neo`); a failed todo with no card (in progress, `neo`).
 
 It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` stays and equals the waiting-on-you count. Web, phone and iPad render the same data.
 
 ## Clients
 
 One rule everywhere:
-- Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, running, recent results) and **ask** (all, then each ask). The default is "waiting on you" and "all".
+- Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, in progress, recent results) and **ask** (all, then each ask). The default is "waiting on you" and "all".
 - Each row shows the choices that fit, and the rest under a final "More" menu. No horizontal scrolling.
 - Items are grouped by ask. Each item says which todo it is about. The agree button is on the right; "Hold" offers: tomorrow, next week, until I come back, and drop this todo.
 
