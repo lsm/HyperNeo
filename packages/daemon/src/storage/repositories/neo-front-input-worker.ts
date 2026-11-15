@@ -91,7 +91,7 @@ export class NeoFrontInputRepository {
         .prepare(`SELECT f.message_id AS id FROM neo_front_inputs f
         JOIN sdk_messages u ON u.session_id = ?2 AND u.sdk_uuid = f.message_id
           AND u.message_type = 'user' AND COALESCE(u.send_status, 'consumed') <> 'failed'
-        WHERE f.conversation_id = ?1 AND f.eligible = 1 AND (f.owner IS NULL OR f.owner = 'front')
+        WHERE f.conversation_id = ?1 AND f.eligible = 1
           AND (u.consumed_seq IS NULL OR u.consumed_seq > COALESCE((SELECT MAX(consumed_seq)
             FROM sdk_messages WHERE session_id = ?2 AND ${SESSION_BILLING_TERMINAL}), 0))
         ORDER BY u.rowid`)
