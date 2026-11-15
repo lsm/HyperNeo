@@ -458,6 +458,23 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target }: Startable) => {
+    for (const pack of deps.packs()) {
+      const selected = await pack.workerTarget?.(todo, target, (ref) =>
+        deps.invoke(caller(ask), 'work.status', { ref })
+      );
+      if (!selected) continue;
+      if ('reason' in selected) {
+        store.updateTodo(
+          todo,
+          { state: 'todo', startedAt: null, reason: selected.reason },
+          Date.now()
+        );
+        deps.changed();
+        return { ok: false as const, reason: selected.reason };
+      }
+      target = selected.value;
+      todo = store.updateTodo(todo, { reason: null }, Date.now());
+    }
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =

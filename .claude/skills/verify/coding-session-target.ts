@@ -7,6 +7,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import type { WorkRef } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv[2]);
@@ -38,7 +39,6 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const session = async (title: string): Promise<WorkRef> => ({ adapter: 'hyperneo', id: ((await rpc('session.create', { title, workspacePath: join(run, 'workspace'), config: { queryMode: 'manual' } })) as { sessionId: string }).sessionId });
-  const status = async (ref: WorkRef) => ({ kind: 'completed' as const, value: await rpc('operation.invoke', { name: 'work.status', input: { ref } }) });
   const [front, back] = [await session('frontend'), await session('backend')];
   const neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   const pack = neo.packs().find((candidate) => candidate.id === 'coding');
@@ -47,32 +47,46 @@ try {
   const store = new NeoAskTodoRepository(db);
   for (const id of ['feature', 'earlier'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
-  const todo = (askId: string) => store.addTodo(crypto.randomUUID(), askId, { title: 'Slice', instruction: 'Synthetic', named: null, check: null, doneWhen: 'Done' }, 2, repo);
+  const todo = (askId: string) => store.addTodo(crypto.randomUUID(), askId, { title: 'Slice', instruction: 'Synthetic dispatch instruction', approvedAt: 1, named: null, check: null, doneWhen: 'Done' }, 2, repo);
   const worked = (askId: string, ref: WorkRef, name?: string) => {
     const item = todo(askId);
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(item.id, JSON.stringify(name ? { verb: 'start', adapter: 'hyperneo', name } : { verb: 'send', ref }), JSON.stringify(ref));
     db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(item.id);
     return item;
   };
-  const decide = async (label: string, item: ReturnType<typeof todo>, target: Parameters<NonNullable<typeof pack.workerTarget>>[1]) => {
-    const decision = await pack.workerTarget!(item, target, status);
-    evidence.push({ surface: 'coding pack workerTarget', label, target, decision });
-    return decision;
-  };
-  worked('earlier', front, 'frontend');
-  worked('earlier', back, 'backend');
+  const sessions = new NeoTodoSessionRepository(db);
+  const frontHistory = worked('earlier', front, 'frontend');
+  const backHistory = worked('earlier', back, 'backend');
   const first = todo('feature');
-  assert.deepEqual(await decide('unrelated work reuses the idle backend session', first, { verb: 'start', adapter: 'hyperneo', name: 'backend' }), { value: { verb: 'send', ref: back } });
-  db.prepare('INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)').run(first.id, JSON.stringify({ verb: 'send', ref: back }));
-  assert.deepEqual(await decide('a later slice of the feature follows it', todo('feature'), { verb: 'start', adapter: 'hyperneo' }), { value: { verb: 'send', ref: back } });
+  sessions.create(first.id, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
+  const dispatched = await neo.todoRunner.start(first.id);
+  evidence.push({ surface: 'todo runner dispatch', dispatched, target: sessions.get(first.id), ref: sessions.readRef(first.id) });
+  assert.equal(dispatched.ok, true, JSON.stringify(dispatched));
+  assert.deepEqual(sessions.get(first.id), { verb: 'send', ref: back });
+  assert.deepEqual(sessions.readRef(first.id), back);
+  assert(sessions.readSent(first.id)?.delivery, 'the real driver records delivery evidence');
+  assert.deepEqual(sessions.readRef(frontHistory.id), front);
+  assert.deepEqual(sessions.readRef(backHistory.id), back);
+  assert.equal(store.getTodo(backHistory.id)?.state, 'done');
+  const active = db.prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number };
+  assert.equal(active.count, 2, 'reuse does not open a new session');
   const missing = { adapter: 'hyperneo', id: 'no-such-session' };
   store.openAsk({ id: 'lost', projectId: null, sessionId: 'neo', originMessageId: null, title: 'lost', request: 'Synthetic', createdAt: 1 });
   const lost = todo('lost');
   db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), 'lost', lost.id);
   db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(lost.id, JSON.stringify({ verb: 'send', ref: missing }), JSON.stringify(missing));
-  const waited = await decide('an unreachable feature session waits', todo('lost'), { verb: 'start', adapter: 'hyperneo' });
-  assert('reason' in waited && waited.reason.startsWith('session_unknown'));
-  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown. Evidence: ${run}/evidence/session-target.json`);
+  const pendingTodo = todo('lost');
+  const pendingTarget = { verb: 'start' as const, adapter: 'hyperneo' };
+  sessions.create(pendingTodo.id, pendingTarget);
+  const waited = await neo.todoRunner.start(pendingTodo.id);
+  evidence.push({ surface: 'todo runner wait', waited, todo: store.getTodo(pendingTodo.id) });
+  assert(!waited.ok && waited.reason.startsWith('session_unknown'));
+  assert.equal(store.getTodo(pendingTodo.id)?.state, 'todo');
+  assert.equal(store.getTodo(pendingTodo.id)?.startedAt, null);
+  assert.deepEqual(sessions.get(pendingTodo.id), pendingTarget);
+  assert.deepEqual(sessions.readRef(lost.id), missing);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count, 2);
+  console.log(`PASS: real todo dispatch reused the backend session with a recorded send target and driver delivery, retained both earlier bindings, and kept unknown-session work pending. sessions=2; reused=1; waits=1. Evidence: ${run}/evidence/session-target.json`);
 } finally {
   writeFileSync(join(run, 'evidence/session-target.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app.cleanup();

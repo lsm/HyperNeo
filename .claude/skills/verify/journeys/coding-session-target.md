@@ -6,17 +6,17 @@ Use the shared isolated daemon setup in `../SKILL.md`.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding-session-target.ts
 ```
 
-The helper boots an isolated daemon with the coding pack, creates two real
-HyperNeo sessions over RPC and records two finished synthetic coding todos that
-worked in them as `frontend` and `backend`. It then asks the coding pack's
-`workerTarget` hook, with live status from the daemon's own `work.status`
-operation:
+The helper boots an isolated daemon with the coding pack and creates two real
+HyperNeo sessions over authenticated RPC. It records finished synthetic coding
+todos that worked in them as `frontend` and `backend`, then runs the normal todo
+runner dispatch against the daemon's registered driver operations.
 
-- unrelated work that asks to start a `backend` session is sent to the idle
-  backend session instead;
-- a later slice of the same feature follows it there;
-- a feature whose recorded session `work.status` cannot find waits instead of
-  starting another.
+- A todo asking to start `backend` reaches the existing backend session through
+  `work.send`. Its stored target, worker ref and driver delivery are checked.
+- Both earlier todo/session bindings remain, and the daemon still has two sessions.
+- An unreachable feature session leaves its new todo pending with the original
+  target and no start timestamp, while its previous worker binding is retained.
 
-Todo dispatch does not call the hook yet, so this journey does not claim that
-any worker was reused or started.
+The job processor stays stopped. This checks durable driver delivery without a
+provider turn. The helper prints explicit session, reuse and wait counts and
+writes the RPC and dispatch outcomes to `session-target.json`.

@@ -13,5 +13,5 @@ plans as `long_lived` without saving a value.
 
 It calls the session dispatch planner directly with the saved strategy: with
 every session busy, `long_lived` starts a work-type-named session and `per_pr`
-starts a session of its own. Coding dispatch does not call the planner yet, so
-this journey does not claim that any worker was reused or started.
+starts a session of its own. The `coding-session-target.md` journey exercises
+the resulting dispatch through the coding hook and the real daemon driver.
