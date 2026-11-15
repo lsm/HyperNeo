@@ -130,7 +130,20 @@ function setup() {
       Date.now()
     );
   };
-  return { db, store, sessions, invoke, step, runner, sent, told, target, work, seedLegacy };
+  return {
+    db,
+    store,
+    sessions,
+    operations,
+    invoke,
+    step,
+    runner,
+    sent,
+    told,
+    target,
+    work,
+    seedLegacy,
+  };
 }
 
 const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo) =>
@@ -299,9 +312,12 @@ describe('cancelled prerequisites', () => {
         expect(store.getTodo(dependent.id)?.state).toBe('todo');
         expect(notes).toHaveLength(1);
         expect(notes[0].note).toContain(cancelled.title);
-        expect(await invoke('neo.todo.proceed', { todoId: dependent.id })).toMatchObject({
-          ok: true,
-        });
+        expect(notes[0].note).toContain('neo.todo.remove stops it');
+        expect(notes[0].note).not.toContain('neo.todo.proceed');
+        await runner.refresh(() => {});
+        expect(store.getTodo(dependent.id)?.state).toBe('todo');
+        expect(sent).toHaveLength(before);
+        return;
       } else if (mode === 'replacement') {
         expect(notes).toHaveLength(0);
         expect(asked(store, dependent)).toBeUndefined();
@@ -398,40 +414,10 @@ describe('cancelled prerequisites', () => {
     }
   });
 
-  test('Neo cannot approve a step the human has not approved', async () => {
-    const { db, store, invoke, step, work, seedLegacy } = setup();
+  test('neo.todo.proceed is no longer an operation', () => {
+    const { db, operations } = setup();
     try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Unapproved',
-        request: 'A, then D.',
-        todos: [step('A', []), { ...step('D', [0]), ...work }],
-      });
-      const [a, d] = opened.todos;
-      seedLegacy(store.updateTodo(d, { approvedAt: null }, Date.now()));
-      await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
-      expect(await invoke('neo.todo.proceed', { todoId: d.id })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('not_approved'),
-      });
-      expect(store.getTodo(d.id)?.approvedAt).toBeNull();
-      expect(card(store, d)).toBeDefined();
-    } finally {
-      db.close();
-    }
-  });
-
-  test('proceed is refused with no cancelled prerequisite', async () => {
-    const { db, invoke, step, work } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Nothing cancelled',
-        request: 'A, then D.',
-        todos: [step('A', []), { ...step('D', [0]), ...work }],
-      });
-      expect(await invoke('neo.todo.proceed', { todoId: opened.todos[1].id })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('no_cancelled_prerequisite'),
-      });
+      expect(operations.map(({ name }) => name)).not.toContain('neo.todo.proceed');
     } finally {
       db.close();
     }
@@ -682,7 +668,8 @@ describe('cancelled prerequisites', () => {
       if (mode === 'after-finished')
         expect(await invoke('neo.todo.edit', { todoId: d.id, after: [x.id] })).toMatchObject({
           ok: false,
-          reason: expect.stringContaining('cancelled_dependency'),
+          reason:
+            'cancelled_dependency: a prerequisite of this step was cancelled; stop it with neo.todo.remove.',
         });
       if (mode === 'after-empty')
         expect(await invoke('neo.todo.edit', { todoId: d.id, after: [] })).toMatchObject({
