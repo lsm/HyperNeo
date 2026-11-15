@@ -1607,6 +1607,27 @@ describe('RateLimitWatchdog', () => {
   });
 
   describe('overloaded hold', () => {
+    it('holds an overloaded turn even when a fallback model is available', async () => {
+      const fallback: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+      const { deps, switchAndRetry } = createMockDeps({ chain: [fallback] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const heldAt = Date.now();
+      expect(
+        await watchdog.scheduleRetry(
+          '529 overloaded',
+          { uuid: 'm1', content: 'hi' },
+          { hold: 'overloaded' }
+        )
+      ).toBe(true);
+      await flush();
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      const held = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls[0][0];
+      expect(held.reason).toBe('overloaded');
+      expect(held.retryAt - heldAt).toBeGreaterThanOrEqual(5 * 60 * 1000);
+      expect(watchdog.getState().status).toBe('cooldown');
+      watchdog.cancel();
+    });
+
     it('holds the turn as overloaded for five minutes, then resumes it', async () => {
       jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
