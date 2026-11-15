@@ -116,14 +116,17 @@ export function createFrontTools(service: NeoService, conversationId: string) {
         },
         async ({ text, work_on: workOn, ...given }) => {
           const body = { text };
-          const targets = given.replyTo?.length
-            ? given.replyTo
-            : await service.db.gateway.call(
+          const targets = [
+            ...new Set([
+              ...(await service.db.gateway.call(
                 neoFrontInputReads,
                 'currentInputs',
                 conversationId,
                 sessionId
-              );
+              )),
+              ...(given.replyTo ?? []),
+            ]),
+          ];
           const input = { ...given, replyTo: given.replyTo ?? [] };
           if (!targets.length)
             return result(

@@ -269,6 +269,27 @@ export class NeoFrontInputRepository {
     return outcome;
   }
 
+  reopenForNeo(conversationId: string, messageId: string, originSessionId: string): boolean {
+    const changes = new ChangeRecorder();
+    const reopened = this.db.transaction(() => {
+      const sdk = new SDKMessageRepository(this.db);
+      if (sdk.getUserSendStatus(originSessionId, messageId) !== 'failed') return false;
+      this.db
+        .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
+        WHERE conversation_id = ? AND message_id = ?`)
+        .run(conversationId, messageId);
+      return (
+        sdkMessageWrites.run(
+          this.db,
+          { method: 'reopenDeliveryByUuid', args: [originSessionId, messageId] },
+          changes
+        ) !== null
+      );
+    })();
+    for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+    return reopened;
+  }
+
   reserve(
     conversationId: string,
     messageIds: readonly string[],
@@ -307,7 +328,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'claimUnowned', 'release', 'reserve', 'failSettled']
+  ['claim', 'claimUnowned', 'release', 'reserve', 'reopenForNeo', 'failSettled']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(
