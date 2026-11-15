@@ -4,6 +4,7 @@ import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -6533,6 +6534,27 @@ describe('SDKMessageHandler', () => {
       expect(onResultLimitError).not.toHaveBeenCalled();
       expect(publishedTopics()).toContain('query.trigger');
     });
+
+    it.each([529, 503])(
+      'holds a %i overload result as an overload instead of ending the turn as a failure',
+      async (status) => {
+        const onResultLimitError = mock(async () => true);
+        mockContext.onResultLimitError = onResultLimitError;
+        const result = makeApiErrorResult({
+          api_error_status: status,
+          result: `API Error: ${status} Overloaded. This is a server-side issue, usually temporary.`,
+        });
+        await handler.handleMessage(result);
+
+        expect(onResultLimitError).toHaveBeenCalledTimes(1);
+        const [, hint] = onResultLimitError.mock.calls[0] as [string, LimitRetryHint];
+        expect(hint).toEqual({ hold: 'overloaded' });
+        expect((result as unknown as { recovery_intercepted?: number }).recovery_intercepted).toBe(
+          1
+        );
+        expect(publishedTopics()).not.toContain('query.trigger');
+      }
+    );
 
     it('ignores api-error results whose text is not a limit error', async () => {
       const onResultLimitError = mock(async () => true);
