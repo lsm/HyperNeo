@@ -33721,6 +33721,14 @@
           "questionId": {
             "minLength": 1,
             "type": "string"
+          },
+          "when": {
+            "description": "Session door only: when the human said the answer.",
+            "type": "string"
+          },
+          "where": {
+            "description": "Session door only: where the human said the answer.",
+            "type": "string"
           }
         },
         "required": [
@@ -36335,67 +36343,6 @@
             "required": [
               "ok",
               "question"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "questionId": {
-            "default": "",
-            "type": "string"
-          },
-          "when": {
-            "default": "",
-            "type": "string"
-          },
-          "where": {
-            "default": "",
-            "type": "string"
-          },
-          "words": {
-            "default": "",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "neo.question.relayAnswer",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "ok"
             ],
             "type": "object"
           }

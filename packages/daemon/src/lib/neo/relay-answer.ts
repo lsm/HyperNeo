@@ -1,25 +1,13 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { defineOperation } from '../operations/registry.ts';
 import { requireLocalUser } from '../operations/caller.ts';
-import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
-import {
-  neoAskInputReads,
-  neoAskInputWrites,
-} from '../../storage/repositories/neo-ask-input-worker.ts';
+import { neoAskInputReads } from '../../storage/repositories/neo-ask-input-worker.ts';
 import { globalSettingsWrites } from '../../storage/repositories/global-settings-writes.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import type { NeoService } from './service.ts';
 
-const Input = z
-  .object({
-    questionId: z.string().default(''),
-    where: z.string().default(''),
-    when: z.string().default(''),
-    words: z.string().default(''),
-  })
-  .strict();
 const Senders = z
   .object({
     relaySenders: z.array(
@@ -33,41 +21,6 @@ const Result = z.union([
 ]);
 
 export function createNeoRelayOperations(service: NeoService) {
-  const relay = (superpipe({})('neo.question.relayAnswer') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (caller: OperationCaller) =>
-        caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL && caller.sessionId
-          ? { value: caller.sessionId }
-          : {
-              reason: {
-                ok: false,
-                reason:
-                  'session_door_required: relay is accepted only through the local session door.',
-              },
-            },
-      'caller',
-      'result:outcome'
-    )
-    .pipe(
-      (input: z.infer<typeof Input>, sender: string) =>
-        service.runDbOp(neoAskInputWrites, {
-          method: 'relayAnswer',
-          args: [{ ...input, sender, at: Date.now() }],
-        }),
-      ['input', 'outcome'],
-      'result:outcome'
-    )
-    .pipe(
-      async (questionId: string) => {
-        service.notifyChanged();
-        await service.deliverQuestionAnswers(questionId);
-        return { ok: true };
-      },
-      'outcome',
-      'outcome'
-    )
-    .endAsync('outcome');
   const recent = (superpipe({})('neo.relaySenders.recent') as PipelineAPI)
     .input(['caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -99,14 +52,6 @@ export function createNeoRelayOperations(service: NeoService) {
       ]),
       policy: { safetyClass: 'read', caller: 'local_user' },
       execute: (_input, caller) => recent(caller),
-    }),
-    defineOperation({
-      name: 'neo.question.relayAnswer',
-      description: neoToolDescription('neo.question.relayAnswer'),
-      inputSchema: Input,
-      resultSchema: Result,
-      policy: { safetyClass: 'mutate' },
-      execute: relay,
     }),
     defineOperation({
       name: 'neo.relaySenders.set',
