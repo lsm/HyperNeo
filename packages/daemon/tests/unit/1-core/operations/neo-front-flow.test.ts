@@ -1981,7 +1981,7 @@ test('a refused reply still lets the turn end hand the input to Neo', async () =
     await convoPublish({ requestId: 'refused', replyTo: [id], fullText: 'Done.', work_on: false })
   ).toMatchObject({ accepted: false, reason: 'spoken_required' });
   listening.mockRestore();
-  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
   await db.saveSDKMessage(front, {
     type: 'result',
@@ -1996,6 +1996,60 @@ test('a refused reply still lets the turn end hand the input to Neo', async () =
     outcome: 'handed_off',
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('a publication the gate refuses still forwards the current input', async () => {
+  const { id } = await deliveredConvoInput();
+  const publish = vi
+    .spyOn(service, 'publish')
+    .mockResolvedValueOnce({ accepted: false, reason: 'reply_target_not_given' } as never);
+  expect(
+    await convoPublish({ requestId: 'gated', replyTo: [id], fullText: 'Done.', work_on: false })
+  ).toMatchObject({ accepted: false });
+  publish.mockRestore();
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('a reopened failed Neo row carries the reply just sent', async () => {
+  const { id } = await deliveredConvoInput();
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+    'failed'
+  );
+  expect(
+    await convoPublish({
+      requestId: 'reopened',
+      replyTo: [id],
+      fullText: 'Reopened answer.',
+      work_on: false,
+    })
+  ).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+  const said = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(said).toContain('<already-said>');
+  expect(said).toContain('Reopened answer.');
+});
+
+test('a reply accepted after a refused one updates the pending Neo row', async () => {
+  const { id } = await deliveredConvoInput();
+  const listening = vi.spyOn(service.speech, 'isListening').mockReturnValue(true);
+  expect(
+    await convoPublish({ requestId: 'first', replyTo: [id], fullText: 'Done.', work_on: false })
+  ).toMatchObject({ accepted: false, reason: 'spoken_required' });
+  listening.mockRestore();
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+  expect(
+    await convoPublish({
+      requestId: 'second',
+      replyTo: [id],
+      fullText: 'Later answer.',
+      work_on: false,
+    })
+  ).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const said = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(said).toContain('Later answer.');
 });
 
 test('an unknown replyTo is refused but never blocks the current input', async () => {
