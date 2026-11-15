@@ -6538,7 +6538,7 @@ describe('SDKMessageHandler', () => {
     it.each([529, 503])(
       'holds a %i overload result as an overload instead of ending the turn as a failure',
       async (status) => {
-        const onResultLimitError = mock(async () => true);
+        const onResultLimitError = mock(async (_text: string, _hint: LimitRetryHint) => true);
         mockContext.onResultLimitError = onResultLimitError;
         const result = makeApiErrorResult({
           api_error_status: status,
@@ -6547,8 +6547,7 @@ describe('SDKMessageHandler', () => {
         await handler.handleMessage(result);
 
         expect(onResultLimitError).toHaveBeenCalledTimes(1);
-        const [, hint] = onResultLimitError.mock.calls[0] as [string, LimitRetryHint];
-        expect(hint).toEqual({ hold: 'overloaded' });
+        expect(onResultLimitError.mock.calls[0][1]).toEqual({ hold: 'overloaded' });
         expect((result as unknown as { recovery_intercepted?: number }).recovery_intercepted).toBe(
           1
         );
