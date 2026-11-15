@@ -15,6 +15,7 @@ import { homedir } from 'node:os';
 import { open } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from '../storage/database.ts';
+import { stripDisallowedBlockKeys } from './content-block-keys.ts';
 
 export function getSDKProjectDir(workspacePath: string): string {
   const resolved = existsSync(workspacePath) ? realpathSync(workspacePath) : workspacePath;
@@ -839,9 +840,14 @@ export function stripThinkingBlocksFromSessionFile(
           Array.isArray(message.message.content)
         ) {
           const original = message.message.content;
-          const filtered = original.filter((block: { type: string }) => block.type !== 'thinking');
+          const filtered = original
+            .filter((block: { type: string }) => block.type !== 'thinking')
+            .map(stripDisallowedBlockKeys);
 
-          if (filtered.length < original.length) {
+          if (
+            filtered.length < original.length ||
+            filtered.some((block, index) => block !== original[index])
+          ) {
             result.thinkingBlocksRemoved += original.length - filtered.length;
             message.message.content = filtered;
             modified = true;
