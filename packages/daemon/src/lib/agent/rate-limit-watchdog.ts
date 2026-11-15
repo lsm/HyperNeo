@@ -1,5 +1,5 @@
 import { runLagPhase } from '../event-loop-activity.ts';
-import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
+import type { FallbackModelEntry, MessageContent, ModelLimit } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import {
   BACKOFF_LADDER_MS,
@@ -7,6 +7,7 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  extractResetTimestamp,
   floorCooldownDecision,
   selectNextFallback,
 } from './fallback-recovery.ts';
@@ -49,6 +50,7 @@ export interface RateLimitWatchdogState {
   fallbackPending: boolean;
   limitKind: 'rate_limit' | 'usage_limit' | null;
   persistedCooldown: boolean;
+  modelLimits: Record<string, ModelLimit>;
 }
 
 export interface RateLimitPausePayload {
@@ -59,6 +61,8 @@ export interface RateLimitPausePayload {
 
 export interface RateLimitWatchdogDeps {
   getCurrentModel(): { provider: string; model: string };
+  initialModelLimits?: Readonly<Record<string, ModelLimit>>;
+  persistModelLimits?(limits: Record<string, ModelLimit>): Promise<unknown> | void;
   resolveChain(): Promise<FallbackModelEntry[]>;
   isEntryAvailable(entry: FallbackModelEntry): Promise<boolean>;
   switchAndRetry(
@@ -95,6 +99,7 @@ export class RateLimitWatchdog {
 
   private triedKeys = new Set<string>();
   private chain: FallbackModelEntry[] | null = null;
+  private readonly modelLimits = new Map<string, ModelLimit>();
   private fallbackPending = false;
   private limitKind: 'rate_limit' | 'usage_limit' | null = null;
   private paused = false;
@@ -124,6 +129,8 @@ export class RateLimitWatchdog {
     this.logger = new Logger(`RateLimitWatchdog ${sessionId}`);
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.stateManager = stateManager;
+    for (const [key, limit] of Object.entries(deps.initialModelLimits ?? {}))
+      this.modelLimits.set(key, limit);
     this.deps = deps;
   }
 
@@ -148,7 +155,14 @@ export class RateLimitWatchdog {
       fallbackPending: this.fallbackPending,
       limitKind: this.limitKind,
       persistedCooldown: this.persistedCooldownArm,
+      modelLimits: Object.fromEntries(this.modelLimits),
     };
+  }
+
+  async forgetModelLimits(): Promise<void> {
+    if (this.modelLimits.size === 0) return;
+    this.modelLimits.clear();
+    await this.deps.persistModelLimits?.({});
   }
 
   armPersistedCooldown(
@@ -295,12 +309,23 @@ export class RateLimitWatchdog {
           `Fallback: switching to ${sel.next.provider}/${sel.next.model} ` +
             `(skipReason for prior candidates: ${sel.skipReason}).`
         );
+        const now = Date.now();
+        const limitedKey = `${provider}/${model}`;
+        this.modelLimits.set(limitedKey, {
+          until:
+            this.lastHint?.resetAtMs ??
+            extractResetTimestamp(errorMessage, now)?.resetAtMs ??
+            now + BACKOFF_LADDER_MS[0],
+          fallback: entryKey(sel.next),
+        });
+        this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
         this.fallbackPending = true;
         void this.fireImmediateFallback(
           lastUserMessage,
           sel.next,
           entryGeneration,
-          queryGeneration
+          queryGeneration,
+          limitedKey
         );
         return true;
       }
@@ -703,7 +728,8 @@ export class RateLimitWatchdog {
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
     episodeGeneration: number,
-    queryGeneration?: number
+    queryGeneration?: number,
+    limitedKey?: string
   ): Promise<void> {
     if (episodeGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
       this.logger.info('Immediate fallback aborted before start (episode superseded).');
@@ -742,6 +768,13 @@ export class RateLimitWatchdog {
     }
 
     if (ok) {
+      const limit = limitedKey ? this.modelLimits.get(limitedKey) : undefined;
+      const current = this.deps.getCurrentModel();
+      const landed = `${current.provider}/${current.model}`;
+      if (limit && limitedKey && limit.fallback !== landed) {
+        this.modelLimits.set(limitedKey, { ...limit, fallback: landed });
+        this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
+      }
       return;
     }
     const canonical =
