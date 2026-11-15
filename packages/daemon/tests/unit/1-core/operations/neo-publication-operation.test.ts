@@ -561,11 +561,11 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('holds every reply text to 200 characters and 5 lines, with or without details', async () => {
+  test('holds every reply text to the character and line limits, with or without details', async () => {
     const send = (requestId: string, text: string, details?: string) =>
       publish({ requestId, text, ...(details === undefined ? {} : { details }) }, caller);
-    const long = `${'The build is green and the review is finished. '.repeat(5)}The branch is ready to merge.`;
-    expect(long.length).toBeGreaterThan(200);
+    const long = `${'The build is green and the review is finished. '.repeat(10)}The branch is ready to merge.`;
+    expect(long.length).toBeGreaterThan(NEO_REPLY_CHAR_LIMIT);
     expect(await send('long-alone', long)).toMatchObject({
       accepted: false,
       reason: 'reply_needs_details',
@@ -592,7 +592,7 @@ describe('Neo publication without runtime input attribution', () => {
     expect(ledger.list(conversationId) ?? []).toHaveLength(0);
 
     for (const [requestId, text] of [
-      ['chars-at-limit', 'x'.repeat(200)],
+      ['chars-at-limit', 'x'.repeat(NEO_REPLY_CHAR_LIMIT)],
       ['five-lines', 'Title\n- a\n- b\n- c\n- d'],
       ['blank-inside-five', 'Merged.\n\n- CI green\n- Reviewed\n- Docs updated'],
       ['terminal-newline', 'Title\n- a\n- b\n- c\n- d\n'],
@@ -605,13 +605,15 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       publication: { shortText: 'Merged and green.', fullText: long },
     });
-    expect(await send('fold', `${'a'.repeat(195)}`, 'b'.repeat(3))).toMatchObject({
+    expect(await send('fold', 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), 'b'.repeat(3))).toMatchObject({
       accepted: true,
-      publication: { verbatim: true, fullText: `${'a'.repeat(195)}\n\nbbb` },
+      publication: { verbatim: true, fullText: `${'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5)}\n\nbbb` },
     });
-    expect(await send('no-fold', `${'a'.repeat(195)}`, 'b'.repeat(20))).toMatchObject({
+    expect(
+      await send('no-fold', 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), 'b'.repeat(20))
+    ).toMatchObject({
       accepted: true,
-      publication: { shortText: 'a'.repeat(195), fullText: 'b'.repeat(20) },
+      publication: { shortText: 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), fullText: 'b'.repeat(20) },
     });
     expect(ledger.list(conversationId)).toHaveLength(7);
   });

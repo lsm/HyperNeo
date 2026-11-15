@@ -6,7 +6,8 @@ import type { NeoQuestionSource } from './neo-ask.ts';
 export const NEO_SHORT_TEXT_LIMIT = 4000;
 export const NEO_REPLY_FIELD_LIMIT = 16000;
 export const NEO_DELIVERABLE_CHAR_LIMIT = 4 * NEO_REPLY_FIELD_LIMIT;
-export const NEO_REPLY_CHAR_LIMIT = 200;
+export const NEO_REPLY_CHAR_LIMIT = 400;
+export const NEO_REPLY_WORD_LIMIT = 60;
 export const NEO_REPLY_LINE_LIMIT = 5;
 export const NEO_FRONT_REPLY_CHAR_LIMIT = 150;
 

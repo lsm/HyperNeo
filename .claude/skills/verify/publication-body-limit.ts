@@ -104,7 +104,7 @@ try {
         );
       }
     );
-  const long = `${'The build is green and the review is finished. '.repeat(5)}Merge it.`;
+  const long = `${'The build is green and the review is finished. '.repeat(10)}Merge it.`;
   const letter = Array.from(
     { length: 400 },
     (_, index) => `Line ${index + 1}: the handover note is copied here as it was written.`
@@ -129,28 +129,28 @@ try {
   for (const key of ['longAlone', 'sixLines', 'blankRuns', 'trailingBlank', 'plainLetter'])
     assert.match(
       (evidence[key] as { reason: string }).reason,
-      /^reply_needs_details: .*one-sentence summary in text and the rest in details\./
+      /^reply_needs_details: .*move supporting material to details\./
     );
   for (const key of ['longWithDetails', 'longShortDetails'])
     assert.match(
       (evidence[key] as { reason: string }).reason,
-      /^reply_summary_too_long: .*one-sentence summary/
+      /^reply_summary_too_long: .*keep supporting material in details/
     );
   assert.match(
     (evidence.deliverableWithDetails as { reason: string }).reason,
     /^deliverable_with_details: .*no details/
   );
-  const emoji = '😀'.repeat(200);
-  assert.equal(emoji.length, 400);
+  const emoji = '😀'.repeat(400);
+  assert.equal(emoji.length, 800);
   evidence.emojiOver = await publish('emoji-over', `${emoji}😀`);
   assert.match(
     (evidence.emojiOver as { reason: string }).reason,
-    /^reply_needs_details: .*200 characters and 5 lines/
+    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
   );
-  evidence.charsOver = await publish('chars-over', 'x'.repeat(201));
+  evidence.charsOver = await publish('chars-over', 'x'.repeat(401));
   assert.match(
     (evidence.charsOver as { reason: string }).reason,
-    /^reply_needs_details: .*200 characters and 5 lines/
+    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
   );
   const before = await read();
   evidence.before = before;

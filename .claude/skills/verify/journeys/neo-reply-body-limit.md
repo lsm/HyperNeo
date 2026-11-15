@@ -7,11 +7,13 @@ handler and the human RPC reader, with no model subprocess:
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/publication-body-limit.ts
 ```
 
-The reply text is at most 200 characters and at most 5 lines counting every line
-including blank ones, the title counting as a line. The limit applies with or
+Neo is asked to write at most 60 words. Separately, the server refuses reply text
+over 400 characters or 5 lines counting every line including blank ones, the
+title counting as a line; it counts characters and lines, not words. The limit applies with or
 without details, so a text over it is refused either way: without details as
 `reply_needs_details`, with details as `reply_summary_too_long`, each explained
-with "put a one-sentence summary in text and the rest in details".
+with "keep the title, the conclusion and any decision in text and supporting
+material in details".
 
 Neo publishes six bodies over the limit: a long sentence alone, a six-line list,
 a five-line body padded with blank lines, a long translation sent without the
@@ -25,13 +27,13 @@ because a deliverable is the whole message. The accepted deliverable is above
 16,000 characters, which proves the exemption clears the ordinary field cap and
 stops at the deliverable's own 64,000-character ceiling.
 
-A one-sentence summary with the long text in details and a three-line Markdown
+A short text with the long text in details and a three-line Markdown
 body are accepted, alongside the deliverable. The human reader shows exactly
 those three, in order, and the delivered deliverable is read back in full.
 
-The limit counts characters, not UTF-16 code units: 200 emoji measure 400 code
-units but exactly 200 characters, so that reply is accepted and read back in
-full, while 201 emoji and 201 plain characters are both refused. The numbers
+The limit counts characters, not UTF-16 code units: 400 emoji measure 800 code
+units but exactly 400 characters, so that reply is accepted and read back in
+full, while 401 emoji and 401 plain characters are both refused. The numbers
 live once in the shared publication types, and the refusals and tool description
 are built from them.
 
