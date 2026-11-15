@@ -62,7 +62,7 @@ export interface RateLimitPausePayload {
 export interface RateLimitWatchdogDeps {
   getCurrentModel(): { provider: string; model: string };
   initialModelLimits?: Readonly<Record<string, ModelLimit>>;
-  persistModelLimits?(limits: Record<string, ModelLimit>): void;
+  persistModelLimits?(limits: Record<string, ModelLimit>): Promise<unknown> | void;
   resolveChain(): Promise<FallbackModelEntry[]>;
   isEntryAvailable(entry: FallbackModelEntry): Promise<boolean>;
   switchAndRetry(
@@ -164,10 +164,10 @@ export class RateLimitWatchdog {
       this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
   }
 
-  forgetModelLimits(): void {
+  async forgetModelLimits(): Promise<void> {
     if (this.modelLimits.size === 0) return;
     this.modelLimits.clear();
-    this.deps.persistModelLimits?.({});
+    await this.deps.persistModelLimits?.({});
   }
 
   armPersistedCooldown(

@@ -715,7 +715,7 @@ export class AgentSession
       initialModelLimits: this.session.metadata.modelLimits,
       persistModelLimits: (limits) => {
         this.session.metadata.modelLimits = Object.keys(limits).length ? limits : undefined;
-        this.db
+        return this.db
           .updateSession(this.session.id, { metadata: this.session.metadata })
           .catch((error) => this.logger.error('Failed to persist model limits:', error));
       },
@@ -1819,7 +1819,7 @@ export class AgentSession
       : nonInterrupting
         ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
         : this.modelSwitchHandler.switchModel(newModel, newProvider));
-    if (result.success) this.rateLimitWatchdog.forgetModelLimits();
+    if (result.success) await this.rateLimitWatchdog.forgetModelLimits();
     return result;
   }
 

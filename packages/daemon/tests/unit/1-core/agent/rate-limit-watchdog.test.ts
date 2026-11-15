@@ -1149,7 +1149,9 @@ describe('RateLimitWatchdog', () => {
         chain: [A],
       });
       const saved: Record<string, ModelLimit>[] = [];
-      deps.persistModelLimits = (limits) => saved.push(limits);
+      deps.persistModelLimits = (limits) => {
+        saved.push(limits);
+      };
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       await watchdog.scheduleRetry('usage limit', { uuid: 'm1', content: 'hi' }, { resetAtMs });
