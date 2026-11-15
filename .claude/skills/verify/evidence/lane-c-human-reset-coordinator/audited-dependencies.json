@@ -71,7 +71,7 @@
   },
   "coreAppend": {
     "lines": 407,
-    "sha256": "cf5a4438054e62e49086c0518dbd8b0e496d244b86ce22affb0a9adf7abad167",
+    "sha256": "243742ff9cfd4740807c2009c565d1f1c9f04ce1d7531c8c107806c7fa1de9ac",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -132,48 +132,48 @@
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "text",
-        "start": 17,
-        "end": 21,
+        "start": 20,
+        "end": 24,
         "lines": 5,
         "sha256": "11875a2f3053a8cf5427e0523779a34b705b3aca5082f3b3a69b17b0f83db5bf"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "origin",
-        "start": 22,
-        "end": 22,
+        "start": 25,
+        "end": 25,
         "lines": 1,
         "sha256": "e81a3691d17fc13057362a68a3e084f792ade4bb0e00d2a5204a527b79f65023"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "NeoPublicationObject",
-        "start": 24,
-        "end": 104,
+        "start": 27,
+        "end": 107,
         "lines": 81,
         "sha256": "d17f816bcea891c7467209ca04295cbcbe7da11f8574e29647fc88fabec5a931"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "publicationTextRule",
-        "start": 114,
-        "end": 138,
+        "start": 117,
+        "end": 141,
         "lines": 25,
         "sha256": "611ccbd5daecd07e63f1c8d9b270867a4f2ce3a671ed19b02f4b6fd7b00e1543"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "NeoPublicationSchema",
-        "start": 164,
-        "end": 164,
+        "start": 168,
+        "end": 168,
         "lines": 1,
         "sha256": "41aca44d7732c4b34b50c982c1e390a53ebab8e736dfd4bf75d478220028f086"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
         "name": "admitNeoPublication",
-        "start": 187,
-        "end": 192,
+        "start": 191,
+        "end": 196,
         "lines": 6,
         "sha256": "db3d6b7c83cd8196afdd2d5f7dab6c8d1edf84b2c84595b8ff79f12ff8862782"
       },
