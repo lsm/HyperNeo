@@ -1,9 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import type {
   HandoffTransition,
   SpaceLongHorizonAgent,
@@ -27,25 +22,18 @@ import {
   mergeNodeStructuralFieldsFromTemplate,
 } from '../../../../src/lib/workflows/built-in-template-merge.ts';
 import {
-  builtInWorkflowRequiresPrMerge,
   CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
   CODER_ONLY_WORKFLOW,
   CODER_OWNED_MERGE_PROMPT,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
-  CODER_OWNED_QA_PROMPT,
-  CODER_OWNED_QA_REVIEW_PROMPT,
-  CODER_OWNED_REVIEW_PROMPT,
-  CODEX_REACTION_APPROVAL_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   getBuiltInWorkflows,
   RESEARCH_PROMPT,
-  RESEARCH_REVIEW_PROMPT,
   RESEARCH_WORKFLOW,
-  REVIEW_ONLY_REVIEW_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
   REVIEWER_ZERO_FINDINGS_GATE,
@@ -2388,6 +2376,49 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
     const modelPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
     expect(modelPa.agents[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  test('keeps a Post-Approval node whose merger prompt was appended to', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'append-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: {
+                value: 'You are the PR Merger.\n\nRemember to also sync the docs.',
+              },
+            },
+          ],
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    const appendPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(appendPa).toBeDefined();
+    expect(appendPa.agents[0].customPrompt?.value).toContain('Remember to also sync the docs.');
   });
 
   const retiredMergerGuard = {
