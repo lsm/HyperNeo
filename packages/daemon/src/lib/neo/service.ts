@@ -596,10 +596,20 @@ export class NeoService {
     for (const [sessionId, preference] of targets) {
       const stored = sessionId && preference ? this.db.getSession(sessionId) : null;
       if (!sessionId || !preference || !stored) continue;
-      const limits = stored.metadata.modelLimits ?? {};
-      if (!planPreferredReturn(stored.config, preference, limits, now)) continue;
+      const action = planPreferredReturn(
+        stored.config,
+        preference,
+        stored.metadata.modelLimits ?? {},
+        now,
+        Boolean(stored.metadata.pendingModelSwitch)
+      );
+      if (!action) continue;
       const live = await this.sessions.getSessionForControl(sessionId);
       if (!live) continue;
+      if (action === 'forget') {
+        live.forgetModelLimit?.(`${preference.provider}/${preference.model}`);
+        continue;
+      }
       await this.alignModelPreference(sessionId, preference);
       const after = this.db.getSession(sessionId)?.config;
       if (after && !planNeoAlignment(after, preference)?.model)

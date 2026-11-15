@@ -1,6 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
+import type { ModelLimit } from '@hyperneo/shared';
 import { findSameModel, resolveAutoCompactPercent, normalizeThinkingLevel } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -101,13 +102,25 @@ export function planNeoAlignment(
 export function planPreferredReturn(
   config: RuntimeConfig,
   preference: NeoModelPreference,
-  modelLimits: Readonly<Record<string, number>>,
-  now: number
-): { model: boolean; thinking: boolean } | null {
-  const until = modelLimits[`${preference.provider}/${preference.model}`];
-  if (until === undefined || until > now) return null;
-  const plan = planNeoAlignment(config, preference);
-  return plan?.model ? plan : null;
+  modelLimits: Readonly<Record<string, ModelLimit>>,
+  now: number,
+  pendingSwitch = false
+): 'return' | 'forget' | null {
+  const key = `${preference.provider}/${preference.model}`;
+  const limit = modelLimits[key];
+  if (!limit) return null;
+  if (pendingSwitch) return 'forget';
+  if (limit.until > now) return null;
+  const current = `${config.provider}/${config.model}`;
+  const seen = new Set([key]);
+  let at = limit.fallback;
+  while (at !== current) {
+    const next = modelLimits[at];
+    if (!next || seen.has(at)) return 'forget';
+    seen.add(at);
+    at = next.fallback;
+  }
+  return planNeoAlignment(config, preference)?.model ? 'return' : 'forget';
 }
 
 export function createNeoPreferenceOperation(service: NeoService) {

@@ -2,7 +2,7 @@ import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { Database } from '../../../../src/storage/sqlite-compat';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { FallbackModelEntry } from '@hyperneo/shared';
+import type { FallbackModelEntry, ModelLimit } from '@hyperneo/shared';
 import {
   BACKOFF_JITTER,
   BACKOFF_LADDER_MS,
@@ -1148,7 +1148,7 @@ describe('RateLimitWatchdog', () => {
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [A],
       });
-      const saved: Record<string, number>[] = [];
+      const saved: Record<string, ModelLimit>[] = [];
       deps.persistModelLimits = (limits) => saved.push(limits);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       const resetAtMs = Date.now() + 60 * 60 * 1000;
