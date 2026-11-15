@@ -129,6 +129,8 @@ export function createCodingMergeOperation(deps: Deps) {
         const { pr, reviews, checks, threads } = observed,
           state = await local(input, pr.headRefOid);
         const { review, qa } = state.assignments;
+        const bot =
+          state.policy.crossModelReview && review?.ref ? state.policy.reviewBot : review?.bot;
         if (
           !state.live ||
           !state.linked ||
@@ -146,7 +148,7 @@ export function createCodingMergeOperation(deps: Deps) {
         if (
           !state.policy.mergePolicy ||
           (state.policy.mergePolicy === 'review_bot' && !state.policy.reviewBot) ||
-          (review.bot ?? '').toLowerCase() !== (state.policy.reviewBot ?? '').toLowerCase()
+          (bot ?? '').toLowerCase() !== (state.policy.reviewBot ?? '').toLowerCase()
         )
           return { accepted: false, reason: 'Resolve repository review policy before merging.' };
         const provenance = codingReviewerPolicy(
@@ -225,7 +227,7 @@ export function createCodingMergeOperation(deps: Deps) {
             write: review.write,
             qa: qa.ref,
             reviewer: review.ref,
-            bot: review.bot,
+            bot,
           },
           route,
           state.facts.filter((f) =>
