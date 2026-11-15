@@ -19,6 +19,7 @@ const FRONT_REPLY_MAX_CHARS = NEO_FRONT_REPLY_CHAR_LIMIT;
 const Read = {
   id: z.string().min(1).max(200).optional(),
   text: z.string().trim().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(2000).optional(),
 };
 const result = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -34,18 +35,24 @@ export function createFrontTools(service: NeoService, conversationId: string) {
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
     tool(
       `${kind}_read`,
-      `Read current ${kind} for this conversation. With no id or text it lists the newest open ${kind}. text searches them by words. id reads one in full and must be an id from a list or search result.`,
+      `Read current ${kind} for this conversation. Without id it reads the ten newest ${kind} and returns the open ones, so a page can be empty; text keeps only matches. Pass nextCursor as cursor for the next ten. id reads one in full and must come from a page.`,
       Read,
       async (input) => {
         const value = await service.db.gateway.run(neoFrontReads, {
           conversationId,
           kind,
-          input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
+          input: input.id
+            ? { id: input.id }
+            : input.cursor
+              ? { cursor: input.cursor }
+              : input.text
+                ? { text: input.text }
+                : {},
         });
         if (input.id && value === null)
           return result({
             found: false,
-            reason: `No ${kind} has id ${input.id}. Call ${kind}_read with no id or text to list them.`,
+            reason: `No ${kind} has id ${input.id}. Call ${kind}_read without id to page through them.`,
           });
         if (kind === 'todos' && value !== null && !('items' in value)) {
           const packFacts = service.packs().flatMap(

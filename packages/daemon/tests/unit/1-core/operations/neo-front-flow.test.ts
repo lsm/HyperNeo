@@ -650,9 +650,41 @@ test('a todo detail carries the pack rows pinned to it as packFacts', async () =
   expect(page.items.every((item) => !('packFacts' in item))).toBe(true);
   expect(text(await readTool.handler({ id: 'missing' }, {} as never))).toEqual({
     found: false,
-    reason: 'No todos has id missing. Call todos_read with no id or text to list them.',
+    reason: 'No todos has id missing. Call todos_read without id to page through them.',
   });
-  expect(readTool.description).toContain('With no id or text it lists the newest open todos');
+});
+
+test('a front read pages past newer closed items to an older open one', async () => {
+  const sql = db.getDatabase();
+  sql
+    .prepare(
+      `INSERT INTO neo_asks (id,session_id,title,request,status,outcome,created_at,updated_at)
+       VALUES ('ask-1','synthetic','Ask','Private request','open','',0,10)`
+    )
+    .run();
+  const insert = sql.prepare(
+    `INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at)
+     VALUES (?,'ask-1',?,?,'Done',?,?,10)`
+  );
+  insert.run('open-old', 0, 'Open todo', 'doing', 0);
+  for (let index = 1; index <= 10; index++)
+    insert.run(`done-${index}`, index, `Done todo ${index}`, 'done', index);
+  createFrontTools(service, conversationId);
+  const readTool = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((entry) => entry.name === 'todos_read')!;
+  expect(readTool.description).toContain('so a page can be empty');
+  const page = async (input: Record<string, string>) =>
+    JSON.parse(
+      ((await readTool.handler(input, {} as never)).content[0] as { text: string }).text
+    ) as { items: { id: string }[]; nextCursor: string | null };
+  const first = await page({});
+  expect(first.items).toEqual([]);
+  expect(typeof first.nextCursor).toBe('string');
+  const second = await page({ cursor: first.nextCursor! });
+  expect(second.items.map((item) => item.id)).toEqual(['open-old']);
+  expect(second.nextCursor).toBeNull();
 });
 
 test('in dual mode Neo publishes to the human directly', async () => {
