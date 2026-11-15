@@ -10,7 +10,7 @@ This design makes the inbox a small core subsystem:
 - A card is a question about one or more todos (or the whole ask). An ask can hold any number of cards; each card stops only the todos it is about.
 - A card is open, held (the human put it aside until a time, or until they come back to it), answered or retired.
 - A human step gets its own card as soon as it can start, asking the human to do it. The "keep waiting?" card goes away.
-- One pure projection, `neoInbox`, gives the clients every item that waits on the human, with two independent filters: state and ask.
+- One pure projection, `neoHumanQueue`, gives the clients every item that waits on the human, with two independent filters: state and ask.
 
 ## What exists
 
@@ -30,7 +30,7 @@ This design makes the inbox a small core subsystem:
 | todo | one piece of it, with dependencies | a sub-issue |
 | card | a question to the human about some todos, or about the whole ask | a comment that mentions the human |
 
-Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/inbox.ts`):
+Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/human-queue.ts`):
 1. **Facts once.** `todos` is the only link from a card to todos. An empty list means the whole ask. `todo_id` is folded into `todos`; readers stop using it, and the column is dropped one release later (Change plan, step 1).
 2. **One live card per todo.** A new card is refused (`card_open`) when an open or held card already covers one of its todos; `replaces` changes it. Cards about the whole ask are not limited. `onlyCard` changes from "per ask" to "per todo".
 3. **A card stops only its todos.** Other todos of the ask keep running. The start gate already holds only the todos a card lists (`todo-start-gate.ts`); the per-ask limit is the only coupling.
@@ -52,7 +52,7 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
 
 ## The inbox projection
 
-`neoInbox({questions, asks, todos, now})` is pure. Each todo and each card lands in exactly one state bucket, first match wins:
+`neoHumanQueue({questions, asks, todos, now})` is pure. Each todo and each card lands in exactly one state bucket, first match wins:
 1. **waiting on you**: an open card without a hold (one item per card, with the titles of its todos, or "the whole ask");
 2. **held**: an open card with a hold;
 3. **running**: a todo in `doing`, or in `todo` that no card covers;
@@ -69,13 +69,37 @@ One rule everywhere:
 - Each row shows the choices that fit, and the rest under a final "More" menu. No horizontal scrolling.
 - Items are grouped by ask. Each item says which todo it is about. The agree button is on the right; "Hold" offers: tomorrow, next week, until I come back, and drop this todo.
 
+## Files
+
+`lib/neo/inbox.ts` already exists and is the default "Inbox" project, so the projection gets its own name.
+
+```
+packages/shared/src/types/neo-ask.ts          NeoQuestion gains heldAt, heldUntil
+packages/daemon/src/
+  storage/schema/m513-neo-question-holds.ts   todo_id → todos copy; held_at, held_until
+  storage/repositories/
+    neo-ask-todo-repository.ts                QUESTION_SELECT reads todos only; hold write
+    neo-stall-reminder-write.ts               opens the human-step card (rule 5)
+  lib/neo/
+    human-card.ts                             onlyCard per todo (rule 2)
+    question-hold.ts                          new: pure planHold
+    question-operations.ts                    neo.question.hold superpipe
+    pack-sweep.ts                             clears expired holds
+    daemon-cards.ts                           human-step card text
+    human-queue.ts                            new: pure neoHumanQueue
+    operations.ts                             adds it to the Neo snapshot
+packages/web/src/neo/                         filter rows and items
+```
+
+The migration number is taken when its PR lands.
+
 ## Change plan
 
 Each step is one PR within the repo's slice budget.
 1. **Build: fold `todo_id` into `todos`.** A migration copies each `todo_id` into `todos` when missing. Readers switch to `todos`; writers keep filling `todo_id` too for one release, so a rolled-back daemon still reads every card. The column is dropped in a later PR, at least one release after. Tests: a card with only `todo_id` covers its todo after migration; every former reader gives the same answer; a card written by the new code is read correctly by the old `QUESTION_SELECT`.
 2. **Build: one live card per todo.** `onlyCard` checks overlap of `todos` among open cards, held or not. Tests: two cards on different todos of one ask are both accepted; a second card on the same todo is refused; an ask-level card is never refused for this.
 3. **Build + wire: held cards.** The `held_at` and `held_until` columns, `neo.question.hold`, and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
-4. **Build: `neoInbox`** with its tests (state × ask counts, whole-ask cards, held items). **Wire:** add it to the Neo snapshot.
+4. **Build: `neoHumanQueue`** with its tests (state × ask counts, whole-ask cards, held items). **Wire:** add it to the Neo snapshot.
 5. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
 6. **Build: the human-step card** replaces the `check_overdue` card in the stall reminder sweep (rule 5). Old `check_overdue` rows stay readable. Tests: a check-only todo whose prerequisites are done gets its card at once; one that already has a card gets none; replay of a check-only todo that today waits 24 hours.
 7. **Wire: the uncovered-blocker rule** (rule 4), after HyperNeo #10684 is merged and `todo.neo_step` is live. Tests: a retired card on a todo that keeps a start target wakes Neo once; an answered card awaiting delivery wakes nobody and resumes the todo.
