@@ -23,7 +23,7 @@ const { subscribeToStructuredLogs } = await import('../../../packages/daemon/src
 
 const ACCESS = 'synthetic-access-secret';
 const REFRESH = 'synthetic-refresh-secret';
-const replies: Array<{ status: number; error: string }> = [];
+const replies: Array<{ status: number; error: string }> = [{ status: 503, error: REFRESH }];
 const requests: Array<{ status: number; error: string }> = [];
 const tokenServer = Bun.serve({
   port: 0,
@@ -95,7 +95,8 @@ try {
   assert.equal(evidence.health, 'unhealthy');
 
   assert.equal(logs.length, transient + 1);
-  for (const line of logs.slice(0, transient)) {
+  assert.match(logs[0], /outcome=transient oauthError=unrecognized/);
+  for (const line of logs.slice(1, transient)) {
     assert.match(line, /outcome=transient oauthError=temporarily_unavailable/);
   }
   assert.match(logs[transient], /outcome=definitive oauthError=invalid_grant/);

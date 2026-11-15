@@ -12,8 +12,9 @@ Claude token URL is answered by a local HTTP server; nothing leaves the machine.
 The launcher starts from `env -i` with `NODE_ENV=test`, a fresh `HOME` and data
 dir, and no provider key. The credentials are synthetic.
 
-The token endpoint answers 503 `temporarily_unavailable` five times, then 400
-`invalid_grant`. The helper drives `tick()` on a controlled clock and asserts:
+The token endpoint answers 503 once with the synthetic refresh token echoed as
+its `error` field, four more times with `temporarily_unavailable`, then 400
+`invalid_grant`. The echoed value must log as `oauthError=unrecognized`. The helper drives `tick()` on a controlled clock and asserts:
 
 - each transient refresh happens only once `refreshDelayMs(attempt)` has passed,
   and the scheduler keeps going past the old three-failure cap;

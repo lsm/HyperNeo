@@ -81,12 +81,10 @@ interface TokenRequestResult {
   oauthError?: string;
 }
 
-const OAUTH_ERROR_CODE = /^[a-z0-9_.-]{1,64}$/i;
-
 async function oauthErrorCode(response: Response): Promise<string | undefined> {
   try {
     const { error } = (await response.json()) as { error?: unknown };
-    return typeof error === 'string' && OAUTH_ERROR_CODE.test(error) ? error : undefined;
+    return typeof error === 'string' && error ? error : undefined;
   } catch {
     return undefined;
   }
