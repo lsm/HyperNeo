@@ -1,4 +1,4 @@
-# Continue, retry and bind wait for unfinished prerequisites
+# Continue and bind wait for unfinished prerequisites
 
 No model, provider, browser or GitHub is involved. Run from the worktree root with
 a fresh absolute evidence directory:
@@ -13,6 +13,7 @@ and `work.status` are counted stubs, so the proof shows what reaches the worker
 door, not delivery to a live worker.
 
 With a prerequisite running or reopened, `neo.todo.bind`, `neo.todo.continue` and
-`neo.todo.retry` each return `not_ready`, send nothing and leave the step as it
-was. Once the prerequisite is done, the same three calls succeed.
+`neo.todo.continue` on a failed step (its retry) each return `not_ready`, send
+nothing and leave the step as it was. Once the prerequisite is done, the same
+calls succeed; the retry queues its follow-up for the worker.
 `evidence/todo-prerequisite-gate.json` holds one row per call.

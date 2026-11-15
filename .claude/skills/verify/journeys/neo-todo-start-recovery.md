@@ -16,7 +16,7 @@ An injected late ask-stamp failure must roll back the interruption flag, state
 and question pruning together, without table notifications. Under a held WAL
 lock there must be no early receipt or notification; card and health reads
 must still answer. Once committed, the full Unicode report survives on the
-failed card. The real `neo.todo.retry` operation must refuse with
+failed card. The real `neo.todo.continue` operation must refuse with
 `start_uncertain`, so the user cannot accidentally open a duplicate worker.
 
 A worker ref bound after candidate discovery must keep its doing card and

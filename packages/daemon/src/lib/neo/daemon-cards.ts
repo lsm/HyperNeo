@@ -240,7 +240,7 @@ export function neoCheckOverdue(
 
 export type NeoDaemonCardAction = {
   todoId: string;
-  name: 'neo.todo.done' | 'neo.todo.remove' | 'neo.todo.retry' | 'neo.todo.continue';
+  name: 'neo.todo.done' | 'neo.todo.remove' | 'neo.todo.continue';
   input: Record<string, string>;
 };
 
@@ -276,7 +276,7 @@ export function planNeoDaemonCardActions(card: Card, todos: readonly Row[]): Neo
       (todo) =>
         todo.updatedAt <= answeredAt && (todo.state === 'failed' || todo.state === 'blocked')
     )
-    .map((todo) => ({ todoId: todo.id, name: 'neo.todo.retry', input: { todoId: todo.id } }));
+    .map((todo) => ({ todoId: todo.id, name: 'neo.todo.continue', input: { todoId: todo.id } }));
 }
 
 export function planNeoHoldCard(
