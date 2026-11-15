@@ -16,6 +16,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants.ts';
 import type { Database } from '../../../../src/storage/database.ts';
+import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
@@ -181,9 +182,10 @@ describe('durable Neo intake operation', () => {
       inputKind: 'human',
       message: {
         content: [
-          { type: 'text', text: `[message id: ${input.requestId}]` },
-          { type: 'text', text: expect.stringMatching(/^\(local time: /) },
+          { type: 'text', text: expect.stringMatching(/^\(local time: [^\n]*\)\n$/) },
+          { type: 'text', text: `<human-message id="${input.requestId}">\n\n` },
           { type: 'text', text: input.content },
+          { type: 'text', text: '\n\n</human-message>' },
         ],
       },
       humanContent: [{ type: 'text', text: input.content }],
@@ -236,6 +238,19 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
   });
+  test('an identical retry with an input mode returns the idempotent receipt', async () => {
+    const voice = { ...input, inputMode: 'dictation' as const };
+    expect(await invoke(voice)).toMatchObject({ value: { ok: true, created: true } });
+    expect(await invoke(voice)).toMatchObject({
+      value: { ok: true, requestId: input.requestId, messageId: input.requestId, created: false },
+    });
+    expect(mailbox.sdkRows()).toHaveLength(1);
+    const stored = JSON.parse(mailbox.sdkRows()[0].sdk_message)
+      .message.content.map((block: { text?: string }) => block.text ?? '')
+      .join('');
+    expect(stored.match(/\[input: dictation\]/g)).toHaveLength(1);
+  });
+
   test('a retry after consumption does not rerun the ask', async () => {
     await invoke();
     const [job] = mailbox.jobQueue.dequeue(MESSAGE_DELIVERY, 1);
@@ -266,7 +281,9 @@ describe('durable Neo intake operation', () => {
     };
     const content = [photo, { type: 'text', text: '```txt\nnotes from a file\n```' }];
     expect(await invoke({ ...input, content })).toMatchObject({ value: { ok: true } });
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content.slice(2)).toEqual(content);
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content.slice(2, -1)).toEqual(
+      content
+    );
     expect(
       await invoke({ ...input, requestId: crypto.randomUUID(), content: [photo] })
     ).toMatchObject({ value: { ok: true } });
@@ -315,6 +332,54 @@ describe('durable Neo intake operation', () => {
     expect(await invoke()).toMatchObject({ value: { ok: false } });
     expect(mailbox.sdkRows()).toEqual([]);
     expect(mailbox.rows()).toEqual([]);
+  });
+  test('a legacy quoted prompt retried through the operation keeps every stored block', async () => {
+    const quotedId = '30000000-0000-4000-8000-000000000001';
+    const content = [
+      { type: 'text' as const, text: `[message id: ${input.requestId}]` },
+      { type: 'text' as const, text: '(local time: Sun 2026-10-18 21:10 EDT)' },
+      { type: 'text' as const, text: 'The human replied to the Neo message "Ready?":' },
+      { type: 'text' as const, text: 'Ready?' },
+      { type: 'text' as const, text: 'Thanks' },
+    ];
+    const asks = new NeoConversationAskRepository(mailbox.db);
+    const conversationId = repo.conversationId();
+    asks.append({
+      conversationId,
+      requestId: quotedId,
+      askOrigin: { sessionId: input.sessionId, messageId: quotedId },
+      content: 'Ready?',
+    });
+    asks.append({
+      conversationId,
+      requestId: input.requestId,
+      askOrigin: { sessionId: input.sessionId, messageId: input.requestId },
+      content: 'Thanks',
+      replyTo: { kind: 'message', id: quotedId },
+    });
+    const legacy = {
+      type: 'user' as const,
+      uuid: input.requestId,
+      session_id: input.sessionId,
+      parent_tool_use_id: null,
+      message: { role: 'user' as const, content },
+      inputKind: 'human' as const,
+      humanContent: [{ type: 'text' as const, text: 'Thanks' }],
+      replyTo: { kind: 'message' as const, id: quotedId },
+    };
+    expect(mailbox.sdkMessageRepo.saveSDKMessage(input.sessionId, legacy as never)).toBe(true);
+    const retry = {
+      ...input,
+      content: 'Thanks',
+      replyTo: { kind: 'message' as const, id: quotedId },
+    };
+    expect(await invoke(retry)).toMatchObject({ value: { ok: true, created: false } });
+    const first = JSON.parse(mailbox.sdkRows()[0].sdk_message);
+    expect(first.message.content).toEqual(content);
+    expect(first.humanContent).toEqual(legacy.humanContent);
+    expect(await invoke(retry)).toMatchObject({ value: { ok: true, created: false } });
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message)).toEqual(first);
+    expect(mailbox.sdkRows()).toHaveLength(1);
   });
   test('a storage fault rolls back the prompt and never reports acceptance', async () => {
     mailbox.db.exec('DROP TABLE job_queue');

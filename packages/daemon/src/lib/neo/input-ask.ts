@@ -87,7 +87,7 @@ export async function resolveNeoInputAsk(
           reason: {
             ok: false,
             reason:
-              'input_required: pass input, the [message id] of the human message this serves.',
+              'input_required: pass input, the id on the `<human-message>` tag of the human message this serves.',
           },
         };
   const human = reads.input(caller, request.input);

@@ -194,9 +194,9 @@ const prompt = JSON.parse(
   ).sdk_message
 );
 const fact = prompt.message.content.find((block: { text?: string }) =>
-  block.text?.startsWith('The human answered')
+  block.text?.startsWith('<reference')
 ).text;
-assert.equal(fact, `The human answered your question "Which layout?" with B (${options[1]}):`);
+assert.equal(fact, `<reference question="${single}" ask="synthetic-ask">\nWhich layout?\n</reference>\n\n`);
 const labelledPrompt = JSON.parse(
   (
     db.prepare('SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?').get(labelledRequestId) as {
@@ -205,11 +205,11 @@ const labelledPrompt = JSON.parse(
   ).sdk_message
 );
 const labelledFact = labelledPrompt.message.content.find((block: { text?: string }) =>
-  block.text?.startsWith('The human answered')
+  block.text?.startsWith('<reference')
 ).text;
 assert.equal(
   labelledFact,
-  'The human answered your question "Approach B keeps the list, approach A switches to cards. Which approach?" with B (Switch every card to the compact table layout):'
+  `<reference question="${labelled}" ask="synthetic-ask-labelled">\nApproach B keeps the list, approach A switches to cards. Which approach?\n</reference>\n\n`
 );
 evidence.push({
   fact,
