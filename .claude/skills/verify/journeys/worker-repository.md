@@ -13,7 +13,7 @@ resolves their places; todo resolution reads local remotes with the shared cache
 workspace identity reader, while remote workers use only status remotes; the MCP operations accept matching and non-coding sends,
 and refuse other or unknown repositories on add, edit, bind and continue.
 Dispatch sentries require zero work.send/work.start calls, and the delivery input
-count stays zero. Refused adds create no todo; refused edits and binds create no
+count stays zero. Refused adds and bind targets create no todo; refused edits create no
 worker target. Evidence includes operation replies and the dispatch counts.
 The helper stops its daemon; the wrapper retains evidence and removes test data.
 

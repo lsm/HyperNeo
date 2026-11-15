@@ -294,11 +294,6 @@ export function planNeoHoldCard(
   return { value: { ...neoDaemonCardDraft(cause, [todo], reason), todoId: todo.id } };
 }
 
-export const neoTodoOnHold = (
-  todo: Pick<NeoTodo, 'id'>,
-  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
-) => cards.some((card) => card.cause === NEO_HOLD && neoQuestionCoversTodo(card, todo));
-
 export const neoTodoHeldBy = (
   todo: Pick<NeoTodo, 'id'>,
   cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
