@@ -8,6 +8,7 @@ import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './wa
 import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
+  codingCrossModelReviewed,
   codingReviewerPolicy,
   type CodingStageFact,
   type CodingActor,
@@ -60,6 +61,7 @@ export type CodingPrState =
   | 'dirty'
   | 'approved_pending'
   | 'approved_green'
+  | 'waiting_cross_review'
   | 'merged'
   | 'closed';
 
@@ -164,6 +166,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  crossModelReview?: boolean;
   allowNoChecksMerge?: boolean;
   mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
@@ -174,7 +177,8 @@ export interface CodingMergePolicy {
 export function codingPrState(
   pr: Node,
   repoHasCi = false,
-  policy: CodingMergePolicy = {}
+  policy: CodingMergePolicy = {},
+  stageFacts: readonly CodingStageFact[] = []
 ): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
@@ -208,7 +212,10 @@ export function codingPrState(
     });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
-    return readyCi ? 'approved_green' : 'approved_pending';
+    if (!readyCi) return 'approved_pending';
+    return policy.crossModelReview && !codingCrossModelReviewed(pr.body, pr.headRefOid, stageFacts)
+      ? 'waiting_cross_review'
+      : 'approved_green';
   }
   return readyCi
     ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
@@ -236,7 +243,8 @@ export type CodingLedgerRow = {
 export function planCodingLedgerRead(
   raw: unknown,
   now: number,
-  readPolicy: (repo: string) => CodingMergePolicy = () => ({})
+  readPolicy: (repo: string) => CodingMergePolicy = () => ({}),
+  readStageFacts: (url: string) => readonly CodingStageFact[] = () => []
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -256,7 +264,14 @@ export function planCodingLedgerRead(
       title: pr.title,
       branch: pr.headRefName,
       head: pr.headRefOid,
-      state: codingPrState(pr, repoHasCi, policy),
+      state: codingPrState(
+        pr,
+        repoHasCi,
+        policy,
+        policy.crossModelReview
+          ? readStageFacts(codingLedgerPrUrl({ repo: canonical, number: pr.number }))
+          : []
+      ),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
@@ -484,7 +499,12 @@ export class CodingPrLedgerRepository {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
     const before = this.health.read(repo);
-    const planned = planCodingLedgerRead(raw, now, (canonical) => this.policy(canonical));
+    const planned = planCodingLedgerRead(
+      raw,
+      now,
+      (canonical) => this.policy(canonical),
+      (url) => this.stageFacts.read(url)
+    );
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
     const canonical = this.canonicalRepo(repo);
@@ -532,6 +552,10 @@ export class CodingPrLedgerRepository {
 
   acceptHealthNotice(repo: string, key: string, at: number) {
     this.health.accept(repo, key, at);
+  }
+
+  readStageFacts(url: string) {
+    return this.stageFacts.read(url);
   }
 
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
@@ -582,6 +606,7 @@ export class CodingPrLedgerRepository {
       allowNoChecksMerge: noChecks?.scope.kind === 'repo' && noChecks.value === true,
       mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
+      crossModelReview: read('crossModelReview') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
       humanSignoff: read('humanSignoff') as string[] | undefined,
@@ -999,5 +1024,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext'] as const
+  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext', 'readStageFacts'] as const
 );

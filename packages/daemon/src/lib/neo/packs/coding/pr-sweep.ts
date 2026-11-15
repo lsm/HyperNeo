@@ -50,6 +50,7 @@ const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_review: 'waiting for review',
   approved_pending: 'approved with CI still pending',
   waiting_ci: 'waiting for CI',
+  waiting_cross_review: 'waiting for a cross-model review',
 };
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
@@ -85,6 +86,8 @@ export function codingPrEscalationText(
   now: number,
   unreachable: boolean
 ): string {
+  if (row.state === 'waiting_cross_review')
+    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} has made no progress`;
@@ -144,6 +147,7 @@ export async function sweepCodingPrs(
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
     const told =
       nudge.kind === 'remind' &&
+      row.state !== 'waiting_cross_review' &&
       (await deps
         .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
         .catch(() => false));

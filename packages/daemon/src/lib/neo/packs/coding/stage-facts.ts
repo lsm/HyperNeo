@@ -182,3 +182,16 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
   body: string,
   reviewer: z.infer<typeof CodingActor>
 ) => { qualifies: boolean; preferred: boolean; reason: string };
+
+export const codingCrossModelReviewed = (
+  body: string,
+  head: string,
+  facts: readonly CodingStageFact[]
+) =>
+  facts.some(
+    (fact) =>
+      fact.stage === 'review' &&
+      fact.verdict === 'pass' &&
+      fact.head === head &&
+      codingReviewerPolicy(true, body, fact.actor).qualifies
+  );
