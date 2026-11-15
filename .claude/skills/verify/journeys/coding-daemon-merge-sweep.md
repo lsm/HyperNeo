@@ -251,3 +251,11 @@ explicit human merge policy. Retired handoffs cannot be revived by stale retries
 The independent-review modes then advance the PR head after retirement. Reusing
 the earlier receipt must be refused and the next sweep must wake Neo. A fresh
 accepted work.send receipt for the new head restores coverage without a merge.
+
+Add `cross-model` for the optional cross-model review gate. With the synthetic
+repository's `crossModelReview` set through the preference RPC and a Claude Agent
+line in the PR body, a bot-approved green PR must read `waiting_cross_review` and
+execute no merge. A passing Review fact by the same model must still hold. A
+passing Review fact by a different model on the head must then allow exactly one
+SHA-pinned squash, with saved preferences unchanged. Unit tests cover the sweep's
+single Neo wake for this state.

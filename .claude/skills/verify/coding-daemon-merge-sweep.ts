@@ -23,6 +23,7 @@ import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/pa
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
+const crossModel = process.argv.includes('cross-model');
 const cancelReview = process.argv.includes('bot-review-cancel');
 const botReviewRepro = process.argv.includes('bot-review-repro') || cancelReview;
 const assignedReview = process.argv.includes('assigned-review') || botReviewRepro;
@@ -94,14 +95,41 @@ try{
  const notices:string[]=[];let deliver=true,rejectSignoff=true;
  const snapshot=()=>JSON.parse(readFileSync(join(run,'fixture.json'),'utf8'));
  const makePack=()=>createCodingPack({database:()=>db,readPrs:async()=>linkedIssue||assignedReview?[{url,state:'OPEN',checks:'passing',review:'approved',head:snapshot().pr.headRefOid}]:[],todoPrs:new CodingTodoPrRepository(db),prLedger:ledger,prEvents:new CodingPrEventRepository(db),prSweep:new CodingPrSweepRepository(db),projectRepos:()=>['synthetic/merge'],prSweepDeps:{human:async(key:string,text:string)=>humanDelivery&&publishCodingHumanMerge({conversation:()=>new NeoRepository(db).conversationId(),append:input=>app!.db.gateway.call(neoPublicationWrites,'append',input),notify:()=>{humanNotices.push(text);}},key,text),tell:async(_owner,_key,text)=>{if(stoppedReady){ownerMessages.push(text);return true;}if(external&&deliver){notices.push(text);return true;}return false;},wake:async(key,text)=>{if(rejectSignoff&&text.includes('requires human sign-off')){rejectSignoff=false;throw new Error('Synthetic mailbox unavailable');}if(deliver)notices.push(text);return ciRetry&&deliver?neo!.wakeNeo(key,text):deliver;}},readLedgerRepo:async()=>{
- const node={number:7,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:snapshot().pr.headRefOid},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
+ const node={number:7,body:snapshot().pr.body,title:'Synthetic daemon merge',headRefName:'fixture',headRefOid:snapshot().pr.headRefOid,state:terminal?(external?'MERGED':'CLOSED'):'OPEN',closedAt:terminal?new Date().toISOString():null,isDraft:false,mergeable:'MERGEABLE',reviewDecision:'APPROVED',files:{nodes:largeFiles?allPaths.slice(0,100).map(path=>({path})):[{path:'src/app.ts'}],pageInfo:{hasNextPage:largeFiles}},labels:{nodes:[],pageInfo:{hasNextPage:false}},reviews:{nodes:[{state:'APPROVED',commit:{oid:snapshot().pr.headRefOid},author:{login:'fixture-bot'}}]},commits:{nodes:[{commit:((pendingLedger&&!snapshot().ciReady)||humanWaiting)?{statusCheckRollup:ciStartup?{state:'PENDING'}:null,checkSuites:{totalCount:1}}:humanSibling?{statusCheckRollup:null,checkSuites:{totalCount:0}}:{statusCheckRollup:{state:'SUCCESS'}}}]}};
  return {data:{rateLimit:{remaining:5000},repository:{nameWithOwner:'synthetic/merge',open:{pageInfo:{hasNextPage:false},nodes:terminal?[]:humanSibling?[node,{...node,number:8,isDraft:true,commits:{nodes:[{commit:{statusCheckRollup:{state:'SUCCESS'}}}]}}]:isolated?[node,{...node,number:8}]:[node]},done:{nodes:terminal?[node]:[]}}}};
  }});
  const pack=makePack();let preferences=await rpc('pack.preferences.list',{});let tick=Date.now();
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
- if (assignedReview) {
+ if (crossModel) {
+   assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/merge' },
+     key: 'crossModelReview', value: true })).ok);
+   preferences = await rpc('pack.preferences.list', {});
+   pr.body = 'Agent: claude-opus-5-5 (effort: medium) via Claude';
+   publish({ labels: [[]] });
+   const stages = new CodingStageFactsRepository(db);
+   const passed = (model: string) => ({ url, head, stage: 'review' as const, verdict: 'pass' as const,
+     actor: { kind: 'agent' as const, id: 'synthetic-reviewer', model, harness: 'Codex' },
+     acceptanceContract: 'contract', evidence: ['synthetic review'] });
+   await runSweep(); await runSweep();
+   assert.equal(mergeCalls().length, 0);
+   assert.equal(ledger.list()[0].state, 'waiting_cross_review');
+   evidence.botApprovedGreenWaits = ledger.list()[0].state;
+   assert(stages.record(passed('claude-opus-5-5')));
+   await runSweep(); await runSweep();
+   assert.equal(mergeCalls().length, 0);
+   assert.equal(ledger.list()[0].state, 'waiting_cross_review');
+   evidence.sameModelReviewHeld = true;
+   assert(stages.record(passed('gpt-6.1-sol')));
+   await runSweep(); await runSweep(); await runSweep();
+   assert.deepEqual(mergeCalls(), [['pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+   assert.deepEqual(await rpc('pack.preferences.list', {}), preferences);
+   evidence.differentModelMergedOnce = true;
+   evidence.mergeCommands = mergeCalls();
+   evidence.savedPreferencesUnchanged = true;
+   evidence.verified = true;
+ } else if (assignedReview) {
    assert(![8399, 8499].includes(app.server.port));
    const prepare = db.prepare.bind(db);
    db.prepare = ((sql: string) => {
@@ -163,7 +191,7 @@ try{
    evidence.reviewReadOffMainThread = true;
    store.askQuestion('review-decision', 'review-ask', { todoId: todo.id,
      text: 'Choose next step', kind: 'reply', options: null, multiple: false,
-     noLabel: null, yesLabel: null, startTodos: null }, tick);
+     noLabel: null, yesLabel: null }, tick);
    await runSweep();
    assert.equal(held().length, beforeCovered + 1);
    evidence.humanDecisionWakes = 1;

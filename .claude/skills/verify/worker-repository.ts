@@ -113,8 +113,9 @@ try {
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), null);
     assert.equal((await call('neo.todo.edit', { todoId: deferred.todo.id, check })).ok, true);
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), 'github.com/example/repo');
-    refusal(await call('neo.todo.bind', { todoId: deferred.todo.id, ref }));
-    assert.equal(sessions.readRef(deferred.todo.id), null);
+    const deferredCount = todos.listTodos(deferredAsk).length;
+    refusal(await call('neo.todo.add', { after: [], askId: deferredAsk, title: 'Bound coding work', check, target: { verb: 'bind', ref } }));
+    assert.equal(todos.listTodos(deferredAsk).length, deferredCount);
     sessions.bind(deferred.todo.id, ref, 1);
     todos.updateTodo(todos.getTodo(deferred.todo.id)!, { state: 'doing', startedAt: 1, approvedAt: 1 }, 1);
     refusal(await call('neo.todo.continue', { todoId: deferred.todo.id, message: 'Continue edited check' }));
@@ -122,14 +123,14 @@ try {
     assert.equal(pending.ok, true);
     refusal(await call('neo.todo.edit', { todoId: pending.todo.id, instruction: 'Implement change', target: { verb: 'send', ref } }));
     assert.equal(sessions.get(pending.todo.id), null);
-    refusal(await call('neo.todo.bind', { todoId: pending.todo.id, ref }));
-    assert.equal(sessions.readRef(pending.todo.id), null);
+    const pendingCount = todos.listTodos('ask').length;
+    refusal(await add({ target: { verb: 'bind', ref } }));
+    assert.equal(todos.listTodos('ask').length, pendingCount);
     sessions.bind(pending.todo.id, ref, 1);
     todos.updateTodo(todos.getTodo(pending.todo.id)!, { state: 'doing', startedAt: 1, approvedAt: 1 }, 1);
     refusal(await call('neo.todo.continue', { todoId: pending.todo.id, message: 'Continue change' }));
   }
-  const pending = await add();
-  assert.equal((await call('neo.todo.bind', { todoId: pending.todo.id, ref: refs[0] })).ok, true);
+  assert.equal((await add({ target: { verb: 'bind', ref: refs[0] } })).ok, true);
   assert.equal((await add({ check: { pack: 'core', kind: 'evidence', params: {} }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
   assert.equal((await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } })).ok, true);
   assert(remoteLookups > 0);

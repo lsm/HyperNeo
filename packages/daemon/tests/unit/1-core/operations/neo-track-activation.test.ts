@@ -136,8 +136,8 @@ test('a Neo MCP caller cannot Track on the human behalf', async () => {
 const relay = () =>
   invokeOperation(
     createOperationRegistry(createNeoOperations(service)),
-    'neo.question.relay',
-    { session: key, title: 'Ship it?', options: ['Yes', 'Not now'] },
+    'neo.question.ask',
+    { kind: 'relay', session: key, text: 'Ship it?', options: ['Yes', 'Not now'] },
     { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
   );
 const asked = () => {

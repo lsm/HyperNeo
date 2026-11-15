@@ -85,7 +85,6 @@ test('only stale open asks without active, waiting or questioned work receive th
       multiple: false,
       noLabel: 'No',
       yesLabel: 'Yes',
-      startTodos: null,
       confirm: null,
       document: null,
       replyTo: [],

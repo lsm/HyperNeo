@@ -116,7 +116,6 @@ export function neoDaemonCardDraft(
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
     todos: covered.map((todo) => todo.id),
     cause,
   };
@@ -293,11 +292,6 @@ export function planNeoHoldCard(
     return { reason: 'already_waiting: this todo already waits on an open card; answer that one.' };
   return { value: { ...neoDaemonCardDraft(cause, [todo], reason), todoId: todo.id } };
 }
-
-export const neoTodoOnHold = (
-  todo: Pick<NeoTodo, 'id'>,
-  cards: readonly Pick<NeoQuestion, 'state' | 'cause' | 'todos'>[]
-) => cards.some((card) => card.cause === NEO_HOLD && neoQuestionCoversTodo(card, todo));
 
 export const neoTodoHeldBy = (
   todo: Pick<NeoTodo, 'id'>,

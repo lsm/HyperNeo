@@ -512,7 +512,6 @@ function mountCard(state: NeoQuestionEntry['state'] = 'open', replacement = fals
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
     todos: [],
     state,
     answer: state === 'answered' ? ['Approve'] : null,

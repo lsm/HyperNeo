@@ -37,7 +37,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
     observed.push({adapter:source.adapter,headerOpeners:0,questionAndTodoLogos:true,...colors});
   }
   const focusedCases=[];
-  for(const id of ['retired-focus','start-focus']) {
+  for(const id of ['retired-focus']) {
   const retired=page.locator(`[data-ask="${id}"]:visible`);
   const retainedOpen=retired.getByRole('button',{name:'Open session: Local worker',exact:true});
   await retainedOpen.waitFor();

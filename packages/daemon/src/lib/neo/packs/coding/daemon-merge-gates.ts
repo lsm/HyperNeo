@@ -2,12 +2,15 @@ import { codingReviewMatches } from './review.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { CodingMergePolicy } from './pr-ledger.ts';
 import { codingHumanSignoff } from './human-signoff.ts';
+import { codingCrossModelReviewed, type CodingStageFact } from './stage-facts.ts';
 
 export type CodingDaemonMergeFacts =
   | { ok: false; reason: string }
   | {
       ok: true;
       head: string;
+      body?: string;
+      stageFacts?: readonly CodingStageFact[];
       closingIssuesReferences?: readonly { url: string }[];
       linkedIssueReason?: string | null;
       state: string;
@@ -65,6 +68,11 @@ const requireReview = (facts: Facts, policy: CodingMergePolicy): Gate => {
     ? { value: facts }
     : skip('matching_head_bot_approval_required');
 };
+const requireCrossModelReview = (facts: Facts, policy: CodingMergePolicy): Gate =>
+  !policy.crossModelReview ||
+  codingCrossModelReviewed(facts.body ?? '', facts.head, facts.stageFacts ?? [])
+    ? { value: facts }
+    : skip('cross_model_review_required');
 const requireResolved = (facts: Facts): Gate =>
   facts.threads.head === facts.head && facts.threads.unresolved === 0
     ? { value: facts }
@@ -95,6 +103,7 @@ export const decideCodingDaemonMerge = (superpipe({})('coding.decide-daemon-merg
   .pipe(requireReview, ['decision', 'policy'], 'result:decision')
   .pipe(requireResolved, 'decision', 'result:decision')
   .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')
+  .pipe(requireCrossModelReview, ['decision', 'policy'], 'result:decision')
   .pipe(
     (facts: Facts): Gate =>
       facts.linkedIssueReason ? skip(facts.linkedIssueReason) : { value: facts },

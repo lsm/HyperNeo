@@ -45,11 +45,7 @@ const git = async (cwd: string, ...args: string[]) => {
 const call = async (name: string, input: unknown) => {
   const registry = createOperationRegistry([
     ...createNeoHomeOperations({ repo, todos, defaultSessionId: () => 'neo:root' }, home),
-    ...createNeoQuestionOperations(
-      todos,
-      async () => {},
-      async () => ({ ok: true })
-    ),
+    ...createNeoQuestionOperations(todos, async () => {}),
   ]);
   const result = await invokeOperation(registry, name, input, {
     source: 'rpc',

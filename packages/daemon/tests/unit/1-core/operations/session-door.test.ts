@@ -167,8 +167,8 @@ describe('the session door', () => {
   test('every other registered operation is rejected by the socket allowlist', async () => {
     const allowed = new Set([
       'message.send',
+      'neo.question.answer',
       'neo.question.get',
-      'neo.question.relayAnswer',
       'system.build',
       'system.restart.reserve',
       'device.pair.create',

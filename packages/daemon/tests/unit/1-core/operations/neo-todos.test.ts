@@ -276,7 +276,6 @@ describe('neo.todo operations', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todoId: added.todo.id,
       },
       Date.now()
@@ -314,7 +313,6 @@ describe('neo.todo operations', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todoId: added.todo.id,
       },
       Date.now()

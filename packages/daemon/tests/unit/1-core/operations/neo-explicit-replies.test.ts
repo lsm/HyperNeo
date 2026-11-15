@@ -241,40 +241,6 @@ test('publish rejects a mixed replyTo while question.ask keeps the received id',
   expect(service.todos.listQuestions('work')).toHaveLength(1);
 });
 
-test('rewording a start question retains its explicit human references', async () => {
-  const id = await received();
-  service.todos.askQuestion(
-    'start',
-    'work',
-    {
-      text: 'Start the comparison?',
-      kind: 'start',
-      options: null,
-      multiple: false,
-      noLabel: null,
-      yesLabel: null,
-      startTodos: [],
-    },
-    1
-  );
-  expect(
-    await invoke('neo.question.ask', {
-      retireWhen: pendingTodoCheck,
-      ...question,
-      kind: 'start',
-      replyTo: [id],
-    })
-  ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
-  expect(
-    await invoke('neo.question.ask', {
-      retireWhen: pendingTodoCheck,
-      ...question,
-      kind: 'start',
-      text: 'Start now?',
-    })
-  ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
-});
-
 test('publication session validation uses the existing adapter lookup for external sessions', async () => {
   const read = mock(({ ref }: { ref: { adapter: string; id: string } }) =>
     ref.id === 'known'

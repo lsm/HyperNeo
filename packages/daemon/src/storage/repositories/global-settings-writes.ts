@@ -45,8 +45,15 @@ class GlobalSettingsWriter extends SettingsRepository {
 
   neoFrontModel(model: NeoModelPreference): GlobalSettings {
     const neo = this.getGlobalSettings().neo;
+    const fallbacks = model.fallbacks ?? neo?.front?.model?.fallbacks;
     return super.updateGlobalSettings({
-      neo: { ...neo, front: { ...neo?.front, model } },
+      neo: {
+        ...neo,
+        front: {
+          ...neo?.front,
+          model: { ...model, ...(fallbacks === undefined ? {} : { fallbacks }) },
+        },
+      },
     });
   }
 

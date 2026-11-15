@@ -92,14 +92,21 @@ describe('Runtime runner commits before external effects', () => {
     await gateway.close();
     db.close();
   });
-  const startCard = () =>
-    store.askQuestion(
+  const startCard = () => {
+    store.addTodo(
+      'gone',
+      'ask',
+      { title: 'gone', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    db.prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+    return store.askQuestion(
       'start',
       'ask',
       {
-        kind: 'start',
-        text: 'Start?',
-        startTodos: ['first'],
+        kind: 'reply',
+        text: 'Ready?',
+        todoId: 'gone',
         options: null,
         multiple: false,
         yesLabel: null,
@@ -107,6 +114,7 @@ describe('Runtime runner commits before external effects', () => {
       },
       2
     );
+  };
   const snapshot = () => ({
     todo: store.getTodo('first'),
     ask: store.getAsk('ask'),
@@ -128,7 +136,7 @@ describe('Runtime runner commits before external effects', () => {
     expect(effects).toEqual([]);
   });
 
-  test('a claim failure leaves its start card open and dispatches nothing', async () => {
+  test('a claim failure leaves its card open and dispatches nothing', async () => {
     startCard();
     const before = snapshot();
     db.exec(

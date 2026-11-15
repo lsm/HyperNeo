@@ -3,6 +3,7 @@ import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoAskTodosVersion } from '../../../../src/storage/repositories/neo-ask-settlement.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -120,6 +121,22 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(changes).toEqual(['neo_asks']);
   });
 
+  test('skips an ask whose todos changed after the caller checked them', async () => {
+    add('design', 'done');
+    add('build', 'done');
+    consumedWake('ask');
+    const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
+      { now: number; ids: string[]; versions?: Record<string, string> },
+      string[]
+    >;
+    const checked = { ask: neoAskTodosVersion(store.listTodos('ask')) };
+    store.updateTodo(store.getTodo('build')!, { state: 'removed', reason: 'Not needed' }, 5);
+    expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: checked })).toEqual([]);
+    expect(store.getAsk('ask')?.status).toBe('open');
+    const fresh = { ask: neoAskTodosVersion(store.listTodos('ask')) };
+    expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: fresh })).toEqual(['ask']);
+  });
+
   test('generates the outcome from the step list when Neo wrote none', async () => {
     add('alpha', 'done');
     add('beta', 'closed_unverified');
@@ -174,7 +191,6 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         multiple: false,
         yesLabel: null,
         noLabel: null,
-        startTodos: null,
         confirm: null,
         document: null,
         replyTo: [],

@@ -1976,7 +1976,8 @@ export class QueryRunner {
             handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
               errorMessage,
               this._lastConsumedUserMessage,
-              retrySignal.rateLimitHint ?? undefined,
+              retrySignal.rateLimitHint ??
+                (decision.route.hint.hold ? decision.route.hint : undefined),
               queryGeneration
             ));
           } catch (handoffError) {
@@ -2504,7 +2505,7 @@ export class QueryRunner {
       suppressPreYieldCallback: true,
       queryGeneration,
     })) {
-      if (this.ctx.isLimitRecoveryPending?.()) {
+      if (this.ctx.isLimitRecoveryPending?.() && !this.retryPromptIdentity.retrying(message.uuid)) {
         logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
         const yieldedUuid = message.uuid;
         if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {

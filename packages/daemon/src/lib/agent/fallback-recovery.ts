@@ -1,4 +1,4 @@
-import type { FallbackModelEntry } from '@hyperneo/shared';
+import type { FallbackModelEntry, GlobalSettings } from '@hyperneo/shared';
 
 export type { FallbackModelEntry };
 
@@ -42,6 +42,27 @@ export function resolveFallbackChain(
     return [...fallbackModels];
   }
   return [];
+}
+
+export function sessionFallbackChain(
+  session: { sessionId: string; frontSessionId: string | null },
+  settings: Pick<GlobalSettings, 'neo' | 'modelFallbackMap' | 'fallbackModels'>,
+  current: { provider: string; model: string; alias?: string }
+): FallbackModelEntry[] {
+  const own = session.sessionId.startsWith('neo:')
+    ? settings.neo?.preferences?.fallbacks
+    : session.sessionId === session.frontSessionId
+      ? settings.neo?.front?.model?.fallbacks
+      : undefined;
+  if (own?.length)
+    return own.map(({ provider, model, thinkingLevel }) => ({ provider, model, thinkingLevel }));
+  return resolveFallbackChain(
+    current.provider,
+    current.model,
+    settings.modelFallbackMap,
+    settings.fallbackModels,
+    current.alias
+  );
 }
 
 export type FallbackSkipReason = 'none' | 'tried' | 'unavailable';

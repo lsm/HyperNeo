@@ -240,6 +240,7 @@ const LEDGER_CODES: Record<CodingPrState, keyof typeof CODING_TODO_STATUS_EN> = 
   unreviewed: 'todo.pr.noReviewer',
   approved_green: 'todo.pr.approvedGreen',
   approved_pending: 'todo.pr.approvedPending',
+  waiting_cross_review: 'todo.pr.waitingReview',
   dirty: 'todo.pr.dirty',
   draft: 'todo.pr.draft',
 };
@@ -435,7 +436,10 @@ export function createCodingTodoPolicy(
         const name = scope.edit
           ? (place.todo ?? hinted() ?? place.ask)
           : repository(candidate, scope);
-        if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
+        if (
+          draft.check?.pack === 'coding' &&
+          (draft.target?.verb === 'send' || draft.target?.verb === 'bind')
+        ) {
           const expected = name ?? hinted();
           const remotes = scope.workerRemotes?.map(neoGitRepo).filter(Boolean) ?? [];
           if (expected && !remotes.includes(neoGitRepo(expected)))

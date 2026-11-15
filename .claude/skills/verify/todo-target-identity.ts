@@ -40,31 +40,21 @@ try {
   const stored = sessions.get(sent.todo.id)?.ref;
   assert.deepEqual(stored, { adapter: 'hyperneo', id: worker });
   evidence.push({ stored });
-  const legacyBind = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Legacy bind', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, target: { verb: 'bind', ref: { adapter: 'hyperneo', id: worker } } } });
-  assert.equal(legacyBind.isError, true, JSON.stringify(legacyBind));
-  evidence.push({ legacyBind });
-  const pending = await add('send', worker);
-  assert.equal(pending.ok, true);
-  const bind = async (id: string) => {
-    const reply = await handler({ name: 'neo.todo.bind', input: { todoId: pending.todo.id, ref: { adapter: 'hyperneo', id } } });
-    evidence.push({ operation: 'neo.todo.bind', id, reply });
+  const bindAdd = async (id: string) => {
+    const reply = await handler({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Running todo', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, target: { verb: 'bind', ref: { adapter: 'hyperneo', id } } } });
+    evidence.push({ verb: 'bind', id, reply });
     assert.notEqual(reply.isError, true);
     return JSON.parse(reply.content[0].text);
   };
-  const legacy = db.prepare("UPDATE neo_todos SET approved_at = ?, depends_on = '[]' WHERE id = ?");
-  legacy.run(null, pending.todo.id);
-  const unapproved = await bind(worker.slice(0, 8));
-  assert.equal(unapproved.ok, false);
-  assert.match(unapproved.reason, /^not_approved:/);
-  legacy.run(Date.now(), pending.todo.id);
-  const bound = await bind(worker.slice(0, 8));
+  const bound = await bindAdd(worker.slice(0, 8));
   assert.equal(bound.ok, true, JSON.stringify(bound));
-  const original = sessions.readRef(pending.todo.id);
-  assert.deepEqual(original, { adapter: 'hyperneo', id: worker });
-  const refused = await bind('deadbeef');
+  assert.equal(bound.todo.state, 'doing');
+  assert.deepEqual(sessions.readRef(bound.todo.id), { adapter: 'hyperneo', id: worker });
+  const beforeUnknown = todos.listTodos('synthetic-ask').length;
+  const refused = await bindAdd('deadbeef');
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /^target_not_found:/);
-  assert.deepEqual(sessions.readRef(pending.todo.id), original);
+  assert.equal(todos.listTodos('synthetic-ask').length, beforeUnknown);
   const count = todos.listTodos('synthetic-ask').length;
   const rejected = await add('send', 'deadbeef');
   assert.equal(rejected.ok, false);
@@ -125,7 +115,7 @@ try {
   assert.match(receipt.records[0], /^ask_settled:/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   evidence.push({ rows: db.prepare('SELECT target, ref FROM neo_todo_sessions').all() });
-  console.log('PASS: real daemon MCP add and direct bind store full target IDs; unknown prefixes are refused without recording, rebinding or dispatching.');
+  console.log('PASS: real daemon MCP send and bind targets store full target IDs; unknown prefixes are refused without recording or dispatching.');
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();

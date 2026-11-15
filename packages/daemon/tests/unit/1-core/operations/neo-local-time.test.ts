@@ -106,7 +106,6 @@ describe('neoIntakeMessage order', () => {
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
     todos: [],
     confirm: null,
     state: 'open' as const,

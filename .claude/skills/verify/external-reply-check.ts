@@ -143,22 +143,22 @@ try {
     ]) {
       seed
         .prepare(
-          "INSERT INTO neo_todos (id, ask_id, position, title, done_when, instruction, state, created_at, updated_at) VALUES (?, 'verify-ask', ?, 'Verify peer', 'Peer receives instruction', ?, 'todo', ?, ?)"
+          "INSERT INTO neo_todos (id, ask_id, position, title, done_when, instruction, state, approved_at, created_at, updated_at) VALUES (?, 'verify-ask', ?, 'Verify peer', 'Peer receives instruction', ?, 'todo', ?, ?, ?)"
         )
-        .run(id, id === 'first' ? 0 : 1, instruction, now, now);
+        .run(id, id === 'first' ? 0 : 1, instruction, now, now, now);
       seed
         .prepare('INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)')
         .run(id, JSON.stringify({ verb: 'send', ref }));
       seed
         .prepare(
-          "INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, todos, state, created_at) VALUES (?, 'verify-ask', 'Start peer?', 'start', ?, ?, 'open', ?)"
+          "INSERT INTO neo_questions (id, ask_id, text, kind, options, todos, state, created_at) VALUES (?, 'verify-ask', 'Start peer?', 'choice', '[\"Start\"]', ?, 'open', ?)"
         )
-        .run(`start-${id}`, JSON.stringify([id]), JSON.stringify([id]), now);
+        .run(`start-${id}`, JSON.stringify([id]), now);
     }
   } finally {
     seed.close();
   }
-  const first = await rpc('neo.question.answer', { questionId: 'start-first', answer: ['first'] });
+  const first = await rpc('neo.question.answer', { questionId: 'start-first', answer: ['Start'] });
   for (let i = 0; received.length < 1 && i < 40; i++) await pause();
   writeFileSync(join(run, 'observed.json'), JSON.stringify({ neo, first, received }, null, 2));
   assert.equal(first.ok, true);
@@ -166,7 +166,7 @@ try {
     received[0]?.includes(line),
     'external worker did not receive the sending Neo CLI reply line'
   );
-  await rpc('neo.question.answer', { questionId: 'start-second', answer: ['second'] });
+  await rpc('neo.question.answer', { questionId: 'start-second', answer: ['Start'] });
   await rpc('work.send', {
     ref,
     message: 'Human instruction.',

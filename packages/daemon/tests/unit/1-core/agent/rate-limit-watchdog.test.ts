@@ -1,8 +1,8 @@
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { Database } from '../../../../src/storage/sqlite-compat';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { FallbackModelEntry } from '@hyperneo/shared';
+import { beforeEach, describe, expect, it, jest, mock } from 'bun:test';
+import type { FallbackModelEntry, ModelLimit } from '@hyperneo/shared';
 import {
   BACKOFF_JITTER,
   BACKOFF_LADDER_MS,
@@ -12,6 +12,7 @@ import {
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   RateLimitWatchdog,
+  type RateLimitRetryCallback,
   type RateLimitWatchdogDeps,
 } from '../../../../src/lib/agent/rate-limit-watchdog';
 
@@ -1143,6 +1144,53 @@ describe('RateLimitWatchdog', () => {
     const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
     const B: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
 
+    it('records when the limited model can run again, and forgets it on request', async () => {
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      const saved: Record<string, ModelLimit>[] = [];
+      deps.persistModelLimits = (limits) => {
+        saved.push(limits);
+      };
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const resetAtMs = Date.now() + 60 * 60 * 1000;
+      await watchdog.scheduleRetry('usage limit', { uuid: 'm1', content: 'hi' }, { resetAtMs });
+      await flush();
+      expect(watchdog.getState().modelLimits).toEqual({
+        'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' },
+      });
+      await watchdog.forgetModelLimits();
+      expect(watchdog.getState().modelLimits).toEqual({});
+      expect(saved).toEqual([
+        { 'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' } },
+        {},
+      ]);
+    });
+
+    it('starts from the limits a previous run saved', () => {
+      const { deps } = createMockDeps();
+      deps.initialModelLimits = { 'anthropic/sonnet': { until: 42, fallback: 'glm/glm-4.6' } };
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      expect(watchdog.getState().modelLimits).toEqual({
+        'anthropic/sonnet': { until: 42, fallback: 'glm/glm-4.6' },
+      });
+    });
+
+    it('assumes the first backoff step when the limit names no reset time', async () => {
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const before = Date.now();
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush();
+      const until = watchdog.getState().modelLimits['anthropic/sonnet'].until;
+      expect(until).toBeGreaterThanOrEqual(before + BACKOFF_LADDER_MS[0]);
+      expect(until).toBeLessThanOrEqual(Date.now() + BACKOFF_LADDER_MS[0]);
+    });
+
     it('switches to the next available fallback and retries without a cooldown', async () => {
       const { deps, switchAndRetry } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
@@ -1603,6 +1651,73 @@ describe('RateLimitWatchdog', () => {
       );
       expect(lastPause(notifyPause).resetAt ?? 0).toBeGreaterThan(nearResetAt + RESET_BUFFER_MS);
       watchdog.cancel();
+    });
+  });
+
+  describe('overloaded hold', () => {
+    it('holds an overloaded turn even when a fallback model is available', async () => {
+      const fallback: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
+      const { deps, switchAndRetry } = createMockDeps({ chain: [fallback] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const heldAt = Date.now();
+      expect(
+        await watchdog.scheduleRetry(
+          '529 overloaded',
+          { uuid: 'm1', content: 'hi' },
+          { hold: 'overloaded' }
+        )
+      ).toBe(true);
+      await flush();
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      const held = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls[0][0];
+      expect(held.reason).toBe('overloaded');
+      expect(held.retryAt - heldAt).toBeGreaterThanOrEqual(5 * 60 * 1000);
+      expect(watchdog.getState().status).toBe('cooldown');
+      watchdog.cancel();
+    });
+
+    it('reports an overloaded hold as a rate limit, never a usage limit', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry(
+        '529 overloaded',
+        { uuid: 'm1', content: 'hi' },
+        { hold: 'overloaded' }
+      );
+      await flush();
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'rate_limit' });
+      watchdog.cancel();
+    });
+
+    it('holds the turn as overloaded for five minutes, then resumes it', async () => {
+      jest.useFakeTimers();
+      try {
+        const { deps, notifyResume } = createMockDeps({ chain: [] });
+        const retryCallback = mock(async (_message: Parameters<RateLimitRetryCallback>[0]) => true);
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+        watchdog.setRetryCallback(retryCallback);
+        const heldAt = Date.now();
+        await watchdog.scheduleRetry(
+          '529 overloaded',
+          { uuid: 'm1', content: 'hi' },
+          { hold: 'overloaded' }
+        );
+        const held = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+          .calls[0][0];
+        expect(held.reason).toBe('overloaded');
+        expect(held.messageId).toBe('m1');
+        expect(held.retryAt - heldAt).toBeGreaterThanOrEqual(5 * 60 * 1000);
+        expect(held.retryAt - heldAt).toBeLessThan(5 * 60 * 1000 + 1000);
+        jest.advanceTimersByTime(5 * 60 * 1000 - 1000);
+        expect(retryCallback).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1000);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(retryCallback).toHaveBeenCalledTimes(1);
+        expect(retryCallback.mock.calls[0][0]).toEqual({ uuid: 'm1', content: 'hi' });
+        expect(notifyResume).toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

@@ -174,7 +174,6 @@ try {
           multiple: false,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
           todoId: worker,
         },
         at

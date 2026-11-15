@@ -150,10 +150,6 @@ class NeoTodoRunnerState {
     const result = recordWorkerBlocker(this.store, this.sessions, todo, ref, dispatchId, turn, now);
     return { todo: result, changed: this.changed };
   }
-  cardUnapproved(now: number) {
-    this.store.cardUnapprovedTodos(now);
-  }
-
   recover(id: string, now: number) {
     const recovery = recoverNeoTodoStart(this.store, this.sessions, id, now);
     if (recovery) this.changes?.notifyChange('neo_todo_sessions');
@@ -165,5 +161,5 @@ export const neoTodoRunnerWrites = defineRepositoryOp(
   'neo.todoRunnerWrites',
   'write',
   NeoTodoRunnerState,
-  ['recompute', 'claim', 'recover', 'blocker', 'cardUnapproved']
+  ['recompute', 'claim', 'recover', 'blocker']
 );

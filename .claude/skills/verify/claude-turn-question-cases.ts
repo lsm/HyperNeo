@@ -376,7 +376,7 @@ try {
       ok: boolean;
       reason?: string;
       question: { id: string; text: string };
-    }>('neo.question.relay', { todoId, title: 'Case two question?', options: ['Yes', 'Not now'] });
+    }>('neo.question.ask', { kind: 'relay', todoId, text: 'Case two question?', options: ['Yes', 'Not now'] });
     assert(relayed.ok, JSON.stringify(relayed));
     const open = await card(relayed.question.id);
     assert.equal(open.text, 'Case two question?');
@@ -416,8 +416,8 @@ try {
     ask(item, question('Case three B?'));
     await refresh();
     const relayed = await op<{ ok: boolean; reason?: string; question: { id: string } }>(
-      'neo.question.relay',
-      { session: noteKey(item), title: 'Case three B?', options: ['Yes', 'Not now'] }
+      'neo.question.ask',
+      { kind: 'relay', session: noteKey(item), text: 'Case three B?', options: ['Yes', 'Not now'] }
     );
     assert(relayed.ok, JSON.stringify(relayed));
     const open = await card(relayed.question.id);
@@ -523,9 +523,10 @@ try {
     const todoId = await onTodo(item, 'Case 6');
     ask(item, question('Case six?'));
     await refresh();
-    const relayed = await op<{ ok: boolean; question: { id: string } }>('neo.question.relay', {
+    const relayed = await op<{ ok: boolean; question: { id: string } }>('neo.question.ask', {
+      kind: 'relay',
       todoId,
-      title: 'Case six?',
+      text: 'Case six?',
       options: ['Yes', 'Not now'],
     });
     assert(relayed.ok, JSON.stringify(relayed));

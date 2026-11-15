@@ -77,15 +77,11 @@ export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readon
   if (answer === null) return '';
   if (question.kind === 'yesno' && question.answeredBy === 'button')
     return (answer === 'yes' ? question.yesLabel : question.noLabel) ?? String(answer);
-  if (question.kind === 'start' && Array.isArray(answer))
-    return answer.length
-      ? t('question.started', {
-          todos: answer
-            .map((id) => todos.find((todo) => todo.id === id)?.title ?? id)
-            .join(t('list.separator')),
-        })
-      : t('question.notNow');
-  return Array.isArray(answer) ? answer.join(t('list.separator')) || t('question.none') : answer;
+  return Array.isArray(answer)
+    ? answer
+        .map((value) => todos.find((todo) => todo.id === value)?.title ?? value)
+        .join(t('list.separator')) || t('question.none')
+    : answer;
 }
 
 function readExpanded(key: string): string[] {
@@ -172,8 +168,6 @@ const PRIORITY_LABELS: Record<NeoTodoPriority, MessageKey> = {
 function TodoRow({
   todo,
   number,
-  checked,
-  onCheck,
   onOpen,
   expanded = false,
   anchorPrefix = '',
@@ -190,8 +184,6 @@ function TodoRow({
   anchorPrefix?: string;
   onToggle?: () => void;
   number?: number;
-  checked?: boolean;
-  onCheck?: (checked: boolean) => void;
   onOpen?: (link: string, title: string) => void;
 }) {
   const [mark, color] = todo.statusCodes?.some((code) =>
@@ -267,19 +259,9 @@ function TodoRow({
       data-todo-state={todo.state}
       class={`grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2.5 text-sm ${number === undefined ? 'border-t border-line py-2 first:border-t-0' : 'py-1'}`}
     >
-      {onCheck ? (
-        <input
-          type="checkbox"
-          aria-label={t('todo.startTitle', { title: todo.title })}
-          checked={checked}
-          onChange={(event) => onCheck((event.target as HTMLInputElement).checked)}
-          class="mt-1 shrink-0"
-        />
-      ) : (
-        <span aria-hidden="true" class={`w-4 shrink-0 text-center font-semibold ${color}`}>
-          {number ?? mark}
-        </span>
-      )}
+      <span aria-hidden="true" class={`w-4 shrink-0 text-center font-semibold ${color}`}>
+        {number ?? mark}
+      </span>
       <div class="min-w-0 flex-1">
         {onToggle ? (
           <div class="relative min-w-0">
@@ -519,33 +501,18 @@ function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
 
 function QuestionBox({
   question,
-  todos,
   disabled,
   onAnswer,
   onReply,
   onOpen,
 }: {
   question: NeoQuestionEntry;
-  todos: readonly NeoTodoEntry[];
   disabled?: boolean;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
 }) {
-  const listed = (question.kind === 'start' ? question.todos : []).flatMap(
-    (id) => todos.find((todo) => todo.id === id) ?? []
-  );
-  const [picked, setPicked] = useState<string[]>(
-    question.kind === 'start' ? listed.map((todo) => todo.id) : []
-  );
-  const seen = useRef(listed.map((todo) => todo.id));
-  const ids = listed.map((todo) => todo.id).join(',');
-  useEffect(() => {
-    const now = ids ? ids.split(',') : [];
-    const added = now.filter((id) => !seen.current.includes(id));
-    seen.current = now;
-    setPicked((current) => [...current.filter((id) => now.includes(id)), ...added]);
-  }, [ids]);
+  const [picked, setPicked] = useState<string[]>([]);
   const toggle = (value: string, on: boolean) =>
     setPicked((current) => (on ? [...current, value] : current.filter((item) => item !== value)));
   const reply = onReply && (
@@ -592,16 +559,6 @@ function QuestionBox({
         artifacts={question.artifacts}
         source={{ kind: 'question', id: question.id }}
       />
-      {question.kind === 'start' &&
-        listed.map((todo) => (
-          <TodoRow
-            key={todo.id}
-            todo={todo}
-            number={0}
-            checked={picked.includes(todo.id)}
-            onCheck={(on) => toggle(todo.id, on)}
-          />
-        ))}
       {question.kind === 'choice' && question.multiple && (
         <div class="mt-2 space-y-1">
           {(question.options ?? []).map((option) => (
@@ -668,26 +625,6 @@ function QuestionBox({
           >
             {t('question.confirm')}
           </button>
-        )}
-        {question.kind === 'start' && (
-          <>
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              disabled={disabled}
-              onClick={() => onAnswer([])}
-            >
-              {t('question.notNow')}
-            </button>
-            <button
-              type="button"
-              class={neoPrimaryClass}
-              disabled={disabled || picked.length === 0}
-              onClick={() => onAnswer(picked)}
-            >
-              {t('question.start')}
-            </button>
-          </>
         )}
       </div>
     </div>
@@ -816,9 +753,6 @@ export function NeoAskTodos({
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
-  const inQuestion = new Set(
-    asked.flatMap((question) => (question.kind === 'start' ? question.todos : []))
-  );
   const knownIds = new Set(
     [...received.todos.filter((todo) => todo.state === 'done'), ...paged].map((todo) => todo.id)
   );
@@ -893,7 +827,7 @@ export function NeoAskTodos({
       restore();
     };
   }, [open, focusedItem, focusedQuestionState, focusedTodoState, knownDone.length]);
-  const listed = live.filter((todo) => !inQuestion.has(todo.id));
+  const listed = live;
   const focused = ask.focusedSession;
   const focusedFallback =
     focused?.link &&
@@ -1042,7 +976,6 @@ export function NeoAskTodos({
           key={question.id}
           question={question}
           onOpen={onOpen}
-          todos={todos}
           disabled={disabled}
           onAnswer={(answer) => onAnswer(question.id, answer)}
           onReply={onReply ? () => onReply(question) : undefined}
@@ -1138,7 +1071,7 @@ export function NeoAskTodos({
                 {removed.map((todo) => (
                   <li
                     key={todo.id}
-                    id={`${inQuestion.has(todo.id) ? 'all-' : ''}neo-ref-todo-${todo.id}`}
+                    id={`neo-ref-todo-${todo.id}`}
                     data-ask-todo={todo.id}
                     data-todo-state="removed"
                     class="truncate"

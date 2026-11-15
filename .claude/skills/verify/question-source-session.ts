@@ -32,12 +32,9 @@ if (phase === 'seed') {
     new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     new NeoAskTodoRepository(db).openAsk({ id: 'source-ask', sessionId: root, projectId: null, originMessageId: null, title: 'Review a worker decision', request: 'Synthetic question source verification', createdAt: Date.now() });
     const legacy = new NeoAskTodoRepository(db);
-    for (const [id, title] of [['ordinary-ask', 'Ask a general question'], ['start-ask', 'Start old work']])
+    for (const [id, title] of [['ordinary-ask', 'Ask a general question']])
       legacy.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title, request: 'Synthetic question source verification', createdAt: Date.now() });
-    const held = legacy.addTodo('legacy-review', 'start-ask', { title: 'First review task', doneWhen: 'Synthetic work complete', check: null, instruction: 'Synthetic work; do not start', named: null }, Date.now());
-    legacy.updateTodo(held, { state: 'blocked', blockedBy: 'question' }, Date.now());
-    legacy.askQuestion('legacy-start', 'start-ask', { text: 'Start "First review task"?', kind: 'start', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: [held.id] }, Date.now());
-    new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
+    new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
     new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
   } finally { db.close(); }
 } else {
@@ -60,12 +57,6 @@ if (phase === 'seed') {
   const ordinary = saved?.ordinary ?? await rpc('neo.question.ask', { askId: 'ordinary-ask', retireWhen: openUntilAnswered, kind: 'reply', text: 'Which repository should hold the general follow-up?' });
   assert(ordinary.ok, JSON.stringify(ordinary));
   assert(!ordinary.question.sourceSession);
-  const start = saved?.start ?? await rpc('neo.question.ask', { askId: 'start-ask', retireWhen: openUntilAnswered, kind: 'start', text: 'Start after the worker review?', sourceSession: ref });
-  assert(start.ok, JSON.stringify(start));
-  assert.deepEqual(start.question.startTodos, ['legacy-review']);
-  const joined = await rpc('neo.question.get', { questionId: start.question.id });
-  assert.equal(joined.question.state, 'open');
-  assert.deepEqual(joined.question.sourceSession, expected);
   const linkless = await rpc('neo.question.get', { questionId: 'linkless-source' });
   assert.equal(linkless.question.sourceSession.name, 'Terminal worker');
   assert.equal(linkless.question.sourceSession.link, null);
@@ -81,6 +72,6 @@ if (phase === 'seed') {
   assert.match(refused.reason, /source_session_unavailable/);
   if (phase === 'capture') assert.equal(got.question.state, 'open');
   else { assert.equal(got.question.state, 'answered'); assert.deepEqual(got.question.answer, ['Approve']); }
-  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, start, joined, linkless, got, entry, refused }, null, 2));
+  writeFileSync(phase === 'capture' ? evidencePath : join(run, 'evidence/source-session-restart.json'), JSON.stringify({ source, ordinary, linkless, got, entry, refused }, null, 2));
   console.log(`PASS: ${phase} source-session identity/ref survives the operation and snapshot payloads`);
 }

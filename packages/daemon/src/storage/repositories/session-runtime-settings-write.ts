@@ -163,6 +163,10 @@ export function buildSessionRuntimeSettingsWrite(
     .join(', ');
   const sets = [`config = json_set(config, ${paths})`];
   const values: SQLiteValue[] = plan.configEntries.map(([, value]) => value);
+  if (plan.configEntries.some(([path]) => path === '$.model' || path === '$.provider'))
+    sets.push(
+      "metadata = CASE WHEN json_type(metadata, '$.modelLimits') IS NULL THEN metadata ELSE json_remove(metadata, '$.modelLimits') END"
+    );
   if (plan.clearSdkSession) sets.push('sdk_session_id = NULL', 'sdk_origin_path = NULL');
   values.push(snapshot.id);
   const guards: string[] = [];

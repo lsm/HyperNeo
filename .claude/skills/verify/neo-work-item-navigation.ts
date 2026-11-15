@@ -30,7 +30,7 @@ try{
  open(doneAsk,'Completed navigation card');
  for(let i=1;i<=25;i++){const todo=store.addTodo(`nav-done-${i}`,doneAsk,{title:`Completed navigation step ${i}`,doneWhen:'Observed synthetic result',check:null,instruction:null,named:null},now+i);store.updateTodo(todo,{state:'done',report:`Navigation report ${i}`},now+i);}
  open(historyAsk,'Stored navigation card',now-10000);
- const draft={kind:'reply' as const,options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null};
+ const draft={kind:'reply' as const,options:null,multiple:false,noLabel:null,yesLabel:null};
  const answered=store.askQuestion('nav-answered',historyAsk,{...draft,text:'Saved answered reference'},now-9999);store.answerQuestion(answered,'Saved decision','chat',now-9998);
  const retired=store.askQuestion('nav-retired',historyAsk,{...draft,text:'Saved retired reference'},now-9997);store.retireQuestion(retired,'Context retained',null,now-9996);
  store.settleAsk(store.getAsk(historyAsk)!,'done','Synthetic archived card',now-9995);

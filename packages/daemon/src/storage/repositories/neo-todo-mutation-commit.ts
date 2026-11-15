@@ -136,7 +136,6 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
           multiple: false,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
           todos: removal.card.todos,
           cause: NEO_REMOVED_PREREQUISITE,
         };

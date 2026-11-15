@@ -24,7 +24,7 @@ describe('the ask and todo tables', () => {
       `INSERT INTO neo_todo_sessions (todo_id, target) VALUES ('t', '{"kind":"hyperneo"}')`
     ).run();
     db.prepare(
-      `INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at)
+      `INSERT INTO neo_questions (id, ask_id, text, kind, todos, created_at)
        VALUES ('q', 'a', 'Start these?', 'start', '["t"]', 1)`
     ).run();
     db.prepare(

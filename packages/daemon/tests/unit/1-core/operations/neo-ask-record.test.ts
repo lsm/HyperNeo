@@ -237,6 +237,71 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
   });
 
+  const openPlan = async (h: ReturnType<typeof setup>, title: string) => {
+    const opened = await h.call(
+      'neo.ask.open',
+      {
+        title,
+        request: 'Plan the cache layer',
+        todos: [
+          {
+            after: [],
+            check: pendingTodoCheck,
+            title: 'Write the plan',
+            doneWhen: 'Written',
+            producesFollowUp: true,
+          },
+        ],
+      },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.todos[0].producesFollowUp).toBe(true);
+    h.store.updateTodo(opened.todos[0], { state: 'done' }, 2);
+    return opened;
+  };
+  const laterTodo = (h: ReturnType<typeof setup>, askId: string, id: string) => {
+    h.store.addTodo(
+      id,
+      askId,
+      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
+      3
+    );
+    h.store.updateTodo(h.store.getTodo(id)!, { state: 'done' }, 4);
+  };
+
+  test('refuses to settle done while a todo that produces work has no later todo', async () => {
+    const h = setup();
+    const opened = await openPlan(h, 'Cache plan');
+    const settle = (status: 'done' | 'dropped') =>
+      h.call('neo.ask.settle', { askId: opened.ask.id, status, outcome: 'Settled' }, turn('m2'));
+    const refused = await settle('done');
+    expect(refused.ok).toBe(false);
+    expect(!refused.ok && refused.reason).toContain('follow_up_missing');
+    expect(h.store.getAsk(opened.ask.id)?.status).toBe('open');
+    laterTodo(h, opened.ask.id, 'todo-build');
+    expect((await settle('done')).ok).toBe(true);
+  });
+
+  test('refuses done when the later todo is removed while settle stops sessions', async () => {
+    const h = setup();
+    const opened = await openPlan(h, 'Cache plan race');
+    laterTodo(h, opened.ask.id, 'todo-race');
+    h.onStop.value = () => {
+      const current = h.store.getTodo('todo-race')!;
+      if (current.state !== 'removed')
+        h.store.updateTodo(current, { state: 'removed', reason: 'Not needed' }, 5);
+    };
+    const settled = await h.call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'done', outcome: 'Planned' },
+      turn('m2')
+    );
+    expect(settled.ok).toBe(false);
+    expect(!settled.ok && settled.reason).toContain('follow_up_missing');
+    expect(h.store.getAsk(opened.ask.id)?.status).toBe('open');
+  });
+
   test('records a settled discussion decision and links while execution stays open', async () => {
     const h = setup();
     const opened = await h.call(
@@ -496,7 +561,6 @@ describe('neo.ask.open and neo.ask.settle', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );

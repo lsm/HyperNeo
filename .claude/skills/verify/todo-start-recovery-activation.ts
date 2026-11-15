@@ -61,7 +61,9 @@ try {
   seed('recover');
   const report='Complete recovery report 🦊\n'.repeat(20000).trim();
   prepare('UPDATE neo_todos SET report=? WHERE id=?').run(report,'recover');
-  store.askQuestion('stale-start','ask',{kind:'start',text:'Start?',startTodos:['recover'],options:null,multiple:false,yesLabel:null,noLabel:null},3);
+  store.addTodo('gone','ask',{ approvedAt: 1,title:'Gone',doneWhen:'Observed',check:null,instruction:null,named:null},3);
+  prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+  store.askQuestion('stale-start','ask',{kind:'reply',text:'Ready?',todoId:'gone',options:null,multiple:false,yesLabel:null,noLabel:null},3);
   const before=await visible();
   db.exec("CREATE TRIGGER refuse_stamp BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic recovery rollback'); END");
   admission=true; watchTables=true; await refresh(); admission=false; watchTables=false;

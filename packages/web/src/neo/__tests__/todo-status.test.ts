@@ -37,22 +37,6 @@ describe('neoTodoStatus', () => {
 });
 
 describe('neoQuestionText', () => {
-  it('renders daemon start-question codes in each language', () => {
-    const one = {
-      text: 'Start "Ship W5"?',
-      textCodes: [{ code: 'question.startOne', params: { title: 'Ship W5' } }],
-    };
-    const many = {
-      text: 'Start these 3?',
-      textCodes: [{ code: 'question.startMany', params: { count: '3' } }],
-    };
-    expect(neoQuestionText(one)).toBe('Start "Ship W5"?');
-    expect(neoQuestionText(many)).toBe('Start these 3?');
-    locale.value = 'zh-Hans';
-    expect(neoQuestionText(one)).toBe('开始「Ship W5」？');
-    expect(neoQuestionText(many)).toBe('开始这 3 件？');
-  });
-
   it('renders a removal card and its buttons in each language', () => {
     const card = {
       text: '"Build" was removed. Continue "Deploy" without it, or remove this step too?',

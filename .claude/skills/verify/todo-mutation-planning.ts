@@ -53,7 +53,6 @@ try {
   const text = 'Complete stored report 🦊\n'.repeat(20000).trim();
   store.updateTodo(first,{report:text},2);
   store.addTodo('peer','ask',{ approvedAt: 1,title:'Peer',doneWhen:'Merged',check:{...check,params:{urls:['https://github.com/synthetic/planning/pull/1']}},instruction:null,named:null},1);
-  store.askQuestion('card','ask',{text:'Start?',kind:'start',options:null,multiple:false,yesLabel:null,noLabel:null,startTodos:['first']},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'first',text:'Answer before completion',options:null,multiple:false,yesLabel:null,noLabel:null},3);
   const before = await visible();
   assert.equal(before.entry.todos[0].report,text);
@@ -82,7 +81,6 @@ try {
   }
   recording = false;
   assert.deepEqual(await visible(),before);
-  assert.equal(store.getQuestion('card')!.state,'open');
   await hub.request('system.health',{});
   assert.equal(announcements,priorEvents);
   assert.equal(mainSql,0);

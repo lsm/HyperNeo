@@ -50,6 +50,7 @@ const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   waiting_review: 'waiting for review',
   approved_pending: 'approved with CI still pending',
   waiting_ci: 'waiting for CI',
+  waiting_cross_review: 'waiting for a cross-model review',
 };
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
@@ -67,7 +68,8 @@ export function planCodingPrNudge(
   now: number
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
   if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
-  if (!STATE_TEXT[row.state] || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
+  if (!STATE_TEXT[row.state] || now - row.readAt > CODING_PR_FRESH_MS) return null;
+  if (!row.owner && row.state !== 'waiting_cross_review') return null;
   return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
 
@@ -85,6 +87,8 @@ export function codingPrEscalationText(
   now: number,
   unreachable: boolean
 ): string {
+  if (row.state === 'waiting_cross_review')
+    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} has made no progress`;
@@ -104,15 +108,15 @@ export class CodingPrSweepRepository {
         .prepare(
           `SELECT repo, number, title, head, state, state_since AS stateSince, read_at AS readAt,
                   nudges, owner FROM pack_coding_pr_ledger
-            WHERE owner IS NOT NULL AND closed_at IS NULL`
+            WHERE (owner IS NOT NULL OR state = 'waiting_cross_review') AND closed_at IS NULL`
         )
-        .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string })[]
+        .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string | null })[]
     )
       .filter((row) => codingRepoWatched(this.db, row.repo))
       .map((row) => ({
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
-        owner: JSON.parse(row.owner) as WorkRef,
+        owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
       }));
   }
 
@@ -144,10 +148,11 @@ export async function sweepCodingPrs(
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
     const told =
       nudge.kind === 'remind' &&
+      row.state !== 'waiting_cross_review' &&
       (await deps
         .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
         .catch(() => false));
-    if (nudge.kind === 'remind')
+    if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       await repo.markLater(row, nudge.nudges, now);

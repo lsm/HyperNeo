@@ -39,6 +39,7 @@ class VoiceRecorderStore {
   private starting = false;
   private stopping = false;
   private stoppedByLimit = false;
+  private trackEnded = false;
   private maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
   private teardownPromise: Promise<void> | null = null;
   private startGeneration = 0;
@@ -58,6 +59,7 @@ class VoiceRecorderStore {
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
+    this.trackEnded = false;
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
@@ -187,8 +189,15 @@ class VoiceRecorderStore {
       this.chunks = chunks;
       this.sampleRate = context.sampleRate;
       this.maxDurationTimer = setTimeout(hitLimit, MAX_RECORDING_MS);
+      const onTrackEnded = () => {
+        if (this.stoppedByLimit) return;
+        this.trackEnded = true;
+        hitLimit();
+      };
+      for (const track of stream.getTracks()) track.onended = onTrackEnded;
       this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
+      if (stream.getTracks().some((track) => track.readyState === 'ended')) onTrackEnded();
     } catch (error) {
       if (this.startGeneration !== generation) return;
       await this.teardown();
@@ -220,7 +229,7 @@ class VoiceRecorderStore {
   readonly stop = async (): Promise<VoiceRecording> => {
     if (!this.isRecording.value && !this.stoppedByLimit)
       throw new Error('Voice recorder is not recording');
-    const hitDurationLimit = this.stoppedByLimit;
+    const hitDurationLimit = this.stoppedByLimit && !this.trackEnded;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
     this.stopping = true;
@@ -296,7 +305,10 @@ class VoiceRecorderStore {
           }
           this.source?.disconnect();
           this.node?.disconnect();
-          this.stream?.getTracks().forEach((track) => track.stop());
+          this.stream?.getTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+          });
           await this.context?.close();
         } catch {}
         this.source = null;

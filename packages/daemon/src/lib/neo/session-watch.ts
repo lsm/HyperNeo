@@ -177,7 +177,7 @@ export const neoTurnQuestionLine = (question: WorkTurnQuestion) =>
 
 export function neoSessionQuestionNote(notice: NeoSessionNotice): string {
   const question = notice.question ? neoTurnQuestionLine(notice.question) : '';
-  return `Session "${notice.title}" (${notice.ref.adapter}:${notice.ref.id}) ended its turn with a question: ${question} It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. If not, relay it with neo.question.relay {session:${JSON.stringify(notice.key)},title,options}.`;
+  return `Session "${notice.title}" (${notice.ref.adapter}:${notice.ref.id}) ended its turn with a question: ${question} It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. If not, relay it with neo.question.ask {kind:relay,session:${JSON.stringify(notice.key)},text,options}.`;
 }
 
 export function planNeoSessionRevisit(

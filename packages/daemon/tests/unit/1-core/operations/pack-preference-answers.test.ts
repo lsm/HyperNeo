@@ -378,7 +378,6 @@ describe('immutable human settings proposals', () => {
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       1
     );
@@ -403,7 +402,6 @@ describe('immutable human settings proposals', () => {
           multiple: false,
           noLabel: 'Keep current settings',
           yesLabel: 'Apply these settings',
-          startTodos: null,
         },
         1
       );
