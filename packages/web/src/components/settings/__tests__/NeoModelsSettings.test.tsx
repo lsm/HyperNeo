@@ -790,6 +790,23 @@ test.each(['refused', 'failed'])(
   }
 );
 
+test('adds a fast reply fallback through the targeted front operation', async () => {
+  await frontEditor();
+  const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
+  fireEvent.click(convo.getByRole('button', { name: 'Add fast reply fallback' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.front.model.set',
+      input: expect.objectContaining({
+        model: primary.model,
+        provider: primary.provider,
+        fallbacks: [{ ...glm, thinkingLevel: 'off' }],
+      }),
+    })
+  );
+});
+
 test('the Front compact percentage saves through the targeted front operation', async () => {
   await frontEditor();
   const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
