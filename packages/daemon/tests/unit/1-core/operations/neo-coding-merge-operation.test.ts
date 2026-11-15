@@ -270,6 +270,18 @@ describe('coding merge operation', () => {
     expect(await f.prepare()).toMatchObject({ accepted: false });
     expect(f.todos.deliveryFacts.read('todo', url, head)).toBeNull();
   });
+  test('a bot Review assigned before cross-model review is enabled still holds', async () => {
+    const f = fixture();
+    f.setting('crossModelReview', true);
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({
+      accepted: false,
+      reason: 'cross_model_review_required',
+    });
+    expect(f.todos.deliveryFacts.read('todo', url, head)).toBeNull();
+    f.stage('review');
+    expect(await f.prepare()).toMatchObject({ accepted: true, head });
+  });
   test('another bot approval cannot substitute for the configured bot', async () => {
     const f = fixture();
     f.stage('qa');
