@@ -143,6 +143,11 @@ describe('Neo composer send slot', () => {
     expect(stop()).toBeNull();
   });
 
+  it('offers no realtime voice entry', () => {
+    mount(false, '');
+    expect(screen.queryByRole('button', { name: 'Realtime voice', exact: true })).toBeNull();
+  });
+
   it('keeps Send enabled while Neo works and the human has typed a new ask', () => {
     mount(true, 'Another fictional ask');
     expect((send() as HTMLButtonElement).disabled).toBe(false);
