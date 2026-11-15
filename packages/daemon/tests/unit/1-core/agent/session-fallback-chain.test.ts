@@ -43,7 +43,7 @@ async function firstSwitch(sessionId: string, current: { provider: string; model
     stateManager(),
     {
       getCurrentModel: () => current,
-      resolveChain: () => sessionFallbackChain({ ...ids, sessionId }, settings, current),
+      resolveChain: async () => sessionFallbackChain({ ...ids, sessionId }, settings, current),
       isEntryAvailable: async () => true,
       switchAndRetry,
       notifyPause: () => {},
