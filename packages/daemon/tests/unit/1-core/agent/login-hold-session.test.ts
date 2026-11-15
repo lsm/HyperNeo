@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { ProviderRefreshClock } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import type { RefreshNowOutcome } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
 import { initializeProviders } from '../../../../src/lib/providers/factory';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import { clearProviderFailure } from '../../../../src/lib/providers/provider-failure-store';
 import {
   createTestDb,
@@ -98,6 +99,9 @@ async function harness(
     ensureQueryStarted: started,
     startQueryAndEnqueue: resume,
     executeDeferredRestartIfPending: mock(async () => {}),
+    restart: mock(async () => ({ blocked: false })),
+    restartWhenIdle: mock(async () => ({ blocked: false })),
+    stop: mock(async () => {}),
     cleanup: mock(async () => {}),
   };
   agent.queryPromise = new Promise<void>(() => {});
@@ -149,6 +153,41 @@ async function harness(
     setOutcome,
   };
 }
+
+beforeEach(() => {
+  clearModelsCache();
+  setModelsCache(
+    new Map([
+      [
+        'global',
+        [
+          {
+            id: 'claude-sonnet-4-5-20250929',
+            name: 'Claude Sonnet 4.5',
+            alias: 'sonnet',
+            family: 'sonnet',
+            provider: 'anthropic',
+            contextWindow: 200000,
+            description: 'Sonnet',
+            releaseDate: '2025-01-01',
+            available: true,
+          },
+          {
+            id: 'glm-5',
+            name: 'GLM-5',
+            alias: 'glm',
+            family: 'glm',
+            provider: 'glm',
+            contextWindow: 200000,
+            description: 'GLM',
+            releaseDate: '2026-01-01',
+            available: true,
+          },
+        ],
+      ],
+    ])
+  );
+});
 
 afterEach(() => {
   availability.forEach((spy) => spy.mockRestore());
@@ -378,7 +417,7 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
-  it('a provider switch does not leave the old hold armed on the new provider', async () => {
+  it('a model switch clears the hold the old provider left behind', async () => {
     const h = await harness();
     h.setNeedsLogin('anthropic', Date.now());
     await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
@@ -386,9 +425,8 @@ describe('login hold', () => {
       .loginRecovery;
     expect(recovery.isHeld('anthropic')).toBe(true);
 
-    h.agent.getSessionData().config.provider = 'glm';
-    await h.agent.restart().catch(() => {});
-
+    const result = await h.agent.handleModelSwitch('glm-5', 'glm');
+    expect(result.success).toBe(true);
     expect(recovery.isHeld('anthropic')).toBe(false);
     await h.agent.cleanup();
   });

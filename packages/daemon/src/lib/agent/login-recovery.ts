@@ -79,10 +79,9 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   const holds = new Map<string, LoginHoldState>();
   const writes = new Map<string, number>();
   const entering = new Set<string>();
-  const cancellations = new Map<string, number>();
+  let cancellations = 0;
 
   const writeCount = (providerId: string) => writes.get(providerId) ?? 0;
-  const cancelCount = (providerId: string) => cancellations.get(providerId) ?? 0;
 
   async function recover(
     providerId: string,
@@ -91,8 +90,8 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     attemptEpoch?: number
   ): Promise<LoginRecoveryPlan> {
     const seenWrites = writeCount(providerId);
-    const seenCancels = cancelCount(providerId);
-    const cancelled = () => cancelCount(providerId) !== seenCancels;
+    const seenCancels = cancellations;
+    const cancelled = () => cancellations !== seenCancels;
     const written = () => writeCount(providerId) !== seenWrites;
     if (
       !retried &&
@@ -225,7 +224,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   }
 
   function stop(providerId: string, error?: unknown): void {
-    cancellations.set(providerId, cancelCount(providerId) + 1);
+    cancellations += 1;
     const state = holds.get(providerId);
     if (!state) return;
     state.cancel?.();
@@ -240,6 +239,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   }
 
   function stopAll(): void {
+    cancellations += 1;
     for (const providerId of Array.from(holds.keys())) stop(providerId);
   }
 

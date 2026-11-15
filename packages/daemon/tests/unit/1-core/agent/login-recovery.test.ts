@@ -310,6 +310,31 @@ describe('createLoginRecovery', () => {
     expect(h.resumed).toHaveLength(0);
   });
 
+  test('a stop for another provider still cancels a recovery with no hold yet', async () => {
+    let release: (() => void) | undefined;
+    const h = recoveryDeps({ outcomes: ['definitive'] });
+    const deps = {
+      ...h.deps,
+      refresh: async () => {
+        await new Promise<void>((done) => {
+          release = done;
+        });
+        return 'definitive' as const;
+      },
+    };
+    const recovery = createLoginRecovery(deps);
+
+    const pending = recovery.recover('anthropic', { uuid: 'prompt', content: 'ask' }, false);
+    while (release === undefined) await new Promise((done) => setTimeout(done, 0));
+    recovery.stopAll();
+    (release as () => void)();
+    await pending;
+
+    expect(h.state.needsLoginAt).toBeNull();
+    expect(h.held).toHaveLength(0);
+    expect(recovery.isHeld('anthropic')).toBe(false);
+  });
+
   test('a health-only change leaves a login hold in place', async () => {
     const h = recoveryDeps({ outcomes: ['definitive'] });
     const recovery = createLoginRecovery(h.deps);

@@ -241,6 +241,7 @@ export interface ModelSwitchHandlerContext {
   readonly messageQueue: MessageQueue;
   getQueryGeneration?(): number;
   reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
+  stopLoginHolds?(): void;
 }
 
 export interface ModelSwitchResult {
@@ -477,6 +478,7 @@ export class ModelSwitchHandler {
           return { success: false, model: session.config.model, error: 'session_settings_changed' };
       }
       if (!this.isQueryActiveOrStarting()) {
+        this.ctx.stopLoginHolds?.();
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
         if (commit?.thinkingLevel !== undefined)
@@ -512,6 +514,7 @@ export class ModelSwitchHandler {
           }
         }
       } else {
+        this.ctx.stopLoginHolds?.();
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
         await db.updateSession(session.id, {

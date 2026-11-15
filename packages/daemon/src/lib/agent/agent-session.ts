@@ -3041,6 +3041,10 @@ export class AgentSession
     return this.loginRecovery?.isHeld(this.providerId()) ?? false;
   }
 
+  stopLoginHolds(): void {
+    this.stopLoginHold();
+  }
+
   private stopLoginHold(): void {
     if (!this.loginRecovery) return;
     this.loginRecovery.stopAll();
