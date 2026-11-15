@@ -44,6 +44,7 @@ function world() {
   const pack = {
     id: 'synthetic',
     describe: 'synthetic',
+    instructions: () => null,
     workerTarget: async (todo, target, status) => {
       asked.push({ todo: todo.id, target, status: await status(backend) });
       return decide(target);
@@ -175,7 +176,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     w.decideWith((target) => ({ value: target }));
     await w.runner.start(id);
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
-    expect(w.store.getTodo(id)?.reason ?? null).not.toContain(wait);
+    expect(w.store.getTodo(id)?.reason ?? '').not.toContain(wait);
   });
 
   test('a start-needed decision leaves a send target in place for Neo to replace', async () => {
