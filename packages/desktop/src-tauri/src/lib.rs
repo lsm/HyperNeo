@@ -19,6 +19,13 @@ struct SidecarState {
 	child: Mutex<Option<CommandChild>>,
 }
 
+// The spawned sidecar's pid, shared with the desktop control socket so it can
+// admit that child (and nothing else claiming the daemon role) by process
+// lifetime. Set once the sidecar spawns; cleared when it is killed.
+struct SidecarPeer {
+	pid: std::sync::Arc<Mutex<Option<u32>>>,
+}
+
 // Serializes startup resolution so the readiness poll and the sidecar's
 // termination handler never both claim (and never both report) the outcome.
 #[derive(Default)]
@@ -67,6 +74,11 @@ fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
 	#[cfg(target_os = "macos")]
 	if let Some(control) = app.try_state::<desktop_drivers::Control>() {
 		tauri::async_runtime::block_on(control.shutdown());
+	}
+	if let Some(peer) = app.try_state::<SidecarPeer>() {
+		if let Ok(mut guard) = peer.pid.lock() {
+			*guard = None;
+		}
 	}
 	if let Some(state) = app.try_state::<SidecarState>() {
 		if let Ok(mut guard) = state.child.lock() {
@@ -187,6 +199,9 @@ pub fn run() {
 		.manage(SidecarState {
 			child: Mutex::new(None),
 		})
+		.manage(SidecarPeer {
+			pid: std::sync::Arc::new(Mutex::new(None)),
+		})
 		.manage(StartupState::default())
 		.setup(|app| {
 			// Setup logging.
@@ -205,6 +220,7 @@ pub fn run() {
 				runtime_descriptor_path().and_then(|path| path.parent().map(PathBuf::from)),
 				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
 				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+				app.state::<SidecarPeer>().pid.clone(),
 			)) {
 				app.manage(control);
 			}
@@ -362,8 +378,14 @@ pub fn run() {
 						}
 					};
 
-					// Stash the child so we can kill it on shutdown.
+					// Stash the child so we can kill it on shutdown, and register
+					// its pid for the control socket's peer check.
 					if let Some(state) = app_handle.try_state::<SidecarState>() {
+						if let Some(peer) = app_handle.try_state::<SidecarPeer>() {
+							if let Ok(mut guard) = peer.pid.lock() {
+								*guard = Some(child.pid());
+							}
+						}
 						if let Ok(mut guard) = state.child.lock() {
 							*guard = Some(child);
 						}

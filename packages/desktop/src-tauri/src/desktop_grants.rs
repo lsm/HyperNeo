@@ -18,6 +18,8 @@ pub(super) static ASKS: Mutex<(BTreeSet<String>, BTreeMap<String, Instant>)> =
 const DECLINE_COOLDOWN: Duration = Duration::from_secs(10 * 60);
 #[cfg(test)]
 pub(super) static FIXTURE_DIALOG: Mutex<(&str, u64)> = Mutex::new(("deny", 0));
+#[cfg(test)]
+static FIXTURE_GRANTS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 
 const GROUP: &str = "P5R65T296V.io.hyperneo.app";
 #[cfg(not(test))]
@@ -36,6 +38,18 @@ fn options(requirement: &str, class: &str) -> PasswordOptions {
 }
 
 pub(super) fn check(bundle_id: &str, requirement: &str, class: &str) -> Result<(), &'static str> {
+    #[cfg(test)]
+    if let Some(stored) = FIXTURE_GRANTS
+        .lock()
+        .unwrap()
+        .get(&format!("{class}\n{requirement}"))
+    {
+        return if stored == bundle_id {
+            Ok(())
+        } else {
+            Err("app_action_not_authorized")
+        };
+    }
     match generic_password(options(requirement, class)) {
         Ok(stored) if stored == bundle_id.as_bytes() => Ok(()),
         Ok(_) => Err("app_action_not_authorized"),
@@ -50,6 +64,13 @@ pub(super) fn record(
     class: &str,
     keep: bool,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    if !keep {
+        FIXTURE_GRANTS
+            .lock()
+            .unwrap()
+            .remove(&format!("{class}\n{requirement}"));
+    }
     let result = if keep {
         let mut options = options(requirement, class);
         let device_only = ProtectionMode::AccessibleAfterFirstUnlockThisDeviceOnly;
@@ -75,6 +96,14 @@ pub(super) fn dialog_text(bundle_id: &str, class: &str) -> Option<String> {
     Some(format!(
         "A HyperNeo worker asked to {action}.\n\nApp: {bundle_id}\n\nIf you allow it, HyperNeo workers can do this in this app without asking again."
     ))
+}
+
+#[cfg(test)]
+pub(super) fn admit(bundle_id: &str, requirement: &str, class: &str) {
+    FIXTURE_GRANTS
+        .lock()
+        .unwrap()
+        .insert(format!("{class}\n{requirement}"), bundle_id.to_owned());
 }
 
 fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {

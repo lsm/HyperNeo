@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
+    os::fd::AsRawFd,
     os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::PathBuf,
     sync::{Arc, Mutex as StdMutex},
@@ -48,6 +49,8 @@ struct Drivers {
     binary: PathBuf,
     verification_path: String,
     records: PathBuf,
+    descriptor: PathBuf,
+    sidecar: Arc<StdMutex<Option<u32>>>,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -66,17 +69,26 @@ pub(crate) struct Control {
     socket: PathBuf,
     _lock: File,
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Advert {
+    pid: u64,
+    started_at: u64,
+}
+
 impl Control {
     pub(crate) async fn setup(
         base: Option<PathBuf>,
         binary: std::io::Result<PathBuf>,
         verification_path: String,
+        sidecar: Arc<StdMutex<Option<u32>>>,
     ) -> Option<Self> {
         let (Some(base), Ok(binary)) = (base, binary) else {
             log::warn!("Desktop control unavailable: startup paths unavailable");
             return None;
         };
-        match Self::bind(base, binary, verification_path).await {
+        match Self::bind(base, binary, verification_path, sidecar).await {
             Ok(control) => control,
             Err(error) => {
                 log::warn!("Desktop control unavailable: {error}");
@@ -88,6 +100,7 @@ impl Control {
         base: PathBuf,
         binary: PathBuf,
         verification_path: String,
+        sidecar: Arc<StdMutex<Option<u32>>>,
     ) -> Result<Option<Self>> {
         let directory = base.join("desktop");
         std::fs::DirBuilder::new()
@@ -135,7 +148,9 @@ impl Control {
             workers: Mutex::new(BTreeMap::new()),
             binary,
             verification_path,
+            descriptor: base.join("runtime.json"),
             records: directory,
+            sidecar,
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -162,7 +177,16 @@ impl Control {
                 }
                 let state = state.clone();
                 requests.spawn(async move {
+                    let authorized = peer_pid(&stream).is_some_and(|pid| state.authorized(pid));
                     let (input, mut output) = stream.into_split();
+                    if !authorized {
+                        let _ = timeout(
+                            Duration::from_secs(2),
+                            output.write_all(b"{\"ok\": false, \"error\": \"not_daemon\"}\n"),
+                        )
+                        .await;
+                        return;
+                    }
                     let mut line = String::new();
                     let read = timeout(
                         Duration::from_secs(3),
@@ -227,7 +251,46 @@ impl Drop for Control {
         let _ = std::fs::remove_file(&self.socket);
     }
 }
+
+fn peer_pid(stream: &tokio::net::UnixStream) -> Option<u32> {
+    let mut pid: libc::pid_t = 0;
+    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    let read = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEEREPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut length,
+        )
+    };
+    (read == 0 && pid > 1).then_some(pid as u32)
+}
+
 impl Drivers {
+    fn authorized(&self, peer: u32) -> bool {
+        if self.sidecar.lock().unwrap().is_some_and(|pid| pid == peer) {
+            return true;
+        }
+        self.daemon(peer)
+    }
+
+    fn daemon(&self, peer: u32) -> bool {
+        let Ok(raw) = std::fs::read(&self.descriptor) else {
+            return false;
+        };
+        let Ok(advert) = serde_json::from_slice::<Advert>(&raw) else {
+            return false;
+        };
+        if advert.pid != u64::from(peer) {
+            return false;
+        }
+        let advertised = advert.started_at / 1000;
+        let Ok(process) = record::identity(peer) else {
+            return false;
+        };
+        process.seconds <= advertised && process.seconds + 60 >= advertised
+    }
     async fn request(&self, request: Request) -> Result<Value> {
         if request.worker.is_empty()
             || request.worker.len() > 64
@@ -282,7 +345,7 @@ impl Drivers {
         }
         if matches!(
             request.action.as_str(),
-            "resolve" | "fixture-target" | "fixture-grant" | "fixture-revoke"
+            "resolve" | "fixture-target" | "fixture-grant" | "fixture-revoke" | "fixture-admit"
         ) {
             let tool = request.tool.as_deref().unwrap_or_default();
             let arguments = request.arguments.unwrap_or(Value::Null);
@@ -313,6 +376,8 @@ impl Drivers {
                         request.action == "fixture-grant",
                     )?,
                     #[cfg(test)]
+                    "fixture-admit" => grants::admit(bundle, requirement, class),
+                    #[cfg(test)]
                     "fixture-target" => {}
                     _ => return Err("Unknown Desktop control action".into()),
                 }
@@ -322,20 +387,76 @@ impl Drivers {
             result["call_id"] = json!(request.call_id);
             return Ok(result);
         }
+        let call_id = json!(request.call_id);
+        let finish =
+            move |app: Value, class: Value, decision: &str, reason: Value, dispatched: bool| {
+                json!({"call_id": call_id, "bundle_id": app, "class": class,
+                    "decision": decision, "reason": reason, "dispatched": dispatched})
+            };
+        let mut bundle = Value::Null;
+        let mut class = Value::Null;
+        if request.action == "dispatch"
+            && record::ensure_enabled(&self.records.join("workers").join(&request.worker)).is_err()
+        {
+            return Err("Desktop worker is stopped".into());
+        }
+        if request.action == "dispatch" {
+            let tool = request.tool.as_deref().unwrap_or_default();
+            let arguments = request.arguments.clone().unwrap_or(Value::Null);
+            let resolved = target::resolve(tool, &arguments, request.instance.as_ref());
+            bundle = resolved["value"]["bundle_id"].clone();
+            class = resolved["value"]["class"].clone();
+            let reason = if let Some(reason) = resolved["reason"].as_str() {
+                json!(reason)
+            } else if bundle == "io.hyperneo.app" {
+                json!("app_not_grantable")
+            } else {
+                let requirement = resolved["value"]["requirement"].as_str().unwrap_or_default();
+                let class_name = class.as_str().unwrap_or_default();
+                match grants::check(bundle.as_str().unwrap_or_default(), requirement, class_name) {
+                    Ok(()) => Value::Null,
+                    Err(reason) if reason == "app_action_not_authorized" => {
+                        json!(grants::ask_owner(
+                            bundle.as_str().unwrap_or_default(),
+                            requirement,
+                            class_name
+                        ))
+                    }
+                    Err(reason) => json!(reason),
+                }
+            };
+            if !reason.is_null() || !bundle.is_string() || !class.is_string() {
+                let reply = finish(
+                    bundle,
+                    class,
+                    "refused",
+                    if reason.is_null() {
+                        json!("target_unverified")
+                    } else {
+                        reason
+                    },
+                    false,
+                );
+                log::info!("Desktop dispatch {worker} refused: {reply}", worker = request.worker);
+                return Ok(reply);
+            }
+        }
         let directory = self.records.join("workers").join(&request.worker);
-        if matches!(request.action.as_str(), "start" | "stop") {
+        if matches!(request.action.as_str(), "start" | "stop" | "dispatch") {
             record::directory(&self.records, &request.worker, true)?;
         }
         if request.action == "stop" {
             record::latch(&directory)?;
         }
-        if request.action == "start" {
+        if matches!(request.action.as_str(), "start" | "dispatch") {
             record::ensure_enabled(&directory)?;
         }
         let worker_id = request.worker.clone();
         let slot = {
             let mut slots = self.workers.lock().await;
-            if request.action != "start" && !slots.contains_key(&worker_id) {
+            if !matches!(request.action.as_str(), "start" | "dispatch")
+                && !slots.contains_key(&worker_id)
+            {
                 return match request.action.as_str() {
                     "status" | "stop" => Ok(json!({"state": "stopped", "pid": null})),
                     _ => Err("Unknown Desktop control action".into()),
@@ -344,80 +465,33 @@ impl Drivers {
             slots.entry(worker_id.clone()).or_default().clone()
         };
         let mut worker = slot.lock().await;
-        let result: Result<()> = async {
+        let result: Result<Option<Value>> = async {
             match request.action.as_str() {
                 "start" => {
-                    let mut starting = record::Starting::begin(&directory)?;
-                    let app = self
-                        .binary
-                        .parent()
-                        .and_then(|p| p.parent())
-                        .and_then(|p| p.parent())
-                        .ok_or("Invalid bundled driver path")?;
-                    let mut signature = Command::new("/bin/bash");
-                    signature
-                        .args(["-c", include_str!("../../verify-macos-bundle.sh"), "--"])
-                        .arg(app)
-                        .arg("--driver-only")
-                        .env_clear()
-                        .env("PATH", &self.verification_path)
-                        .kill_on_drop(true);
-                    if !timeout(Duration::from_secs(5), signature.output())
-                        .await
-                        .map_err(|_| "Driver signature validation timed out")??
-                        .status
-                        .success()
-                    {
-                        return Err("Driver signature validation failed".into());
-                    }
+                    self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
+                        .await?
+                }
+                "dispatch" => {
                     if worker.is_none() {
-                        let directory = tempfile::Builder::new()
-                            .prefix("d-")
-                            .permissions(std::fs::Permissions::from_mode(0o700))
-                            .tempdir_in(
-                                request
-                                    .work_dir
-                                    .ok_or("workDir is required")?
-                                    .canonicalize()?,
-                            )?;
-                        let home = directory
-                            .path()
-                            .to_str()
-                            .ok_or("Invalid worker directory")?;
-                        let channel = channel::Channel::open(
-                            &self.binary,
-                            &[
-                                ("HOME", home),
-                                ("TMPDIR", home),
-                                ("CUA_DRIVER_RS_HOME", home),
-                                ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
-                                ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
-                            ],
-                        )
-                        .await?;
-                        *worker = Some(Worker {
-                            channel,
-                            _directory: directory,
-                        });
+                        self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
+                            .await?;
                     }
-                    let pid = worker.as_ref().unwrap().channel.pid;
-                    if let Err(error) = record::publish(&directory, pid)
-                        .and_then(|_| record::ensure_enabled(&directory))
-                    {
-                        starting.preserve();
-                        let _cleanup: Result<()> = async {
-                            #[cfg(test)]
-                            if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
-                                return Err("Fixture start cleanup failed".into());
-                            }
-                            worker.as_mut().unwrap().channel.close().await?;
-                            Ok(())
-                        }
-                        .await;
-                        record::verify_gone(pid)?;
-                        starting.cleanup_verified();
-                        return Err(error);
-                    }
+                    let call = timeout(
+                        Duration::from_secs(30),
+                        worker.as_mut().unwrap().channel.call(
+                            request.tool.as_deref().unwrap_or_default(),
+                            request.arguments.clone(),
+                        ),
+                    )
+                    .await;
+                    let (reason, sent) = match call {
+                        Ok(Ok(_)) => (Value::Null, true),
+                        Ok(Err(error)) => (json!(error.to_string()), false),
+                        Err(_) => (json!("driver call timed out"), false),
+                    };
+                    let reply = finish(bundle, class, "allowed", reason, sent);
+                    log::info!("Desktop dispatch {worker}: {reply}", worker = request.worker);
+                    return Ok(Some(reply));
                 }
                 "stop" => {
                     if let Some(worker) = worker.as_mut() {
@@ -459,7 +533,7 @@ impl Drivers {
                     return Err(error);
                 }
             }
-            Ok(())
+            Ok(None)
         }
         .await;
         if worker
@@ -475,10 +549,84 @@ impl Drivers {
                 slots.remove(&worker_id);
             }
         }
-        result?;
-        Ok(match worker.as_ref() {
+        Ok(result?.unwrap_or_else(|| match worker.as_ref() {
             Some(worker) => json!({"state": "running", "pid": worker.channel.pid}),
             None => json!({"state": "stopped", "pid": null}),
-        })
+        }))
+    }
+
+    async fn start_driver(
+        &self,
+        directory: &std::path::Path,
+        worker: &mut Option<Worker>,
+        work_dir: Option<&std::path::Path>,
+    ) -> Result<()> {
+        let mut starting = record::Starting::begin(directory)?;
+        let app = self
+            .binary
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .ok_or("Invalid bundled driver path")?;
+        let mut signature = Command::new("/bin/bash");
+        signature
+            .args(["-c", include_str!("../../verify-macos-bundle.sh"), "--"])
+            .arg(app)
+            .arg("--driver-only")
+            .env_clear()
+            .env("PATH", &self.verification_path)
+            .kill_on_drop(true);
+        if !timeout(Duration::from_secs(5), signature.output())
+            .await
+            .map_err(|_| "Driver signature validation timed out")??
+            .status
+            .success()
+        {
+            return Err("Driver signature validation failed".into());
+        }
+        if worker.is_none() {
+            let directory = tempfile::Builder::new()
+                .prefix("d-")
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in(work_dir.ok_or("workDir is required")?.canonicalize()?)?;
+            let home = directory
+                .path()
+                .to_str()
+                .ok_or("Invalid worker directory")?;
+            let channel = channel::Channel::open(
+                &self.binary,
+                &[
+                    ("HOME", home),
+                    ("TMPDIR", home),
+                    ("CUA_DRIVER_RS_HOME", home),
+                    ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0"),
+                    ("CUA_DRIVER_RS_UPDATE_CHECK", "0"),
+                ],
+            )
+            .await?;
+            *worker = Some(Worker {
+                channel,
+                _directory: directory,
+            });
+        }
+        let pid = worker.as_ref().unwrap().channel.pid;
+        if let Err(error) =
+            record::publish(directory, pid).and_then(|_| record::ensure_enabled(directory))
+        {
+            starting.preserve();
+            let _cleanup: Result<()> = async {
+                #[cfg(test)]
+                if FAIL_START_CLEANUP.swap(false, Ordering::Relaxed) {
+                    return Err("Fixture start cleanup failed".into());
+                }
+                worker.as_mut().unwrap().channel.close().await?;
+                Ok(())
+            }
+            .await;
+            record::verify_gone(pid)?;
+            starting.cleanup_verified();
+            return Err(error);
+        }
+        Ok(())
     }
 }

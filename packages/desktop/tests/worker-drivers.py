@@ -32,9 +32,14 @@ log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)),
 with channel.makefile('rwb') as stream:
     for line in stream:
         request = json.loads(line)
-        log.write(request['operation'] + '\\n')
+        name = request.get('name')
+        entry = request['operation']
+        if name is not None:
+            entry += ' ' + name + ' ' + json.dumps(request.get('arguments'))
+        log.write(entry + '\\n')
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0'}}
+            'driver_version': '0.44.0', 'contract_version': '0.8.0'},
+            'name': request.get('name'), 'arguments': request.get('arguments')}
         stream.write((json.dumps({'protocol_version': 1, 'request_id': request['request_id'],
             'generation': generation, 'ok': request['generation'] == generation,
             'completion': 'completed', 'result': result}) + '\\n').encode())
@@ -136,6 +141,7 @@ class WorkerDrivers(unittest.TestCase):
         self.codesign.write_text(CODESIGN)
         self.codesign.chmod(0o700)
         self.path = str(self.bin) + ':/usr/bin:/bin:/usr/sbin:/sbin'
+        self.daemon()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
@@ -156,6 +162,11 @@ class WorkerDrivers(unittest.TestCase):
             if alive(pid):
                 os.kill(pid, signal.SIGKILL)
 
+    def daemon(self, started_at=None):
+        (self.root / 'runtime.json').write_text(json.dumps(
+            {'pid': os.getpid(), 'host': '127.0.0.1', 'port': 9283, 'url': 'http://127.0.0.1:9283',
+             'version': 'test', 'startedAt': started_at if started_at is not None else int(time.time() * 1000)}))
+
     def call(self, action, worker='worker-a', **params):
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(20)
@@ -173,6 +184,70 @@ class WorkerDrivers(unittest.TestCase):
 
     def lifecycle(self, worker='worker-a'):
         return self.root / 'desktop/workers' / worker
+
+    CONNECTOR = '''import json, socket, sys, time
+while True:
+    try:
+        client = socket.socket(socket.AF_UNIX)
+        client.connect(sys.argv[1])
+        break
+    except OSError:
+        time.sleep(0.1)
+client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
+reply = client.makefile('rb').readline()
+open(sys.argv[2], 'w').write(reply.decode())
+'''
+
+    def connector(self, out=None):
+        out = out or self.root / f'peer-{len(self.pids)}.json'
+        child = subprocess.Popen(
+            [sys.executable, '-I', '-c', self.CONNECTOR,
+             str(self.root / 'desktop/control.sock'), str(out)])
+        self.addCleanup(child.kill)
+        return out
+
+    def peer_reply(self, out):
+        wait_until(lambda: out.exists() and bool(out.read_text().strip()))
+        return json.loads(out.read_text())
+
+    def test_refuses_a_peer_that_is_not_the_advertised_daemon(self):
+        reply = self.peer_reply(self.connector())
+        self.assertEqual(reply, {'ok': False, 'error': 'not_daemon'})
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_daemon_advert_refuses_processes_outside_its_window(self):
+        self.daemon(started_at=int((time.time() + 120) * 1000))
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.daemon(started_at=int((time.time() - 120) * 1000))
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        (self.root / 'runtime.json').unlink()
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.daemon()
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_sidecar_child_is_accepted_while_registered(self):
+        refused = self.connector()
+        out = self.root / 'peer-accepted.json'
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.process.stdout.close()
+        self.process.stderr.close()
+        connector = subprocess.Popen(
+            [sys.executable, '-I', '-c', self.CONNECTOR,
+             str(self.root / 'desktop/control.sock'), str(out)])
+        self.addCleanup(connector.kill)
+        self.addCleanup(connector.wait)
+        self.process = subprocess.Popen(
+            [str(RUNNER), str(self.root), str(self.binary), self.path],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
+                 'FIXTURE_SIDECAR_PID': str(connector.pid)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
+        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+        self.assertEqual(self.peer_reply(out),
+                         {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        self.assertEqual(self.peer_reply(refused), {'ok': False, 'error': 'not_daemon'})
+        self.assertTrue(self.call('status')['ok'])
 
     def test_publishes_protected_record_before_start_returns(self):
         driver = self.start()
@@ -801,6 +876,57 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
+
+    def dispatch(self, tool, arguments, worker='worker-a', **params):
+        return self.call('dispatch', worker, tool=tool, arguments=arguments,
+                         callId='call-' + tool, **params)
+
+    def test_dispatch_refuses_without_starting_a_driver(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(result['ok'], result)
+        reply = result['result']
+        self.assertEqual(reply['decision'], 'refused')
+        self.assertEqual(reply['reason'], denied)
+        self.assertEqual((reply['class'], reply['bundle_id']), ('pointer', 'com.apple.finder'))
+        self.assertFalse(reply['dispatched'])
+        self.assertEqual(reply['call_id'], 'call-click')
+        self.assertFalse(list(self.work.glob('d-*')))
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        print(f'dispatch_refused={denied} no_slot=1 no_driver=1')
+
+    def test_dispatch_refuses_unlisted_tools_and_stopped_workers(self):
+        reply = self.dispatch('kill_app', {'pid': os.getpid()}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason']), ('refused', 'tool_not_allowed'))
+        self.assertFalse(reply['dispatched'])
+        self.assertTrue(self.call('stop')['ok'])
+        result = self.dispatch('click', {'pid': finder()}, workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stopped', result['error'])
+
+    def test_dispatch_starts_the_driver_and_sends_the_call(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(result['ok'], result)
+        reply = result['result']
+        self.assertEqual((reply['decision'], reply['class'], reply['bundle_id']),
+                         ('allowed', 'pointer', 'com.apple.finder'))
+        self.assertIsNone(reply['reason'])
+        self.assertTrue(reply['dispatched'])
+        self.assertEqual(reply['call_id'], 'call-click')
+        record = json.loads((self.lifecycle() / 'driver.json').read_text())
+        self.pids.append(record['pid'])
+        home = next(self.work.glob('d-*'))
+        entry = (home.parent / f'log-{home.name}').read_text().splitlines()[-1]
+        self.assertTrue(entry.startswith('call click '), entry)
+        self.assertEqual(json.loads(entry[len('call click '):]), {'pid': pid})
+        again = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(again['result']['dispatched'])
+        self.assertTrue(alive(record['pid']))
+        print('dispatch=allowed started=1 call=click reused_slot=1')
 
 
 if __name__ == '__main__':

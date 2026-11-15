@@ -101,13 +101,26 @@ impl Channel {
         operation: &str,
         arguments: Option<Value>,
     ) -> Result<Value> {
+        self.send(operation, None, arguments).await
+    }
+
+    pub(super) async fn call(&mut self, name: &str, arguments: Option<Value>) -> Result<Value> {
+        self.send("call", Some(name.to_owned()), arguments).await
+    }
+
+    async fn send(
+        &mut self,
+        operation: &str,
+        name: Option<String>,
+        arguments: Option<Value>,
+    ) -> Result<Value> {
         let stream = self.stream.as_mut().ok_or("Driver channel closed")?;
         let request = ChannelRequest {
             protocol_version: PRIVATE_WORKER_PROTOCOL_VERSION,
             request_id: self.next,
             generation: self.generation.clone(),
             operation: operation.into(),
-            name: None,
+            name,
             arguments,
             session_handle: None,
         };

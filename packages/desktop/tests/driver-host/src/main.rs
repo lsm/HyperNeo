@@ -42,7 +42,14 @@ async fn serve() {
     if mode == Some("accept-error") {
         desktop_drivers::inject_accept_failure();
     }
-    let control = desktop_drivers::Control::setup(base, binary, args[3].clone()).await;
+    let sidecar: std::sync::Arc<std::sync::Mutex<Option<u32>>> = std::sync::Arc::new(
+        std::sync::Mutex::new(
+            std::env::var("FIXTURE_SIDECAR_PID")
+                .ok()
+                .and_then(|value| value.parse().ok()),
+        ),
+    );
+    let control = desktop_drivers::Control::setup(base, binary, args[3].clone(), sidecar).await;
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");
