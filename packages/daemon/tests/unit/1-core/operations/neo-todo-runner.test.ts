@@ -1,3 +1,4 @@
+import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
 import { deliverNeoTurnReport } from '../../../../src/lib/neo/turn-report.ts';
 import { withCodingWorkerStartBrief } from '../../../../src/lib/neo/packs/coding/worker-worktree-brief';
 import { createDelegationPack } from '../../../../src/lib/neo/packs/delegation/pack.ts';
@@ -176,6 +177,114 @@ function setup(
 }
 
 describe('neo todo runner', () => {
+  test('coding dispatch reuses a feature session and records the send target', async () => {
+    const h = setup();
+    try {
+      h.packs[0].workerTarget = (todo, target, status) =>
+        decideCodingSessionTarget(h.db, todo, target, status);
+      const first = h.add();
+      h.db
+        .prepare(
+          'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
+        )
+        .run(first.id, 'synthetic/repo');
+      await h.runner.start(first.id);
+      expect(h.calls.find((call) => call.name === 'work.start')?.input.title).toBe('dev');
+      h.store.updateTodo(h.store.getTodo(first.id)!, { state: 'done' }, Date.now());
+      const second = h.add();
+      h.db
+        .prepare(
+          'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
+        )
+        .run(second.id, 'synthetic/repo');
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          title: 'dev',
+          status: 'running',
+          place: { machine: 'test', name: 'repo' },
+          lastActivityAt: 1000,
+        },
+      });
+      await h.runner.start(second.id);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(h.calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
+      expect(h.sessions.get(second.id)).toEqual({ verb: 'send', ref });
+      expect(h.sessions.readRef(first.id)).toEqual(ref);
+      expect(h.store.getTodo(first.id)?.state).toBe('done');
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('an unknown coding session keeps the todo pending until status recovers', async () => {
+    const h = setup();
+    try {
+      h.packs[0].workerTarget = (todo, target, status) =>
+        decideCodingSessionTarget(h.db, todo, target, status);
+      const first = h.add();
+      h.db
+        .prepare(
+          'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
+        )
+        .run(first.id, 'synthetic/repo');
+      await h.runner.start(first.id);
+      h.store.updateTodo(h.store.getTodo(first.id)!, { state: 'done' }, Date.now());
+      const second = h.add();
+      h.db
+        .prepare(
+          'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
+        )
+        .run(second.id, 'synthetic/repo');
+      const waiting = await h.runner.start(second.id);
+      expect(waiting).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('session_unknown:'),
+      });
+      expect(h.store.getTodo(second.id)).toMatchObject({ state: 'todo', startedAt: null });
+      expect(
+        h.calls.filter((call) => ['work.start', 'work.send'].includes(call.name))
+      ).toHaveLength(1);
+      expect(h.sessions.readRef(first.id)).toEqual(ref);
+      h.setStatus({
+        ok: true,
+        value: {
+          ref,
+          title: 'dev',
+          status: 'done',
+          place: { machine: 'test', name: 'repo' },
+          lastActivityAt: 1000,
+        },
+      });
+      expect(await h.runner.start(second.id)).toMatchObject({ ok: true });
+      expect(h.calls.filter((call) => call.name === 'work.send')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a pack requesting a start target leaves the todo pending without dispatching', async () => {
+    const h = setup();
+    try {
+      h.packs[0].workerTarget = async () => ({
+        reason: 'session_start_needed: this work needs a new session; add it with a start target.',
+      });
+      const todo = h.add();
+      const target = h.sessions.get(todo.id);
+      const result = await h.runner.start(todo.id);
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('session_start_needed:'),
+      });
+      expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'todo', startedAt: null });
+      expect(h.sessions.get(todo.id)).toEqual(target);
+      expect(h.calls).toHaveLength(0);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('long worker instructions retain shared delegation data after message truncation', async () => {
     const h = setup();
     try {
