@@ -14,7 +14,7 @@ A HyperNeo session already calls daemon operations in process: every session get
 
 ## Design
 
-1. **One daemon operation, `desktop.call {tool, args}`, in-process callers only.** Its policy admits only `isAgentSessionCaller` (`source: 'mcp'` with a session and a role), which only the in-process operations server produces; RPC and every other source are refused before any host request. The caller session comes from that identity, never from the input.
+1. **One daemon operation, `desktop.call {tool, args}`, in-process callers only.** Its policy admits only a caller that is `isAgentSessionCaller` (`source: 'mcp'` with a session and a role) and has no `principal`, which is what a session's in-process operations server produces (`agent-session.ts`). RPC callers and the session door (`session-door.ts`, which sets a principal and no role, and whose allowlist does not include `desktop.call`) are refused before any host request. The caller session comes from that identity, never from the input.
 2. **One superpipe pipeline in the operation, daemon checks first:**
    - read facts: the caller's todo binding (`readDesktopTodos` / `desktopOptIn`: doing, approved, desktop control on) and whether `tool` is in `tool-catalog.json`;
    - `decideDesktopCall(facts)`: a pure function that returns `send` or a refusal (`desktop_not_enabled`, `tool_not_allowed`). The host is not contacted on a refusal, so no owner dialog can open for a call the daemon would refuse;
