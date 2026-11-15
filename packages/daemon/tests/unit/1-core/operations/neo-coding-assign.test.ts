@@ -573,4 +573,16 @@ describe('neo.coding.assign with cross-model review', () => {
       )
     ).toEqual({ kind: 'completed', value: { ok: true } });
   });
+  test('turning provenance off still refuses a same-model reviewer', async () => {
+    const f = fixture();
+    f.set('provenance', false);
+    f.set('crossModelReview', true);
+    f.pr.body = 'Agent: gpt-6-sol (effort: high) via codex-desktop';
+    f.publish();
+    expect(await f.assign({ candidates: [author] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('same_model'),
+    });
+    expect(f.starts).toHaveLength(0);
+  });
 });
