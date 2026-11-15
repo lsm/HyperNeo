@@ -170,4 +170,20 @@ describe('durable session assignments', () => {
       ref: ref('pr-8'),
     });
   });
+
+  test('a link that is not a PR never resolves to the owner of another non-PR link', async () => {
+    const { assignments, prs, todo, started } = setup();
+    const [author, fixer] = [todo(), todo()];
+    started(author, 'docs');
+    prs.record(author, [{ ...pr('OPEN'), url: 'https://example.test/notes/a' }], 1);
+    expect(
+      await assignments.owner({
+        strategy: 'per_pr',
+        repo: 'synthetic/repo',
+        featureKey: 'ask',
+        todoId: fixer,
+        prUrl: 'https://example.test/notes/b',
+      })
+    ).toBeNull();
+  });
 });
