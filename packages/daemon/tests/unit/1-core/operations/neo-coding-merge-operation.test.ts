@@ -260,6 +260,16 @@ describe('coding merge operation', () => {
     f.data.reviews[0][0].user.login = 'wrong-bot';
     expect(await f.prepare()).toMatchObject({ accepted: false });
   });
+  test('enabling cross-model review refuses an earlier same-model Review', async () => {
+    const f = fixture(false);
+    f.setting('provenance', false);
+    f.setting('crossModelReview', true);
+    f.data.pr.body = 'Agent: claude-opus-5-5 (effort: medium) via Claude';
+    f.stage('review');
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({ accepted: false });
+    expect(f.todos.deliveryFacts.read('todo', url, head)).toBeNull();
+  });
   test('another bot approval cannot substitute for the configured bot', async () => {
     const f = fixture();
     f.stage('qa');
