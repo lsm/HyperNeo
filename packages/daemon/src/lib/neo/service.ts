@@ -107,6 +107,7 @@ import {
   effectiveNeoPreference,
   neoCompactPercentFor,
   planNeoAlignment,
+  planPreferredReturn,
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
@@ -554,8 +555,10 @@ export class NeoService {
     });
   }
 
-  private async alignModelPreference(sessionId: string): Promise<void> {
-    const preference = this.modelPreference();
+  private async alignModelPreference(
+    sessionId: string,
+    preference: NeoModelPreference | null = this.modelPreference()
+  ): Promise<void> {
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
     if (!preference || !plan) return;
@@ -580,6 +583,26 @@ export class NeoService {
         await this.sessions.updateSession(sessionId, {
           config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
         });
+    }
+  }
+
+  async returnToPreferredModels(now = Date.now()): Promise<void> {
+    const settings = this.db.getGlobalSettings();
+    const conversation = this.repo.readConversationId();
+    const targets: [string | undefined, NeoModelPreference | undefined][] = [
+      [this.repo.defaultBinding()?.sessionId, settings.neo?.preferences],
+      [conversation ? frontSessionId(conversation) : undefined, settings.neo?.front?.model],
+    ];
+    for (const [sessionId, preference] of targets) {
+      const config = sessionId && preference ? this.db.getSession(sessionId)?.config : undefined;
+      if (!sessionId || !preference || !config) continue;
+      const live = await this.sessions.getSessionForControl(sessionId);
+      const limits = live?.getRateLimitWatchdogState?.().modelLimits ?? {};
+      if (!live || !planPreferredReturn(config, preference, limits, now)) continue;
+      await this.alignModelPreference(sessionId, preference);
+      const after = this.db.getSession(sessionId)?.config;
+      if (after && !planNeoAlignment(after, preference)?.model)
+        live.forgetModelLimit?.(`${preference.provider}/${preference.model}`);
     }
   }
 
@@ -1155,6 +1178,9 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    await this.returnToPreferredModels().catch((error) =>
+      this.log.warn('Preferred model return pending', error)
+    );
     const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
     for (const { question, todo } of await this.todos.read('openQuestionChecks'))
       await retire(question, todo, Date.now()).catch((error) =>

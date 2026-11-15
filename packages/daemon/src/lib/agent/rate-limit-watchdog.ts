@@ -7,6 +7,7 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
+  extractResetTimestamp,
   floorCooldownDecision,
   selectNextFallback,
 } from './fallback-recovery.ts';
@@ -49,6 +50,7 @@ export interface RateLimitWatchdogState {
   fallbackPending: boolean;
   limitKind: 'rate_limit' | 'usage_limit' | null;
   persistedCooldown: boolean;
+  modelLimits: Record<string, number>;
 }
 
 export interface RateLimitPausePayload {
@@ -95,6 +97,7 @@ export class RateLimitWatchdog {
 
   private triedKeys = new Set<string>();
   private chain: FallbackModelEntry[] | null = null;
+  private readonly modelLimits = new Map<string, number>();
   private fallbackPending = false;
   private limitKind: 'rate_limit' | 'usage_limit' | null = null;
   private paused = false;
@@ -148,7 +151,12 @@ export class RateLimitWatchdog {
       fallbackPending: this.fallbackPending,
       limitKind: this.limitKind,
       persistedCooldown: this.persistedCooldownArm,
+      modelLimits: Object.fromEntries(this.modelLimits),
     };
+  }
+
+  forgetModelLimit(key: string): void {
+    this.modelLimits.delete(key);
   }
 
   armPersistedCooldown(
@@ -294,6 +302,13 @@ export class RateLimitWatchdog {
         this.logger.info(
           `Fallback: switching to ${sel.next.provider}/${sel.next.model} ` +
             `(skipReason for prior candidates: ${sel.skipReason}).`
+        );
+        const now = Date.now();
+        this.modelLimits.set(
+          `${provider}/${model}`,
+          this.lastHint?.resetAtMs ??
+            extractResetTimestamp(errorMessage, now)?.resetAtMs ??
+            now + BACKOFF_LADDER_MS[0]
         );
         this.fallbackPending = true;
         void this.fireImmediateFallback(

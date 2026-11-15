@@ -98,6 +98,18 @@ export function planNeoAlignment(
   return model || thinking ? { model, thinking } : null;
 }
 
+export function planPreferredReturn(
+  config: RuntimeConfig,
+  preference: NeoModelPreference,
+  modelLimits: Readonly<Record<string, number>>,
+  now: number
+): { model: boolean; thinking: boolean } | null {
+  const until = modelLimits[`${preference.provider}/${preference.model}`];
+  if (until === undefined || until > now) return null;
+  const plan = planNeoAlignment(config, preference);
+  return plan?.model ? plan : null;
+}
+
 export function createNeoPreferenceOperation(service: NeoService) {
   const set = (superpipe({})('neo.preferences.set') as PipelineAPI)
     .input(['input', 'caller'])

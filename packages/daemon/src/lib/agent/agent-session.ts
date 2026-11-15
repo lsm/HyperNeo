@@ -1776,6 +1776,10 @@ export class AgentSession
     return this.rateLimitWatchdog.getState();
   }
 
+  forgetModelLimit(key: string): void {
+    this.rateLimitWatchdog.forgetModelLimit(key);
+  }
+
   async handleQuestionResponse(
     toolUseId: string,
     responses: QuestionDraftResponse[]
