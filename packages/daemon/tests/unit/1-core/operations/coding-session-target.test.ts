@@ -141,4 +141,21 @@ describe('coding session target decision', () => {
     worked(todo('other'), 'idle', 'dev', 'done');
     expect(await decide(todo(), start('dev'))).toEqual({ value: start('dev') });
   });
+
+  test('unfinished work on a feature session does not hide an unreadable status', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'doing');
+    live['backend-1'] = 'unreachable';
+    expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test('a refused send-only dispatch leaves the feature free for a later start', async () => {
+    const { todo, decide } = setup();
+    expect(await decide(todo(), { verb: 'send', ref: ref('elsewhere') })).toMatchObject({
+      reason: expect.stringMatching(/^session_start_needed/),
+    });
+    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
+  });
 });
