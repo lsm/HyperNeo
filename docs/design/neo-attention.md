@@ -69,6 +69,8 @@ type Decision =
 - whether the human is the one who must act: `neoTodoAwaitsHuman`;
 - the latest turn report from the same worker.
 
+**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries stays as a failed row, and the 5-minute sweep re-enqueues failed admit jobs. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
+
 **Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
 1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
 2. `stillTrue` and `revision`: pure.
@@ -76,10 +78,9 @@ type Decision =
    - A delivered item whose revision is unchanged is a duplicate.
    - An item covered by an open card waits while the card is open.
    - A turn report superseded by a newer report from the same worker folds.
-4. `record`: one guarded upsert of `neo_attention_items`. It stores the revision, state, `told_at`, `told_count` and `next_at`.
-5. `send`: on `wake`, the existing `deliverForward(..., 'event')`. On `digest`, the existing `neo_notes` hold.
+4. `record and enqueue`: one gateway operation, in one transaction. It upserts `neo_attention_items` (revision, state, `told_at`, `told_count`, `next_at`) and writes the outbox row: on `wake`, a `mailbox` job (`enqueueMailboxEntry`, `lib/mailbox/handoff.ts`); on `digest`, a `neo_notes` hold (`NeoWakeQueueRepository.hold`). Actual delivery stays with the existing processors. It does not call `deliverForward`, whose enqueue is asynchronous and runs in its own gateway call (`service.ts` `enqueueDelivery`).
 
-Recording and sending happen in one gateway transaction, the same way `neoWakeQueueWrite` already commits a hold. So a crash between the two cannot lose or duplicate a delivery. A failed fact read defers the event: it records nothing and consumes no key, and the next sweep re-raises it.
+Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`. The episode is the revision's sequence number. A retried job after a lost acknowledgement writes the same uuid, which the existing mailbox and hold de-duplication already refuse (`listActiveByPayload`, `enqueueUniquePending`). An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered at this step from the facts just read, so the stored content for a uuid never changes. A failed fact read writes nothing and fails the job, which retries.
 
 **Pipeline `neo.attention.sweep`.** It runs on the existing 5-minute pack sweep (`pack-sweep.ts`):
 1. Raise the derived kinds that no producer pushes. Core: `ask.idle`. Packs: their `attention.scan(now)` output, such as `coding.pr_merged_outside_todo` and `coding.idle_with_open_pr`.
@@ -204,7 +205,7 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
    - Exported, not called.
 2. **Build: store and pipelines.**
    - Contents: the `neo_attention_items` migration, its repository on the gateway, and the `neo.attention.admit` and `neo.attention.sweep` superpipes with `state = 'shadow'` support.
-   - Tests: transactional record and send, a failed read defers.
+   - Tests: the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
    - Reachable through the sweep in shadow only.
 3. **Wire (shadow): core todo notes.** One call site: `tell` in `service.ts` (`createNeoTodoRunner`), which every `todo-runner.ts` note goes through.
    - `todo.follow_up_missing` lands before this rung, in core, without the pipeline. Its parts: a `producesFollowUp` flag on `neo_todos` that Neo sets on `neo.todo.add`; a pure check over the ask's todos; a refusal of `done` in `neo.ask.settle` and in auto-settle, rechecked at commit as HyperNeo #10665 already does; and a wake from the existing 5-minute pack sweep.
@@ -213,8 +214,11 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
 4. **Wire (shadow): turn reports, stalled asks, health.** Three call sites, each in its own PR.
 5. **Build + Wire: coding pack `attention`.** Two PRs: (a) merge held/failing and unowned behind kinds; (b) `scan` for `pr_merged_outside_todo` and `idle_with_open_pr`.
 6. **Wire: digest renderer and `neo.attention.wait`.** One prompt line in `root-turn-end.md`, about digest items and `wait`.
-7. **Read the shadow week.** Then switch kinds live, one PR per producer, each a few lines.
-8. **Delete.** Remove these, one PR each:
+7. **Read the shadow week.** Then switch kinds live, one PR per producer, each a few lines. Shadow rows never count as told: going live starts every item at `open`. Each live switch carries its cutover:
+   - The kind's `read` also reads the producer's old receipt (for example `stalled_wake_at`, `pack_coding_daemon_merge_notices`, turn-report receipts) as "already told at". An incident told before the switch is not told again.
+   - Outbox rows the old producer already queued (`mailbox` or `neo_notes` jobs) are left to deliver as they are. The old producer stops writing in the same PR, so nothing is queued twice.
+   - Tests: an incident told before the switch is not re-told; a queued but undelivered old notice is delivered once.
+8. **Delete**, at least one release after the last kind went live, so a rollback still finds the old receipts. A rollback in that window can re-tell an incident first told by the new code once; that is accepted. Remove these, one PR each:
    - `stalled_wake_at` use, `pack_coding_daemon_merge_notices`, the unowned pending slot and the in-memory `noted` sets;
    - the per-producer `neoWakeEvent` flags, now set only by `admit`;
    - the check-overdue card for todos already waiting on the human.
