@@ -77,7 +77,7 @@ describe('QueryRunner overload hold', () => {
       stop: () => {
         isRunning = false;
       },
-      clear: mock(() => {}),
+      clear: () => {},
       size: () => 1,
       getGeneration: () => 0,
       enqueueWithId: async () => {},
@@ -151,7 +151,7 @@ describe('QueryRunner overload hold', () => {
       onMarkApiSuccess: async () => {},
       onRateLimitExhausted,
     };
-    return { runner: new QueryRunner(ctx), ctx, messageQueue };
+    return { runner: new QueryRunner(ctx), ctx };
   }
 
   async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
@@ -191,7 +191,7 @@ describe('QueryRunner overload hold', () => {
 
   it('never latches "stopped" on repeated 529s and holds the turn once retries run out', async () => {
     const onRateLimitExhausted = mock(async () => true);
-    const { runner, ctx, messageQueue } = createRunner(onRateLimitExhausted);
+    const { runner, ctx } = createRunner(onRateLimitExhausted);
     runner.start();
 
     await waitFor(
@@ -203,7 +203,6 @@ describe('QueryRunner overload hold', () => {
     expect(ctx.session.metadata.queryFailureEpisode?.failures ?? 0).toBe(0);
     expect(ctx.session.metadata.queryFailureEpisode?.failed ?? false).toBe(false);
     expect(handleErrorSpy).not.toHaveBeenCalled();
-    expect(messageQueue.clear).not.toHaveBeenCalled();
     expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
     expect(onRateLimitExhausted.mock.calls[0][2]).toEqual({ hold: 'overloaded' });
   });

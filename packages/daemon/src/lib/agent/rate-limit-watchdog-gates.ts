@@ -20,6 +20,19 @@ export type RateLimitTripDecision =
 
 export const DEFAULT_PARK_AFTER_EXHAUSTED_CYCLES = 3;
 
+const OVERLOAD_HOLD_MS = 5 * 60 * 1000;
+
+function overloadHold(now: number): CooldownDecision {
+  return {
+    delayMs: OVERLOAD_HOLD_MS,
+    retryAtMs: now + OVERLOAD_HOLD_MS,
+    reason: 'parsed-reset',
+    ladderIndex: -1,
+    freeWait: true,
+    reset: null,
+  };
+}
+
 export function decideRateLimitTrip(input: {
   hint: LimitRetryHint | null;
   errorMessage: string;
@@ -40,9 +53,11 @@ export function decideRateLimitTrip(input: {
       ? hintedReset
       : null;
   const decision =
-    usableHintedReset !== null
-      ? cooldownFromReset(usableHintedReset, input.now)
-      : computeCooldown(input.errorMessage, input.retryCount, input.now);
+    input.hint?.hold === 'overloaded'
+      ? overloadHold(input.now)
+      : usableHintedReset !== null
+        ? cooldownFromReset(usableHintedReset, input.now)
+        : computeCooldown(input.errorMessage, input.retryCount, input.now);
   if (!decision.freeWait && input.retryCount >= input.maxAutoRetries) {
     return { action: 'give-up' };
   }

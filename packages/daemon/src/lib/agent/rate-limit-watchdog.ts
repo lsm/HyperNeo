@@ -194,6 +194,10 @@ export class RateLimitWatchdog {
     return this.persistedCooldownArm;
   }
 
+  private holdReason(): { reason?: 'overloaded' } {
+    return this.lastHint?.hold ? { reason: this.lastHint.hold } : {};
+  }
+
   private querySuperseded(queryGeneration?: number): boolean {
     return (
       queryGeneration !== undefined &&
@@ -503,6 +507,7 @@ export class RateLimitWatchdog {
         retryAt,
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
+        ...this.holdReason(),
       },
       queryGeneration
     );
@@ -646,6 +651,7 @@ export class RateLimitWatchdog {
             messageId: this.lastUserMessage?.uuid,
             exhaustedCycles: this.exhaustedRetryCycles,
             manualRetry: true,
+            ...this.holdReason(),
           },
           queryGeneration
         )
@@ -665,6 +671,7 @@ export class RateLimitWatchdog {
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
           messageId: this.lastUserMessage?.uuid,
           exhaustedCycles: this.exhaustedRetryCycles,
+          ...this.holdReason(),
         },
         queryGeneration
       );
