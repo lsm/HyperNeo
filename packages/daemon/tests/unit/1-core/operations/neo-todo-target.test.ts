@@ -110,8 +110,17 @@ function fixture(
     expect(reply.isError ?? false).toBe(false);
     return JSON.parse(reply.content[0].text);
   };
-  const bind = async (todoId: string, ref: WorkRef) => {
-    const reply = await handler({ name: 'neo.todo.bind', input: { todoId, ref } });
+  const bind = async (ref: WorkRef) => {
+    const reply = await handler({
+      name: 'neo.todo.add',
+      input: {
+        after: [],
+        askId: 'ask',
+        title: 'Running todo',
+        check: pendingTodoCheck,
+        target: { verb: 'bind', ref },
+      },
+    });
     expect(reply.isError ?? false).toBe(false);
     return JSON.parse(reply.content[0].text);
   };
@@ -194,34 +203,25 @@ describe('todo target identity at the MCP add door', () => {
       f.db.close();
     }
   });
-  test('direct binding stores the resolved reference rather than the supplied prefix', async () => {
+  test('a bind target stores the resolved reference rather than the supplied prefix', async () => {
     const f = fixture();
     try {
-      const original = { adapter: 'hyperneo', id: full };
-      const added = await f.add({ verb: 'send', ref: original });
-      f.todos.updateTodo(added.todo, { approvedAt: 1 }, 1);
       const ref = { adapter: 'codex-desktop', daemon: 'synthetic-peer', id: full.slice(0, 8) };
-      expect(f.starts()).toBe(1);
-      const result = await f.bind(added.todo.id, ref);
+      const result = await f.bind(ref);
       expect(result.ok).toBe(true);
-      expect(f.sessions.readRef(added.todo.id)).toEqual({ ...ref, id: full });
-      expect(f.starts()).toBe(1);
+      expect(result.todo.state).toBe('doing');
+      expect(f.sessions.readRef(result.todo.id)).toEqual({ ...ref, id: full });
+      expect(f.starts()).toBe(0);
     } finally {
       f.db.close();
     }
   });
-  test('direct binding rejects unknown work and leaves the prior target intact', async () => {
+  test('a bind target rejects unknown work and adds no todo', async () => {
     const f = fixture();
     try {
-      const original = { adapter: 'hyperneo', id: full };
-      const added = await f.add({ verb: 'send', ref: original });
-      const before = f.todos.getTodo(added.todo.id);
-      const target = f.sessions.get(added.todo.id);
-      const result = await f.bind(added.todo.id, { adapter: 'codex-desktop', id: 'missing' });
+      const result = await f.bind({ adapter: 'codex-desktop', id: 'missing' });
       expect(result).toEqual({ ok: false, reason: expect.stringMatching(/^target_not_found:/) });
-      expect(f.todos.getTodo(added.todo.id)).toEqual(before);
-      expect(f.sessions.get(added.todo.id)).toEqual(target);
-      expect(f.sessions.readRef(added.todo.id)).toBeNull();
+      expect(f.todos.listTodos('ask')).toEqual([]);
     } finally {
       f.db.close();
     }

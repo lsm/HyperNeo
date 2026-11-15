@@ -12,7 +12,7 @@ export const NEO_RESIDENT_FAMILIES = [
     description:
       'Manage todos. add needs title/check; continue needs todoId, and message unless the todo failed.',
     prefix: 'neo.todo',
-    actions: ['add', 'continue', 'edit', 'remove', 'hold', 'done', 'bind', 'proceed', 'read'],
+    actions: ['add', 'continue', 'edit', 'remove', 'hold', 'done', 'proceed', 'read'],
   },
   {
     name: 'neo_publish',

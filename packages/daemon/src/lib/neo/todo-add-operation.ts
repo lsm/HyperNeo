@@ -22,6 +22,20 @@ type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; record
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
+  controls: Pick<NeoTodoControls, 'advance' | 'userFolder' | 'refreshIdentity'>,
+  ask: NeoAsk,
+  draft: ResolvedNeoTodoDraft,
+  packs: readonly NeoPack[]
+): Promise<Result> {
+  const result = await admitNeoTodo(store, sessions, controls, ask, draft, packs);
+  if (result.ok && result.todo && draft.target?.verb === 'bind')
+    await controls.refreshIdentity?.(result.todo.id);
+  return result;
+}
+
+async function admitNeoTodo(
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
   controls: Pick<NeoTodoControls, 'advance' | 'userFolder'>,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,

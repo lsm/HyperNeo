@@ -1,6 +1,6 @@
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoAsk, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
-import type { NeoDriverTarget, NeoTodoTarget } from './driver-work.ts';
+import type { NeoDriverTarget, NeoTodoAddTarget } from './driver-work.ts';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -35,7 +35,7 @@ export interface NeoTodoFactJudge<Facts = unknown> {
 
 export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
   id?: string;
-  target?: NeoDriverTarget | NeoTodoTarget | null;
+  target?: NeoDriverTarget | NeoTodoAddTarget | null;
 };
 export type NeoTodoPolicyScope = {
   workerRemotes?: readonly string[];
