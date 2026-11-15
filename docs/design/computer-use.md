@@ -1,0 +1,54 @@
+# Computer use: HyperNeo sessions first (minimal)
+
+Replaces the four-layer design in lsm/HyperNeo#10632. Scope: HyperNeo's own sessions only. Codex and Claude Code workers come later.
+
+## Problem
+
+A worker's desktop tool call never reaches a driver. The `desktop-mcp` proxy plans the call and then `dispatch` throws `driver_unavailable` (`packages/cli/src/desktop-mcp.ts`). The host app's control socket has `start`, `stop`, `status` and `resolve`, but no action that sends input (`desktop_drivers.rs`).
+
+#10632 adds a keychain port key, a signed sidecar, per-call tokens and a two-phase audit, and it turns the feature off for any daemon the app did not spawn. A daemon run as a launchd service, a common setup, therefore never gets it.
+
+## Why HyperNeo sessions make this small
+
+A HyperNeo session already calls daemon operations in process: every session gets the `hyperneo-operations` MCP server unless `operationTools` is off (`query-options-builder.ts`). The daemon resolves the caller itself, so a session cannot claim to be another one. No proxy process and no new channel are needed.
+
+## Design
+
+1. **One daemon operation, `desktop.call {tool, args}`, in-process callers only.** Its policy admits only a caller that is `isAgentSessionCaller` (`source: 'mcp'` with a session and a role) and has no `principal`, which is what a session's in-process operations server produces (`agent-session.ts`). RPC callers and the session door (`session-door.ts`, which sets a principal and no role, and whose allowlist does not include `desktop.call`) are refused before any host request. The caller session comes from that identity, never from the input.
+2. **One superpipe pipeline in the operation, daemon checks first:**
+   - read facts: the caller's todo binding (`readDesktopTodos` / `desktopOptIn`: doing, approved, desktop control on) and whether `tool` is in `tool-catalog.json`;
+   - `decideDesktopCall(facts)`: a pure function that returns `send` or a refusal (`desktop_not_enabled`, `tool_not_allowed`). The host is not contacted on a refusal, so no owner dialog can open for a call the daemon would refuse;
+   - edge: on `send`, one host `dispatch` request (below);
+   - edge: write one audit row from the host's reply (todo, session, tool, app, class, decision, reason, dispatched, time).
+3. **One host request, `dispatch {worker_id, work_dir, tool, args}`.** The control socket keeps its one-request, one-response framing. `dispatch` does in that single request what `resolve` does today (verify the target app, classify the action, check the stored grant, open the dialog when there is none), and only when all pass sends the call on the private driver channel. The channel is the worker's existing `Channel` in the host's slot map, selected by `worker_id`, which the daemon sets to the caller session; nothing in the daemon sends `start` today, so `dispatch` starts the slot itself when the worker has none, with the same code `start` runs (signature check, private home under `work_dir`, record). The daemon sends `work_dir` as the caller session's working directory. A slot ends through the existing `stop` (`stop-operation.ts`) or when the host exits. The reply carries the resolved app, class, decision, reason and whether input was sent. The host writes one log line per `dispatch`.
+4. **The host answers only the live daemon process.** On each control connection the host reads the peer PID (tokio `peer_cred`, `LOCAL_PEEREPID` on macOS) and accepts only:
+   - the sidecar it spawned, while it still holds that child unreaped (a PID cannot be reused before it is reaped); or
+   - for an attached daemon, the `pid` in `runtime.json`, read again on every connection, and only when that process started at or before the file's `startedAt` and at most 60 seconds earlier. A recycled PID starts later and is refused; a restarted daemon writes a new file.
+
+   Every other process gets `not_daemon`. No key, prompt or signing step.
+5. **The owner approves each app once,** through the existing dialog and grant store (`desktop_grants.rs`). Unchanged.
+
+## Cut
+
+- Keychain key, user-presence prompt, nonce handshake and revocation rules: replaced by the peer-PID check.
+- The signed-sidecar prerequisite and "off for attached daemons".
+- Per-call tokens: only the daemon connects, and the daemon is already trusted.
+- The two-phase audit and the withheld reply.
+- Any change to the `desktop-mcp` proxy. It stays as is until Codex and Claude Code workers are in scope.
+
+## Limits
+
+- A process running as the daemon, or one that rewrites `runtime.json` before the host attaches, can act as the daemon. A worker with its sandbox off runs as the user and can already do that. The worker sandbox closes it; this design does not.
+- A grant is per app and class, not per task, as today.
+
+## Where it lives
+
+- The mechanism is core: `packages/daemon/src/lib/desktop` (operation, pipeline, pure decision) and the desktop app (peer check, `dispatch`). A security boundary cannot sit in a pack, because packs can be turned off.
+- A `computer-use` pack is optional and later. It would only carry Neo's guidance: when to turn desktop control on for a todo, and which apps suit it. Sign-in, codes, forms and payment preferences stay in the delegation pack.
+
+## Change
+
+Two PRs:
+
+1. Host: the peer-PID check on the control socket, and `dispatch` (start the slot if needed, resolve, grant check and send, in one request). It can be tested alone with a fixture driver and a fake peer.
+2. Daemon: `desktop.call` with its in-process admission, one pipeline with `decideDesktopCall`, and the audit row.
