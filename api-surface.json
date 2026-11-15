@@ -28568,6 +28568,36 @@
             "minimum": -9007199254740991,
             "type": "integer"
           },
+          "fallbacks": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "thinkingLevel": {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "provider",
+                "thinkingLevel"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
           "model": {
             "maxLength": 200,
             "minLength": 1,
@@ -28626,6 +28656,35 @@
                     "maximum": 9007199254740991,
                     "minimum": -9007199254740991,
                     "type": "integer"
+                  },
+                  "fallbacks": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "model": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "provider": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "thinkingLevel": {
+                          "maxLength": 40,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "model",
+                        "provider",
+                        "thinkingLevel"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "model": {
                     "maxLength": 200,
