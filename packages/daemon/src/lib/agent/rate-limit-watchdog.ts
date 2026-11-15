@@ -164,6 +164,12 @@ export class RateLimitWatchdog {
       this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
   }
 
+  forgetModelLimits(): void {
+    if (this.modelLimits.size === 0) return;
+    this.modelLimits.clear();
+    this.deps.persistModelLimits?.({});
+  }
+
   armPersistedCooldown(
     retryAt: number,
     messageId?: string,

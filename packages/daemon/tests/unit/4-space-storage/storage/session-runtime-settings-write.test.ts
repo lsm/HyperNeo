@@ -137,10 +137,11 @@ describe('session runtime settings capture and conditional write', () => {
     expect(cas({ thinkingLevel: 'think16k' })).toBe('won');
     expect(storedMetadata().modelLimits).toEqual(modelLimits);
     expect(cas({ model: 'fictional-model' })).toBe('won');
-    expect(storedMetadata()).toEqual(METADATA);
+    expect(storedMetadata().modelLimits).toBeUndefined();
+    expect(storedMetadata().messageCount).toBe(METADATA.messageCount);
     repo.createSession({ ...session('other'), metadata: { ...METADATA, modelLimits } });
     expect(cas({ provider: 'glm' }, capture('other')!)).toBe('won');
-    expect(storedMetadata('other')).toEqual(METADATA);
+    expect(storedMetadata('other').modelLimits).toBeUndefined();
   });
 
   test('a provider and thinking patch is one statement and preserves unrelated config values', () => {

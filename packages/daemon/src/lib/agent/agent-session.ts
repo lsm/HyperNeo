@@ -1814,11 +1814,13 @@ export class AgentSession
     nonInterrupting = false,
     commit?: RuntimeSettingsCommit
   ): Promise<ModelSwitchResult> {
-    if (commit)
-      return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit);
-    return nonInterrupting
-      ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
-      : this.modelSwitchHandler.switchModel(newModel, newProvider);
+    const result = await (commit
+      ? this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit)
+      : nonInterrupting
+        ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
+        : this.modelSwitchHandler.switchModel(newModel, newProvider));
+    if (result.success) this.rateLimitWatchdog.forgetModelLimits();
+    return result;
   }
 
   private providerWaitAnnounced = false;
