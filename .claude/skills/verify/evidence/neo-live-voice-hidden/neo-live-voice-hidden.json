@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "schemes": {
+    "light": {
+      "micVisible": true,
+      "micEnabled": true,
+      "realtimeButtons": 0
+    },
+    "dark": {
+      "micVisible": true,
+      "micEnabled": true,
+      "realtimeButtons": 0
+    }
+  }
+}
