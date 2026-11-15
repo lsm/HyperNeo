@@ -57,4 +57,4 @@ for (const phase of ['initial', 'reopen']) {
     evidence.push({ phase, audits, todos: store.listTodos('ask'), questions: store.listQuestions('ask') });
   } finally { await gatewayFor(db).close(); db.close(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('PASS: tool-visible no-op/removal records, untouched start card, and five accepted audit records survive DB reopen.');
+console.log('PASS: tool-visible no-op/removal records, untouched cards, and five accepted audit records survive DB reopen.');

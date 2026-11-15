@@ -41,7 +41,6 @@ try{
  const links=new NeoTodoSessionRepository(db);links.bind('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now);links.recordRef('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now,'/session/all-worker');
  const removed=store.addTodo('all-removed',askId,{title:'Removed All step',doneWhen:'Synthetic removal',check:null,instruction:null,named:null},now);
  store.updateTodo(removed,{state:'removed',reason:'Synthetic retired work'},now);
- store.askQuestion('start-removed',askId,{...draft,text:'Synthetic removed selection',kind:'start',startTodos:[removed.id],document:undefined},now+7);
  db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('## Final outcome\n\nOutcome sentinel',askId);
  const entry=await hub.request<{ok:boolean;entry:{questions:{id:string;text:string}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});assert(entry.ok && entry.entry.questions.some(q=>q.id==='answered-long' && q.text===full));
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));

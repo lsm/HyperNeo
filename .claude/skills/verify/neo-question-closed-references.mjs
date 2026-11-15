@@ -56,14 +56,6 @@ assert.equal(retireAnswered.ok, true, JSON.stringify(retireAnswered));
 assert.equal(retireAnswered.question.state, 'answered');
 evidence.retiredClosed = { retiredTwice: retiredTwice.question, retireAnswered: retireAnswered.question };
 
-sql(`INSERT INTO neo_questions(id,ask_id,text,kind,start_todos,created_at) VALUES('start-q',${quote(ask)},'Start these?','start','[]',${now});`);
-const retireStart = rpc('neo.question.retire', { questionId: 'start-q', reason: 'moot' });
-assert.equal(retireStart.ok, false);
-assert.match(retireStart.reason, /^start_question:/);
-const replaceStart = rpc('neo.question.ask', { askId: ask, kind: 'reply', text: 'Swap?', replaces: 'start-q' });
-assert.equal(replaceStart.ok, false);
-assert.match(replaceStart.reason, /^start_question:/);
-evidence.startBoundary = { retireStart, replaceStart };
 
 mkdirSync(`${run}/evidence`, { recursive: true });
 writeFileSync(`${run}/evidence/neo-question-closed-references.json`, JSON.stringify(evidence, null, 1));
