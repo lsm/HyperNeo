@@ -166,9 +166,10 @@ export function neoIntakeMessage(
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
   const storedHumanContent = (stored as { humanContent?: unknown } | undefined)?.humanContent;
   if (legacy) {
-    const facts = [has('(local time: ') ? null : localTime, previewFact].filter(
-      (text): text is string => Boolean(text)
-    );
+    const facts = [
+      has('(local time: ') ? null : localTime,
+      has('Preview context: ') ? null : previewFact,
+    ].filter((text): text is string => Boolean(text));
     return {
       type: 'user',
       uuid: input.requestId as UUID,

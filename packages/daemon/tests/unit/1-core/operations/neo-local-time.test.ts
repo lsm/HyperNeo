@@ -439,6 +439,39 @@ describe('neoIntakeMessage order', () => {
     expect(second.message.content).toEqual(content);
   });
 
+  test('a legacy retry that resends its preview context keeps the stored line once', () => {
+    const preview = {
+      artifactId: 'a1',
+      snapshot: 'b'.repeat(64),
+    };
+    const previewFact = `Preview context: registered artifact ${preview.artifactId}, exact SHA-256 snapshot ${preview.snapshot}.`;
+    const content = [
+      { type: 'text' as const, text: `[message id: ${requestId}]` },
+      { type: 'text' as const, text: '(local time: Sun 2026-10-18 21:10 EDT)' },
+      { type: 'text' as const, text: previewFact },
+      { type: 'text' as const, text: 'Ship it' },
+    ];
+    const stored = {
+      type: 'user' as const,
+      uuid: requestId as `${string}-${string}-${string}-${string}-${string}`,
+      session_id: session,
+      parent_tool_use_id: null,
+      message: { role: 'user' as const, content },
+      inputKind: 'human' as const,
+      humanContent: [{ type: 'text' as const, text: 'Ship it' }],
+      previewContext: preview,
+    };
+    const retry = neoIntakeMessage(
+      { sessionId: session, requestId, content: 'Ship it', previewContext: preview },
+      session,
+      null,
+      neoRetryLocalTime(stored, 'fresh'),
+      stored as never,
+      preview as never
+    );
+    expect(retry.message.content).toEqual(content);
+  });
+
   test('reads no stored time from the human words', () => {
     const words = '(local time: Mon 2025-01-01 09:00 EST) that is what I typed';
     const content = [
