@@ -39,6 +39,7 @@ class VoiceRecorderStore {
   private starting = false;
   private stopping = false;
   private stoppedByLimit = false;
+  private trackEnded = false;
   private maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
   private teardownPromise: Promise<void> | null = null;
   private startGeneration = 0;
@@ -58,6 +59,7 @@ class VoiceRecorderStore {
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
+    this.trackEnded = false;
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
@@ -187,6 +189,13 @@ class VoiceRecorderStore {
       this.chunks = chunks;
       this.sampleRate = context.sampleRate;
       this.maxDurationTimer = setTimeout(hitLimit, MAX_RECORDING_MS);
+      for (const track of stream.getTracks()) {
+        track.onended = () => {
+          if (this.stoppedByLimit) return;
+          this.trackEnded = true;
+          hitLimit();
+        };
+      }
       this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
     } catch (error) {
@@ -220,7 +229,7 @@ class VoiceRecorderStore {
   readonly stop = async (): Promise<VoiceRecording> => {
     if (!this.isRecording.value && !this.stoppedByLimit)
       throw new Error('Voice recorder is not recording');
-    const hitDurationLimit = this.stoppedByLimit;
+    const hitDurationLimit = this.stoppedByLimit && !this.trackEnded;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
     this.stopping = true;
