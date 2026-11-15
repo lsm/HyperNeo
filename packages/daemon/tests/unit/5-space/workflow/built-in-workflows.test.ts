@@ -2485,6 +2485,27 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateName).toBe('Coding Workflow');
   });
 
+  test('does not seed a second template for a row stored under a legacy name', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    db.prepare(
+      `UPDATE space_workflows SET name = ?, handle = ?, template_name = ? WHERE id = ?`
+    ).run('Coding Workflow', 'coding-workflow', 'Coding Workflow', seededCoding.id);
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+
+    expect(result.seeded).toEqual([]);
+    const workflows = manager.listWorkflows(SPACE_ID);
+    expect(workflows).toHaveLength(5);
+    expect(
+      workflows.filter(
+        (w) => w.name === STABLE_CODING_WORKFLOW.name || w.name === 'Coding Workflow'
+      )
+    ).toHaveLength(1);
+  });
+
   test('handle collision on a new stable template fails safely without aborting the seed', () => {
     manager.createWorkflow({
       spaceId: SPACE_ID,

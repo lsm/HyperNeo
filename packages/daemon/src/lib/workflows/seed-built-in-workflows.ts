@@ -5,7 +5,7 @@ import {
   mergeHooksFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
 } from './built-in-template-merge.ts';
-import { getBuiltInWorkflows } from './built-in-workflows.ts';
+import { canonicalTemplateName, getBuiltInWorkflows } from './built-in-workflows.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import type { SpaceWorkflowManager } from './workflow-manager.ts';
 
@@ -123,6 +123,7 @@ export function seedBuiltInWorkflows(
       .listWorkflows(spaceId)
       .map((workflow) => workflow.templateName)
       .filter((name): name is string => !!name)
+      .map(canonicalTemplateName)
   );
   const templatesToCreate = templates.filter(
     (template) => !installedTemplateNames.has(template.name)

@@ -58,8 +58,18 @@ export {
   REVIEWER_ZERO_FINDINGS_GATE,
 };
 
+const LEGACY_BUILT_IN_TEMPLATE_NAMES: Record<string, string> = {
+  'Coding Workflow': 'Coding',
+  'Coding with QA Workflow': 'Coding with QA',
+};
+
+export function canonicalTemplateName(templateName: string): string {
+  return LEGACY_BUILT_IN_TEMPLATE_NAMES[templateName] ?? templateName;
+}
+
 export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkflow | undefined {
-  return getBuiltInWorkflows().find((workflow) => workflow.name === templateName);
+  const canonicalName = canonicalTemplateName(templateName);
+  return getBuiltInWorkflows().find((workflow) => workflow.name === canonicalName);
 }
 
 export function builtInWorkflowRequiresPrMerge(templateName: string | null | undefined): boolean {
