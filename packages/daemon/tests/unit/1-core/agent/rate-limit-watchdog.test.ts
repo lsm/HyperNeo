@@ -1143,6 +1143,34 @@ describe('RateLimitWatchdog', () => {
     const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
     const B: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
 
+    it('records when the limited model can run again, and forgets it on request', async () => {
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const resetAtMs = Date.now() + 60 * 60 * 1000;
+      await watchdog.scheduleRetry('usage limit', { uuid: 'm1', content: 'hi' }, { resetAtMs });
+      await flush();
+      expect(watchdog.getState().modelLimits).toEqual({ 'anthropic/sonnet': resetAtMs });
+      watchdog.forgetModelLimit('anthropic/sonnet');
+      expect(watchdog.getState().modelLimits).toEqual({});
+    });
+
+    it('assumes the first backoff step when the limit names no reset time', async () => {
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const before = Date.now();
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush();
+      const until = watchdog.getState().modelLimits['anthropic/sonnet'];
+      expect(until).toBeGreaterThanOrEqual(before + BACKOFF_LADDER_MS[0]);
+      expect(until).toBeLessThanOrEqual(Date.now() + BACKOFF_LADDER_MS[0]);
+    });
+
     it('switches to the next available fallback and retries without a cooldown', async () => {
       const { deps, switchAndRetry } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },

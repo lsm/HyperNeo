@@ -7,8 +7,10 @@ import {
   effectiveNeoPreference,
   neoCompactPercentFor,
   planNeoAlignment,
+  planPreferredReturn,
   requireNeoPreferenceModel,
 } from '../../../../src/lib/neo/model-preference.ts';
+import { frontSessionId } from '../../../../src/lib/neo/front-mode.ts';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -147,6 +149,26 @@ describe('planNeoAlignment', () => {
   });
 });
 
+describe('planPreferredReturn', () => {
+  const preference = { model: 'flash', provider: 'deepseek', thinkingLevel: 'off' as const };
+  const onFallback = { model: 'opus', provider: 'anthropic', thinkingLevel: 'off' };
+
+  test('returns to the preferred model once its recorded limit has passed', () => {
+    expect(planPreferredReturn(onFallback, preference, { 'deepseek/flash': 100 }, 100)).toEqual({
+      model: true,
+      thinking: false,
+    });
+  });
+
+  test('stays on the fallback while the limit lasts, without a recorded limit, or once back', () => {
+    expect(planPreferredReturn(onFallback, preference, { 'deepseek/flash': 101 }, 100)).toBeNull();
+    expect(planPreferredReturn(onFallback, preference, {}, 100)).toBeNull();
+    expect(
+      planPreferredReturn({ ...preference }, preference, { 'deepseek/flash': 1 }, 100)
+    ).toBeNull();
+  });
+});
+
 describe('neoCompactPercentFor', () => {
   const preferences = {
     model: 'flash',
@@ -193,6 +215,8 @@ describe('neo.preferences.set', () => {
   let busy: boolean;
   let events: InternalEventBus<DaemonInternalEventMap>;
   let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
+  let limits: Record<string, number>;
+  let forgotten: unknown[];
   let pendingFor: { sessionId: string; percent: number | null } | undefined;
 
   beforeEach(async () => {
@@ -211,6 +235,8 @@ describe('neo.preferences.set', () => {
     busy = false;
     switchFailure = undefined;
     pendingFor = undefined;
+    limits = {};
+    forgotten = [];
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
@@ -220,7 +246,11 @@ describe('neo.preferences.set', () => {
         getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
         getRateLimitWatchdogState: () => ({
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
+          modelLimits: limits,
         }),
+        forgetModelLimit: (key: string) => {
+          forgotten.push([sessionId, key]);
+        },
         updateMetadata: (updates: Partial<Session>) => {
           return db.updateSession(sessionId, updates);
         },
@@ -813,6 +843,39 @@ describe('neo.preferences.set', () => {
     recovering = false;
     await invoke('neo.preferences.set', preference);
     expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
+  });
+
+  test('moves root Neo and the front back to their preferred models once the limit passed', async () => {
+    const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    const front = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' as const };
+    const writes = gatewayFor(db.getDatabase());
+    await writes.call(globalSettingsWrites, 'neoPreferences', neo);
+    await writes.call(globalSettingsWrites, 'neoFrontModel', front);
+    const frontId = frontSessionId(service.repo.conversationId()!);
+    const frontRow = createTestSession(frontId);
+    await db.createSession({
+      ...frontRow,
+      config: { ...frontRow.config, model: 'glm-5', provider: 'glm' },
+    });
+    await db.updateSession('neo:root', {
+      config: { ...db.getSession('neo:root')!.config, model: 'glm-5', provider: 'glm' },
+    });
+    limits = { [`${flash.provider}/${flash.id}`]: 1000, [`${opus.provider}/${opus.id}`]: 1000 };
+    await service.returnToPreferredModels(999);
+    expect(switched).toEqual([]);
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual(
+      expect.arrayContaining([
+        ['neo:root', flash.id, flash.provider],
+        [frontId, opus.id, opus.provider],
+      ])
+    );
+    expect(forgotten).toEqual(
+      expect.arrayContaining([
+        ['neo:root', `${flash.provider}/${flash.id}`],
+        [frontId, `${opus.provider}/${opus.id}`],
+      ])
+    );
   });
 
   test('saves a fallback again unchanged after a forced refresh lists it under its remote id', async () => {
