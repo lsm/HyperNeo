@@ -9,7 +9,6 @@ import {
   createNeoOperations,
   createNeoService,
 } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
-import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 
 const run = resolve(process.argv[2]);
@@ -65,8 +64,7 @@ try {
     '{}'
   );
   db.prepare("INSERT INTO neo_session_bindings (session_id, kind) VALUES (?, 'neo')").run(root);
-  const prs = new CodingTodoPrRepository(db);
-  const finished = (askId: string, todoId: string, url: string, design: boolean) => {
+  const finished = (askId: string, todoId: string, producesFollowUp: boolean) => {
     service!.todos.openAsk({
       id: askId,
       sessionId: root,
@@ -79,28 +77,20 @@ try {
     const step = service!.todos.addTodo(
       todoId,
       askId,
-      { title: `${askId} step`, doneWhen: 'Merged', check: null, instruction: null, named: null },
+      {
+        title: `${askId} step`,
+        doneWhen: 'Written',
+        check: null,
+        instruction: null,
+        named: null,
+        ...(producesFollowUp ? { producesFollowUp: true } : {}),
+      },
       at
     );
-    service!.todos.updateTodo(step, { state: 'done', evidence: 'Merged' }, at);
-    prs.record(
-      todoId,
-      [
-        {
-          url,
-          state: 'MERGED',
-          checks: 'passing',
-          review: 'approved',
-          title: `${askId} PR`,
-          ...(design ? { design: true as const } : {}),
-        },
-      ],
-      at
-    );
+    service!.todos.updateTodo(step, { state: 'done', evidence: 'Written' }, at);
   };
-  const designUrl = 'https://github.com/example/project/pull/7';
-  finished('design-ask', 'design-step', designUrl, true);
-  finished('plain-ask', 'plain-step', 'https://github.com/example/project/pull/8', false);
+  finished('plan-ask', 'plan-step', true);
+  finished('plain-ask', 'plain-step', false);
   const note = (askId: string) =>
     db
       .prepare(`INSERT INTO job_queue (id, queue, status, payload, run_at, created_at, completed_at)
@@ -133,7 +123,7 @@ try {
         consumedSeq,
         kind === 'result' ? 1 : 0
       );
-  for (const askId of ['design-ask', 'plain-ask']) {
+  for (const askId of ['plan-ask', 'plain-ask']) {
     note(askId);
     sdk('user', `batch-${askId}`, 10 + seq);
     sdk('result', `result-${askId}`, 20 + seq);
@@ -154,7 +144,7 @@ try {
           `SELECT json_extract(payload, '$.messageUuid') AS key,
                   json_extract(payload, '$.message.message.content') AS text
              FROM job_queue WHERE queue = 'mailbox'
-              AND json_extract(payload, '$.messageUuid') LIKE 'neo-design-follow-up:%'`
+              AND json_extract(payload, '$.messageUuid') LIKE 'neo-follow-up-missing:%'`
         )
         .all() as { key: string; text: string }[]
     ).map((row) => ({ key: row.key, text: String(row.text) }));
@@ -162,32 +152,32 @@ try {
   const settled = asks();
   (evidence.checks as unknown[]).push({ name: 'auto-settle after one refresh', rows: settled });
   assert.equal(settled['plain-ask'], 'done', 'an ordinary finished ask still settles itself');
-  assert.equal(settled['design-ask'], 'open', 'a merged design with no follow-up stays open');
+  assert.equal(settled['plan-ask'], 'open', 'a finished plan with no follow-up stays open');
   await service.sweepPacks();
   await service.sweepPacks();
   const woken = wakes();
-  (evidence.checks as unknown[]).push({ name: 'wakes after two coding sweeps', woken });
+  (evidence.checks as unknown[]).push({ name: 'wakes after two pack sweeps', woken });
   assert.equal(woken.length, 1, 'two sweeps queue one wake for Neo');
-  assert(woken[0]!.text.includes(designUrl) && woken[0]!.text.includes('Change section'));
+  assert(woken[0]!.text.includes('plan-ask step') && woken[0]!.text.includes('plan-ask'));
   const ops = Object.fromEntries(createNeoOperations(service).map((op) => [op.name, op]));
   const settle = ops['neo.ask.settle']!;
   const caller = { source: 'mcp' as const, sessionId: root, role: 'neo' as const };
   const refused = (await settle.execute(
-    settle.inputSchema.parse({ askId: 'design-ask', status: 'done', outcome: 'Designed' }),
+    settle.inputSchema.parse({ askId: 'plan-ask', status: 'done', outcome: 'Planned' }),
     caller
   )) as { ok: boolean; reason?: string };
   (evidence.checks as unknown[]).push({ name: 'settle done without follow-up', refused });
   assert.equal(refused.ok, false);
-  assert(refused.reason?.startsWith('design_follow_up_missing'));
+  assert(refused.reason?.startsWith('follow_up_missing'));
   service.todos.addTodo(
     'build-step',
-    'design-ask',
+    'plan-ask',
     { title: 'Build it', doneWhen: 'Merged', check: null, instruction: null, named: null },
     at
   );
   service.todos.updateTodo(service.todos.getTodo('build-step')!, { state: 'done' }, at);
   const accepted = (await settle.execute(
-    settle.inputSchema.parse({ askId: 'design-ask', status: 'done', outcome: 'Designed and built' }),
+    settle.inputSchema.parse({ askId: 'plan-ask', status: 'done', outcome: 'Planned and built' }),
     caller
   )) as { ok: boolean };
   (evidence.checks as unknown[]).push({ name: 'settle done after a follow-up', ok: accepted.ok });

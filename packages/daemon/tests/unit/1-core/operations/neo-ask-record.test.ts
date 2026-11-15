@@ -17,7 +17,6 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
@@ -238,81 +237,56 @@ describe('neo.ask.open and neo.ask.settle', () => {
     });
   });
 
-  test('refuses to settle done while a merged design PR has no follow-up todo', async () => {
-    const h = setup();
+  const openPlan = async (h: ReturnType<typeof setup>, title: string) => {
     const opened = await h.call(
       'neo.ask.open',
       {
-        title: 'Cache design',
-        request: 'Design the cache layer',
-        todos: [{ after: [], check: pendingTodoCheck, title: 'Design doc', doneWhen: 'Merged' }],
+        title,
+        request: 'Plan the cache layer',
+        todos: [
+          {
+            after: [],
+            check: pendingTodoCheck,
+            title: 'Write the plan',
+            doneWhen: 'Written',
+            producesFollowUp: true,
+          },
+        ],
       },
       turn('m1')
     );
     if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.todos[0].producesFollowUp).toBe(true);
     h.store.updateTodo(opened.todos[0], { state: 'done' }, 2);
-    new CodingTodoPrRepository(h.db).record(
-      opened.todos[0].id,
-      [
-        {
-          url: 'https://github.com/example/project/pull/7',
-          state: 'MERGED',
-          checks: 'passing',
-          review: 'approved',
-          design: true,
-        },
-      ],
-      2
+    return opened;
+  };
+  const laterTodo = (h: ReturnType<typeof setup>, askId: string, id: string) => {
+    h.store.addTodo(
+      id,
+      askId,
+      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
+      3
     );
+    h.store.updateTodo(h.store.getTodo(id)!, { state: 'done' }, 4);
+  };
+
+  test('refuses to settle done while a todo that produces work has no later todo', async () => {
+    const h = setup();
+    const opened = await openPlan(h, 'Cache plan');
     const settle = (status: 'done' | 'dropped') =>
       h.call('neo.ask.settle', { askId: opened.ask.id, status, outcome: 'Settled' }, turn('m2'));
     const refused = await settle('done');
     expect(refused.ok).toBe(false);
-    expect(!refused.ok && refused.reason).toContain('design_follow_up_missing');
+    expect(!refused.ok && refused.reason).toContain('follow_up_missing');
     expect(h.store.getAsk(opened.ask.id)?.status).toBe('open');
-    h.store.addTodo(
-      'todo-build',
-      opened.ask.id,
-      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
-      3
-    );
-    h.store.updateTodo(h.store.getTodo('todo-build')!, { state: 'done' }, 4);
+    laterTodo(h, opened.ask.id, 'todo-build');
     expect((await settle('done')).ok).toBe(true);
   });
 
-  test('refuses done when the follow-up todo is removed while settle stops sessions', async () => {
+  test('refuses done when the later todo is removed while settle stops sessions', async () => {
     const h = setup();
-    const opened = await h.call(
-      'neo.ask.open',
-      {
-        title: 'Cache design race',
-        request: 'Design the cache layer',
-        todos: [{ after: [], check: pendingTodoCheck, title: 'Design doc', doneWhen: 'Merged' }],
-      },
-      turn('m1')
-    );
-    if (!opened.ok) throw new Error(opened.reason);
-    h.store.updateTodo(opened.todos[0], { state: 'done' }, 2);
-    new CodingTodoPrRepository(h.db).record(
-      opened.todos[0].id,
-      [
-        {
-          url: 'https://github.com/example/project/pull/9',
-          state: 'MERGED',
-          checks: 'passing',
-          review: 'approved',
-          design: true,
-        },
-      ],
-      2
-    );
-    const later = h.store.addTodo(
-      'todo-race',
-      opened.ask.id,
-      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
-      3
-    );
-    h.store.updateTodo(later, { state: 'done' }, 4);
+    const opened = await openPlan(h, 'Cache plan race');
+    laterTodo(h, opened.ask.id, 'todo-race');
     h.onStop.value = () => {
       const current = h.store.getTodo('todo-race')!;
       if (current.state !== 'removed')
@@ -320,11 +294,11 @@ describe('neo.ask.open and neo.ask.settle', () => {
     };
     const settled = await h.call(
       'neo.ask.settle',
-      { askId: opened.ask.id, status: 'done', outcome: 'Designed' },
+      { askId: opened.ask.id, status: 'done', outcome: 'Planned' },
       turn('m2')
     );
     expect(settled.ok).toBe(false);
-    expect(!settled.ok && settled.reason).toContain('design_follow_up_missing');
+    expect(!settled.ok && settled.reason).toContain('follow_up_missing');
     expect(h.store.getAsk(opened.ask.id)?.status).toBe('open');
   });
 
