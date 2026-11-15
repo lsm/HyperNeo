@@ -205,4 +205,10 @@ describe('Neo composer send slot', () => {
     });
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
   });
+
+  it('shows no realtime voice button', () => {
+    mount(false, 'Hello');
+    expect(screen.queryByRole('button', { name: 'Realtime voice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop realtime voice' })).toBeNull();
+  });
 });
