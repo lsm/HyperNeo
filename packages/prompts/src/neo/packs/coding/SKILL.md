@@ -123,6 +123,15 @@ aliases (including Fable and [1m] context suffixes). Unrecognised identities,
 including GLM, Gemini and DeepSeek, do not qualify automatically. Ask for a supported
 identity or use a human reviewer.
 A human is an alternative. When off, no Agent line or model diversity is required.
+coding.crossModelReview (repository, default off) is the human's setting only; never
+propose or change it. When on, a bot-approved green PR waits in waiting_cross_review
+until a Review passes on its head by a different model than its Agent line, and the
+daemon will not merge it before then. When the PR sweep wakes you for one, assign
+`review` on that head to a non-Claude candidate for a Claude author (any different
+recognised model otherwise) with `neo.coding.assign`, then relay its result. A PR
+without an exact Agent line has no author model to differ from and is not held;
+provenance governs that line. If assign refuses because that head already has a bot
+Review from before the setting was turned on, the PR needs a new push; ask its owner.
 Keep the repository's existing review and merge rules.
 
 Assign `review` then `verify` with `neo.coding.assign` on the same existing todoId,

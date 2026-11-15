@@ -240,6 +240,7 @@ const LEDGER_CODES: Record<CodingPrState, keyof typeof CODING_TODO_STATUS_EN> = 
   unreviewed: 'todo.pr.noReviewer',
   approved_green: 'todo.pr.approvedGreen',
   approved_pending: 'todo.pr.approvedPending',
+  waiting_cross_review: 'todo.pr.waitingReview',
   dirty: 'todo.pr.dirty',
   draft: 'todo.pr.draft',
 };

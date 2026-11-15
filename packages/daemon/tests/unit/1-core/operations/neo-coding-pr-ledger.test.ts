@@ -11,6 +11,7 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -864,4 +865,159 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
   } finally {
     db.close();
   }
+});
+
+describe('planCodingLedgerRead cross-model review', () => {
+  const policy = { mergePolicy: 'review_bot', reviewBot: 'bot', crossModelReview: true } as const;
+  const pr = node(1, {
+    body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+    reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+  });
+  const review = (model: string, head = 'h1') => ({
+    url: 'https://github.com/x/x/pull/1',
+    head,
+    stage: 'review' as const,
+    actor: { kind: 'agent' as const, id: 'reviewer', model, harness: 'Codex' },
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  });
+  const state = (crossModelReview: boolean, reviews: ReturnType<typeof review>[]) =>
+    planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => ({ ...policy, crossModelReview }),
+      (repo, number) => (repo === 'x/x' && number === 1 ? reviews : [])
+    )?.rows[0].state;
+
+  test('an approved green PR waits for a review by a different model', () => {
+    expect(state(true, [])).toBe('waiting_cross_review');
+    expect(state(true, [review('claude-opus-5-5')])).toBe('waiting_cross_review');
+    expect(state(true, [review('gpt-6.1-sol', 'h0')])).toBe('waiting_cross_review');
+  });
+
+  test('a passing review by a different model on the head makes it green', () => {
+    expect(state(true, [review('gpt-6.1-sol')])).toBe('approved_green');
+  });
+
+  test('repositories without the preference keep the existing states', () => {
+    expect(state(false, [])).toBe('approved_green');
+  });
+});
+
+describe('planCodingLedgerRead cross-model review for CI-only repositories', () => {
+  const pr = node(1, { body: 'Agent: claude-opus-5-5 (effort: medium) via Claude' });
+  const review = {
+    url: 'https://github.com/x/x/pull/1',
+    head: 'h1',
+    stage: 'review' as const,
+    actor: { kind: 'agent' as const, id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  };
+  const state = (reviews: (typeof review)[]) =>
+    planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => ({ mergePolicy: 'ci_only', mergeBy: 'daemon', crossModelReview: true }),
+      () => reviews
+    )?.rows[0].state;
+
+  test('a green CI-only PR waits for a review by a different model, then reads green', () => {
+    expect(state([])).toBe('waiting_cross_review');
+    expect(state([review])).toBe('approved_green');
+  });
+});
+
+describe('reconcileCodingPrLedger cross-model review on a GitHub Enterprise host', () => {
+  test('a review recorded under the deployment host clears the hold', async () => {
+    const { db, ledger } = setup();
+    const previous = process.env.GH_HOST;
+    process.env.GH_HOST = 'ghe.example.test';
+    try {
+      for (const [key, value] of Object.entries({
+        mergePolicy: 'review_bot',
+        reviewBot: 'bot',
+        crossModelReview: true,
+      }))
+        db.prepare(
+          `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+        ).run(key, JSON.stringify(value));
+      const pr = node(1, {
+        body: 'Agent: claude-opus-5-5 (effort: medium) via Claude',
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+        },
+      });
+      const read = async () => response([pr]);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+      expect(ledger.list()[0].state).toBe('waiting_cross_review');
+      const url = 'https://ghe.example.test/lsm/hyperneo/pull/1';
+      expect(
+        ledger.stageFacts.record({
+          url,
+          head: 'h1',
+          stage: 'review',
+          actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+          verdict: 'pass',
+          acceptanceContract: 'contract',
+          evidence: ['ran it'],
+        })
+      ).toBe(true);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 200);
+      expect(ledger.list()[0].state).toBe('approved_green');
+    } finally {
+      if (previous === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = previous;
+      db.close();
+    }
+  });
+});
+
+describe('reconcileCodingPrLedger cross-model review without an Agent line', () => {
+  test('a PR with no exact Agent line is not held, and the daemon may merge it', async () => {
+    const { db, ledger } = setup();
+    try {
+      for (const [key, value] of Object.entries({
+        mergePolicy: 'review_bot',
+        reviewBot: 'bot',
+        crossModelReview: true,
+      }))
+        db.prepare(
+          `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+        ).run(key, JSON.stringify(value));
+      const pr = node(1, {
+        body: 'Written by hand.',
+        reviews: {
+          nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+        },
+      });
+      await reconcile(ledger, ['lsm/hyperneo'], async () => response([pr]), 100);
+      expect(ledger.list()[0].state).toBe('approved_green');
+      const head = 'a'.repeat(40);
+      expect(
+        decideCodingDaemonMerge(
+          {
+            ok: true,
+            head,
+            body: 'Written by hand.',
+            stageFacts: [],
+            state: 'OPEN',
+            draft: false,
+            mergeable: 'MERGEABLE',
+            passingCommitStatus: true,
+            requiredCi: { count: 1, head, green: true },
+            threads: { head, unresolved: 0 },
+            reviews: [{ login: 'bot', head, state: 'APPROVED' }],
+            files: ['src/app.ts'],
+            labels: [],
+          },
+          { ...ledger.policy('lsm/hyperneo'), mergeBy: 'daemon' }
+        )
+      ).toEqual({ kind: 'merge', head });
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -237,7 +237,8 @@ export function createCodingAssignmentOperation(deps: Deps) {
           id: 'provenance-check',
         });
         if (!provenance.qualifies) return refuse(provenance.reason);
-        const reviewBot = deps.ledger.policy(repoName(input)).reviewBot;
+        const policy = deps.ledger.policy(repoName(input));
+        const reviewBot = policy.crossModelReview ? undefined : policy.reviewBot;
         if (
           existing &&
           (existing.bot?.toLowerCase() ?? null) !== (reviewBot?.toLowerCase() ?? null)

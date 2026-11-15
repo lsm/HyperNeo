@@ -33,7 +33,7 @@ const agent = (ref: typeof author) => ({
   harness: ref.adapter,
   model: 'claude-opus-5-5',
 });
-function fixture(bot = true) {
+function fixture(bot = true, cross = false) {
   const root = mkdtempSync(join(tmpdir(), 'coding-merge-op-'));
   const data = {
     pr: {
@@ -101,6 +101,7 @@ function fixture(bot = true) {
       .run(key, JSON.stringify(value));
   setting('mergePolicy', bot ? 'review_bot' : 'ci_only');
   if (bot) setting('reviewBot', 'fixture-bot');
+  if (cross) setting('crossModelReview', true);
   const base = {
     url,
     head,
@@ -111,7 +112,7 @@ function fixture(bot = true) {
   expect(
     assignments.record('todo', 'review', {
       ...base,
-      ...(bot ? { bot: 'fixture-bot' } : { ref: reviewer, actor: agent(reviewer) }),
+      ...(bot && !cross ? { bot: 'fixture-bot' } : { ref: reviewer, actor: agent(reviewer) }),
     })
   ).toBe(true);
   expect(assignments.record('todo', 'qa', { ...base, ref: verifier, actor: agent(verifier) })).toBe(
@@ -249,6 +250,46 @@ describe('coding merge operation', () => {
     f.stage('qa');
     f.data.reviews.push([{ ...f.data.reviews[0][0], state: 'CHANGES_REQUESTED' }]);
     expect((await f.prepare()).accepted).toBe(false);
+  });
+  test('cross-model review needs the bot approval and the assigned Review', async () => {
+    const f = fixture(true, true);
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({ accepted: false });
+    f.stage('review');
+    expect(await f.prepare()).toMatchObject({ accepted: true, head });
+    f.data.reviews[0][0].user.login = 'wrong-bot';
+    expect(await f.prepare()).toMatchObject({ accepted: false });
+  });
+  test('enabling cross-model review refuses an earlier same-model Review', async () => {
+    const f = fixture(false);
+    f.setting('provenance', false);
+    f.setting('crossModelReview', true);
+    f.data.pr.body = 'Agent: claude-opus-5-5 (effort: medium) via Claude';
+    f.stage('review');
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({ accepted: false });
+    expect(f.todos.deliveryFacts.read('todo', url, head)).toBeNull();
+  });
+  test('a bot Review assigned before cross-model review is enabled still holds', async () => {
+    const f = fixture();
+    f.setting('crossModelReview', true);
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({
+      accepted: false,
+      reason: 'cross_model_review_required',
+    });
+    expect(f.todos.deliveryFacts.read('todo', url, head)).toBeNull();
+    f.stage('review');
+    expect(await f.prepare()).toMatchObject({ accepted: true, head });
+  });
+  test('with provenance off, a PR without an Agent line is not held by cross-model review', async () => {
+    const f = fixture(false);
+    f.setting('provenance', false);
+    f.setting('crossModelReview', true);
+    f.data.pr.body = '';
+    f.stage('review');
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({ accepted: true, head });
   });
   test('another bot approval cannot substitute for the configured bot', async () => {
     const f = fixture();

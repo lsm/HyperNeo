@@ -8,6 +8,8 @@ import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './wa
 import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
+  codingCrossModelReviewed,
+  codingHasAuthorLine,
   codingReviewerPolicy,
   type CodingStageFact,
   type CodingActor,
@@ -60,6 +62,7 @@ export type CodingPrState =
   | 'dirty'
   | 'approved_pending'
   | 'approved_green'
+  | 'waiting_cross_review'
   | 'merged'
   | 'closed';
 
@@ -164,6 +167,7 @@ export function codingPrReplyAt(pr: Node): number | null {
 
 export interface CodingMergePolicy {
   provenance?: boolean;
+  crossModelReview?: boolean;
   allowNoChecksMerge?: boolean;
   mergeBy?: 'owner' | 'daemon';
   mergePolicy?: 'review_bot' | 'ci_only' | 'human';
@@ -171,10 +175,14 @@ export interface CodingMergePolicy {
   humanSignoff?: readonly string[];
 }
 
+export const codingReviewerProvenance = (policy: CodingMergePolicy, body: string) =>
+  policy.provenance !== false || (policy.crossModelReview === true && codingHasAuthorLine(body));
+
 export function codingPrState(
   pr: Node,
   repoHasCi = false,
-  policy: CodingMergePolicy = {}
+  policy: CodingMergePolicy = {},
+  stageFacts: readonly CodingStageFact[] = []
 ): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
@@ -200,6 +208,10 @@ export function codingPrState(
     ) !== false;
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
+  const green =
+    policy.crossModelReview && !codingCrossModelReviewed(pr.body, pr.headRefOid, stageFacts)
+      ? 'waiting_cross_review'
+      : 'approved_green';
   if (policy.mergePolicy === 'review_bot') {
     const bot = codingReviewOnHead({
       head: pr.headRefOid,
@@ -208,12 +220,12 @@ export function codingPrState(
     });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
-    return readyCi ? 'approved_green' : 'approved_pending';
+    return readyCi ? green : 'approved_pending';
   }
   return readyCi
     ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
       ? 'waiting_human'
-      : 'approved_green'
+      : green
     : 'waiting_ci';
 }
 
@@ -236,7 +248,8 @@ export type CodingLedgerRow = {
 export function planCodingLedgerRead(
   raw: unknown,
   now: number,
-  readPolicy: (repo: string) => CodingMergePolicy = () => ({})
+  readPolicy: (repo: string) => CodingMergePolicy = () => ({}),
+  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => []
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -256,7 +269,12 @@ export function planCodingLedgerRead(
       title: pr.title,
       branch: pr.headRefName,
       head: pr.headRefOid,
-      state: codingPrState(pr, repoHasCi, policy),
+      state: codingPrState(
+        pr,
+        repoHasCi,
+        policy,
+        policy.crossModelReview ? readStageFacts(canonical, pr.number) : []
+      ),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
@@ -484,7 +502,15 @@ export class CodingPrLedgerRepository {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
     const before = this.health.read(repo);
-    const planned = planCodingLedgerRead(raw, now, (canonical) => this.policy(canonical));
+    const planned = planCodingLedgerRead(
+      raw,
+      now,
+      (canonical) => this.policy(canonical),
+      (repo, number) =>
+        this.stageFacts.read(
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`
+        )
+    );
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
     const canonical = this.canonicalRepo(repo);
@@ -534,8 +560,16 @@ export class CodingPrLedgerRepository {
     this.health.accept(repo, key, at);
   }
 
+  readStageFacts(url: string) {
+    return this.stageFacts.read(url);
+  }
+
+  reviewerProvenance(repo: string, body: string) {
+    return codingReviewerProvenance(this.policy(repo), body);
+  }
+
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
-    return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
+    return codingReviewerPolicy(this.reviewerProvenance(repo, body), body, reviewer);
   }
 
   policyContextCurrent(text: string) {
@@ -582,6 +616,7 @@ export class CodingPrLedgerRepository {
       allowNoChecksMerge: noChecks?.scope.kind === 'repo' && noChecks.value === true,
       mergeBy: (read('mergeBy') ?? 'owner') as CodingMergePolicy['mergeBy'],
       provenance: read('provenance') as boolean | undefined,
+      crossModelReview: read('crossModelReview') as boolean | undefined,
       mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
       reviewBot: read('reviewBot') as string | undefined,
       humanSignoff: read('humanSignoff') as string[] | undefined,
@@ -677,7 +712,7 @@ export class CodingPrLedgerRepository {
     );
     for (const row of rows) {
       this.stageFacts.observeHead(
-        `https://github.com/${row.repo}/pull/${row.number}`,
+        `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
         row.head,
         observedAt
       );
@@ -792,8 +827,8 @@ export class CodingPrLedgerRepository {
       this.db
         .prepare(`DELETE FROM ${table} WHERE substr(url, 1, length(?)) = ?`)
         .run(
-          `https://github.com/${repo.toLowerCase()}/pull/`,
-          `https://github.com/${repo.toLowerCase()}/pull/`
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/`.toLowerCase(),
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/`.toLowerCase()
         );
   }
 
@@ -999,5 +1034,5 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext'] as const
+  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext', 'readStageFacts'] as const
 );

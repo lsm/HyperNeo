@@ -85,6 +85,7 @@ export const prepareCodingMerge = (superpipe({})('coding.prepare-manual-merge') 
         (contract.reviewer && sameCodingWorkRef(contract.qa, contract.reviewer))
       )
         return refuse('independent_matching_head_qa_required');
+      if (contract.reviewer && !reviewFact) return refuse('matching_head_review_required');
       const gate = CodingMergeGate.safeParse({
         url: candidate.url,
         head: candidate.head,

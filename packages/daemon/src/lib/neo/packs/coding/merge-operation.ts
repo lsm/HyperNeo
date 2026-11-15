@@ -11,7 +11,8 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation } from '../../../operations/registry.ts';
-import { codingReviewerPolicy } from './stage-facts.ts';
+import { codingCrossModelReviewed, codingReviewerPolicy } from './stage-facts.ts';
+import { codingReviewerProvenance } from './pr-ledger.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
@@ -129,6 +130,8 @@ export function createCodingMergeOperation(deps: Deps) {
         const { pr, reviews, checks, threads } = observed,
           state = await local(input, pr.headRefOid);
         const { review, qa } = state.assignments;
+        const bot =
+          state.policy.crossModelReview && review?.ref ? state.policy.reviewBot : review?.bot;
         if (
           !state.live ||
           !state.linked ||
@@ -146,15 +149,20 @@ export function createCodingMergeOperation(deps: Deps) {
         if (
           !state.policy.mergePolicy ||
           (state.policy.mergePolicy === 'review_bot' && !state.policy.reviewBot) ||
-          (review.bot ?? '').toLowerCase() !== (state.policy.reviewBot ?? '').toLowerCase()
+          (bot ?? '').toLowerCase() !== (state.policy.reviewBot ?? '').toLowerCase()
         )
           return { accepted: false, reason: 'Resolve repository review policy before merging.' };
         const provenance = codingReviewerPolicy(
-          state.policy.provenance !== false,
+          codingReviewerProvenance(state.policy, pr.body),
           pr.body,
           review.actor ?? { kind: 'human', id: 'bot-route' }
         );
         if (!provenance.qualifies) return { accepted: false, reason: provenance.reason };
+        if (
+          state.policy.crossModelReview &&
+          !codingCrossModelReviewed(pr.body, pr.headRefOid, state.facts)
+        )
+          return { accepted: false, reason: 'cross_model_review_required' };
         const route = await deps.review(
           {
             head: pr.headRefOid,
@@ -225,7 +233,7 @@ export function createCodingMergeOperation(deps: Deps) {
             write: review.write,
             qa: qa.ref,
             reviewer: review.ref,
-            bot: review.bot,
+            bot,
           },
           route,
           state.facts.filter((f) =>
