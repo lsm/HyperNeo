@@ -560,8 +560,13 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.read(url);
   }
 
+  reviewerProvenance(repo: string) {
+    const policy = this.policy(repo);
+    return policy.provenance !== false || policy.crossModelReview === true;
+  }
+
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
-    return codingReviewerPolicy(this.policy(repo).provenance !== false, body, reviewer);
+    return codingReviewerPolicy(this.reviewerProvenance(repo), body, reviewer);
   }
 
   policyContextCurrent(text: string) {
@@ -819,8 +824,8 @@ export class CodingPrLedgerRepository {
       this.db
         .prepare(`DELETE FROM ${table} WHERE substr(url, 1, length(?)) = ?`)
         .run(
-          `https://github.com/${repo.toLowerCase()}/pull/`,
-          `https://github.com/${repo.toLowerCase()}/pull/`
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/`.toLowerCase(),
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/`.toLowerCase()
         );
   }
 

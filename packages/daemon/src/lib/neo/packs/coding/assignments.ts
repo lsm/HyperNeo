@@ -50,7 +50,7 @@ export class CodingAssignmentsRepository {
       this.db,
       input,
       input.stage === 'review'
-        ? new CodingPrLedgerRepository(this.db).policy(input.repo).provenance !== false
+        ? new CodingPrLedgerRepository(this.db).reviewerProvenance(input.repo)
         : false
     );
   }
