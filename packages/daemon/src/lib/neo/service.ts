@@ -561,14 +561,14 @@ export class NeoService {
     sessionId: string,
     preference: NeoModelPreference | null = this.modelPreference(),
     stillWanted?: () => boolean
-  ): Promise<void> {
+  ): Promise<'deferred' | undefined> {
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
     if (!preference || !plan) return;
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (!live) return;
+    if (!live) return 'deferred';
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
-      return;
+      return 'deferred';
     if (stillWanted && !stillWanted()) return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
@@ -616,7 +616,8 @@ export class NeoService {
       const live = await this.sessions.getSessionForControl(sessionId);
       if (!live) continue;
       const due = () => plan(live.getSessionData()) === 'return';
-      if (due()) await this.alignModelPreference(sessionId, preference, due);
+      if (due() && (await this.alignModelPreference(sessionId, preference, due)) === 'deferred')
+        continue;
       await live.forgetModelLimits?.();
     }
   }
