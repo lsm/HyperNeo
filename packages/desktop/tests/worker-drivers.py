@@ -147,7 +147,8 @@ class WorkerDrivers(unittest.TestCase):
         self.daemon()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.cleanup)
         ready = select.select([self.process.stdout], [], [], 15)[0]
@@ -488,7 +489,8 @@ open(sys.argv[2], 'w').write(reply.decode())
     def test_refuses_second_app_without_removing_endpoint(self):
         second = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([second.stdout], [], [], 15)[0])
@@ -528,7 +530,8 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -562,7 +565,8 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertGreaterEqual(len(str(base / 'desktop/control.sock').encode()), 104)
         process = subprocess.Popen(
             [str(RUNNER), str(base), str(self.binary), self.path],
-            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -584,7 +588,8 @@ open(sys.argv[2], 'w').write(reply.decode())
                 base.mkdir()
                 process = subprocess.Popen(
                     [str(RUNNER), str(base), str(self.binary), self.path, mode],
-                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -606,7 +611,8 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path, 'accept-error'],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -661,7 +667,8 @@ open(sys.argv[2], 'w').write(reply.decode())
         result = subprocess.run(
             [str(self.binary), '__private-worker', '--generation', 'g', '--transport-fd=3'],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
-                 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+                 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('FIXTURE_PARENT_ONLY', result.stderr)
@@ -943,7 +950,11 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(reply['result']['reason'], 'tool_not_allowed')
 
     def test_oversized_frame_gets_an_explicit_error(self):
-        reply = self.dispatch('click', {'text': 'x' * (2 << 20)}, workDir=str(self.work))
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(10)
+            client.connect(str(self.root / 'desktop/control.sock'))
+            client.sendall(b' ' * (1 << 20))
+            reply = json.loads(client.makefile('rb').readline())
         self.assertEqual(reply, {'ok': False, 'error': 'request_too_large'})
 
     def test_failed_reply_retires_the_slot_and_preserves_sent(self):
@@ -964,18 +975,17 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.call('status')['result']['state'], 'stopped')
         self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
 
-    def test_target_exit_during_startup_prevents_input(self):
-        target = subprocess.Popen(['/bin/sleep', '60'])
-        self.addCleanup(target.wait)
-        self.addCleanup(target.kill)
-        self.call('fixture-admit', tool='click', arguments={'pid': target.pid})
+    def test_target_change_during_startup_prevents_input(self):
+        pid = finder()
+        original = self.resolve('click', {'pid': pid})['value']['instance']['startedAt']
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
         slow = self.work / 'slow'
         slow.mkdir()
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self.dispatch, 'click', {'pid': target.pid}, workDir=str(slow))
+            future = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(slow))
             wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
-            target.kill()
-            target.wait()
+            (self.root / 'target-birth.json').write_text(json.dumps(
+                {'pid': pid, 'seconds': original['seconds'], 'microseconds': original['microseconds'] + 1}))
             next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
             reply = future.result(timeout=15)
         self.assertEqual(reply['result']['reason'], 'target_mismatch')
