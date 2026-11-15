@@ -199,33 +199,6 @@ export class SpaceWorkflowManager {
     return withSanitizedNodes;
   }
 
-  updateBuiltInIdentity(
-    id: string,
-    identity: Pick<UpdateSpaceWorkflowParams, 'name' | 'handle' | 'templateName'>
-  ): SpaceWorkflow | null {
-    const existing = this.repo.getWorkflow(id);
-    if (!existing) return null;
-    const name = identity.name?.trim();
-    if (!name) throw new WorkflowValidationError('Workflow name is required');
-    validateName(this.repo, existing.spaceId, name, id);
-    if (typeof identity.handle !== 'string') {
-      throw new WorkflowValidationError('Workflow handle must be a string');
-    }
-    const handle = identity.handle.trim();
-    validateHandle(this.repo, existing.spaceId, handle, id);
-    return this.repo.updateWorkflow(id, {
-      name,
-      handle,
-      templateName: identity.templateName,
-    });
-  }
-
-  stampBuiltInTemplateName(id: string, templateName: string): SpaceWorkflow | null {
-    const existing = this.repo.getWorkflow(id);
-    if (!existing) return null;
-    return this.repo.updateWorkflow(id, { templateName });
-  }
-
   stampBuiltInTags(id: string, tags: string[]): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return null;

@@ -1,4 +1,3 @@
-import type { SpaceWorkflow } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import {
@@ -6,7 +5,7 @@ import {
   mergeHooksFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
 } from './built-in-template-merge.ts';
-import { getBuiltInWorkflows, LEGACY_CODING_TEMPLATE_IDENTITIES } from './built-in-workflows.ts';
+import { canonicalTemplateName, getBuiltInWorkflows } from './built-in-workflows.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import type { SpaceWorkflowManager } from './workflow-manager.ts';
 
@@ -35,54 +34,10 @@ export function seedBuiltInWorkflows(
 ): SeedBuiltInWorkflowsResult {
   const templates = getBuiltInWorkflows();
   const templatesByName = new Map(templates.map((t) => [t.name, t]));
-  let existing = workflowManager.listWorkflows(spaceId);
-  const identityErrors: Array<{ name: string; error: string }> = [];
-
-  for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
-    const legacyRows = existing.filter((workflow) => workflow.templateName === identity.legacyName);
-    if (legacyRows.length === 0) continue;
-    const canonicalTemplate = templatesByName.get(identity.name);
-    const canonicalIsDefault = (canonicalTemplate?.tags ?? []).includes('default');
-    const sorted = [...legacyRows].sort((a, b) => b.createdAt - a.createdAt);
-    for (const row of sorted) {
-      let migrated: SpaceWorkflow | null = row;
-      const rowIsUnmodifiedSeed =
-        row.name === identity.legacyName && row.handle === identity.legacyHandle;
-      try {
-        if (rowIsUnmodifiedSeed) {
-          migrated = workflowManager.updateBuiltInIdentity(row.id, {
-            name: identity.name,
-            handle: identity.handle,
-            templateName: identity.name,
-          });
-        } else {
-          migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
-        }
-      } catch {
-        try {
-          migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
-        } catch (innerErr) {
-          migrated = null;
-          identityErrors.push({
-            name: identity.legacyName,
-            error: innerErr instanceof Error ? innerErr.message : String(innerErr),
-          });
-        }
-      }
-      if (migrated && !canonicalIsDefault && (migrated.tags ?? []).includes('default')) {
-        try {
-          workflowManager.stampBuiltInTags(
-            row.id,
-            migrated.tags!.filter((tag) => tag !== 'default')
-          );
-        } catch {}
-      }
-    }
-  }
-  existing = workflowManager.listWorkflows(spaceId);
+  const existing = workflowManager.listWorkflows(spaceId);
 
   const restamped: string[] = [];
-  const errors: Array<{ name: string; error: string }> = [...identityErrors];
+  const errors: Array<{ name: string; error: string }> = [];
 
   if (existing.length > 0) {
     for (const row of existing) {
@@ -168,6 +123,7 @@ export function seedBuiltInWorkflows(
       .listWorkflows(spaceId)
       .map((workflow) => workflow.templateName)
       .filter((name): name is string => !!name)
+      .map(canonicalTemplateName)
   );
   const templatesToCreate = templates.filter(
     (template) => !installedTemplateNames.has(template.name)
