@@ -33,7 +33,7 @@ The superpipe:
 1. **Read** the facts every kind may consult: the open cards covering the subject (`neoTodoCovered`), whether the human must act (`neoTodoAwaitsHuman`), and the latest turn report from the same worker.
 2. **Decide**, pure: `decideNeoAttention(event, known, now)` returns `wake`, `digest` or `drop` with a reason, from the kind's row below. Cross-kind rules come first, and apply only to the kinds in the table that are not `pass`: a subject covered by an open card is dropped; a turn report superseded by a newer report from the same worker is dropped.
 3. **Render**, pure, from the event's facts only, with absolute times. The same event always renders the same text.
-4. **Deliver.** The message uuid is `<kind>:<subject>:<since>:<step>`, where `step` is how many repeats are due (below). A wake goes through the mailbox once primitive the external events use (`submitSessionEvent`), and a digest item through the existing timed hold (`NeoWakeQueueRepository.hold`) and its 15-minute grouped flush. Both refuse a uuid they have seen, so the same step is never sent twice. A drop is logged with its reason.
+4. **Deliver.** The message uuid is `<kind>:<subject>:<since>:<step>:<text hash>`, where `step` is how many repeats are due (below) and the hash is of the rendered text. Both delivery primitives refuse a seen uuid but throw when a seen uuid arrives with different content (`PromptContentConflictError` in `NeoWakeQueueRepository.hold`, `idempotency_conflict` in the job queue), so the text is part of the key: the same step with the same text is refused as seen, and a real change in what Neo would be told is a new message. The render therefore uses only facts that matter to Neo (no live counters, no relative times), so a flapping detail cannot resend. A wake goes through the mailbox once primitive the external events use (`submitSessionEvent`), and a digest item through the existing timed hold (`NeoWakeQueueRepository.hold`) and its 15-minute grouped flush. Both refuse a uuid they have seen, so the same step is never sent twice. A drop is logged with its reason.
 
 **Repeating without a table.** A kind that repeats has a ladder, for example 1 h, 4 h, 24 h. `step` is the number of ladder rungs that `now - since` has passed. The 5-minute sweep re-raises every such subject from current state, so a new rung is a new uuid and is sent; an unchanged rung is refused as seen. `since` is the subject's own change time (a todo's `updatedAt`, a PR ledger row's `state_since`), so anything Neo does to the subject restarts the ladder, and a subject that is no longer true is simply not raised again. One-shot kinds have no ladder and are sent once.
 
@@ -104,7 +104,7 @@ Tests give the owner for each row, including a todo waiting on an unfinished pre
 
 ## Where it sits: core, with a pack hook
 
-`lib/neo/attention/` is core. It knows asks, todos, questions, workers and cards only, as `AGENTS.md` requires. Packs add kinds through one optional hook in `pack-contract.ts`:
+`lib/neo/attention/` is core. It knows asks, todos, questions and workers only, as `AGENTS.md` requires; a card is a question (`neo_questions`). Packs add kinds through one optional hook in `pack-contract.ts`:
 
 ```ts
 attention?: {
