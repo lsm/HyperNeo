@@ -12,11 +12,9 @@ That fails both ways. Many notices are ones Neo almost never acts on: todo-done 
 - a failed todo is told once, and the cancelled-prerequisite note is de-duplicated only in memory;
 - a todo whose result is more work (a design, research, a plan) can finish and its ask settle with no follow-up todo.
 
-Wake and hold already exist (`prepareEntry` in `lib/mailbox/registration.ts`; the 15-minute hold flush). What is missing is a decision about whether a message is still worth telling, and anything that brings an unhandled one back.
-
 Wake and hold already exist (`prepareEntry` in `lib/mailbox/registration.ts`; the 15-minute hold flush). What is missing is one place that decides whether a message is worth telling, and anything that brings an unhandled one back.
 
-This design adds one core entry, `lib/neo/attention/`: one superpipe, `neo.attention.tell`, and one pure decision. Every message the daemon sends Neo goes through it; no producer writes to Neo's session directly. It adds no table. Packs add kinds through one `NeoPack.attention` hook.
+This design adds one core entry, `lib/neo/attention/`: one superpipe, `neo.attention.tell`, and one pure decision. Every automatic message the daemon sends Neo goes through it; no producer writes to Neo's session directly. Messages from the human, card answers and a worker's deliberate message do not go through it and are never filtered. It adds no table. Packs add kinds through one `NeoPack.attention` hook.
 
 ## The entry
 
@@ -33,7 +31,7 @@ type NeoAttentionEvent = {
 
 The superpipe:
 1. **Read** the facts every kind may consult: the open cards covering the subject (`neoTodoCovered`), whether the human must act (`neoTodoAwaitsHuman`), and the latest turn report from the same worker.
-2. **Decide**, pure: `decideNeoAttention(event, known, now)` returns `wake`, `digest` or `drop` with a reason, from the kind's row below. Cross-kind rules come first: a subject covered by an open card is dropped; a turn report superseded by a newer report from the same worker is dropped.
+2. **Decide**, pure: `decideNeoAttention(event, known, now)` returns `wake`, `digest` or `drop` with a reason, from the kind's row below. Cross-kind rules come first, and apply only to the kinds in the table that are not `pass`: a subject covered by an open card is dropped; a turn report superseded by a newer report from the same worker is dropped.
 3. **Render**, pure, from the event's facts only, with absolute times. The same event always renders the same text.
 4. **Deliver.** The message uuid is `<kind>:<subject>:<since>:<step>`, where `step` is how many repeats are due (below). A wake goes through the mailbox once primitive the external events use (`submitSessionEvent`), and a digest item through the existing timed hold (`NeoWakeQueueRepository.hold`) and its 15-minute grouped flush. Both refuse a uuid they have seen, so the same step is never sent twice. A drop is logged with its reason.
 
@@ -41,10 +39,8 @@ The superpipe:
 
 ## Decisions per kind
 
-"Pass" means it keeps its current path and is not gated. The entry must never filter the human, cards or a worker's deliberate message.
+"Pass" means it keeps its current path and never enters `decideNeoAttention`. The entry must never filter the human, cards or a worker's deliberate message.
 
-| Kind | Decision | Facts read | Repeat | Dies when |
-|---|---|---|---|---|
 | Kind | Decision | Facts read | Repeat | Dies when |
 |---|---|---|---|---|
 | Human input, card answer, relayed answer, front hand-off, schedule, external event, preference changed, question retired, restart cut | pass | — | — | — |
@@ -75,6 +71,7 @@ The superpipe:
 | `todo.follow_up_missing` (new, core; subject: the ask) | wake. Raised when a todo flagged `producesFollowUp` (set by Neo on `neo.todo.add`) is done and no non-removed todo follows it in its ask. The ask may not settle `done` while the item is open (`dropped` stays allowed). | that ask's todos by position and their `producesFollowUp` flag | 1 h, 4 h, 24 h | a non-removed todo exists after the flagged todo; ask settled or dropped |
 | `coding.pr_unowned`, `coding.pr_sweep` escalation | wake | ledger | existing | owner assigned / PR closed |
 
+Linking a PR outside a todo to an ask (for `coding.pr_event`) uses, in order:
 1. A todo PR link. This exists today.
 2. A repo where exactly one open ask has todo PRs.
 3. The owner session's *currently active* todo.
@@ -86,8 +83,6 @@ The owner-history link alone can put a merge on the wrong ask (the owner's last 
 
 The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished todo. The facts are read outside it: the todo, its target and worker ref, the worker's live status, the work queue's decision (`capacity.ts`), a scheduled retry, the pack's `waiting` answer, open cards covering the todo, and its prerequisites. The first matching row wins:
 
-| Facts | Owner |
-|---|---|
 | Facts | Owner |
 |---|---|
 | an open card covers the todo | human |
