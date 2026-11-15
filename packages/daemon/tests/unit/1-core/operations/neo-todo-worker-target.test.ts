@@ -49,7 +49,11 @@ function world(coding = false) {
   let decide: (target: NeoTodoTarget) => NeoWorkerTargetDecision = (target) => ({
     value: target,
   });
-  const failing = { refuse: null as string | null, start: false };
+  const failing = {
+    refuse: null as string | null,
+    start: false,
+    status: null as (() => unknown) | null,
+  };
   const pack = {
     id: 'synthetic',
     describe: 'synthetic',
@@ -72,6 +76,8 @@ function world(coding = false) {
     sessions,
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
+      if (name === 'work.status' && failing.status)
+        return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
         return completed({ ok: false, reason: 'start_failed', detail: 'driver down' });
       if (name === 'work.start')
@@ -270,5 +276,40 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
         .map((call) => call.name)
     ).toEqual(['work.start']);
     expect(w.store.getTodo(second)?.state).toBe('doing');
+  });
+
+  test('a claim refused after the coding hook reserved a new start releases the feature', async () => {
+    const w = (current = world(true));
+    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+    const running = w.add(check, 'running');
+    const first = w.add(check, 'first');
+    const second = w.add(check, 'second', [first]);
+    for (const id of [running, first, second])
+      w.db
+        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
+        .run(id, 'synthetic/repo');
+    w.store.updateTodo(w.store.getTodo(running)!, { state: 'doing', startedAt: 1 }, 1);
+    w.db
+      .prepare('UPDATE neo_todo_sessions SET ref = ?2 WHERE todo_id = ?1')
+      .run(running, JSON.stringify(backend));
+    w.store.updateTodo(w.store.getTodo(first)!, { state: 'done', finishedAt: 1 }, 1);
+    w.failing.status = () => {
+      w.store.updateTodo(w.store.getTodo(first)!, { state: 'todo', finishedAt: null }, 1);
+      w.failing.status = null;
+      return {
+        ref: backend,
+        title: 'busy',
+        place: start.place,
+        status: 'running',
+        lastActivityAt: 1,
+      };
+    };
+    await w.runner.start(second);
+    expect(w.store.getTodo(second)).toMatchObject({ state: 'todo', startedAt: null });
+    expect(w.dispatched()).toEqual([]);
+    await w.runner.start(first);
+    expect(w.store.getTodo(first)?.reason ?? '').not.toContain('session_unknown');
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.store.getTodo(first)?.state).toBe('doing');
   });
 });
