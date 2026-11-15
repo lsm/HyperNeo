@@ -946,6 +946,44 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].agentId).toBe('');
     });
 
+    it('preserves a route that exactly matches a whitespace-suffixed slot name', async () => {
+      const bundle = {
+        version: 6,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 6,
+            type: 'workflow',
+            name: 'Whitespace Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.research', name: 'worker.swe ' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'coder' }],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.swe ', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Setup',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<{ workflows: Array<{ id: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle }
+      );
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('worker.swe ');
+    });
+
     it('flags ambiguous worker.swe references using the actual relocated key', async () => {
       new SpaceAgentTemplateRepository(db).createOwned(SPACE_ID, {
         key: 'worker.swe.migrated-2',

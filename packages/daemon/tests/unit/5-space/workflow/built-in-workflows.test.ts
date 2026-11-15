@@ -2419,6 +2419,50 @@ describe('seedBuiltInWorkflows()', () => {
     expect(modelPa.agents[0].model).toBe('claude-sonnet-4-6');
   });
 
+  test('keeps a Post-Approval node whose merger prompt was appended to', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'append-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: {
+                value: 'You are the PR Merger.\n\nRemember to also sync the docs.',
+              },
+            },
+          ],
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    const appendPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(appendPa).toBeDefined();
+    expect(appendPa.agents[0].customPrompt?.value).toContain('Remember to also sync the docs.');
+  });
+
   const retiredMergerGuard = {
     matcher: 'Bash',
     pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
