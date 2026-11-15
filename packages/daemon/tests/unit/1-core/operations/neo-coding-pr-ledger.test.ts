@@ -973,3 +973,33 @@ describe('reconcileCodingPrLedger cross-model review on a GitHub Enterprise host
     }
   });
 });
+
+describe('planCodingLedgerRead cross-model review without an Agent line', () => {
+  const pr = node(1, {
+    body: 'Written by hand.',
+    reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+  });
+  const passed = (actor: unknown) => ({
+    url: 'https://github.com/x/x/pull/1',
+    head: 'h1',
+    stage: 'review' as const,
+    actor,
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  });
+  const state = (reviews: unknown[]) =>
+    planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => ({ mergePolicy: 'review_bot', reviewBot: 'bot', crossModelReview: true }),
+      () => reviews as never
+    )?.rows[0].state;
+
+  test('a human Review clears the hold; an agent Review cannot be compared', () => {
+    expect(
+      state([passed({ kind: 'agent', id: 'r', model: 'gpt-6.1-sol', harness: 'Codex' })])
+    ).toBe('waiting_cross_review');
+    expect(state([passed({ kind: 'human', id: 'reviewer' })])).toBe('approved_green');
+  });
+});
