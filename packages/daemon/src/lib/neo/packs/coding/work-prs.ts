@@ -8,6 +8,7 @@ import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 export type NeoWorkPrReader = (urls: readonly string[]) => Promise<NeoWorkPr[] | null>;
 
+const CODING_DESIGN_DOCS = 'docs/design/';
 export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
 const GhPrSchema = z.object({
@@ -18,6 +19,7 @@ const GhPrSchema = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   closingIssuesReferences: z.array(z.object({ number: z.number() })).optional(),
+  files: z.array(z.object({ path: z.string() })).optional(),
   headRefName: z.string().optional(),
   mergeStateStatus: z.string().optional(),
   baseRefName: z.string().optional(),
@@ -91,6 +93,9 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     ...(headRefName ? { branch: headRefName } : {}),
     head: headRefOid,
     ...(refs.length ? { refs } : {}),
+    ...(parsed.data.files?.some((file) => file.path.startsWith(CODING_DESIGN_DOCS))
+      ? { design: true as const }
+      : {}),
   };
 }
 
@@ -399,7 +404,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences,files',
         ],
         spawnImpl,
         'graphql'

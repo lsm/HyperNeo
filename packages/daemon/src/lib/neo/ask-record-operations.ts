@@ -23,7 +23,7 @@ import {
 } from './todo-operations.ts';
 import { recordNeoTodoAdmission } from './todo-add-operation.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
-import { neoTodoRepository } from './pack-contract.ts';
+import { neoAskSettleRefusal, neoTodoRepository } from './pack-contract.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
@@ -448,6 +448,14 @@ export function createNeoAskRecordOperations(
         return requireNeoAskSettlement(snapshot, input);
       },
       'input',
+      'result:outcome'
+    )
+    .pipe(
+      (current: { ask: NeoAsk; todos: NeoTodo[] }, input: z.infer<typeof Settle>) => {
+        const reason = input.status === 'done' && neoAskSettleRefusal(packs(), current.todos);
+        return reason ? { reason: { ok: false as const, reason } } : { value: current };
+      },
+      ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(

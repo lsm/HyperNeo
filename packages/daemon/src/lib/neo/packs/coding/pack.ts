@@ -29,6 +29,7 @@ import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events
 import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
+import { wakeCodingDesignFollowUps } from './design-follow-up.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
 import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
@@ -224,6 +225,7 @@ export function createCodingPack(deps: {
     readFacts: todos.readFacts,
     judge: todos.judge,
     sweep: async (now) => {
+      await wakeCodingDesignFollowUps(deps.todoPrs, prSweepDeps.wake);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),

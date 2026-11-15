@@ -131,6 +131,7 @@ export interface NeoWorkPr {
   branch?: string;
   head?: string;
   refs?: number[];
+  design?: true;
 }
 
 export type NeoWorkPrVerdict = 'done' | 'failed' | 'waiting' | 'ready' | 'pending';

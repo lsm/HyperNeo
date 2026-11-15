@@ -110,6 +110,7 @@ import {
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
+import { neoAskSettleRefusal } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -1197,10 +1198,13 @@ export class NeoService {
         this.log.warn('Ask auto-settle pending', error);
         return null;
       });
-      if (settleReady?.length)
+      const settleIds = settleReady?.filter(
+        (id) => !neoAskSettleRefusal(this.packs(), this.todos.listTodos(id))
+      );
+      if (settleIds?.length)
         await this.runDbOp(neoAskTurnedSettleWrites, {
           now: Date.now(),
-          ids: settleReady,
+          ids: settleIds,
         }).catch((error) => this.log.warn('Ask auto-settle pending', error));
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)

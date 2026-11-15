@@ -11,6 +11,10 @@ then name that PR with neo.todo.edit {todoId,addUrls:[url]}. Do not accumulate t
 chain's PRs on one todo. Each todo after the first sets after:[previousTodoId];
 the existing queue starts it when the previous todo finishes. Give each step its own
 instruction and target; it starts by itself, so never manually start the next one.
+A design never merges alone. Before a PR that changes docs/design/** merges, add
+each follow-up PR from its Change section as a todo after the design todo (they
+may stay unstarted). An ask whose merged design has no later todo cannot settle
+done, and the coding sweep wakes you to add them.
 Keep one sub-issue per todo and have its PR close that issue. Track deployment or
 smoke separately. Keep the repository's review and merge rules. For a separate
 issue outcome, use {pack:"coding",kind:"issue_closed",params:{issue:"owner/repo#N"}}:

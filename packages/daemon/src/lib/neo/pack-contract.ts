@@ -52,6 +52,7 @@ export interface NeoTodoPack {
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
   waiting?(todo: NeoTodo): boolean | Promise<boolean>;
+  refuseSettle?(todos: readonly NeoTodo[]): string | null;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
@@ -71,6 +72,13 @@ export function neoTodoRepository(
   scope: NeoTodoPolicyScope
 ): string | null {
   return packs.map((pack) => pack.todos?.repository?.(draft, scope)).find(Boolean) ?? null;
+}
+
+export function neoAskSettleRefusal(
+  packs: readonly { todos?: Pick<NeoTodoPack, 'refuseSettle'> }[],
+  todos: readonly NeoTodo[]
+): string | null {
+  return packs.map((pack) => pack.todos?.refuseSettle?.(todos)).find(Boolean) ?? null;
 }
 
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
