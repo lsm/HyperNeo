@@ -573,6 +573,14 @@ describe('neo.coding.assign with cross-model review', () => {
       )
     ).toEqual({ kind: 'completed', value: { ok: true } });
   });
+  test('with provenance off, a PR without an Agent line still gets a Review', async () => {
+    const f = fixture();
+    f.set('provenance', false);
+    f.set('crossModelReview', true);
+    f.pr.body = '';
+    f.publish();
+    expect((await f.assign({ candidates: [author] })).ok).toBe(true);
+  });
   test('turning provenance off still refuses a same-model reviewer', async () => {
     const f = fixture();
     f.set('provenance', false);

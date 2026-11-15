@@ -282,6 +282,15 @@ describe('coding merge operation', () => {
     f.stage('review');
     expect(await f.prepare()).toMatchObject({ accepted: true, head });
   });
+  test('with provenance off, a PR without an Agent line is not held by cross-model review', async () => {
+    const f = fixture(false);
+    f.setting('provenance', false);
+    f.setting('crossModelReview', true);
+    f.data.pr.body = '';
+    f.stage('review');
+    f.stage('qa');
+    expect(await f.prepare()).toMatchObject({ accepted: true, head });
+  });
   test('another bot approval cannot substitute for the configured bot', async () => {
     const f = fixture();
     f.stage('qa');
