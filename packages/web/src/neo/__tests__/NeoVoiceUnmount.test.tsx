@@ -18,8 +18,7 @@ rec.start.mockImplementation(async (_ownerId: string, ownerSessionId: string) =>
   rec.isRecording = true;
 });
 rec.stop.mockImplementation(async () => {
-  if (!rec.isRecording && !rec.durationLimitHit)
-    throw new Error('Voice recorder is not recording');
+  if (!rec.isRecording && !rec.durationLimitHit) throw new Error('Voice recorder is not recording');
   rec.isRecording = false;
   rec.durationLimitHit = false;
   rec.sessionId = null;
@@ -36,11 +35,31 @@ rec.cancel.mockImplementation(async () => {
 vi.mock('../../lib/voice/voice-recorder-store.ts', () => ({
   isVoiceRecordingSupported: () => true,
   voiceRecorderStore: {
-    isRecording: { get value() { return rec.isRecording; } },
-    isStarting: { get value() { return rec.isStarting; } },
-    durationLimitHit: { get value() { return rec.durationLimitHit; } },
-    recordingSessionId: { get value() { return rec.sessionId; } },
-    recordingOwnerId: { get value() { return rec.ownerId; } },
+    isRecording: {
+      get value() {
+        return rec.isRecording;
+      },
+    },
+    isStarting: {
+      get value() {
+        return rec.isStarting;
+      },
+    },
+    durationLimitHit: {
+      get value() {
+        return rec.durationLimitHit;
+      },
+    },
+    recordingSessionId: {
+      get value() {
+        return rec.sessionId;
+      },
+    },
+    recordingOwnerId: {
+      get value() {
+        return rec.ownerId;
+      },
+    },
     recordingStartedAt: { value: null },
     recordingScopeId: { value: null },
     recordingTaskId: { value: null },
