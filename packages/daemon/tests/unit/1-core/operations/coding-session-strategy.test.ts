@@ -77,6 +77,7 @@ describe('sessionStrategy setting', () => {
     });
     expect(codingSessionStrategy(db.getDatabase(), 'synthetic/repo')).toBe('per_task');
     expect(codingSessionStrategy(db.getDatabase(), 'synthetic/other')).toBe('long_lived');
+    expect(codingSessionStrategy(db.getDatabase(), 'Synthetic/Repo')).toBe('per_task');
   });
 });
 
