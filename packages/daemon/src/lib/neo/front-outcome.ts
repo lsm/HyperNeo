@@ -5,6 +5,7 @@ import {
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
+import { handOffToNeo } from './front-handoff.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -87,9 +88,16 @@ export async function settleConvoInput(
       }
     );
   };
+  const handOff = async (id: string) => {
+    const openAsk = id === messageId ? ask : service.asks.find(conversationId, id);
+    if (!openAsk) return 'settled' as const;
+    const said = await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, id);
+    const reserved = await handOffToNeo(service, conversationId, [openAsk], [id], said);
+    return reserved === 'reserved' ? ('handed_off' as const) : markFailed(id);
+  };
   let self = 'failed';
   for (const id of open) {
-    const outcome = await markFailed(id);
+    const outcome = await handOff(id);
     if (id === messageId) self = outcome;
   }
   return { delivered: true, outcome: self === 'handed_off' ? 'handed_off' : 'failed' };

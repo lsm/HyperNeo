@@ -86,6 +86,31 @@ export class NeoFrontInputRepository {
     };
   }
 
+  frontSaid(conversationId: string, messageId: string) {
+    const input = this.db
+      .prepare(`SELECT catch_up_through AS through FROM neo_front_inputs
+      WHERE conversation_id = ? AND message_id = ?`)
+      .get(conversationId, messageId) as { through: number | null } | null;
+    if (input?.through == null) return [];
+    return (
+      this.db
+        .prepare(`SELECT payload_json AS payload FROM neo_publications
+        WHERE conversation_id = ? AND sequence > ?
+          AND json_extract(payload_json, '$.publishedBy') = 'front' ORDER BY sequence`)
+        .all(conversationId, input.through) as { payload: string }[]
+    )
+      .map(
+        (row) =>
+          JSON.parse(row.payload) as { replyTo?: string[]; fullText: string; workOn?: boolean }
+      )
+      .filter((row) => !row.replyTo?.length || row.replyTo.includes(messageId))
+      .map(({ replyTo, fullText, workOn }) => ({
+        replyTo: replyTo?.length ? replyTo : [messageId],
+        fullText,
+        ...(workOn === undefined ? {} : { workOn }),
+      }));
+  }
+
   enqueueWithCatchUp(conversationId: string, entry: MailboxEntry): 'duplicate' | 'enqueued' {
     if (entry.to.kind !== 'session' || !entry.messageUuid)
       throw new Error('Front delivery requires a session and message identity');
@@ -292,5 +317,5 @@ export const neoFrontInputReads = defineRepositoryOp(
   'neo.front.outcomes',
   'read',
   NeoFrontInputRepository,
-  ['get', 'terminal']
+  ['get', 'terminal', 'frontSaid']
 );

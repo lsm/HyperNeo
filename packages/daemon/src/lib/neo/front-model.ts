@@ -4,11 +4,9 @@ import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.
 import { NeoSpeechSay } from './speech.ts';
 import { NeoPublicationDraft, publicationIdFor } from './publication-operation.ts';
 import { frontSessionId } from './front-mode.ts';
-import { catchUpBlock } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
-import { neoIntakeMessage, readNeoReply } from './intake.ts';
-import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
+import { handOffToNeo } from './front-handoff.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 
 const FRONT_REPLY_MAX_CHARS = 150;
@@ -82,36 +80,9 @@ export function createFrontTools(service: NeoService, conversationId: string) {
     saidText: string,
     workOn: boolean
   ) => {
-    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText, workOn }]);
-    const reserved = await service.db.gateway.call(
-      neoFrontInputWrites,
-      'reserve',
-      conversationId,
-      messageIds,
-      asks.map((ask) => {
-        const message = neoIntakeMessage(
-          { ...ask, sessionId: ask.askOrigin.sessionId },
-          ask.askOrigin.sessionId,
-          readNeoReply(ask.replyTo, service.todos),
-          null,
-          undefined,
-          ask.previewContext ?? null
-        );
-        return {
-          sessionId: ask.askOrigin.sessionId,
-          message: {
-            ...message,
-            message: {
-              ...message.message,
-              content: [
-                ...(message.message.content as Exclude<typeof message.message.content, string>),
-                { type: 'text' as const, text: block },
-              ],
-            },
-          },
-        };
-      })
-    );
+    const reserved = await handOffToNeo(service, conversationId, asks, messageIds, [
+      { replyTo: messageIds, fullText: saidText, workOn },
+    ]);
     return reserved === 'reserved'
       ? { started: true }
       : {
