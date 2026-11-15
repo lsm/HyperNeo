@@ -115,18 +115,20 @@ export class NeoFrontInputRepository {
       .prepare(`SELECT catch_up_through AS through FROM neo_front_inputs
       WHERE conversation_id = ? AND message_id = ?`)
       .get(conversationId, messageId) as { through: number | null } | null;
-    if (input?.through == null) return [];
+    if (!input) return [];
+    const through = input.through;
     return (
       this.db
         .prepare(`SELECT payload_json AS payload FROM neo_publications
         WHERE conversation_id = ? AND sequence > ?
           AND json_extract(payload_json, '$.publishedBy') = 'front' ORDER BY sequence`)
-        .all(conversationId, input.through) as { payload: string }[]
+        .all(conversationId, through ?? 0) as { payload: string }[]
     )
       .map(
         (row) =>
           JSON.parse(row.payload) as { replyTo?: string[]; fullText: string; workOn?: boolean }
       )
+      .filter((said) => through != null || (said.replyTo ?? []).includes(messageId))
       .map(({ replyTo, fullText, workOn }) => ({
         replyTo: replyTo?.length ? replyTo : [messageId],
         fullText,
@@ -285,7 +287,10 @@ export class NeoFrontInputRepository {
     prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message' | 'hold'>[],
     saidThrough?: number
   ): 'reserved' | 'ineligible' | 'stale' {
-    return this.db.transaction(() => {
+    const changes = new ChangeRecorder();
+    const write = (method: 'reopenDeliveryByUuid' | 'deletePendingUserMessage', args: unknown[]) =>
+      sdkMessageWrites.run(this.db, { method, args }, changes);
+    const outcome = this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
       if (rows.some((row) => !row?.eligible)) return 'ineligible';
       if (saidThrough !== undefined && this.frontSaidThrough(conversationId) > saidThrough)
@@ -304,12 +309,13 @@ export class NeoFrontInputRepository {
           const stored = sdk.getMessageByStatusAndUuid(prompt.sessionId, status, uuid);
           if (
             !stored ||
-            (status === 'failed' && sdk.reopenDeliveryByUuid(prompt.sessionId, uuid) === null) ||
-            !sdk.deletePendingUserMessage(
+            (status === 'failed' &&
+              write('reopenDeliveryByUuid', [prompt.sessionId, uuid]) == null) ||
+            !write('deletePendingUserMessage', [
               prompt.sessionId,
               stored.dbId,
-              status === 'deferred' ? 'deferred' : 'enqueued'
-            )
+              status === 'deferred' ? 'deferred' : 'enqueued',
+            ])
           )
             throw new Error('front_handoff_replace_failed');
         } else if (status) continue;
@@ -325,6 +331,8 @@ export class NeoFrontInputRepository {
       }
       return 'reserved' as const;
     })();
+    for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+    return outcome;
   }
 }
 

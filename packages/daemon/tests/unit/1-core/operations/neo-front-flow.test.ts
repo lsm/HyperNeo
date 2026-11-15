@@ -1924,7 +1924,7 @@ test('a retried reply keeps the work_on decision committed with it', async () =>
   spy.mockRestore();
 });
 
-test('a reused request ID for a different input is refused, not handed off', async () => {
+test('a reused request ID for a different input is refused but the input still reaches Neo', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
   const send = (replyTo: string[], text: string, workOn: boolean) =>
@@ -1940,7 +1940,8 @@ test('a reused request ID for a different input is refused, not handed off', asy
     accepted: false,
     reason: 'publication_conflict',
   });
-  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(1);
+  expect(service.publications.list(conversationId)).toHaveLength(1);
 });
 
 test.each([false, true])(
@@ -2230,6 +2231,11 @@ test('a failed enqueue leaves the failed Neo row retryable and unowned', async (
 });
 
 test('a reply without replyTo and with no current input cannot promise work it never starts', async () => {
+  await frontSession(
+    service,
+    { conversationId, askOrigin: { sessionId: root, messageId: crypto.randomUUID() } },
+    model
+  );
   expect(
     await convoPublish({ requestId: 'no-target-work', fullText: "I'll check.", work_on: true })
   ).toMatchObject({ accepted: false, reason: 'work_on_needs_reply_to' });
