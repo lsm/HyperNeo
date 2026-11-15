@@ -232,6 +232,7 @@ describe('neo.preferences.set', () => {
   let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
   let limits: Record<string, number>;
   let forgotten: unknown[];
+  let beforeControl: (() => Promise<void>) | undefined;
   let pendingFor: { sessionId: string; percent: number | null } | undefined;
 
   beforeEach(async () => {
@@ -252,53 +253,67 @@ describe('neo.preferences.set', () => {
     pendingFor = undefined;
     limits = {};
     forgotten = [];
+    beforeControl = undefined;
     const sessions = {
-      getSessionForControl: async (sessionId: string) => ({
-        isLimitRecoveryPending: () => false,
-        restartQuery: async () => {
-          restarted.push(db.getSession(sessionId)?.config);
-        },
-        getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
-        getRateLimitWatchdogState: () => ({
-          lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
-          modelLimits: limits,
-        }),
-        forgetModelLimit: (key: string) => {
-          forgotten.push([sessionId, key]);
-        },
-        updateMetadata: (updates: Partial<Session>) => {
-          return db.updateSession(sessionId, updates);
-        },
-        requestModelSwitch: async (model: string, provider: string) => {
-          switched.push([sessionId, model, provider]);
-          if (switchFailure === 'pending')
-            return { success: true, model, pending: { model, provider, requestedAt: 1 } };
-          if (switchFailure === 'throws') throw new Error('Synthetic unavailable primary');
-          if (switchFailure === 'refused')
-            return {
-              success: false,
-              model: db.getSession(sessionId)?.config.model,
-              error: 'Synthetic unavailable primary',
-            };
-          if (busy) {
-            await events.publish('session.updated', {
-              sessionId,
-              source: 'model-switch-pending',
-              session: { metadata: { pendingModelSwitch: { model, provider, requestedAt: 1 } } },
+      getSessionForControl: async (sessionId: string) => {
+        await beforeControl?.();
+        return {
+          isLimitRecoveryPending: () => false,
+          restartQuery: async () => {
+            restarted.push(db.getSession(sessionId)?.config);
+          },
+          getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
+          getRateLimitWatchdogState: () => ({
+            lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
+            modelLimits: limits,
+          }),
+          forgetModelLimits: async () => {
+            forgotten.push([sessionId]);
+          },
+          updateMetadata: (updates: Partial<Session>) => {
+            return db.updateSession(sessionId, updates);
+          },
+          requestModelSwitch: async (
+            model: string,
+            provider: string,
+            stillWanted?: () => boolean
+          ) => {
+            if (stillWanted && !stillWanted())
+              return {
+                success: false,
+                model: db.getSession(sessionId)?.config.model,
+                error: 'superseded',
+              };
+            switched.push([sessionId, model, provider]);
+            if (switchFailure === 'pending')
+              return { success: true, model, pending: { model, provider, requestedAt: 1 } };
+            if (switchFailure === 'throws') throw new Error('Synthetic unavailable primary');
+            if (switchFailure === 'refused')
+              return {
+                success: false,
+                model: db.getSession(sessionId)?.config.model,
+                error: 'Synthetic unavailable primary',
+              };
+            if (busy) {
+              await events.publish('session.updated', {
+                sessionId,
+                source: 'model-switch-pending',
+                session: { metadata: { pendingModelSwitch: { model, provider, requestedAt: 1 } } },
+              });
+              return { success: true, model, pending: { model, provider, requestedAt: 1 } };
+            }
+            await db.updateSession(sessionId, {
+              config: {
+                ...db.getSession(sessionId)!.config,
+                model,
+                provider: provider as Session['config']['provider'],
+              },
             });
-            return { success: true, model, pending: { model, provider, requestedAt: 1 } };
-          }
-          await db.updateSession(sessionId, {
-            config: {
-              ...db.getSession(sessionId)!.config,
-              model,
-              provider: provider as Session['config']['provider'],
-            },
-          });
-          return { success: true, model };
-        },
-        getSessionData: () => db.getSession(sessionId),
-      }),
+            return { success: true, model };
+          },
+          getSessionData: () => db.getSession(sessionId),
+        };
+      },
       updateSession: async (sessionId: string, updates: Partial<Session>) => {
         updated.push([sessionId, updates]);
         if (busy && updates.config && 'autoCompactPercent' in updates.config) {
@@ -921,12 +936,44 @@ describe('neo.preferences.set', () => {
         [frontId, opus.id, opus.provider],
       ])
     );
-    expect(forgotten).toEqual(
-      expect.arrayContaining([
-        ['neo:root', `${flash.provider}/${flash.id}`],
-        [frontId, `${opus.provider}/${opus.id}`],
-      ])
-    );
+    expect(forgotten).toEqual(expect.arrayContaining([['neo:root'], [frontId]]));
+  });
+
+  test('a human pick that lands while the sweep waits for the session is never undone', async () => {
+    const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'neoPreferences', neo);
+    const root = db.getSession('neo:root')!;
+    await db.updateSession('neo:root', {
+      config: { ...root.config, model: 'glm-5', provider: 'glm' },
+      metadata: {
+        ...root.metadata,
+        modelLimits: { [`${flash.provider}/${flash.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
+    });
+    beforeControl = async () => {
+      const now = db.getSession('neo:root')!;
+      await db.updateSession('neo:root', { metadata: { ...now.metadata, modelLimits: undefined } });
+    };
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual([]);
+    expect(db.getSession('neo:root')?.config.model).toBe('glm-5');
+  });
+
+  test('a refused return forgets the limit instead of retrying every sweep', async () => {
+    const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'neoPreferences', neo);
+    const root = db.getSession('neo:root')!;
+    await db.updateSession('neo:root', {
+      config: { ...root.config, model: 'glm-5', provider: 'glm' },
+      metadata: {
+        ...root.metadata,
+        modelLimits: { [`${flash.provider}/${flash.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
+    });
+    switchFailure = 'refused';
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual([['neo:root', flash.id, flash.provider]]);
+    expect(forgotten).toEqual([['neo:root']]);
   });
 
   test('leaves a model the human picked after a fallback and forgets the old limit', async () => {
@@ -942,7 +989,7 @@ describe('neo.preferences.set', () => {
     });
     await service.returnToPreferredModels(1000);
     expect(switched).toEqual([]);
-    expect(forgotten).toEqual([['neo:root', `${flash.provider}/${flash.id}`]]);
+    expect(forgotten).toEqual([['neo:root']]);
   });
 
   test('saves a fallback again unchanged after a forced refresh lists it under its remote id', async () => {

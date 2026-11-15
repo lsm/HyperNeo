@@ -2278,6 +2278,27 @@ describe('AgentSession', () => {
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
+      it('skips a guarded switch when a switch queued ahead of it made the guard false', async () => {
+        await agentSession.stateManager.setIdle();
+        let release = () => {};
+        const held = new Promise<void>((done) => {
+          release = done;
+        });
+        let humanApplied = false;
+        switchModel.mockImplementationOnce(async (model: string) => {
+          await held;
+          humanApplied = true;
+          return { success: true, model };
+        });
+        const human = agentSession.requestModelSwitch('sonnet', 'anthropic');
+        const sweep = agentSession.requestModelSwitch('opus', 'anthropic', () => !humanApplied);
+        release();
+        await human;
+        expect(await sweep).toMatchObject({ success: false });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('sonnet', 'anthropic');
+      });
+
       it('holds a switch during a turn and applies it when the turn ends', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         const result = await agentSession.requestModelSwitch('opus', 'anthropic');
