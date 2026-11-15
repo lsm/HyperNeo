@@ -803,6 +803,14 @@ export function createNeoTodoOperations(
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
     .pipe(
+      (todo: NeoTodo, input: z.infer<typeof Continue>): Gate<NeoTodo> =>
+        input.message || neoTodoFailed(todo)
+          ? { value: todo }
+          : fail('message_required: say what its session should do next.'),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       async (todo: NeoTodo): Promise<Gate<NeoTodo>> => {
         const ref = todo.startedAt === null ? null : sessions.readRef(todo.id);
         if (!ref) return { value: todo };
@@ -826,9 +834,7 @@ export function createNeoTodoOperations(
       (todo: NeoTodo, input: z.infer<typeof Continue>) =>
         neoTodoFailed(todo)
           ? controls.retry(todo.id, input.message)
-          : input.message
-            ? controls.proceed(todo.id, input.message)
-            : fail('message_required: say what its session should do next.').reason,
+          : controls.proceed(todo.id, input.message!),
       ['outcome', 'input'],
       'outcome'
     )

@@ -60,7 +60,14 @@ function setup() {
     ...createNeoTodoOperations(
       store,
       sessions,
-      { ...runner, resolveTarget: existingTodoTarget, advance: async () => {} },
+      {
+        ...runner,
+        resolveTarget: (ref) => {
+          calls.push('resolveTarget');
+          return existingTodoTarget(ref);
+        },
+        advance: async () => {},
+      },
       () => createTodoCheckPacks(db),
       () => null
     ),
@@ -156,6 +163,11 @@ describe('todo and ask bookkeeping records through MCP', () => {
   test('neo.todo.continue without a message is refused unless the todo failed', async () => {
     const h = setup();
     try {
+      h.store.updateTodo(h.todo, { state: 'doing', startedAt: 1 }, 1);
+      const ref = { adapter: 'hyperneo', id: 'worker' };
+      h.sessions.create(h.todo.id, { verb: 'send', ref });
+      h.sessions.recordRef(h.todo.id, ref, 1);
+      expect(h.sessions.readRef(h.todo.id)).toEqual(ref);
       const before = h.store.getTodo(h.todo.id);
       expect(await h.call('neo.todo.continue', { todoId: h.todo.id })).toMatchObject({
         ok: false,
