@@ -953,7 +953,6 @@ describe('reconcileCodingPrLedger cross-model review on a GitHub Enterprise host
       await reconcile(ledger, ['lsm/hyperneo'], read, 100);
       expect(ledger.list()[0].state).toBe('waiting_cross_review');
       const url = 'https://ghe.example.test/lsm/hyperneo/pull/1';
-      ledger.stageFacts.observeHead(url, 'h1', 150);
       expect(
         ledger.stageFacts.record({
           url,
