@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -131,7 +132,7 @@ const open = async () => {
     app.db.updateGlobalSettings({ neo: { packs: ['inbox-triage'] } });
   store = new NeoAskTodoRepository(app.db.getDatabase());
   sessions = new NeoTodoSessionRepository(app.db.getDatabase());
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('RPC unavailable'));
@@ -327,7 +328,7 @@ try {
     writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
     const closing = rpc('neo.todo.edit', {
       todoId: 'race-close',
-      done: 'reported', evidence: 'Merged during report update',
+      done: 'met', evidence: 'Merged during report update',
     });
     const deadline = Date.now() + 15000;
     while (!existsSync(join(run, 'read-started'))) {
@@ -345,7 +346,7 @@ try {
     writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
     evidence.finalReceipt = await rpc('neo.todo.edit', {
       todoId: 'next',
-      done: 'reported', evidence: 'Synthetic final merge',
+      done: 'met', evidence: 'Synthetic final merge',
     });
     assert.equal((evidence.finalReceipt as any).ok, true);
     assert.equal(starts(), 1);

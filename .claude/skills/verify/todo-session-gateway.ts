@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -20,7 +21,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
 const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 const report: Record<string, unknown> = { mode, port: app.server.port };
-const socket = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+const socket = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
 const connected = new Promise<void>((done, fail) => { socket.onopen = () => done(); socket.onerror = () => fail(new Error('RPC connect failed')); });
 let lock: ReturnType<typeof spawn> | undefined;
 let measure = false;
@@ -62,7 +63,7 @@ try {
       const result = await call(op, method, ...args);
       if (op.name === 'neo.todoSessionReads' && method === 'unrecordedStarts') {
         sessions.recordRef('gateway-late', { adapter: 'hyperneo', id: worker }, 1);
-        report.closeReceipt = await rpc('operation.invoke', { name: 'neo.todo.edit', input: { todoId: 'gateway-edited', done: 'reported', evidence: 'Human completed the synthetic step' } });
+        report.closeReceipt = await rpc('operation.invoke', { name: 'neo.todo.done', input: { todoId: 'gateway-edited', reason: 'Human completed the synthetic step' } });
         assert.equal((report.closeReceipt as { ok: boolean }).ok, true);
         assert.equal((report.closeReceipt as { todo: { state: string } }).todo.state, 'done');
       }

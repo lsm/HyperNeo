@@ -120,7 +120,7 @@ try {
   assert.equal(edited.todo.doneWhen, `File ${check.params.path} exists.`);
   assert.deepEqual(edited.todo.check, check);
   writeFileSync(check.params.path, 'Synthetic outcome');
-  const closed = await rpc('neo.todo.edit', { todoId: edited.todo.id, done: 'reported', evidence: 'Observed result' });
+  const closed = await rpc('neo.todo.edit', { todoId: edited.todo.id, done: 'met', evidence: 'Observed result' });
   assert.equal(closed.todo?.state, 'done');
   receipts.push({ final: store.listTodos('ask'), isolatedPort: app.server.port });
   console.log(

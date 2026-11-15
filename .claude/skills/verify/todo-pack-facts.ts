@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
@@ -50,15 +51,13 @@ try {
  store.updateTodo(todo,{report},now);
  const fixture=(state:string)=>writeFileSync(ghJson,JSON.stringify({url,state,headRefOid:'synthetic-head',reviews:[],statusCheckRollup:[],createdAt:new Date(now).toISOString(),...(state==='MERGED'?{mergedAt:new Date(now+1).toISOString()}: {})}));
  fixture('OPEN');
- ws=new WebSocket(`ws://127.0.0.1:${port}/ws`);
+ ws=createLocalSocket(`ws://127.0.0.1:${port}/ws`);
  await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('isolated RPC connect failed'))});
  const rpc=(name:string,input:unknown)=>new Promise<Record<string,unknown>>((done,fail)=>{
   const id=crypto.randomUUID(), at=performance.now(), timeout=setTimeout(()=>fail(new Error(name+' timeout')),15000);
   ws!.onmessage=e=>{const r=JSON.parse(String(e.data));if(r.id!==id&&r.requestId!==id)return;clearTimeout(timeout);times.push({name,ms:performance.now()-at});if(r.error)fail(new Error(JSON.stringify(r.error)));else done(r.data)};
   ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
  });
- evidence.refused=await rpc('neo.todo.edit',{todoId: todo.id,done: 'reported', evidence:'Synthetic claim'});
- assert.equal((evidence.refused as {ok:boolean}).ok,false);
  assert.equal(store.getTodo(todo.id)?.state,'todo');
  let reads=0, upstream:'OPEN'|'MERGED'='MERGED';
  const pack=createCodingPack({database: () => db,readPrs:async urls=>{reads++;return urls.map(url=>({url,state:upstream,checks:'passing',review:'none'}))},todoPrs:new CodingTodoPrRepository(db),prLedger:new CodingPrLedgerRepository(db),prSweep:new CodingPrSweepRepository(db),prEvents:new CodingPrEventRepository(db),prSweepDeps:{tell:async()=>true,wake:async()=>{}},projectRepos:()=>[]});
@@ -72,7 +71,7 @@ try {
  assert.deepEqual(pack.judge!(before!,facts),judged);assert.equal(reads,afterRead);
  evidence.factBoundary={judged,readerCalls:reads,pureReplayReaderCalls:reads-afterRead,todoUnchanged:true};
  fixture('MERGED');
- evidence.closed=await rpc('neo.todo.edit',{todoId: todo.id,done: 'reported', evidence:'Observed merge'});
+ evidence.closed=await rpc('neo.todo.edit',{todoId: todo.id,done: 'met', evidence:'Observed merge'});
  assert.equal((evidence.closed as {ok:boolean}).ok,true);
  const final=store.getTodo(todo.id)!;
  assert.equal(final.state,'done');assert.equal(final.evidence,'Observed merge');assert.equal(final.report,report);

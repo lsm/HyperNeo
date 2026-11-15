@@ -70,16 +70,16 @@ try {
           { reference: fact.acceptanceContract, write, qa: ref, bot: 'review-bot' }, { kind: 'bot', head, login: 'review-bot', approved: true }, ledger.stageFacts.read(url), async () => head);
         assert(prepared.accepted); evidence.push({ phase, prepared });
         fixture('MERGED');
-        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Merge only' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'met', evidence: 'Merge only' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, verdict: 'fail' } }), { accepted: true });
-        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Failed smoke' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'met', evidence: 'Failed smoke' })).ok, true);
         assert.equal(store.getTodo('todo')?.state, 'done');
       } else {
         assert.equal(store.getTodo('todo')?.state, 'done');
-        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Restart preserves the passed check' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'met', evidence: 'Restart preserves the passed check' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, ref: write, actor: { ...actor, id: write.id } } }), { accepted: false, reason: 'stage_assignment_mismatch' });
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke }), { accepted: true });
-        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Observed deployed smoke' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'met', evidence: 'Observed deployed smoke' })).ok, true);
         assert.equal(store.getTodo('todo')?.state, 'done');
       }
       evidence.push({ phase, todo: store.getTodo('todo'), delivery: todos.deliveryFacts.read('todo', url, head) });

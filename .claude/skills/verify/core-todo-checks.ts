@@ -125,7 +125,7 @@ try {
     store.updateTodo(store.getTodo(todo.id)!, { startedAt: Date.now() }, Date.now());
     const result = await rpc('neo.todo.edit', {
       todoId: todo.id,
-      done: 'reported', evidence: 'Observed synthetic outcome',
+      done: 'met', evidence: 'Observed synthetic outcome',
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.todo?.state, state, JSON.stringify(result));
