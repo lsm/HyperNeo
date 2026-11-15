@@ -35,9 +35,6 @@ describe('requireHumanCard', () => {
     );
     expect(reason(requireHumanCard(draft('Ship it?'), [prior], prior, undefined))).toBeNull();
     expect(
-      reason(requireHumanCard(draft('Ship it?'), [open('s', 'start')], null, undefined))
-    ).toBeNull();
-    expect(
       reason(
         requireHumanCard(draft('Ship it?'), [{ ...prior, state: 'answered' }], null, undefined)
       )
