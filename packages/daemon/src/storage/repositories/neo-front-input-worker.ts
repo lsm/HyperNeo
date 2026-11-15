@@ -2,6 +2,7 @@ import type { Database } from '../sqlite-compat.ts';
 import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
+import { sdkPendingRemoval } from './sdk-message-transactions.ts';
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
@@ -294,7 +295,7 @@ export class NeoFrontInputRepository {
     saidThrough?: number
   ): 'reserved' | 'ineligible' | 'stale' {
     const changes = new ChangeRecorder();
-    const write = (method: 'reopenDeliveryByUuid' | 'deletePendingUserMessage', args: unknown[]) =>
+    const write = (method: 'reopenDeliveryByUuid', args: unknown[]) =>
       sdkMessageWrites.run(this.db, { method, args }, changes);
     const outcome = this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
@@ -317,11 +318,16 @@ export class NeoFrontInputRepository {
             !stored ||
             (status === 'failed' &&
               write('reopenDeliveryByUuid', [prompt.sessionId, uuid]) == null) ||
-            !write('deletePendingUserMessage', [
-              prompt.sessionId,
-              stored.dbId,
-              status === 'deferred' ? 'deferred' : 'enqueued',
-            ])
+            !sdkPendingRemoval.run(
+              this.db,
+              {
+                sessionId: prompt.sessionId,
+                messageDbId: stored.dbId,
+                mode: 'remove',
+                ...(status === 'deferred' ? { expectedStatus: 'deferred' as const } : {}),
+              },
+              changes
+            )
           )
             throw new Error('front_handoff_replace_failed');
         } else if (status) continue;
