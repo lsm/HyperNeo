@@ -18,6 +18,7 @@ import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { frontModeNote } from '../../../../src/lib/neo/front-mode.ts';
 import { z } from 'zod';
 import { NeoFrontInputRepository } from '../../../../src/storage/repositories/neo-front-input-worker.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import {
   catchUpBlock,
   FRONT_FALLBACK_TEXT,
@@ -1995,6 +1996,56 @@ test('a refused reply still lets the turn end hand the input to Neo', async () =
     outcome: 'handed_off',
   });
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('an unknown replyTo is refused but never blocks the current input', async () => {
+  const { id } = await deliveredConvoInput();
+  expect(
+    await convoPublish({
+      requestId: 'bad-target',
+      replyTo: [crypto.randomUUID()],
+      fullText: 'Done.',
+      work_on: false,
+    })
+  ).toMatchObject({ accepted: false, reason: 'unknown_reply_target' });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('a named input that cannot be handed off never blocks the current input', async () => {
+  const earlier = await deliveredConvoInput();
+  db.getDatabase()
+    .prepare(
+      'UPDATE neo_front_inputs SET eligible = 0 WHERE conversation_id = ? AND message_id = ?'
+    )
+    .run(conversationId, earlier.id);
+  const { id } = await deliveredConvoInput();
+  const receipt = await convoPublish({
+    requestId: 'ineligible-target',
+    replyTo: [earlier.id],
+    fullText: 'Done.',
+    work_on: false,
+  });
+  expect(receipt).toMatchObject({ started: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
+test('a failed enqueue leaves the failed Neo row retryable and unowned', async () => {
+  const { id } = await deliveredConvoInput();
+  const message = neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' });
+  await db.saveUserMessage(root, message, 'failed');
+  const inputs = new NeoFrontInputRepository(db.getDatabase());
+  const enqueue = vi.spyOn(JobQueueRepository.prototype, 'enqueue').mockImplementationOnce(() => {
+    throw new Error('enqueue failed');
+  });
+  expect(() => inputs.reserve(conversationId, [id], [{ sessionId: root, message }])).toThrow(
+    'enqueue failed'
+  );
+  enqueue.mockRestore();
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+  expect(inputs.get(conversationId, id)?.owner).not.toBe('neo');
+  expect(inputs.reserve(conversationId, [id], [{ sessionId: root, message }])).toBe('reserved');
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+  expect(inputs.get(conversationId, id)?.owner).toBe('neo');
 });
 
 test('a reply without replyTo and with no current input cannot promise work it never starts', async () => {
