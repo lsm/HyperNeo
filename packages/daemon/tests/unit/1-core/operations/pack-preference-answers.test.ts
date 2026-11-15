@@ -510,4 +510,52 @@ describe('immutable human settings proposals', () => {
     expect(service.todos.getQuestion(questionId)?.state).toBe('open');
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
+
+  test('a choice between alternatives applies only the option the human picks', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    const strategy = (value: string) => ({
+      pack: 'coding',
+      scope: { kind: 'repo', key: 'synthetic/one' },
+      key: 'sessionStrategy',
+      value,
+    });
+    const ask = (requestId: string) =>
+      invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId,
+        alternatives: [[strategy('long_lived')], [strategy('per_task')], [strategy('per_pr')]],
+      });
+    const reply = await ask('strategy');
+    expect(reply).toMatchObject({ value: { ok: true } });
+    const questionId = (reply as { value: { questionId: string } }).value.questionId;
+    expect(await ask('strategy')).toEqual(reply);
+    expect(service.todos.getQuestion(questionId)).toMatchObject({
+      kind: 'choice',
+      multiple: false,
+      options: [
+        'Long-lived work-type sessions',
+        'One session per task',
+        'One session per PR',
+        'Keep current settings',
+      ],
+    });
+    expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(await saved()).toMatchObject({ value: { preferences: [] } });
+    await invoke('neo.question.answer', { questionId, answer: option(questionId, 1) }, human);
+    expect(await saved()).toMatchObject({
+      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+    });
+
+    const kept = (await ask('strategy-kept')) as { value: { questionId: string } };
+    await invoke(
+      'neo.question.answer',
+      { questionId: kept.value.questionId, answer: option(kept.value.questionId, 3) },
+      human
+    );
+    expect(await saved()).toMatchObject({
+      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+    });
+  });
 });
