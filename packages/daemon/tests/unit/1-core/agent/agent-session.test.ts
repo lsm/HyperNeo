@@ -2233,9 +2233,10 @@ describe('AgentSession', () => {
         'anthropic/haiku': { until: 1, fallback: 'anthropic/sonnet' },
         'anthropic/sonnet': { until: 1, fallback: 'anthropic/opus' },
       };
+      const updateSession = mock(async () => {});
       const limited = new AgentSession(
         { ...mockSession, metadata: { ...mockSession.metadata, modelLimits: limits } },
-        mockDb,
+        { ...mockDb, updateSession } as unknown as Database,
         mockMessageHub,
         mockInternalEventBus,
         mockGetApiKey
@@ -2249,6 +2250,9 @@ describe('AgentSession', () => {
       await limited.handleModelSwitch('sonnet', 'anthropic');
       expect(limited.getRateLimitWatchdogState().modelLimits).toEqual({});
       expect(limited.getSessionData().metadata.modelLimits).toBeUndefined();
+      expect(updateSession).toHaveBeenCalledWith(mockSession.id, {
+        metadata: expect.not.objectContaining({ modelLimits: expect.anything() }),
+      });
     });
 
     describe('requestModelSwitch', () => {
