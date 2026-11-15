@@ -903,3 +903,28 @@ describe('planCodingLedgerRead cross-model review', () => {
     expect(state(false, [])).toBe('approved_green');
   });
 });
+
+describe('planCodingLedgerRead cross-model review for CI-only repositories', () => {
+  const pr = node(1, { body: 'Agent: claude-opus-5-5 (effort: medium) via Claude' });
+  const review = {
+    url: 'https://github.com/x/x/pull/1',
+    head: 'h1',
+    stage: 'review' as const,
+    actor: { kind: 'agent' as const, id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  };
+  const state = (reviews: (typeof review)[]) =>
+    planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => ({ mergePolicy: 'ci_only', mergeBy: 'daemon', crossModelReview: true }),
+      () => reviews
+    )?.rows[0].state;
+
+  test('a green CI-only PR waits for a review by a different model, then reads green', () => {
+    expect(state([])).toBe('waiting_cross_review');
+    expect(state([review])).toBe('approved_green');
+  });
+});

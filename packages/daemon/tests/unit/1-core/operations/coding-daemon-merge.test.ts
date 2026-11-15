@@ -147,3 +147,14 @@ describe('decideCodingDaemonMerge cross-model review', () => {
     ).toEqual({ kind: 'merge', head });
   });
 });
+
+describe('decideCodingDaemonMerge cross-model review for CI-only repositories', () => {
+  test('refuses a green CI-only PR without a review by a different model', () => {
+    expect(
+      decideCodingDaemonMerge(
+        { ...facts, reviews: [], body: 'Agent: claude-opus-5-5 (effort: medium) via Claude' },
+        { ...policy, mergePolicy: 'ci_only', crossModelReview: true }
+      )
+    ).toEqual({ kind: 'skip', reason: 'cross_model_review_required' });
+  });
+});
