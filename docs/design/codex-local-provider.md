@@ -140,6 +140,42 @@ catches the throw:
   the first 50 characters of the first message. A Codex chat is titled that
   way and never calls an SDK model.
 
+### Pipelines and pure decisions
+
+The new decisions are pure functions over recorded facts. Effects sit at the
+pipeline edges, and the OAP code keeps its existing pipelines.
+
+- `engineForProvider(providerId)` is pure: `codex` for `oxap-codex` and `sdk`
+  for everything else. Session create calls it next to the existing
+  `oap.session.admission` check to derive `harness`.
+- The switch check is a pure gate, `decideEngineSwitch(sessionHarness,
+  engineForProvider(target))`, added as a stage before the existing
+  `isValidModel` step in `ModelSwitchHandler.invalidModel`. It uses one
+  `result:engine` output with `{ value } | { reason }` arms.
+- Settings save is one pipeline, `oxap-codex.settings.save`. It runs read the
+  binary's version and hash (effect), then validate absolute paths (pure), then
+  write the provider record (effect), then `OapEngine.restart()` (effect). If
+  the write fails, the hub is not restarted. If the restart fails, the hub is
+  left failed and the next open starts it again.
+- The card status reuses the existing `check-oap-binary` pipeline.
+
+### Pull requests
+
+Each PR is cut from `dev` after the previous one merges. The line counts are
+production-line estimates, sized against `ollama-provider.ts`,
+`AddProviderModal.tsx` and `create-session-config.ts`. Tests come on top.
+
+| # | Change | Surface | Est. lines |
+| --- | --- | --- | --- |
+| 1 | `oxap-codex` provider, `createOapRuntime` reads its record, settings-save pipeline, remove the `HYPERNEO_OAP_*` vars | daemon | ~150 |
+| 2 | `OapEngine.restart()`, called from settings save | daemon | ~40 |
+| 3 | `engineForProvider` and session create derives `harness` | daemon | ~25 |
+| 4 | Engine gate in the model switch | daemon | ~30 |
+| 5 | Add provider entry and form, picker filtered by engine | **UI** | ~130 |
+
+Merge order is 1 → 2 → 3 → 4 → 5. Only PR 5 changes what the human sees. The
+daemon PRs before it are reachable through RPC and the verify skill.
+
 ## Ready today vs. waiting
 
 Ready, and enough to ship this:
