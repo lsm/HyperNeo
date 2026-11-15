@@ -1,4 +1,4 @@
-# Neo attention: one subsystem decides what Neo is told
+# Neo attention: one entry for everything the daemon tells Neo
 
 ## Summary
 
@@ -14,122 +14,37 @@ That fails both ways. Many notices are ones Neo almost never acts on: todo-done 
 
 Wake and hold already exist (`prepareEntry` in `lib/mailbox/registration.ts`; the 15-minute hold flush). What is missing is a decision about whether a message is still worth telling, and anything that brings an unhandled one back.
 
-This design adds one core subsystem, `lib/neo/attention/`. Producers raise typed events (subject, kind, facts) instead of prose. One superpipe reads the current facts, runs a pure `decideNeoAttention`, and records the result: wake, digest, drop with a reason, or wait. One table, one row per subject and kind, also drives repetition: a periodic sweep re-reads each open item, retires a false one, and repeats a true, unhandled one on a backoff. Packs add kinds and fact readers through one `NeoPack.attention` hook. Every message the daemon sends Neo goes through this one entry; no producer writes to Neo's session directly.
+Wake and hold already exist (`prepareEntry` in `lib/mailbox/registration.ts`; the 15-minute hold flush). What is missing is one place that decides whether a message is worth telling, and anything that brings an unhandled one back.
 
-The first delivery is the part that keeps approved work moving while the human is away: every open todo has one owner of its next step, and a todo whose next step is Neo's wakes Neo until Neo acts (below). The rest of the subsystem follows in the same change plan.
+This design adds one core entry, `lib/neo/attention/`: one superpipe, `neo.attention.tell`, and one pure decision. Every message the daemon sends Neo goes through it; no producer writes to Neo's session directly. It adds no table. Packs add kinds through one `NeoPack.attention` hook.
 
-## Design
+## The entry
 
-## Shape
-
-```
-producers ──raise(event)──▶ neo.attention.admit ──▶ neo_attention_items ──▶ mailbox (wake | digest)
-                               │  read facts (core + pack)                       ▲
-                               │  decideNeoAttention (pure)                      │
-pack scans ──raise──▶          └─ record decision ─────────────┐                 │
-                                                               ▼                 │
-                      neo.attention.sweep (every 5 min) ── re-read open items ───┘
-                                                         retire | repeat | keep
-```
-
-**Event.**
+A producer calls `neo.attention.tell(event)` where it calls `tell` or `wakeNeo` today:
 
 ```ts
 type NeoAttentionEvent = {
-  kind: string;                        // 'todo.neo_step', 'coding.pr_event', ...
-  subject: { type: 'todo' | 'ask' | 'worker' | 'card' | string; id: string };
-  pack: string | null;                 // null for core kinds
-  facts: Record<string, unknown>;      // what the producer observed
-  sourceId: string;                    // existing idempotency key, kept
-  at: number;
+  kind: string;                        // 'todo.neo_step', 'coding.merge_held', ...
+  subject: { type: string; id: string };
+  since: number;                       // when this state of the subject began
+  facts: Record<string, unknown>;
 };
 ```
 
-The event carries facts, not prose. The text is rendered after the decision, from the facts read at decision time. That way a stale producer read cannot reach Neo.
+The superpipe:
+1. **Read** the facts every kind may consult: the open cards covering the subject (`neoTodoCovered`), whether the human must act (`neoTodoAwaitsHuman`), and the latest turn report from the same worker.
+2. **Decide**, pure: `decideNeoAttention(event, known, now)` returns `wake`, `digest` or `drop` with a reason, from the kind's row below. Cross-kind rules come first: a subject covered by an open card is dropped; a turn report superseded by a newer report from the same worker is dropped.
+3. **Render**, pure, from the event's facts only, with absolute times. The same event always renders the same text.
+4. **Deliver.** The message uuid is `<kind>:<subject>:<since>:<step>`, where `step` is how many repeats are due (below). A wake goes through the mailbox once primitive the external events use (`submitSessionEvent`), and a digest item through the existing timed hold (`NeoWakeQueueRepository.hold`) and its 15-minute grouped flush. Both refuse a uuid they have seen, so the same step is never sent twice. A drop is logged with its reason.
 
-**Kind.** A kind is registered by core or by a pack:
-
-```ts
-interface NeoAttentionKind<F> {
-  kind: string;
-  read(subject, event): Promise<F | null>;     // current facts; null = subject gone
-  stillTrue(facts: F): boolean;
-  revision(facts: F): string;                  // canonical, excludes times and counts
-  decide(facts: F, known: Known): Decision;    // pure, per-kind policy (table below)
-  render(facts: F): { line: string; verb: string };
-  repeat?: readonly number[];                  // backoff in ms; absent = never repeat
-}
-type Decision =
-  | { deliver: 'wake' | 'digest' }
-  | { drop: string }                           // reason, logged and counted
-  | { wait: { until?: number; untilRevisionChanges: true } };
-```
-
-`Known` holds the facts that every kind may consult, read once per admission:
-- the subject's current row in `neo_attention_items`;
-- the open cards covering the subject, using the existing `neoQuestionCoversTodo` / `neoTodoCovered`;
-- whether the human is the one who must act: `neoTodoAwaitsHuman`;
-- the latest turn report from the same worker.
-
-**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. Today both cleanup queries delete dead rows of every queue after the retention cutoff: the hourly `jobs.cleanup` op (`cleanupJobs`, run through `cleanupJobsInBatches`) and its fallback `JobQueueRepository.cleanup()`. This design adds one clause to both so they keep dead admit jobs; completed admit jobs are cleaned up as usual. A dead admit job therefore stays until a later admission succeeds, even after downtime longer than the retention cutoff. Retrying is bounded. An event whose kind is no longer registered (a pack removed or a kind renamed) completes at once as dropped with reason `unknown_kind`. A registered kind whose read keeps failing is retired after the sweep has re-enqueued it 2,016 times (7 days of running sweeps, so downtime does not count): the sweep completes the job as dropped with reason `read_failed`, and it is counted like any drop. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
-
-**Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
-1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
-2. `stillTrue` and `revision`: pure.
-3. `decideNeoAttention(kind, facts, known, row, now)`: pure. It handles the cross-kind rules first, then calls `kind.decide`:
-   - A delivered item whose revision is unchanged is a duplicate.
-   - An item covered by an open card waits while the card is open.
-   - A turn report superseded by a newer report from the same worker folds.
-4. `record and enqueue`: one gateway operation, in one transaction. The upsert is conditional on every column the decision read: `revision`, `episode`, `told_count`, `state`, `wait_until` and `next_at`. If another admission, the sweep or Neo's `wait` changed the row in between, the write does nothing and the step re-reads and decides again. So a stale sweep repeat can never overwrite a newer episode or undo a wait. Test: pause a due repeat after its read, apply `wait`, resume the repeat; the item stays `waiting` and no wake is enqueued. It upserts `neo_attention_items` (revision, state, `told_at`, `told_count`, `next_at`) and writes the outbox row: on `wake`, a `mailbox` job through the once path described below (`enqueueStage`, `lib/mailbox/handoff.ts`); on `digest`, a `neo_notes` hold (`NeoWakeQueueRepository.hold`). Actual delivery stays with the existing processors. It does not call `deliverForward`, whose enqueue is asynchronous and runs in its own gateway call (`service.ts` `enqueueDelivery`).
-
-Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`, from the row's `episode` and `told_count` columns. A → B → A is three episodes, so it never reuses a uuid. A retried job after a lost acknowledgement writes the same uuid and must not enqueue twice. The hold side already refuses it (`NeoWakeQueueRepository.hold` matches on `messageUuid`). The mailbox side does not: `enqueueMailboxEntry` matches only on the random entry id, and only among active jobs. So a wake goes through the existing once path, `enqueueStage(..., once = true)` in `lib/mailbox/handoff.ts`, whose submission receipt is keyed on the recipient and `messageUuid` and survives the job's completion. An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered once per uuid and stored on the item row (`rendered`) in the same transaction; a retry for that uuid reuses the stored text instead of rendering again. This matters because a render can hold relative times ("failed 3 h ago"), and `NeoWakeQueueRepository.hold` throws `PromptContentConflictError` when the same uuid arrives with different content. A failed fact read writes nothing and fails the job, which retries.
-
-**Pipeline `neo.attention.sweep`.** It runs on the existing 5-minute pack sweep (`pack-sweep.ts`):
-1. Raise the derived kinds that no producer pushes. Core: `ask.idle`. Packs: their `attention.scan(now)` output, such as `coding.idle_with_open_pr`.
-2. For each item not `retired` (so `open`, `told` and `waiting`): `read`, then `stillTrue`.
-   - False → `retired` with its reason.
-   - Revision changed → re-decide.
-   - Unchanged, and `next_at <= now` → repeat (`digest`, or `wake` if the kind says so).
-   - Otherwise keep.
-
-**Table `neo_attention_items`.** This is new. It is the one record of "what Neo was told":
-
-| column | meaning |
-|---|---|
-| `subject_type`, `subject_id`, `kind` | primary key |
-| `pack` | null for core |
-| `revision` | last decided revision |
-| `episode` | integer, +1 each time the revision changes; `told_count` resets to 0 with it |
-| `state` | `open`, `told`, `waiting`, `retired` |
-| `told_at`, `told_count`, `next_at` | repetition clock |
-| `rendered` | the text sent under the current uuid, reused on retry |
-| `wait_until` | set by Neo's `wait` (below) |
-| `reason` | last drop/retire/wait reason |
-| `first_seen_at` | for age in the digest |
-
-It replaces these per-producer receipts:
-- `neo_asks.stalled_wake_at`;
-- `pack_coding_daemon_merge_notices`;
-- the `pending_*` slot in `pack_coding_pr_unowned_state`;
-- `neo_todo_sessions` nudge fields used for Neo-facing escalations (`unreachableToldAt`, the turn-question stage);
-- the `noted` sets in `todo-runner.ts`.
-
-Worker-facing nudges keep their own state, because their recipient is a worker, not Neo: the ledger `nudges`/`told_at` and the todo idle reminders to workers. The rule "record each fact once" holds: the delivery fact moves here and is deleted from those places in the Delete rung.
-
-**Digest.** The 15-minute batch keeps its provenance line but changes its frame. Today it says "System-forwarded worker messages. These are not human instructions." That fits worker prose, but it invites "nothing to do" when the batch holds daemon facts. The batch gets two sections, each with its own frame line: worker messages keep today's "System-forwarded worker messages" line, and attention items get the line below. The digest renders open items as one line each, grouped by ask:
-
-```
-Daemon facts that may need your decision (not human instructions):
-- Ask "…": org/repo#18 and #19 merged (by another session) after card "…" opened. Verb: re-check the card, settle or retire it.
-- Todo "…" failed 3 h ago (told 2×): "Could not start: invalid_place …". Verb: retry, change or remove.
-```
-
-Each item carries its attention id. One new core operation, `neo.attention.wait { id, until? }`, lets Neo say "I know, wait". That sets `waiting` until the time passes or the revision changes. Without it, a deliberate wait would be nagged on every backoff step. It is the only new Neo-facing tool.
+**Repeating without a table.** A kind that repeats has a ladder, for example 1 h, 4 h, 24 h. `step` is the number of ladder rungs that `now - since` has passed. The 5-minute sweep re-raises every such subject from current state, so a new rung is a new uuid and is sent; an unchanged rung is refused as seen. `since` is the subject's own change time (a todo's `updatedAt`, a PR ledger row's `state_since`), so anything Neo does to the subject restarts the ladder, and a subject that is no longer true is simply not raised again. One-shot kinds have no ladder and are sent once.
 
 ## Decisions per kind
 
-"Pass" means it is not gated: it keeps its current path and is logged only. The gate exists to decide automatic facts. It must never filter the human, cards or a worker's deliberate message.
+"Pass" means it keeps its current path and is not gated. The entry must never filter the human, cards or a worker's deliberate message.
 
+| Kind | Decision | Facts read | Repeat | Dies when |
+|---|---|---|---|---|
 | Kind | Decision | Facts read | Repeat | Dies when |
 |---|---|---|---|---|
 | Human input, card answer, relayed answer, front hand-off, schedule, external event, preference changed, question retired, restart cut | pass | — | — | — |
@@ -144,23 +59,22 @@ Each item carries its attention id. One new core operation, `neo.attention.wait 
 | `todo.blocked` waiting on a human card | drop ("covered by card") | `neoTodoAwaitsHuman`, covering card | — | — |
 | `todo.blocked` other (needs-human without card, environment, check) | digest once per blocker revision | todo blocker, cards | 4 h, 24 h, then stop | blocker changes or clears |
 | `todo.failed` | a reason of `todo.neo_step`, not its own item | — | — | — |
-| `todo.unworked`, waiting for a worker or capacity | wait ("daemon starts it") | queue reasons (`planWorkQueue`) | — | starts |
+| `todo.unworked`, waiting for a worker or capacity | drop ("daemon starts it") | queue reasons (`planWorkQueue`) | — | starts |
 | `todo.unworked`, not approved / no instruction | digest | todo, approval | 24 h | approved, started or removed |
 | `todo.neo_step` (new, core): the one Neo-facing incident per todo whose next step is Neo's (table below) | wake | the facts in the table below, read outside the pure function | 1 h, 4 h, 24 h, then every 24 h while the owner is Neo | the owner is no longer Neo |
 | `todo.stalled` (unreachable, rescued) | wake | nudge incident, live status | 4 h | progress or state change |
 | `todo.prereq_cancelled` | a reason of `todo.neo_step`, not its own item | — | — | — |
 | `ask.idle` (open ask, nothing running) | digest only if no todo remains; a todo that needs Neo is already a `todo.neo_step` | ask, todos, cards | 24 h (today 4 h) | a todo starts or the ask settles |
-| `card.check_overdue` on a todo already waiting on another human card | drop and retire that daemon card | covering cards | — | — |
+| `card.check_overdue` on a todo already waiting on another human card | drop | covering cards | — | — |
 | Session error on a todo worker | wake | worker, todo | via `todo.stalled` | worker running |
-| Driver health stalled (core); GitHub health stalled (`coding.github_health`) | digest | health incident | 24 h | recovered (a `recovered` retires the `stalled` item, and both drop if they land in one digest window) |
+| Driver health stalled (core); GitHub health stalled (`coding.github_health`) | digest | health incident | 24 h | recovered |
 | `coding.merge_held` (sign-off) | wake once per PR head | fresh merge facts, handoff coverage | none | merged/closed, head changes, hold resolves |
 | `coding.merge_failing` | wake after 3 failed attempts on one head, as today (`CODING_DAEMON_MERGE_MAX_ATTEMPTS`) | `pack_coding_daemon_merge_failures` | 4 h | merged or head changes |
-| `coding.pr_event` (new; from Neo's PR topic subscriptions): a merge or close outside a todo | digest, to the candidate asks | the event; asks with a todo PR in that repo; owner's *active* todo | none | retires as soon as it is told |
+| `coding.pr_event` (later; from Neo's PR topic subscriptions): a merge or close outside a todo | digest, to the candidate asks | the event; asks with a todo PR in that repo; owner's *active* todo | none | retires as soon as it is told |
 | `coding.idle_with_open_pr` (new) | digest | todo live status, PR ledger state and `state_since` | 4 h | worker running, PR state changes, merged |
 | `todo.follow_up_missing` (new, core; subject: the ask) | wake. Raised when a todo flagged `producesFollowUp` (set by Neo on `neo.todo.add`) is done and no non-removed todo follows it in its ask. The ask may not settle `done` while the item is open (`dropped` stays allowed). | that ask's todos by position and their `producesFollowUp` flag | 1 h, 4 h, 24 h | a non-removed todo exists after the flagged todo; ask settled or dropped |
 | `coding.pr_unowned`, `coding.pr_sweep` escalation | wake | ledger | existing | owner assigned / PR closed |
 
-Linking a PR outside a todo to an ask uses, in order:
 1. A todo PR link. This exists today.
 2. A repo where exactly one open ask has todo PRs.
 3. The owner session's *currently active* todo.
@@ -174,7 +88,10 @@ The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished t
 
 | Facts | Owner |
 |---|---|
+| Facts | Owner |
+|---|---|
 | an open card covers the todo | human |
+| Neo put the todo on hold (`neo.todo.hold`) | nobody until Neo continues it |
 | the todo is failed, or a prerequisite is failed or removed | neo |
 | a prerequisite is still unfinished | that prerequisite's owner (no item for this todo) |
 | blocked on `question` or `needs-human` with no open card: an answer still being delivered | daemon (the delivery resumes it) |
@@ -186,65 +103,37 @@ The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished t
 | a start target exists and the queue would start it now | daemon |
 | no start target, or a worker idle with nothing to wait on | neo |
 
-When the owner is `neo`, one `todo.neo_step` item carries the reason (failed, prerequisite failed or removed, no worker, idle worker). It is the only Neo-facing item for that todo, so a failed idle todo or a removed prerequisite wakes Neo once, with one repeat clock. It keeps waking (1 h, 4 h, 24 h, then every 24 h) while the owner is Neo; a card or Neo's `wait` still silences it. That is how approved work moves while the human is away. The wake names the todo, why the step is Neo's, and the one action that unblocks it, for example: "Its prerequisite is done and it has no instruction or worker: write the instruction and start it, or remove it." The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
+When the owner is `neo`, the sweep raises one `todo.neo_step` event with the reason (failed, prerequisite failed or removed, no worker, idle worker). It is the only Neo-facing message for that todo. It wakes Neo at 1 h, 4 h, 24 h, then every 24 h while the owner is Neo. Neo stops it by acting on the todo, by asking the human, or by holding it (`neo.todo.hold`). That is how approved work moves while the human is away. The wake names the todo, why the step is Neo's, and the one action that unblocks it, for example: "Its prerequisite is done and it has no instruction or worker: write the instruction and start it, or remove it." The prompt gets no new limits: Neo starts and assigns approved work on its own; starting new asks belongs to the goals system.
 
-Tests give the owner for each row, including a todo waiting on an unfinished prerequisite (no item), a target with a queue hold (daemon), an idle worker with an open PR (pack), unknown live status (daemon), and a failed todo with an idle worker (one `neo` item); and an unchanged Neo-owned todo still wakes after the last ladder step.
-
-## Repetition and death
-
-- A kind with no `repeat` retires as soon as it is told, so the sweep stops re-reading one-shot facts.
-- An item repeats only if `stillTrue`, the revision is unchanged, it is not `waiting`, and `next_at` has passed. The backoff comes from the kind (1 h / 4 h / 24 h). It stops after the last step, except where a kind says otherwise (`todo.neo_step`), and stays visible in the work snapshot as "unhandled since …".
-- Neo's own action is never tracked directly. Anything Neo does changes the facts: a todo edit, a card, a send, a settle. That makes the condition false (retire) or the revision new (decide again). This keeps "record each fact once": the facts that already exist decide.
-- A new revision is a new episode: A → B → A notifies again, as in the earlier root design.
-- Stale items die in the sweep, never at render time. An item read but not yet rendered is re-read at render. A failed read keeps the old state and defers.
+Tests give the owner for each row, including a todo waiting on an unfinished prerequisite (no message), a target with a queue hold (daemon), an idle worker with an open PR (pack), unknown live status (daemon), a held todo (nobody), and a failed todo with an idle worker (one `neo` message); and an unchanged Neo-owned todo still wakes after the last ladder step.
 
 ## Where it sits: core, with a pack hook
 
-`lib/neo/attention/` is core. It knows asks, todos, questions, workers and cards only, as `AGENTS.md` requires. Core kinds: `turn.report`, `todo.*`, `ask.*`, `card.*`, `session.*`, `health.driver`. GitHub health is coding-pack state, so its kind is `coding.github_health`.
-
-Packs extend it through one optional hook in `pack-contract.ts`:
+`lib/neo/attention/` is core. It knows asks, todos, questions, workers and cards only, as `AGENTS.md` requires. Packs add kinds through one optional hook in `pack-contract.ts`:
 
 ```ts
 attention?: {
-  kinds: readonly NeoAttentionKind<unknown>[];   // registered by id prefix '<pack>.'
-  scan?(now: number): Promise<readonly NeoAttentionEvent[]>;
+  kinds: readonly NeoAttentionKind[];      // decide and render, registered by id prefix '<pack>.'
+  scan?(now: number): Promise<readonly NeoAttentionEvent[]>;   // repeated kinds, raised each sweep
 };
 ```
 
-- **Coding** moves its Neo-facing `wake` calls behind `attention`: merge held/failing, unowned, sweep escalation. It adds `idle_with_open_pr` in `scan` and decides `pr_event`, which arrives from Neo's PR topic subscriptions. Its `waiting` hook stays for worker reminders, but it no longer silences Neo: `idle_with_open_pr` is how Neo hears.
-- **Delegation** and **life-admin** register no kinds today. A delegation pack would raise `delegation.awaiting_human_step` (a form waiting for the human's last click) the same way.
-- **A future usage pack** raises `usage.near_limit` and `usage.limit_reset` from provider usage. It is digest-only. A reset retires the near-limit item.
-
-Core never branches on a pack id. It only dispatches by `kind`.
-
-## What the external event system already gives
-
-`lib/external-events/` ingests GitHub events through a superpipe (`ingest-external-event`: validate, classify urgency, render, store with a dedupe key), routes them by topic subscription (`route-session-external-event`, `topic-trie.ts`), and delivers each to a session through the mailbox once path (`mailSessionEvent` → `submitSessionEvent`, keyed on recipient and message uuid) in `immediate` or `defer` mode. No Neo session subscribes today (`session_event_subscriptions` has two rows, both PR sessions).
-
-Reused here:
-- **Delivery of wakes.** A `wake` is submitted through the same once primitive (`submitSessionEvent`), so a retry never queues twice. A `digest` does not use its `defer` mode: that mode replays as soon as Neo is idle and is marked as a wake event, so each item would start a turn. A digest item keeps the existing timed hold (`NeoWakeQueueRepository.hold`, `neo_notes`) and its 15-minute grouped flush.
-- **GitHub facts for Neo.** Instead of a new coding-pack poll, Neo's session subscribes to the PR topics of repos with open asks. The session route hands those events to `neo.attention.admit` as kind `coding.pr_event`, which decides like any other kind (for example a merge outside a todo becomes a digest line on the candidate asks). The subscription follows the open asks.
-
-Not reused, because it does not exist there: whether a fact is still true, repetition on a backoff, `wait`, and one row per subject. External events are one-shot and append-only, and their urgency and headline rules are GitHub-specific (`event-urgency.ts`, `sessionEventHeadline`). Those live in `neo_attention_items` and the per-kind `decide`.
+Core never branches on a pack id; it dispatches by `kind`. Coding moves its Neo-facing wakes (merge held/failing, unowned, sweep escalation) behind it and adds `idle_with_open_pr` in `scan`. Its `waiting` hook stays for worker reminders, but no longer silences Neo.
 
 ## Change plan
 
-These are slices in the `AGENTS.md` rungs, each one about 100–250 production lines, branched from `dev`. Each producer switches directly; there is no parallel run.
+Slices in the `AGENTS.md` rungs, each about 100–250 production lines, branched from `dev`.
 
-1. **Build: next-step owner.** Pure `nextStepOwner(facts)` (the table above) and the repeat ladder, with the tests listed there. Exported, not called.
-2. **Wire: wake Neo for its steps.** On the existing 5-minute sweep, next to the follow-up wake (`wakeNeoFollowUpGaps`, `service.ts`): read the facts, and for each todo whose owner is `neo`, wake Neo through `wakeNeo` with the uuid `neo-step:<todo>:<updatedAt>:<step>`. Delivery already refuses a uuid it has seen (`deliveryStatus`, `service.ts`), so each step is sent once. Any action Neo takes changes the todo's `updatedAt` and restarts the ladder. One prompt line says what these wakes are; no new limits. This step needs no new table and is the first thing that ships.
-3. **Build: decision core.** `attention/kinds.ts`, `attention/decide.ts` (pure `decideNeoAttention`, cross-kind rules, the core kind table) and the `NeoPack.attention` contract type. Tests: covered-by-card drops, superseded reports fold, a stale item retires, an unchanged item repeats on backoff, A → B → A re-notifies. Exported, not called.
-4. **Build: store and pipelines.** The `neo_attention_items` migration, its repository on the gateway, the dead-admit-job exclusion in both cleanup queries, and the `neo.attention.admit` and `neo.attention.sweep` superpipes; wakes go through the external events' once primitive, digest items through the existing `neo_notes` hold and its 15-minute flush. Test, with a controlled clock and Neo idle: several digest items start no turn before the flush and arrive as one grouped message at it. Tests: a dead admit job older than the cleanup retention survives cleanup and is delivered once by the next sweep; the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
-5. **Wire: Neo's own kinds onto the pipeline.** `todo.neo_step` (step 2's sweep wake becomes the kind's `stillTrue` and repeat) and `todo.follow_up_missing` (its pure check and settle refusal stay; the direct wake is deleted).
-6. **Wire: each producer, one PR each.** The core todo notes (`tell` in `service.ts`, which every `todo-runner.ts` note goes through), turn reports, stalled asks, driver health, and the coding pack's merge held/failing, unowned and `idle_with_open_pr`. Each PR routes the producer through `admit` and stops its direct write. An incident told just before its switch may be told once more; that is accepted.
-7. **Wire: GitHub events for Neo.** Neo's session subscribes to the PR topics of repos with open asks, and the session route hands its events to `admit` as `coding.pr_event`.
-8. **Wire: digest renderer and `neo.attention.wait`.** One prompt line in `root-turn-end.md`, about digest items and `wait`.
-9. **Delete** what no producer reads any more, one PR each: `stalled_wake_at` use, `pack_coding_daemon_merge_notices`, the unowned pending slot, the in-memory `noted` sets, the Neo-facing nudge fields in `neo_todo_sessions` (`unreachableToldAt`, the turn-question stage), the turn-report receipts' Neo-delivery part, the per-producer `neoWakeEvent` flags, and the check-overdue card for todos already waiting on the human.
+1. **Build: the entry.** `attention/decide.ts` (pure `decideNeoAttention`, the kind table, the ladder), `attention/owner.ts` (pure `nextStepOwner`), the render, the `NeoPack.attention` type, and the `neo.attention.tell` superpipe. Tests: the owner rows, covered-by-card drops, superseded reports drop, a rung is sent once and the next rung is sent, a change of `since` restarts the ladder, the same event renders the same text.
+2. **Wire: `todo.neo_step`.** The 5-minute sweep raises it for every Neo-owned todo, next to the follow-up wake, which moves onto the entry in the same PR. One prompt line says what these wakes are.
+3. **Wire: each producer, one PR each.** The core todo notes (`tell` in `service.ts`, which every `todo-runner.ts` note goes through), turn reports, stalled asks, driver health, and the coding pack's kinds. Each PR routes the producer through the entry and deletes that producer's own "already told" record in the same PR (for example `stalled_wake_at` for stalled asks, `pack_coding_daemon_merge_notices` for merge notices). An incident told just before its switch may be told once more; that is accepted.
+
+Later, as its own small change: Neo's session subscribes to the PR topics of repos with open asks through the external events' topic subscriptions (`session_event_subscriptions`, `route-session-external-event`), and the route hands those events to the entry as `coding.pr_event`. That is how Neo learns of a merge done by another session.
 
 ## Limits and risks
 
-- **Repeats that annoy.** A wrong `stillTrue` can repeat something Neo chose to ignore. The backoff stops after three steps, and `wait` silences an item until the facts change.
-- **Silent drops.** Over-broad coverage can hide a real decision. Every drop is recorded with a reason, so a wrong one shows in the item table. The pass kinds are never gated.
-- **Remote facts.** A PR can change after the last read. The design only ever acts on its last read, and the next sweep corrects it within 5 minutes.
+- **Repeats that annoy.** A wrong owner row can repeat something Neo chose to leave. Neo holds the todo to stop it.
+- **Silent drops.** Over-broad coverage can hide a real decision. Every drop is logged with its reason. The pass kinds are never gated.
+- **Remote facts.** A PR can change after the last read. The entry only acts on its last read, and the next sweep corrects it within 5 minutes.
 - **Linking.** Matching merges outside todos to an ask is a heuristic beyond the todo link. The digest names the candidates and lets Neo decide; it never closes anything.
 - **Out of scope.** Worker-facing reminders and the front model's own catch-up.
