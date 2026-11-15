@@ -2103,6 +2103,45 @@ test.each([
   }
 );
 
+test('a reply published while another hand-off is in flight stays in already-said', async () => {
+  const { id } = await deliveredConvoInput();
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let raced = false;
+  vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
+    if (!raced && args[1] === 'reserve') {
+      raced = true;
+      await convoPublish({
+        requestId: 'newer',
+        replyTo: [id],
+        fullText: 'Newer answer.',
+        work_on: false,
+      });
+    }
+    return (call as (...rest: unknown[]) => unknown)(...args);
+  }) as never);
+  await convoPublish({
+    requestId: 'older',
+    replyTo: [id],
+    fullText: 'Older answer.',
+    work_on: false,
+  });
+  vi.restoreAllMocks();
+  expect(raced).toBe(true);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  const said = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(said).toContain('Older answer.');
+  expect(said).toContain('Newer answer.');
+});
+
+test('a hand-off keeps the full session manual query mode', async () => {
+  await db.updateSession(root, { config: { ...db.getSession(root)!.config, queryMode: 'manual' } });
+  const { id } = await deliveredConvoInput();
+  expect(
+    await convoPublish({ requestId: 'manual', replyTo: [id], fullText: 'Done.', work_on: false })
+  ).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('deferred');
+});
+
 test('an unknown replyTo is refused but never blocks the current input', async () => {
   const { id } = await deliveredConvoInput();
   expect(
