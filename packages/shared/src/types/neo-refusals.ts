@@ -53,6 +53,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Obtain passing QA evidence from the assigned independent session for this PR, head and acceptance contract.',
   matching_head_review_required:
     'Obtain passing review on the exact current head; a configured bot rejection has no session fallback.',
+  cross_model_review_required:
+    'This repository requires a passing Review on this head by a different model than its Agent line. Assign one with neo.coding.assign before preparing a merge.',
   merge_requirements_not_satisfied:
     'Keep the pull request open until required CI is green, findings are resolved and repository sign-off is satisfied.',
   matching_merge_gate_required:
