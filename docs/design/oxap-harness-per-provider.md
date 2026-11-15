@@ -200,7 +200,11 @@ pipeline edges.
 - `decideSwitch(session, targetProvider, engineForProvider(target))` is a gate
   in `ModelSwitchHandler.invalidModel`, with one `result:switch` output and
   `{ value } | { reason }` arms. An SDK chat may not move to an OXAP provider.
-  An OXAP chat may not change its provider.
+  An OXAP chat may not change its provider. The same decision also guards the
+  other door: raw `session.update` can write `config.provider`, because
+  `provider` is an updatable field in `create-session-config.ts`. So
+  `admitUpdateSessionConfig` calls `decideSwitch` whenever the update sets
+  `provider` or `model`.
 - `decideOxapOpen(session, providerRecord)` gates each open. It returns the
   adapter name, or the refusal for a provider whose harness changed.
 - `buildHubConfig`, each row's entry builder and each row's link parser are
