@@ -703,7 +703,7 @@ test.each([
   { text: 'A plain terminal answer', failedNeo: true },
   { text: '', failedNeo: true },
 ])(
-  'a tool-free Front turn hands the input to Neo unless Neo delivery failed, never publishing its closing text ($text, failed Neo delivery $failedNeo)',
+  'a tool-free Front turn hands the input to Neo, never publishing its closing text ($text, earlier failed Neo delivery $failedNeo)',
   async ({ text, failedNeo }) => {
     const { id, job } = await accept();
     const handler = createNeoFrontHandler(service);
@@ -738,20 +738,17 @@ test.each([
     } as import('@hyperneo/shared/sdk').SDKMessage);
     expect(await handler(job)).toMatchObject({
       delivered: true,
-      outcome: failedNeo ? 'failed' : 'handed_off',
+      outcome: 'handed_off',
     });
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
-    if (failedNeo) expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
-    else {
-      expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).not.toBe('failed');
-      expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
-    }
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).not.toBe('failed');
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
     await handler(job);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
   }
 );
 
-test('a Front turn with no reply leaves the input failed and retryable after Neo delivery failed', async () => {
+test('a Front turn with no reply retries an earlier failed Neo delivery while the session exists', async () => {
   const { id, job } = await accept();
   const handler = createNeoFrontHandler(service);
   await handler(job);
@@ -781,11 +778,11 @@ test('a Front turn with no reply leaves the input failed and retryable after Neo
     num_turns: 2,
     is_error: false,
   } as import('@hyperneo/shared/sdk').SDKMessage);
-  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'failed' });
+  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   expect(
     service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(id))
   ).toEqual([]);
-  expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
 });
 
 test.each(['user_message_uuid', 'user_message_uuids'] as const)(
@@ -962,7 +959,7 @@ test('a pending Front outcome does not reattach or redeliver the active session'
   expect(deliver).toHaveBeenCalledTimes(1);
 });
 
-test('a failed Neo delivery leaves the input failed for retry, with no notice', async () => {
+test('an earlier failed Neo delivery is retried when the front cannot start, with no notice', async () => {
   const { id, job } = await accept();
   await db.saveUserMessage(
     root,
@@ -971,7 +968,8 @@ test('a failed Neo delivery leaves the input failed for retry, with no notice', 
   );
   vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
   const handler = createNeoFrontHandler(service);
-  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'failed' });
+  expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
   expect(
     service.publications.list(conversationId)?.filter((row) => row.replyTo?.includes(id)) ?? []
@@ -979,7 +977,7 @@ test('a failed Neo delivery leaves the input failed for retry, with no notice', 
 });
 
 test.each(['terminal', 'creation failure'])(
-  'a queued Neo delivery stays pending through %s and leaves the input failed for retry',
+  'a queued Neo delivery stays pending through %s and is retried once it fails',
   async (path) => {
     const { id } = await accept();
     const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
@@ -1027,7 +1025,8 @@ test.each(['terminal', 'creation failure'])(
       expect(sdk.markDeliveryFailedByUuid(root, id)).not.toBeNull();
       clock.mockReturnValue(now + 2000);
       const failed = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
-      expect(await handler(failed)).toMatchObject({ delivered: true, outcome: 'failed' });
+      expect(await handler(failed)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+      expect(sdk.getUserSendStatus(root, id)).toBe('enqueued');
       expect(service.publications.list(conversationId) ?? []).toEqual([]);
       await handler(failed);
       expect(service.publications.list(conversationId) ?? []).toEqual([]);
@@ -1949,6 +1948,54 @@ test.each([false, true])(
     expect(delivered).toContain(`work_on=\\"${workOn}\\"`);
   }
 );
+
+test('a reply naming another message still forwards the current input in the same call', async () => {
+  const earlier = await deliveredConvoInput();
+  expect(
+    await convoPublish({
+      requestId: 'earlier',
+      replyTo: [earlier.id],
+      fullText: 'Done.',
+      work_on: false,
+    })
+  ).toMatchObject({ started: true });
+  const { id } = await deliveredConvoInput();
+  const receipt = await convoPublish({
+    requestId: 'other-target',
+    replyTo: [earlier.id],
+    fullText: 'Still on it.',
+    work_on: true,
+  });
+  expect(receipt).toMatchObject({ accepted: true, started: true });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+  expect(JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '')).toContain(
+    'Still on it.'
+  );
+});
+
+test('a refused reply still lets the turn end hand the input to Neo', async () => {
+  const { id, job } = await deliveredConvoInput();
+  const listening = vi.spyOn(service.speech, 'isListening').mockReturnValue(true);
+  expect(
+    await convoPublish({ requestId: 'refused', replyTo: [id], fullText: 'Done.', work_on: false })
+  ).toMatchObject({ accepted: false, reason: 'spoken_required' });
+  listening.mockRestore();
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: '',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  expect(await createNeoFrontHandler(service)(job)).toMatchObject({
+    delivered: true,
+    outcome: 'handed_off',
+  });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
 
 test('a reply without replyTo and with no current input cannot promise work it never starts', async () => {
   expect(
