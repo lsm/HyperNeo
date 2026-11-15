@@ -20595,6 +20595,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -21684,6 +21688,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -22035,6 +22043,10 @@
                     "urgent"
                   ],
                   "type": "string"
+                },
+                "producesFollowUp": {
+                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+                  "type": "boolean"
                 },
                 "target": {
                   "oneOf": [
@@ -22609,6 +22621,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -23141,6 +23157,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -24209,6 +24229,10 @@
                               ],
                               "type": "string"
                             },
+                            "producesFollowUp": {
+                              "const": true,
+                              "type": "boolean"
+                            },
                             "reason": {
                               "type": [
                                 "string",
@@ -24922,6 +24946,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -25454,6 +25482,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -31039,6 +31071,10 @@
                               "urgent"
                             ],
                             "type": "string"
+                          },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
                           },
                           "reason": {
                             "type": [
@@ -39502,6 +39538,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -40217,6 +40257,10 @@
             ],
             "type": "string"
           },
+          "producesFollowUp": {
+            "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+            "type": "boolean"
+          },
           "target": {
             "oneOf": [
               {
@@ -40644,6 +40688,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -41015,6 +41063,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -41385,6 +41437,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -42058,6 +42114,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -42438,6 +42498,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -42805,6 +42869,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -43165,6 +43233,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -43550,6 +43622,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [

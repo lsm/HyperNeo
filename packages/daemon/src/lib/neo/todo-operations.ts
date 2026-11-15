@@ -100,6 +100,12 @@ const TodoDraft = z.object({
     .nullable()
     .default(null),
   priority: TodoPriority.default('normal'),
+  producesFollowUp: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id]."
+    ),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
@@ -371,6 +377,7 @@ export const NeoTodoSchema = z.object({
   addedAfterStart: z.boolean(),
   approvedAt: z.number().nullable(),
   approvalQuestionId: z.string().nullable(),
+  producesFollowUp: z.literal(true).optional(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
   artifacts: z.array(ArtifactRefSchema).readonly().optional(),
