@@ -4,6 +4,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoPack, NeoWorkerTargetDecision } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { codingSessionAssignmentWrites } from '../../../../src/lib/neo/packs/coding/session-assignments-worker.ts';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
 import {
   CodingTodoPrRepository,
@@ -69,6 +70,8 @@ function world(coding = false) {
     instructions: () => null,
     workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
     workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
+    workerTargetRefused: (todo) =>
+      gatewayFor(db).call(codingSessionAssignmentWrites, 'releaseFeature', { todoId: todo.id }),
   } satisfies NeoPack;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -294,8 +297,9 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       .run(running, JSON.stringify(backend));
     w.store.updateTodo(w.store.getTodo(first)!, { state: 'done', finishedAt: 1 }, 1);
     w.failing.status = () => {
-      w.store.updateTodo(w.store.getTodo(first)!, { state: 'todo', finishedAt: null }, 1);
-      w.failing.status = null;
+      const prerequisite = w.store.getTodo(first)!;
+      if (prerequisite.state === 'done')
+        w.store.updateTodo(prerequisite, { state: 'todo', finishedAt: null }, 1);
       return {
         ref: backend,
         title: 'busy',
@@ -307,6 +311,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     await w.runner.start(second);
     expect(w.store.getTodo(second)).toMatchObject({ state: 'todo', startedAt: null });
     expect(w.dispatched()).toEqual([]);
+    expect(w.db.prepare('SELECT todo_id FROM pack_coding_feature_sessions').all()).toEqual([]);
     await w.runner.start(first);
     expect(w.store.getTodo(first)?.reason ?? '').not.toContain('session_unknown');
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);

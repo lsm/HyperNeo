@@ -30,6 +30,18 @@ class CodingSessionAssignments {
     return this.feature(input.repo, input.featureKey)!;
   }
 
+  releaseFeature(input: { todoId: string }) {
+    this.db
+      .prepare(
+        `DELETE FROM pack_coding_feature_sessions WHERE todo_id = ?1
+         AND NOT EXISTS (SELECT 1 FROM neo_todo_sessions r WHERE r.todo_id = ?1
+           AND COALESCE(r.ref, json_extract(r.target, '$.ref')) IS NOT NULL)
+         AND EXISTS (SELECT 1 FROM neo_todos t WHERE t.id = ?1
+           AND t.state = 'todo' AND t.started_at IS NULL)`
+      )
+      .run(input.todoId);
+  }
+
   owner(input: {
     strategy: CodingSessionStrategy;
     repo: string;
@@ -128,5 +140,5 @@ export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',
   'write',
   CodingSessionAssignments,
-  ['reserveFeature']
+  ['reserveFeature', 'releaseFeature']
 );

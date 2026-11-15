@@ -130,6 +130,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     target: NeoTodoTarget,
     status: (ref: WorkRef) => Promise<OperationOutcome>
   ): Promise<NeoWorkerTargetDecision>;
+  workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
   workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
   workerBrief?(
     instruction: string,

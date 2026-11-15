@@ -37,6 +37,8 @@ import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
+import { codingSessionAssignmentWrites } from './session-assignments-worker.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -217,6 +219,10 @@ export function createCodingPack(deps: {
     prepareExecution: prepareCodingExecution,
     workerTarget: (todo, target, status) =>
       decideCodingSessionTarget(deps.database(), todo, target, status),
+    workerTargetRefused: (todo) =>
+      gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
+        todoId: todo.id,
+      }),
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
     review: runCodingReview,
     todos: {

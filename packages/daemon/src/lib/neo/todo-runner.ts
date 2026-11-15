@@ -729,11 +729,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'receipt'
     )
     .pipe(
-      (
+      async (
         receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>,
-        chosen: { value: NeoTodoTarget | null }
-      ): Gate<Startable> => {
+        chosen: { value: NeoTodoTarget | null },
+        todoId: string
+      ): Promise<Gate<Startable>> => {
         if (receipt.changed) deps.changed();
+        const refused = !receipt.ok && chosen.value?.verb === 'start' && store.getTodo(todoId);
+        if (refused)
+          await deps
+            .packs()
+            .find((pack) => pack.id === refused.check?.pack)
+            ?.workerTargetRefused?.(refused);
         return !receipt.ok
           ? fail(receipt.reason)
           : receipt.ask && receipt.target
@@ -749,7 +756,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
               }
             : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      ['receipt', 'chosen'],
+      ['receipt', 'chosen', 'todoId'],
       'result:outcome'
     )
     .pipe(dispatch, 'outcome', 'outcome')
