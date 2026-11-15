@@ -558,4 +558,26 @@ describe('immutable human settings proposals', () => {
       value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
     });
   });
+
+  test('a choice keeps every option, including keep, within chat letter replies', async () => {
+    const choice = (count: number) =>
+      invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: `letters-${count}`,
+        alternatives: Array.from({ length: count }, (_, index) => [
+          { ...values[2], value: index % 2 ? 'ci_only' : 'human' },
+          { ...values[2], key: 'humanSignoff', value: [`docs/${index}/**`] },
+        ]),
+      });
+    expect(await choice(6)).toMatchObject({ kind: 'failed' });
+    const reply = (await choice(5)) as { value: { questionId: string } };
+    const questionId = reply.value.questionId;
+    expect(service.todos.getQuestion(questionId)!.options).toHaveLength(6);
+    await chat(questionId, 'F');
+    expect(service.todos.getQuestion(questionId)).toMatchObject({
+      state: 'answered',
+      answer: ['Keep current settings'],
+    });
+    expect(await saved()).toMatchObject({ value: { preferences: [] } });
+  });
 });
