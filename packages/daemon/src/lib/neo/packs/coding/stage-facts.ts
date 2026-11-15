@@ -193,5 +193,5 @@ export const codingCrossModelReviewed = (
       fact.stage === 'review' &&
       fact.verdict === 'pass' &&
       fact.head === head &&
-      codingReviewerPolicy(true, body, fact.actor).qualifies
+      (fact.actor.kind === 'human' || codingReviewerPolicy(true, body, fact.actor).qualifies)
   );

@@ -128,7 +128,9 @@ propose or change it. When on, a bot-approved green PR waits in waiting_cross_re
 until a Review passes on its head by a different model than its Agent line, and the
 daemon will not merge it before then. When the PR sweep wakes you for one, assign
 `review` on that head to a non-Claude candidate for a Claude author (any different
-recognised model otherwise) with `neo.coding.assign`, then relay its result.
+recognised model otherwise) with `neo.coding.assign`, then relay its result. A PR
+without an exact Agent line cannot be compared: ask its author to repair the line,
+or assign a human reviewer, whose passing Review always clears the hold.
 Keep the repository's existing review and merge rules.
 
 Assign `review` then `verify` with `neo.coding.assign` on the same existing todoId,
