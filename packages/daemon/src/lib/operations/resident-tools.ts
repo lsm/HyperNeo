@@ -9,7 +9,8 @@ export const NEO_RESIDENT_FAMILIES = [
   },
   {
     name: 'neo_todo',
-    description: 'Manage todos. add needs title/check; continue needs todoId/message.',
+    description:
+      'Manage todos. add needs title/check; continue needs todoId, and message unless the todo failed.',
     prefix: 'neo.todo',
     actions: ['add', 'continue', 'edit', 'remove', 'hold', 'done', 'bind', 'proceed', 'read'],
   },
