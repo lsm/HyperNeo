@@ -80,12 +80,16 @@ export async function settleConvoInput(
     if (!service.db.getSession(origin)) return markFailed(id, origin);
     const reserved = await handOffToNeo(service, conversationId, openAsk, id);
     if (reserved === 'reserved') return 'handed_off' as const;
+    if (reserved === 'stale') return 'stale' as const;
     return markFailed(id, origin);
   };
   let self = 'failed';
+  let contended = false;
   for (const id of open) {
     const outcome = await handOff(id);
+    if (outcome === 'stale') contended = true;
     if (id === messageId) self = outcome;
   }
+  if (contended) return pending();
   return { delivered: true, outcome: self === 'handed_off' ? 'handed_off' : 'failed' };
 }
