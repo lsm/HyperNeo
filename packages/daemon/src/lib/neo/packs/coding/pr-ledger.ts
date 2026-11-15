@@ -704,7 +704,7 @@ export class CodingPrLedgerRepository {
     );
     for (const row of rows) {
       this.stageFacts.observeHead(
-        `https://github.com/${row.repo}/pull/${row.number}`,
+        `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
         row.head,
         observedAt
       );
