@@ -105,8 +105,6 @@ export function neoCancelledPrerequisiteNote(todo: NeoTodo, family: readonly Neo
   );
   return [
     `Prerequisite ${names.join(', ')} of todo "${todo.title}" (${todo.id}) was cancelled, so it will not start by itself.`,
-    'neo.todo.proceed continues it,',
-    ...waitLine(family, todo.id),
     'neo.todo.remove stops it, and neo.question.ask is only for when you cannot tell what the human wants.',
   ].join(' ');
 }

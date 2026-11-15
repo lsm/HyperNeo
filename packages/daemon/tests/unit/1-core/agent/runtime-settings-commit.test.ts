@@ -346,7 +346,10 @@ describe('runtime settings commit admission', () => {
   test('AgentSession forwards two, three and four arguments exactly', async () => {
     const forwarded = { success: true, model: 'm' };
     const switchModel = vi.fn(async (_m: string, _p: string, _n?: boolean) => forwarded);
-    const session = { modelSwitchHandler: { switchModel } } as unknown as AgentSession;
+    const session = {
+      modelSwitchHandler: { switchModel },
+      rateLimitWatchdog: { forgetModelLimits: async () => {} },
+    } as unknown as AgentSession;
     await AgentSession.prototype.handleModelSwitch.call(session, 'm', 'anthropic');
     await AgentSession.prototype.handleModelSwitch.call(session, 'm', 'anthropic', true);
     repo.createSession(seedSession());

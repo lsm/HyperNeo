@@ -93,6 +93,7 @@ describe('session.runtimeSettings.update native boundary', () => {
     } as unknown as ModelSwitchHandlerContext;
     const native = {
       modelSwitchHandler: new ModelSwitchHandler(ctx),
+      rateLimitWatchdog: { forgetModelLimits: async () => {} },
       handleModelSwitch: NativeSession.prototype.handleModelSwitch,
       getSessionData: () => session,
       getProcessingState: () => ({ status: state.status }),

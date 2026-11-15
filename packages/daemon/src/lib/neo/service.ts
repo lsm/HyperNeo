@@ -108,6 +108,7 @@ import {
   effectiveNeoPreference,
   neoCompactPercentFor,
   planNeoAlignment,
+  planPreferredReturn,
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
@@ -556,15 +557,19 @@ export class NeoService {
     });
   }
 
-  private async alignModelPreference(sessionId: string): Promise<void> {
-    const preference = this.modelPreference();
+  private async alignModelPreference(
+    sessionId: string,
+    preference: NeoModelPreference | null = this.modelPreference(),
+    stillWanted?: () => boolean
+  ): Promise<'deferred' | undefined> {
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
     if (!preference || !plan) return;
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (!live) return;
+    if (!live) return 'deferred';
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
-      return;
+      return 'deferred';
+    if (stillWanted && !stillWanted()) return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
@@ -573,7 +578,11 @@ export class NeoService {
     if (!plan.model) return;
     let restored = false;
     try {
-      const switched = await live.requestModelSwitch(preference.model, preference.provider);
+      const switched = await live.requestModelSwitch(
+        preference.model,
+        preference.provider,
+        stillWanted
+      );
       restored = switched.success && !switched.pending;
       if (!switched.success)
         this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
@@ -582,6 +591,34 @@ export class NeoService {
         await this.sessions.updateSession(sessionId, {
           config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
         });
+    }
+  }
+
+  async returnToPreferredModels(now = Date.now()): Promise<void> {
+    const settings = this.db.getGlobalSettings();
+    const conversation = this.repo.readConversationId();
+    const targets: [string | undefined, NeoModelPreference | undefined][] = [
+      [this.repo.defaultBinding()?.sessionId, settings.neo?.preferences],
+      [conversation ? frontSessionId(conversation) : undefined, settings.neo?.front?.model],
+    ];
+    for (const [sessionId, preference] of targets) {
+      const stored = sessionId && preference ? this.db.getSession(sessionId) : null;
+      if (!sessionId || !preference || !stored) continue;
+      const plan = (session: Session) =>
+        planPreferredReturn(
+          session.config,
+          preference,
+          session.metadata.modelLimits ?? {},
+          now,
+          Boolean(session.metadata.pendingModelSwitch)
+        );
+      if (!plan(stored)) continue;
+      const live = await this.sessions.getSessionForControl(sessionId);
+      if (!live) continue;
+      const due = () => plan(live.getSessionData()) === 'return';
+      if (due() && (await this.alignModelPreference(sessionId, preference, due)) === 'deferred')
+        continue;
+      await live.forgetModelLimits?.();
     }
   }
 
@@ -862,7 +899,7 @@ export class NeoService {
           (staged, question, reportId) =>
             wake(
               reportId,
-              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
+              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.ask with kind relay in your own plain words.`
             )
         );
         return result.ok ? receipt : { kind: 'rejected', reason: result.reason };
@@ -1157,6 +1194,9 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    await this.returnToPreferredModels().catch((error) =>
+      this.log.warn('Preferred model return pending', error)
+    );
     await wakeNeoFollowUpGaps(this.todos, this.wakeNeo.bind(this)).catch((error) =>
       this.log.warn('Follow-up wake pending', error)
     );

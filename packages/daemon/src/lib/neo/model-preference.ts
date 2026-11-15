@@ -1,6 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
+import type { ModelLimit } from '@hyperneo/shared';
 import { findSameModel, resolveAutoCompactPercent, normalizeThinkingLevel } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -96,6 +97,30 @@ export function planNeoAlignment(
   const model = config.model !== preference.model || config.provider !== preference.provider;
   const thinking = normalizeThinkingLevel(config.thinkingLevel) !== preference.thinkingLevel;
   return model || thinking ? { model, thinking } : null;
+}
+
+export function planPreferredReturn(
+  config: RuntimeConfig,
+  preference: NeoModelPreference,
+  modelLimits: Readonly<Record<string, ModelLimit>>,
+  now: number,
+  pendingSwitch = false
+): 'return' | 'forget' | null {
+  const key = `${preference.provider}/${preference.model}`;
+  const limit = modelLimits[key];
+  if (!limit) return null;
+  if (pendingSwitch) return 'forget';
+  if (limit.until > now) return null;
+  const current = `${config.provider}/${config.model}`;
+  const seen = new Set([key]);
+  let at = limit.fallback;
+  while (at !== current) {
+    const next = modelLimits[at];
+    if (!next || seen.has(at)) return 'forget';
+    seen.add(at);
+    at = next.fallback;
+  }
+  return planNeoAlignment(config, preference)?.model ? 'return' : 'forget';
 }
 
 export function createNeoPreferenceOperation(service: NeoService) {

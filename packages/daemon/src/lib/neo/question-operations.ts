@@ -337,20 +337,22 @@ const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input
   message: 'retireWhen is required without a linked todo; supply {pack, kind, params}.',
   path: ['retireWhen'],
 });
-
-type Bound = z.infer<typeof Ask> & { askId: string };
-
-const Retire = z.object({ questionId: Text, reason: Text });
-const Relay = z
-  .object({
+const RelayAsk = z
+  .strictObject({
+    kind: z.literal('relay'),
     todoId: Text.optional(),
     session: Text.optional().describe('The notice key of a session with no todo.'),
-    title: ReportLine,
+    text: ReportLine,
     options: z.array(ReportLine).min(2).max(6),
   })
   .refine((input) => !input.todoId !== !input.session, {
     message: 'Pass todoId, or session for a session with no todo.',
   });
+
+type Bound = z.infer<typeof Ask> & { askId: string };
+
+const Retire = z.object({ questionId: Text, reason: Text });
+type Relay = { todoId?: string; session?: string; title: string; options: string[] };
 
 const Answer = z.object({
   questionId: Text,
@@ -688,10 +690,7 @@ export function createNeoQuestionOperations(
   deliverAnswers: (questionId: string) => Promise<void> = async () => {},
   inputs: NeoInputReads = noNeoInputReads,
   policies: () => readonly NeoTodoPolicy[] = questionPolicies,
-  relay: (
-    input: z.infer<typeof Relay>,
-    caller: OperationCaller
-  ) => Promise<unknown> = async () => ({
+  relay: (input: Relay, caller: OperationCaller) => Promise<unknown> = async () => ({
     ok: false,
     reason: 'no_worker_question: this todo has no worker question to relay.',
   }),
@@ -1060,10 +1059,20 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description: neoToolDescription('neo.question.ask'),
-      inputSchema: Ask,
+      inputSchema: z.union([RelayAsk, Ask]),
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => ask(input, caller),
+      execute: async (input, caller) =>
+        input.kind === 'relay'
+          ? ((await relay(
+              {
+                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
+                title: input.text,
+                options: input.options,
+              },
+              caller
+            )) as QuestionReceipt | Rejection)
+          : ask(input, caller),
     }),
     defineOperation({
       name: 'neo.question.retire',
@@ -1072,14 +1081,6 @@ export function createNeoQuestionOperations(
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => retire(input, caller),
-    }),
-    defineOperation({
-      name: 'neo.question.relay',
-      description: neoToolDescription('neo.question.relay'),
-      inputSchema: Relay,
-      resultSchema: QuestionResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => (await relay(input, caller)) as QuestionReceipt | Rejection,
     }),
     defineOperation({
       name: 'neo.question.get',
