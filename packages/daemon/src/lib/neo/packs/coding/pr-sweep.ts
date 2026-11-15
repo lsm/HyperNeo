@@ -88,7 +88,7 @@ export function codingPrEscalationText(
   unreachable: boolean
 ): string {
   if (row.state === 'waiting_cross_review')
-    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign. If it has no exact Agent line, ask its author to repair the line or assign a human reviewer.`;
+    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} has made no progress`;

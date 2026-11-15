@@ -129,8 +129,8 @@ until a Review passes on its head by a different model than its Agent line, and 
 daemon will not merge it before then. When the PR sweep wakes you for one, assign
 `review` on that head to a non-Claude candidate for a Claude author (any different
 recognised model otherwise) with `neo.coding.assign`, then relay its result. A PR
-without an exact Agent line cannot be compared: ask its author to repair the line,
-or assign a human reviewer, whose passing Review always clears the hold.
+without an exact Agent line has no author model to differ from and is not held;
+provenance governs that line.
 Keep the repository's existing review and merge rules.
 
 Assign `review` then `verify` with `neo.coding.assign` on the same existing todoId,

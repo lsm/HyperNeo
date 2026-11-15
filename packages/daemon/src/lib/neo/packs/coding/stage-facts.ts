@@ -188,10 +188,11 @@ export const codingCrossModelReviewed = (
   head: string,
   facts: readonly CodingStageFact[]
 ) =>
+  !parseAuthor(body) ||
   facts.some(
     (fact) =>
       fact.stage === 'review' &&
       fact.verdict === 'pass' &&
       fact.head === head &&
-      (fact.actor.kind === 'human' || codingReviewerPolicy(true, body, fact.actor).qualifies)
+      codingReviewerPolicy(true, body, fact.actor).qualifies
   );
