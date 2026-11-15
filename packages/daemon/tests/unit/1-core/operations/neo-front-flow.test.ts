@@ -2180,6 +2180,21 @@ test('settlement retries later when every reservation goes stale, never failing 
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
+test('a legacy input without a catch-up range keeps a reply that omitted replyTo', async () => {
+  const { id } = await deliveredConvoInput();
+  db.getDatabase()
+    .prepare(
+      'UPDATE neo_front_inputs SET catch_up_from = NULL, catch_up_through = NULL WHERE conversation_id = ? AND message_id = ?'
+    )
+    .run(conversationId, id);
+  expect(
+    await convoPublish({ requestId: 'legacy', fullText: 'Legacy answer.', work_on: false })
+  ).toMatchObject({ accepted: true, started: true });
+  const said = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(said).toContain('<already-said>');
+  expect(said).toContain('Legacy answer.');
+});
+
 test('an unknown replyTo is refused but never blocks the current input', async () => {
   const { id } = await deliveredConvoInput();
   expect(
