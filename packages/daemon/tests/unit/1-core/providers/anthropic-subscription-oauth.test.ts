@@ -197,9 +197,9 @@ describe('anthropic-subscription-oauth helpers', () => {
     expect(result).toEqual({ ok: false, definitive: false, oauthError: 'unavailable' });
   });
 
-  it('keeps only a plain OAuth error code from a failed refresh', async () => {
+  it('reports no OAuth error code when the error field is not a string', async () => {
     const fetchImpl = mock(async () =>
-      jsonResponse({ error: 'bad token refresh-value' }, 400)
+      jsonResponse({ error: { code: 'invalid_grant' } }, 400)
     ) as unknown as typeof fetch;
     const result = await refreshClaudeSubscriptionToken({
       refreshToken: 'refresh-value',

@@ -1095,4 +1095,60 @@ describe('background refresh outcomes', () => {
       warn.mockRestore();
     }
   });
+
+  it('logs an unrecognized OAuth error code as unrecognized, never the echoed value', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      const clock = { now: 0 };
+      const outcomes: TokenRefreshResult[] = [
+        { outcome: 'transient', oauthError: 'secret-access-token' },
+        { outcome: 'definitive', oauthError: 'secret-refresh-token' },
+      ];
+      const { scheduler } = backgroundScheduler(async () => outcomes.shift() ?? 'transient', clock);
+
+      await scheduler.tick();
+      clock.now += refreshDelayMs(1);
+      await scheduler.tick();
+
+      const lines = warn.mock.calls.map((call) => call.map(String).join(' '));
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(line).toContain('oauthError=unrecognized');
+        expect(line).not.toContain('secret-');
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('ignores a refresh outcome that a credential write superseded mid-flight', async () => {
+    const clock = { now: 0 };
+    let refreshes = 0;
+    let answer: (result: TokenRefreshResult) => void = () => {};
+    const { scheduler, manager, needsLogin } = backgroundScheduler(() => {
+      refreshes += 1;
+      return new Promise<TokenRefreshResult>((resolve) => {
+        answer = resolve;
+      });
+    }, clock);
+
+    const stale = scheduler.tick();
+    while (refreshes === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    scheduler.resetClock('oauth-provider');
+    answer({ outcome: 'definitive', oauthError: 'invalid_grant' });
+    await stale;
+
+    expect(needsLogin).toEqual([]);
+    expect(manager.health.has('oauth-provider')).toBe(false);
+    expect(scheduler.clock('oauth-provider')).toEqual({
+      nextRefreshAt: 0,
+      attempt: 0,
+      lastOutcome: 'none',
+    });
+    const next = scheduler.tick();
+    while (refreshes === 1) await new Promise((resolve) => setTimeout(resolve, 1));
+    answer('transient');
+    await next;
+    expect(refreshes).toBe(2);
+  });
 });
