@@ -54,6 +54,7 @@ class CodingSessionAssignments {
 
   private prHolder(url: string): Owner | null {
     const key = codingPrKey(url);
+    if (!key) return null;
     const rows = this.db
       .prepare(
         `SELECT p.todo_id AS todoId, p.prs_json AS prs FROM pack_coding_todo_prs p
