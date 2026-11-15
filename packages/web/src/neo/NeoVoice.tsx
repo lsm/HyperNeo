@@ -125,8 +125,7 @@ export function NeoVoice({
     return () => {
       mounted.current = false;
       dropLiveStream();
-      if (!pending.current && (latest.current.isRecording || latest.current.durationLimitHit))
-        void finalizeUnmountedRecording();
+      if (!pending.current) void finalizeUnmountedRecording(sessionId, latest.current.ownerId);
       else void latest.current.cancel();
     };
   }, []);

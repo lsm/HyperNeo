@@ -14,7 +14,9 @@ const recorder = vi.hoisted(() => ({
   isStarting: false,
   durationLimitHit: false,
   sessionId: null as string | null,
+  ownerId: null as string | null,
   stop: vi.fn(),
+  cancel: vi.fn(async () => {}),
 }));
 vi.mock('../voice-recorder-store.ts', () => ({
   voiceRecorderStore: {
@@ -38,7 +40,13 @@ vi.mock('../voice-recorder-store.ts', () => ({
         return recorder.sessionId;
       },
     },
+    recordingOwnerId: {
+      get value() {
+        return recorder.ownerId;
+      },
+    },
     stop: recorder.stop,
+    cancel: recorder.cancel,
   },
 }));
 
@@ -99,7 +107,9 @@ describe('voice audio outbox', () => {
     recorder.isStarting = false;
     recorder.durationLimitHit = false;
     recorder.sessionId = null;
+    recorder.ownerId = null;
     recorder.stop.mockReset();
+    recorder.cancel.mockClear();
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
     enqueueTranscript.mockReset().mockReturnValue(true);
     removePendingTranscript.mockClear();
@@ -342,7 +352,7 @@ describe('voice audio outbox', () => {
       return { audioBase64: 'bmV3', mimeType: 'audio/wav', peakLevel: 0.5 };
     });
 
-    await finalizeUnmountedRecording();
+    await finalizeUnmountedRecording('s1', 'owner-1');
     expect(recorder.stop).toHaveBeenCalledOnce();
     expect(hubRequest).toHaveBeenCalledWith(
       'voice.transcribe',
@@ -366,13 +376,32 @@ describe('voice audio outbox', () => {
       return { audioBase64: 'c2lsZW50', mimeType: 'audio/wav', peakLevel: 0.0004 };
     });
 
-    await finalizeUnmountedRecording();
+    await finalizeUnmountedRecording('s1', 'owner-1');
     expect(recorder.stop).toHaveBeenCalledOnce();
     expect(store.records).toEqual([]);
   });
 
+  it('refuses to finalize a recording another composer owns', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's1';
+    recorder.ownerId = 'other-owner';
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(store.records).toEqual([]);
+  });
+
+  it('refuses to finalize a recording belonging to another session', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's2';
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(store.records).toEqual([]);
+  });
+
   it('does nothing when no recording is active', async () => {
-    await finalizeUnmountedRecording();
+    await finalizeUnmountedRecording('s1', 'owner-1');
     expect(recorder.stop).not.toHaveBeenCalled();
     expect(store.records).toEqual([]);
   });

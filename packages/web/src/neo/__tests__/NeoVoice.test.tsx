@@ -22,6 +22,7 @@ vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.e
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   isVoiceRecordingSupported: () => true,
   useVoiceRecorder: () => ({
+    ownerId: 'owner-1',
     get isRecording() {
       return voice.recording;
     },
@@ -514,10 +515,10 @@ describe('Neo voice', () => {
       />
     );
     view.unmount();
-    expect(voice.finalize).toHaveBeenCalledOnce();
+    expect(voice.finalize).toHaveBeenCalledExactlyOnceWith('neo:club', 'owner-1');
     expect(voice.cancel).not.toHaveBeenCalled();
   });
-  it('cancels the recorder when unmounting without a pending record', () => {
+  it('routes unmount cleanup through the outbox when no transcription is pending', () => {
     const view = render(
       <NeoVoice
         sessionId="neo:club"
@@ -531,8 +532,8 @@ describe('Neo voice', () => {
       />
     );
     view.unmount();
-    expect(voice.finalize).not.toHaveBeenCalled();
-    expect(voice.cancel).toHaveBeenCalledOnce();
+    expect(voice.finalize).toHaveBeenCalledExactlyOnceWith('neo:club', 'owner-1');
+    expect(voice.cancel).not.toHaveBeenCalled();
   });
   it('surfaces saved recording failures and microphone refusal', async () => {
     voice.enabled = true;

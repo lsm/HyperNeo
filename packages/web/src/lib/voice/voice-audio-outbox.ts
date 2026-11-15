@@ -265,12 +265,20 @@ export async function refreshPendingVoiceAudio(): Promise<void> {
   pendingVoiceAudioRecords.value = await listVoiceRecords();
 }
 
-export async function finalizeUnmountedRecording(): Promise<void> {
-  if (!voiceRecorderStore.isRecording.value && !voiceRecorderStore.durationLimitHit.value) return;
-  const sessionId = voiceRecorderStore.recordingSessionId.value;
+export async function finalizeUnmountedRecording(
+  sessionId: string,
+  ownerId: string | null
+): Promise<void> {
+  if (voiceRecorderStore.recordingSessionId.value !== sessionId) return;
+  const owner = voiceRecorderStore.recordingOwnerId.value;
+  if (owner !== null && owner !== ownerId) return;
   try {
+    if (!voiceRecorderStore.isRecording.value && !voiceRecorderStore.durationLimitHit.value) {
+      await voiceRecorderStore.cancel();
+      return;
+    }
     const recording = await voiceRecorderStore.stop();
-    if (sessionId && recording.peakLevel >= VOICE_SUBMIT_SILENCE_PEAK_LEVEL) {
+    if (recording.peakLevel >= VOICE_SUBMIT_SILENCE_PEAK_LEVEL) {
       await putVoiceRecord({
         id: generateUUID(),
         sessionId,
