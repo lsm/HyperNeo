@@ -317,4 +317,27 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
     expect(w.store.getTodo(first)?.state).toBe('doing');
   });
+
+  test('an interrupted start keeps the coding feature after recovery, so the next todo waits', async () => {
+    const w = (current = world(true));
+    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+    const first = w.add(check, 'first');
+    const second = w.add(check, 'second');
+    for (const id of [first, second])
+      w.db
+        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
+        .run(id, 'synthetic/repo');
+    w.db
+      .prepare(
+        "INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES ('synthetic/repo', 'ask', ?, 1)"
+      )
+      .run(first);
+    w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 1 }, 1);
+    await w.runner.refresh(() => {});
+    expect(w.store.getTodo(first)?.state).toBe('failed');
+    expect(w.sessions.readStartInterrupted(first)).toBeTruthy();
+    await w.runner.start(second);
+    expect(w.store.getTodo(second)?.reason ?? '').toContain('session_unknown');
+    expect(w.dispatched()).toEqual([]);
+  });
 });
