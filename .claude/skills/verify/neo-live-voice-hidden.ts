@@ -37,7 +37,16 @@ let browser: { newContext(options?: unknown): Promise<any>; close(): Promise<voi
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
-  await app.settingsManager.updateGlobalSettings({ language: 'en' });
+  await app.settingsManager.updateGlobalSettings({
+    language: 'en',
+    voice: {
+      enabled: true,
+      endpoint: `http://127.0.0.1:${app.server.port}/synthetic-asr-unused`,
+      model: 'synthetic',
+      mode: 'batch',
+      allowPrivateNetwork: true,
+    },
+  });
   const now = new Date().toISOString();
   await app.db.createSession({
     id: sessionId,

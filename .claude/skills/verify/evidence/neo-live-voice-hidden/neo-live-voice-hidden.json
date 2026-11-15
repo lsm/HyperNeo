@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "themes": [
+    {
+      "scheme": "light",
+      "realtimeButtons": 0,
+      "micPresent": true,
+      "theme": "light"
+    },
+    {
+      "scheme": "dark",
+      "realtimeButtons": 0,
+      "micPresent": true,
+      "theme": "dark"
+    }
+  ]
+}
