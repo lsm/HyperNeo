@@ -34,7 +34,7 @@ pack scans ──raise──▶          └─ record decision ─────�
 
 ```ts
 type NeoAttentionEvent = {
-  kind: string;                        // 'todo.failed', 'coding.pr_merged_outside_todo', ...
+  kind: string;                        // 'todo.neo_step', 'coding.pr_merged_outside_todo', ...
   subject: { type: 'todo' | 'ask' | 'worker' | 'card' | string; id: string };
   pack: string | null;                 // null for core kinds
   facts: Record<string, unknown>;      // what the producer observed
@@ -134,7 +134,7 @@ Each item carries its attention id. One new core operation, `neo.attention.wait 
 | `listening` on/off | record only, never wakes | — | — | — |
 | `turn.report` done/running, with todo | digest. Wake if it carries a question, a `Blocked (…)` line, or the todo is `blocked`. | latest report from the same worker; todo state; covering card | none | a newer report from the same worker (fold); todo closed |
 | `turn.report` notice (no todo) | digest, latest per worker | same | none | a newer report |
-| `turn.report` failed / needs_you | wake | todo, cards | via `todo.failed` / `todo.stalled` | todo leaves state |
+| `turn.report` failed / needs_you | wake | todo, cards | via `todo.neo_step` / `todo.stalled` | todo leaves state |
 | `turn.report` focused status | drop ("status only, focused") | ask.focusedSession | — | — |
 | `todo.done` | drop as its own item; raises `ask.finished` when it was the last open todo | ask todos | — | — |
 | `ask.finished` (all todos finished) | wake once per finish | ask, todos | 24 h | ask settled or a todo added |
