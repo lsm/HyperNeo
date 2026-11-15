@@ -30,7 +30,7 @@ export const NEO_RESIDENT_FAMILIES = [
     name: 'neo_question',
     description: 'Manage human cards. ask needs kind/text; get needs questionId.',
     prefix: 'neo.question',
-    actions: ['ask', 'get', 'retire', 'relay'],
+    actions: ['ask', 'get', 'retire'],
   },
   {
     name: 'neo_session',

@@ -862,7 +862,7 @@ export class NeoService {
           (staged, question, reportId) =>
             wake(
               reportId,
-              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.relay with your own plain words.`
+              `Worker question on todo ${staged.id}: ${question.title}\nOptions: ${question.options.join(' | ')}\nAnswer the worker and continue if you can. If only the human can decide, call neo.question.ask with kind relay in your own plain words.`
             )
         );
         return result.ok ? receipt : { kind: 'rejected', reason: result.reason };
