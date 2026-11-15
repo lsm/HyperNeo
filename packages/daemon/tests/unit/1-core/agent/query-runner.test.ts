@@ -6040,6 +6040,34 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
+    it('lands in the sign-in hold when a later rejection follows a credential write', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      let epoch = 0;
+      let writes = 0;
+      const seen: Array<{ epoch: number | undefined; writes: number }> = [];
+      const ctx = createContext({
+        hasLoginRecovery: () => true,
+        loginCredentialEpoch: () => epoch,
+        onLoginRejected: async (prompt, attemptEpoch) => {
+          seen.push({ epoch: attemptEpoch, writes });
+          writes += 1;
+          if (writes === 1) {
+            epoch += 1;
+            return 'retry';
+          }
+          return attemptEpoch !== undefined && epoch > attemptEpoch ? 'retry' : 'sign_in';
+        },
+      });
+      ctx.session.config.provider = 'anthropic';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(seen).toHaveLength(2);
+      expect(seen[1]?.epoch).toBe(1);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('holds instead of restarting when the refresh is still failing', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
       const ctx = createContext({

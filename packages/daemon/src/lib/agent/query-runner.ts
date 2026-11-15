@@ -421,8 +421,10 @@ export interface QueryRunnerContext {
 
   isLimitRecoveryPending?(): boolean;
   hasLoginRecovery?(): boolean;
+  loginCredentialEpoch?(): number;
   onLoginRejected?(
-    prompt: { uuid: string; content: string | MessageContent[] } | null
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    attemptEpoch?: number
   ): Promise<'retry' | 'refresh_pending' | 'sign_in'>;
   endNetworkOutage?(): void;
   onNetworkOutage?(
@@ -1869,7 +1871,10 @@ export class QueryRunner {
       }
       if (routeDecision.route.action === 'claude_auth_retry') {
         const plan = this.ctx.hasLoginRecovery?.()
-          ? await this.ctx.onLoginRejected?.(this._lastConsumedUserMessage)
+          ? await this.ctx.onLoginRejected?.(
+              this._lastConsumedUserMessage,
+              this.ctx.loginCredentialEpoch?.()
+            )
           : 'retry';
         if (plan === 'retry')
           return await this.runRetryTeardown(queryGeneration, attemptToken, {

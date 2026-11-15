@@ -3053,13 +3053,20 @@ export class AgentSession
     return !!this.runtimeOptions.loginRecovery;
   }
 
-  async onLoginRejected(prompt: { uuid: string; content: string | MessageContent[] } | null) {
+  loginCredentialEpoch(): number {
+    return this.loginRecovery?.epoch(this.providerId()) ?? 0;
+  }
+
+  async onLoginRejected(
+    prompt: { uuid: string; content: string | MessageContent[] } | null,
+    attemptEpoch?: number
+  ) {
     if (!this.loginRecovery) return 'sign_in' as const;
     const plan = await this.loginRecovery.recover(
       this.providerId(),
       prompt,
       this.loginRetriedInTurn,
-      this.loginAttemptEpoch ?? undefined
+      attemptEpoch ?? this.loginAttemptEpoch ?? undefined
     );
     if (plan === 'retry') {
       this.loginRetriedInTurn = true;

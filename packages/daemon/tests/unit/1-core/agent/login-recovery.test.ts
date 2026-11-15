@@ -256,6 +256,33 @@ describe('createLoginRecovery', () => {
     expect(h.state.needsLoginAt).not.toBeNull();
   });
 
+  test('a stop during an in-flight refresh installs no hold afterwards', async () => {
+    let release: (() => void) | undefined;
+    let refreshed = false;
+    const h = recoveryDeps({ outcomes: ['transient'] });
+    const deps = {
+      ...h.deps,
+      refresh: async () => {
+        await new Promise<void>((done) => {
+          release = done;
+        });
+        refreshed = true;
+        return 'transient' as const;
+      },
+    };
+    const recovery = createLoginRecovery(deps);
+
+    const pending = recovery.recover('anthropic', { uuid: 'prompt', content: 'ask' }, false);
+    while (release === undefined) await new Promise((done) => setTimeout(done, 0));
+    recovery.stop('anthropic');
+    (release as () => void)();
+    await pending;
+
+    expect(refreshed).toBe(true);
+    expect(recovery.isHeld('anthropic')).toBe(false);
+    expect(h.held).toHaveLength(0);
+  });
+
   test('a health-only change leaves a login hold in place', async () => {
     const h = recoveryDeps({ outcomes: ['definitive'] });
     const recovery = createLoginRecovery(h.deps);

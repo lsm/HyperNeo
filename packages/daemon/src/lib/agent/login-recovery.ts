@@ -79,8 +79,10 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   const holds = new Map<string, LoginHoldState>();
   const writes = new Map<string, number>();
   const entering = new Set<string>();
+  const cancellations = new Map<string, number>();
 
   const writeCount = (providerId: string) => writes.get(providerId) ?? 0;
+  const cancelCount = (providerId: string) => cancellations.get(providerId) ?? 0;
 
   async function recover(
     providerId: string,
@@ -89,6 +91,8 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     attemptEpoch?: number
   ): Promise<LoginRecoveryPlan> {
     const seenWrites = writeCount(providerId);
+    const seenCancels = cancelCount(providerId);
+    const cancelled = () => cancelCount(providerId) !== seenCancels;
     const written = () => writeCount(providerId) !== seenWrites;
     if (
       !retried &&
@@ -103,18 +107,18 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
         facts: async () => deps.facts(providerId, retried),
         refresh: () => deps.refresh(providerId),
       });
-      if (plan === 'retry') return plan;
+      if (plan === 'retry' || cancelled()) return plan;
       const state = startHold(providerId, prompt, plan === 'sign_in');
       if (!state.active) return plan;
       await persist(providerId, state);
-      if (!state.active) return plan;
+      if (!state.active || cancelled()) return plan;
       if (written() && mayResume(deps.facts(providerId, false))) {
         stop(providerId);
         return 'retry' as const;
       }
       if (plan === 'sign_in') deps.enterSignIn(providerId);
       else deps.enterTransient(providerId);
-      if (!state.active) return plan;
+      if (!state.active || cancelled()) return plan;
       armTimer(providerId, state);
       if (written() && mayResume(deps.facts(providerId, false))) await resume(providerId, state);
       return plan;
@@ -221,6 +225,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
   }
 
   function stop(providerId: string, error?: unknown): void {
+    cancellations.set(providerId, cancelCount(providerId) + 1);
     const state = holds.get(providerId);
     if (!state) return;
     state.cancel?.();
