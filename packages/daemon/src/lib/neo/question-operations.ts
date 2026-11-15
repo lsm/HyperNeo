@@ -1066,8 +1066,7 @@ export function createNeoQuestionOperations(
         input.kind === 'relay'
           ? ((await relay(
               {
-                todoId: input.todoId,
-                session: input.session,
+                ...(input.todoId ? { todoId: input.todoId } : { session: input.session }),
                 title: input.text,
                 options: input.options,
               },
