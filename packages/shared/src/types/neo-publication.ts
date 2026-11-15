@@ -10,6 +10,7 @@ export const NEO_REPLY_CHAR_LIMIT = 400;
 export const NEO_REPLY_WORD_LIMIT = 60;
 export const NEO_REPLY_LINE_LIMIT = 5;
 export const NEO_FRONT_REPLY_CHAR_LIMIT = 150;
+export const NEO_FRONT_ACK_CHAR_LIMIT = 80;
 
 export const neoCharCount = (value: string): number => [...value].length;
 

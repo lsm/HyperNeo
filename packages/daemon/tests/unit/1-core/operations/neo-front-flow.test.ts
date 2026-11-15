@@ -7,6 +7,7 @@ import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/d
 import { createFrontTools } from '../../../../src/lib/neo/front-model.ts';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { MessageHub, Session } from '@hyperneo/shared';
+import { NEO_FRONT_ACK_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
@@ -647,7 +648,43 @@ test('a todo detail carries the pack rows pinned to it as packFacts', async () =
     items: Record<string, unknown>[];
   };
   expect(page.items.every((item) => !('packFacts' in item))).toBe(true);
-  expect(text(await readTool.handler({ id: 'missing' }, {} as never))).toBeNull();
+  expect(text(await readTool.handler({ id: 'missing' }, {} as never))).toEqual({
+    found: false,
+    reason: 'Nothing in todos has id missing. Call todos_read without id to page through them.',
+  });
+});
+
+test('a front read pages past newer closed items to an older open one', async () => {
+  const sql = db.getDatabase();
+  sql
+    .prepare(
+      `INSERT INTO neo_asks (id,session_id,title,request,status,outcome,created_at,updated_at)
+       VALUES ('ask-1','synthetic','Ask','Private request','open','',0,10)`
+    )
+    .run();
+  const insert = sql.prepare(
+    `INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at)
+     VALUES (?,'ask-1',?,?,'Done',?,?,10)`
+  );
+  insert.run('open-old', 0, 'Open todo', 'doing', 0);
+  for (let index = 1; index <= 10; index++)
+    insert.run(`done-${index}`, index, `Done todo ${index}`, 'done', index);
+  createFrontTools(service, conversationId);
+  const readTool = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((entry) => entry.name === 'todos_read')!;
+  expect(readTool.description).toContain('with text it returns the matches, open or closed');
+  const page = async (input: Record<string, string>) =>
+    JSON.parse(
+      ((await readTool.handler(input, {} as never)).content[0] as { text: string }).text
+    ) as { items: { id: string }[]; nextCursor: string | null };
+  const first = await page({});
+  expect(first.items).toEqual([]);
+  expect(typeof first.nextCursor).toBe('string');
+  const second = await page({ cursor: first.nextCursor! });
+  expect(second.items.map((item) => item.id)).toEqual(['open-old']);
+  expect(second.nextCursor).toBeNull();
 });
 
 test('in dual mode Neo publishes to the human directly', async () => {
@@ -1434,12 +1471,44 @@ test('a front reply over the shared line limit is told to shorten, not to add de
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
 
+test('a front reply that hands off is held to a short acknowledgment and is not handed off', async () => {
+  const { id } = await deliveredConvoInput();
+  createFrontTools(service, conversationId);
+  const reply = vi
+    .mocked(createSdkMcpServer)
+    .mock.calls.at(-1)![0]
+    .tools!.find((tool) => tool.name === 'reply')!;
+  const send = async (requestId: string, text: string, work_on: boolean) =>
+    JSON.parse(
+      (
+        (await reply.handler({ requestId, replyTo: [id], text, work_on }, {} as never))
+          .content[0] as {
+          text: string;
+        }
+      ).text
+    );
+  const long = `${'I will check that. '.repeat(4)}Back soon.`;
+  expect(long.length).toBeGreaterThan(NEO_FRONT_ACK_CHAR_LIMIT);
+  const refused = await send('long-ack', long, true);
+  expect(refused.accepted).toBe(false);
+  expect(refused.reason).toMatch(/^front_ack_too_long: /);
+  expect(refused.reason).toContain(`at most ${NEO_FRONT_ACK_CHAR_LIMIT} characters`);
+  expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  expect(await send('ack', 'a'.repeat(NEO_FRONT_ACK_CHAR_LIMIT), true)).toMatchObject({
+    accepted: true,
+    started: true,
+  });
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
 test('the front reply is short, and its rules live only in the front prompt', async () => {
   const { job } = await accept();
   await createNeoFrontHandler(service)(job);
   const prompt = db.getSession(front)!.config.systemPrompt as string;
   expect(prompt).toContain('Reply in one or two short sentences');
   expect(prompt).toContain('at most 150 characters');
+  expect(prompt).toContain(`at most ${NEO_FRONT_ACK_CHAR_LIMIT} characters`);
   expect(prompt).not.toContain('five short sentences');
   createFrontTools(service, conversationId);
   const reply = vi
