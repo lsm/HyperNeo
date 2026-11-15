@@ -1,7 +1,7 @@
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { Database } from '../../../../src/storage/sqlite-compat';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import type { FallbackModelEntry } from '@hyperneo/shared';
 import {
   BACKOFF_JITTER,
@@ -1603,6 +1603,39 @@ describe('RateLimitWatchdog', () => {
       );
       expect(lastPause(notifyPause).resetAt ?? 0).toBeGreaterThan(nearResetAt + RESET_BUFFER_MS);
       watchdog.cancel();
+    });
+  });
+
+  describe('overloaded hold', () => {
+    it('holds the turn as overloaded for five minutes, then resumes it', async () => {
+      jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const { deps, notifyResume } = createMockDeps({ chain: [] });
+        const retryCallback = mock(async () => true);
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+        watchdog.setRetryCallback(retryCallback);
+        const heldAt = Date.now();
+        await watchdog.scheduleRetry(
+          '529 overloaded',
+          { uuid: 'm1', content: 'hi' },
+          { hold: 'overloaded' }
+        );
+        const held = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
+          .calls[0][0];
+        expect(held.reason).toBe('overloaded');
+        expect(held.messageId).toBe('m1');
+        expect(held.retryAt - heldAt).toBeGreaterThanOrEqual(5 * 60 * 1000);
+        expect(held.retryAt - heldAt).toBeLessThan(5 * 60 * 1000 + 1000);
+        jest.advanceTimersByTime(5 * 60 * 1000 - 1000);
+        expect(retryCallback).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1000);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(retryCallback).toHaveBeenCalledTimes(1);
+        expect(retryCallback.mock.calls[0][0]).toEqual({ uuid: 'm1', content: 'hi' });
+        expect(notifyResume).toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 
