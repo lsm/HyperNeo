@@ -204,6 +204,10 @@ export function codingPrState(
     ) !== false;
   if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
     return readyCi ? 'waiting_human' : 'waiting_ci';
+  const green =
+    policy.crossModelReview && !codingCrossModelReviewed(pr.body, pr.headRefOid, stageFacts)
+      ? 'waiting_cross_review'
+      : 'approved_green';
   if (policy.mergePolicy === 'review_bot') {
     const bot = codingReviewOnHead({
       head: pr.headRefOid,
@@ -212,15 +216,12 @@ export function codingPrState(
     });
     if (bot?.state !== 'APPROVED') return 'waiting_review';
     if (humanSignoff) return 'waiting_human';
-    if (!readyCi) return 'approved_pending';
-    return policy.crossModelReview && !codingCrossModelReviewed(pr.body, pr.headRefOid, stageFacts)
-      ? 'waiting_cross_review'
-      : 'approved_green';
+    return readyCi ? green : 'approved_pending';
   }
   return readyCi
     ? humanSignoff || (noCi && codingNoChecksNeedsHuman(policy, 0))
       ? 'waiting_human'
-      : 'approved_green'
+      : green
     : 'waiting_ci';
 }
 
