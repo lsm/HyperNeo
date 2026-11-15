@@ -2676,7 +2676,7 @@ describe('a todo session waiting on the human', () => {
     });
     await runner.refresh(warn);
     expect(told.filter((note) => note.includes('ended its turn'))).toEqual([
-      `Todo "Rows": its session ended its turn with a question: Ship it? Options: Yes; Not now. If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.relay {todoId:"${todo.id}",title,options}.`,
+      `Todo "Rows": its session ended its turn with a question: Ship it? Options: Yes; Not now. If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.ask {kind:relay,todoId:"${todo.id}",text,options}.`,
     ]);
     const sends = calls.filter((call) => call.name === 'work.send').length;
     expect(await runner.proceed(todo.id, 'Yes, ship it')).toMatchObject({ ok: true });

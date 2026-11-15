@@ -395,7 +395,7 @@ test('only Neo turns a worker question into a card, in its own words, keeping th
     expect(service.todos.listQuestions('ask')).toEqual([]);
     expect(service.todos.getTodo('todo')?.nextAction).toContain('relay the question');
     const wake = db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'neo' });
-    expect(JSON.stringify(wake)).toContain('neo.question.relay');
+    expect(JSON.stringify(wake)).toContain('neo.question.ask with kind relay');
     const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
     expect(await service.relayWorkerQuestion(words, 'someone-else')).toMatchObject({ ok: false });
     expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({

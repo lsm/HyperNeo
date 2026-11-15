@@ -179,7 +179,7 @@ export const neoTodoTurnQuestionNote = (
   todo: Pick<NeoTodo, 'id' | 'title'>,
   question: WorkTurnQuestion
 ) =>
-  `Todo "${todo.title}": its session ended its turn with a question: ${neoTurnQuestionLine(question)} If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.relay {todoId:${JSON.stringify(todo.id)},title,options}.`;
+  `Todo "${todo.title}": its session ended its turn with a question: ${neoTurnQuestionLine(question)} If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.ask {kind:relay,todoId:${JSON.stringify(todo.id)},text,options}.`;
 
 export function neoTurnQuestionDue(
   question: WorkTurnQuestion,

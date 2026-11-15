@@ -205,7 +205,6 @@ import mdToolConversationImageRead from './neo/tools/neo.conversation.image.read
 import mdToolQuestionAnswer from './neo/tools/neo.question.answer.md' with { type: 'text' };
 import mdToolQuestionAsk from './neo/tools/neo.question.ask.md' with { type: 'text' };
 import mdToolQuestionGet from './neo/tools/neo.question.get.md' with { type: 'text' };
-import mdToolQuestionRelay from './neo/tools/neo.question.relay.md' with { type: 'text' };
 import mdToolQuestionRetire from './neo/tools/neo.question.retire.md' with { type: 'text' };
 import mdToolRuleApplyAnswer from './neo/tools/neo.rule.applyAnswer.md' with { type: 'text' };
 import mdToolRuleAsk from './neo/tools/neo.rule.ask.md' with { type: 'text' };
@@ -664,7 +663,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.question.answer.md': mdToolQuestionAnswer,
     'neo/tools/neo.question.ask.md': mdToolQuestionAsk,
     'neo/tools/neo.question.get.md': mdToolQuestionGet,
-    'neo/tools/neo.question.relay.md': mdToolQuestionRelay,
     'neo/tools/neo.question.retire.md': mdToolQuestionRetire,
     'neo/tools/neo.rule.applyAnswer.md': mdToolRuleApplyAnswer,
     'neo/tools/neo.rule.ask.md': mdToolRuleAsk,

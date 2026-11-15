@@ -141,8 +141,8 @@ describe('neo.session.track', () => {
       const relay = () =>
         invokeOperation(
           registry,
-          'neo.question.relay',
-          { session: key, title: 'Continue?', options: ['Yes', 'Wait'] },
+          'neo.question.ask',
+          { kind: 'relay', session: key, text: 'Continue?', options: ['Yes', 'Wait'] },
           { source: 'mcp', sessionId: 'neo:root', role: 'neo' }
         );
       const failed = await relay();
