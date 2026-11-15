@@ -12,11 +12,14 @@ use tauri::{
 	Emitter, Manager, Runtime,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+#[cfg(not(target_os = "macos"))]
 use tauri_plugin_shell::process::CommandChild;
+#[cfg(target_os = "macos")]
+type CommandChild = std::process::Child;
 
 // Store the sidecar child process for cleanup.
 struct SidecarState {
-	child: Mutex<Option<CommandChild>>,
+	child: std::sync::Arc<Mutex<Option<CommandChild>>>,
 }
 
 // Serializes startup resolution so the readiness poll and the sidecar's
@@ -54,6 +57,63 @@ fn last_daemon_error<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
 		.and_then(|state| state.last_daemon_error.lock().ok().and_then(|guard| guard.clone()))
 }
 
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
+fn spawn_sidecar(
+	command: tauri_plugin_shell::process::Command,
+) -> std::io::Result<(
+	tokio::sync::mpsc::Receiver<tauri_plugin_shell::process::CommandEvent>,
+	CommandChild,
+)> {
+	use std::io::{BufRead, BufReader};
+	use std::process::Stdio;
+	use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
+	let mut command: std::process::Command = command.into();
+	let mut child = command
+		.stdin(Stdio::null())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()?;
+	let (tx, rx) = tokio::sync::mpsc::channel(1);
+	fn pipe<R: std::io::Read + Send + 'static>(
+		reader: R,
+		tx: tokio::sync::mpsc::Sender<CommandEvent>,
+		event: fn(Vec<u8>) -> CommandEvent,
+	) -> std::thread::JoinHandle<()> {
+		std::thread::spawn(move || {
+			for line in BufReader::new(reader).split(b'\n') {
+				let message = match line {
+					Ok(line) => event(line),
+					Err(error) => CommandEvent::Error(error.to_string()),
+				};
+				if tx.blocking_send(message).is_err() {
+					break;
+				}
+			}
+		})
+	}
+	let stdout = pipe(
+		child.stdout.take().unwrap(),
+		tx.clone(),
+		CommandEvent::Stdout,
+	);
+	let stderr = pipe(
+		child.stderr.take().unwrap(),
+		tx.clone(),
+		CommandEvent::Stderr,
+	);
+	let pid = child.id();
+	std::thread::spawn(move || {
+		let event = match desktop_drivers::wait_unreaped(pid) {
+			Ok((code, signal)) => CommandEvent::Terminated(TerminatedPayload { code, signal }),
+			Err(error) => CommandEvent::Error(error.to_string()),
+		};
+		let _ = stdout.join();
+		let _ = stderr.join();
+		let _ = tx.blocking_send(event);
+	});
+	Ok((rx, child))
+}
+
 const DAEMON_PORT: u16 = 9283;
 
 #[derive(serde::Deserialize)]
@@ -71,6 +131,13 @@ fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
 	if let Some(state) = app.try_state::<SidecarState>() {
 		if let Ok(mut guard) = state.child.lock() {
 			if let Some(child) = guard.take() {
+				#[cfg(target_os = "macos")]
+				{
+					let mut child = child;
+					let _ = child.kill();
+					let _ = child.wait();
+				}
+				#[cfg(not(target_os = "macos"))]
 				let _ = child.kill();
 			}
 		}
@@ -185,7 +252,7 @@ pub fn run() {
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
 		.manage(SidecarState {
-			child: Mutex::new(None),
+			child: Default::default(),
 		})
 		.manage(StartupState::default())
 		.setup(|app| {
@@ -197,6 +264,7 @@ pub fn run() {
 					} else {
 						log::LevelFilter::Warn
 					})
+					.level_for("hyperneo_lib::desktop_drivers", log::LevelFilter::Info)
 					.build(),
 			)?;
 
@@ -205,6 +273,7 @@ pub fn run() {
 				runtime_descriptor_path().and_then(|path| path.parent().map(PathBuf::from)),
 				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
 				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+				app.state::<SidecarState>().child.clone(),
 			)) {
 				app.manage(control);
 			}
@@ -349,7 +418,11 @@ pub fn run() {
 							}
 						};
 
-					let (mut rx, child) = match sidecar_command.spawn() {
+					#[cfg(target_os = "macos")]
+					let spawned = spawn_sidecar(sidecar_command);
+					#[cfg(not(target_os = "macos"))]
+					let spawned = sidecar_command.spawn();
+					let (mut rx, child) = match spawned {
 						Ok(spawned) => spawned,
 						Err(error) => {
 							fail_startup(
@@ -386,6 +459,12 @@ pub fn run() {
 									log::error!("[hyperneo] Error: {}", err);
 								}
 								CommandEvent::Terminated(payload) => {
+									#[cfg(target_os = "macos")]
+									if let Some(state) = handle_for_events.try_state::<SidecarState>() {
+										if let Some(mut child) = state.child.lock().unwrap().take() {
+											let _ = child.wait();
+										}
+									}
 									log::warn!(
 										"[hyperneo] Process terminated with code: {:?}",
 										payload.code

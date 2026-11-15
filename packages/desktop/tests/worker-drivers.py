@@ -32,10 +32,18 @@ log = open(os.path.join(os.path.dirname(home), 'log-' + os.path.basename(home)),
 with channel.makefile('rwb') as stream:
     for line in stream:
         request = json.loads(line)
-        log.write(request['operation'] + '\\n')
+        name = request.get('name')
+        entry = request['operation']
+        if name is not None:
+            entry += ' ' + name + ' ' + json.dumps(request.get('arguments'))
+        log.write(entry + '\\n')
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0'}}
-        stream.write((json.dumps({'protocol_version': 1, 'request_id': request['request_id'],
+            'driver_version': '0.44.0', 'contract_version': '0.8.0'},
+            'name': request.get('name'), 'arguments': request.get('arguments')}
+        if name is not None and request.get('arguments', {}).get('fixture_delay'):
+            time.sleep(0.3)
+        reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
+        stream.write((json.dumps({'protocol_version': 1, 'request_id': reply_id,
             'generation': generation, 'ok': request['generation'] == generation,
             'completion': 'completed', 'result': result}) + '\\n').encode())
         stream.flush()
@@ -136,9 +144,11 @@ class WorkerDrivers(unittest.TestCase):
         self.codesign.write_text(CODESIGN)
         self.codesign.chmod(0o700)
         self.path = str(self.bin) + ':/usr/bin:/bin:/usr/sbin:/sbin'
+        self.daemon()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.cleanup)
         ready = select.select([self.process.stdout], [], [], 15)[0]
@@ -155,6 +165,13 @@ class WorkerDrivers(unittest.TestCase):
         for pid in getattr(self, 'pids', []):
             if alive(pid):
                 os.kill(pid, signal.SIGKILL)
+
+    def daemon(self, started_at=None):
+        birth = subprocess.check_output(['/bin/ps', '-p', str(os.getpid()), '-o', 'lstart='], text=True).strip()
+        birth_ms = int(time.mktime(time.strptime(birth, '%a %b %d %H:%M:%S %Y')) * 1000) + 1000
+        (self.root / 'runtime.json').write_text(json.dumps(
+            {'pid': os.getpid(), 'host': '127.0.0.1', 'port': 9283, 'url': 'http://127.0.0.1:9283',
+             'version': 'test', 'startedAt': started_at if started_at is not None else birth_ms}))
 
     def call(self, action, worker='worker-a', **params):
         with socket.socket(socket.AF_UNIX) as client:
@@ -173,6 +190,68 @@ class WorkerDrivers(unittest.TestCase):
 
     def lifecycle(self, worker='worker-a'):
         return self.root / 'desktop/workers' / worker
+
+    CONNECTOR = '''import json, socket, sys, time
+while True:
+    try:
+        client = socket.socket(socket.AF_UNIX)
+        client.connect(sys.argv[1])
+        break
+    except OSError:
+        time.sleep(0.1)
+client.sendall((json.dumps({'action': 'status', 'worker': 'peer'}) + '\\n').encode())
+reply = client.makefile('rb').readline()
+open(sys.argv[2], 'w').write(reply.decode())
+'''
+
+    def connector(self, out=None):
+        out = out or self.root / f'peer-{len(self.pids)}.json'
+        child = subprocess.Popen(
+            [sys.executable, '-I', '-c', self.CONNECTOR,
+             str(self.root / 'desktop/control.sock'), str(out)])
+        self.addCleanup(child.kill)
+        return out
+
+    def peer_reply(self, out):
+        wait_until(lambda: out.exists() and bool(out.read_text().strip()))
+        return json.loads(out.read_text())
+
+    def test_refuses_a_peer_that_is_not_the_advertised_daemon(self):
+        reply = self.peer_reply(self.connector())
+        self.assertEqual(reply, {'ok': False, 'error': 'not_daemon'})
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_daemon_advert_refuses_processes_outside_its_window(self):
+        self.daemon(started_at=int((time.time() + 120) * 1000))
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.daemon(started_at=int((time.time() - 120) * 1000))
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        (self.root / 'runtime.json').unlink()
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.daemon()
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_sidecar_child_is_accepted_while_registered(self):
+        refused = self.connector()
+        out = self.root / 'peer-accepted.json'
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        self.process.stdout.close()
+        self.process.stderr.close()
+        script = self.root / 'connector.py'
+        script.write_text(self.CONNECTOR)
+        self.process = subprocess.Popen(
+            [str(RUNNER), str(self.root), str(self.binary), self.path],
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
+                 'FIXTURE_SIDECAR_CONNECTOR': str(script), 'FIXTURE_PYTHON': sys.executable,
+                 'FIXTURE_SIDECAR_REPLY': str(out)},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
+        self.assertEqual(self.process.stdout.readline().strip(), 'ready')
+        self.assertEqual(self.peer_reply(out),
+                         {'ok': True, 'result': {'state': 'stopped', 'pid': None}})
+        self.assertEqual(self.peer_reply(refused), {'ok': False, 'error': 'not_daemon'})
+        self.assertTrue(self.call('status')['ok'])
 
     def test_publishes_protected_record_before_start_returns(self):
         driver = self.start()
@@ -410,7 +489,8 @@ class WorkerDrivers(unittest.TestCase):
     def test_refuses_second_app_without_removing_endpoint(self):
         second = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([second.stdout], [], [], 15)[0])
@@ -450,7 +530,8 @@ class WorkerDrivers(unittest.TestCase):
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -484,7 +565,8 @@ class WorkerDrivers(unittest.TestCase):
         self.assertGreaterEqual(len(str(base / 'desktop/control.sock').encode()), 104)
         process = subprocess.Popen(
             [str(RUNNER), str(base), str(self.binary), self.path],
-            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -506,7 +588,8 @@ class WorkerDrivers(unittest.TestCase):
                 base.mkdir()
                 process = subprocess.Popen(
                     [str(RUNNER), str(base), str(self.binary), self.path, mode],
-                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+                    env={'HOME': str(base), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     self.assertTrue(select.select([process.stdout], [], [], 15)[0])
@@ -528,7 +611,8 @@ class WorkerDrivers(unittest.TestCase):
         self.process.stderr.close()
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path, 'accept-error'],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
@@ -583,7 +667,8 @@ class WorkerDrivers(unittest.TestCase):
         result = subprocess.run(
             [str(self.binary), '__private-worker', '--generation', 'g', '--transport-fd=3'],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
-                 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+                 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_TARGET_BIRTH': str(self.root / 'target-birth.json')},
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('FIXTURE_PARENT_ONLY', result.stderr)
@@ -801,6 +886,119 @@ class WorkerDrivers(unittest.TestCase):
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
+
+    def dispatch(self, tool, arguments, worker='worker-a', **params):
+        return self.call('dispatch', worker, tool=tool, arguments=arguments,
+                         callId='call-' + tool, **params)
+
+    def test_dispatch_refuses_without_starting_a_driver(self):
+        pid = finder()
+        self.call('fixture-revoke', tool='click', arguments={'pid': pid})
+        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(result['ok'], result)
+        reply = result['result']
+        self.assertEqual(reply['decision'], 'refused')
+        self.assertEqual(reply['reason'], denied)
+        self.assertEqual((reply['class'], reply['bundle_id']), ('pointer', 'com.apple.finder'))
+        self.assertFalse(reply['dispatched'])
+        self.assertEqual(reply['call_id'], 'call-click')
+        self.assertFalse(list(self.work.glob('d-*')))
+        self.assertEqual(self.call('fixture-slots')['result']['count'], 0)
+        print(f'dispatch_refused={denied} no_slot=1 no_driver=1')
+
+    def test_dispatch_refuses_unlisted_tools_and_stopped_workers(self):
+        reply = self.dispatch('kill_app', {'pid': os.getpid()}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason']), ('refused', 'tool_not_allowed'))
+        self.assertFalse(reply['dispatched'])
+        self.assertTrue(self.call('stop')['ok'])
+        result = self.dispatch('click', {'pid': finder()}, workDir=str(self.work))
+        self.assertFalse(result['ok'], result)
+        self.assertIn('stopped', result['error'])
+
+    def test_dispatch_starts_the_driver_and_sends_the_call(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(result['ok'], result)
+        reply = result['result']
+        self.assertEqual((reply['decision'], reply['class'], reply['bundle_id']),
+                         ('allowed', 'pointer', 'com.apple.finder'))
+        self.assertIsNone(reply['reason'])
+        self.assertTrue(reply['dispatched'])
+        self.assertEqual(reply['call_id'], 'call-click')
+        record = json.loads((self.lifecycle() / 'driver.json').read_text())
+        self.pids.append(record['pid'])
+        home = next(self.work.glob('d-*'))
+        entry = (home.parent / f'log-{home.name}').read_text().splitlines()[-1]
+        self.assertTrue(entry.startswith('call click '), entry)
+        self.assertEqual(json.loads(entry[len('call click '):]), {'pid': pid})
+        again = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
+        self.assertTrue(again['result']['dispatched'])
+        self.assertTrue(alive(record['pid']))
+        print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_daemon_advert_uses_the_process_birth_even_after_a_long_suite(self):
+        from unittest.mock import patch
+        with patch('time.time', return_value=time.time() + 120):
+            self.daemon()
+        self.assertTrue(self.call('status')['ok'])
+
+    def test_large_dispatch_frame_gets_a_response(self):
+        reply = self.dispatch('kill_app', {'text': 'x' * 20000}, workDir=str(self.work))
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['reason'], 'tool_not_allowed')
+
+    def test_oversized_frame_gets_an_explicit_error(self):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(10)
+            client.connect(str(self.root / 'desktop/control.sock'))
+            client.sendall(b' ' * (1 << 20))
+            reply = json.loads(client.makefile('rb').readline())
+        self.assertEqual(reply, {'ok': False, 'error': 'request_too_large'})
+
+    def test_failed_reply_retires_the_slot_and_preserves_sent(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_bad_reply': True}, workDir=str(self.work))
+        self.assertTrue(reply['result']['dispatched'], reply)
+        self.assertIsNotNone(reply['result']['reason'])
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+
+    def test_timeout_retires_the_slot_and_preserves_sent(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_delay': True}, workDir=str(self.work))
+        self.assertEqual(reply['result']['reason'], 'driver call timed out')
+        self.assertTrue(reply['result']['dispatched'])
+        self.assertEqual(self.call('status')['result']['state'], 'stopped')
+        self.assertTrue(self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']['dispatched'])
+
+    def test_target_change_during_startup_prevents_input(self):
+        pid = finder()
+        original = self.resolve('click', {'pid': pid})['value']['instance']['startedAt']
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            (self.root / 'target-birth.json').write_text(json.dumps(
+                {'pid': pid, 'seconds': original['seconds'], 'microseconds': original['microseconds'] + 1}))
+            next(slow.glob('d-*/d.starting')).with_suffix('.release').touch()
+            reply = future.result(timeout=15)
+        self.assertEqual(reply['result']['reason'], 'target_mismatch')
+        self.assertFalse(reply['result']['dispatched'])
+        self.assertNotIn('call click', ''.join(p.read_text() for p in slow.glob('log-*')))
+
+    def test_dispatch_log_is_visible_without_arguments(self):
+        self.dispatch('kill_app', {'text': 'private-fixture-text'}, workDir=str(self.work))
+        self.process.send_signal(signal.SIGINT)
+        self.assertEqual(self.process.wait(timeout=10), 0)
+        log = self.process.stderr.read()
+        self.assertEqual(log.count('Desktop dispatch'), 1)
+        self.assertNotIn('private-fixture-text', log)
 
 
 if __name__ == '__main__':
