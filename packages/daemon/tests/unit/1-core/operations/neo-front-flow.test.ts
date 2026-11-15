@@ -674,7 +674,7 @@ test('a front read pages past newer closed items to an older open one', async ()
     .mocked(createSdkMcpServer)
     .mock.calls.at(-1)![0]
     .tools!.find((entry) => entry.name === 'todos_read')!;
-  expect(readTool.description).toContain('so a page can be empty');
+  expect(readTool.description).toContain('with text it returns the matches, open or closed');
   const page = async (input: Record<string, string>) =>
     JSON.parse(
       ((await readTool.handler(input, {} as never)).content[0] as { text: string }).text

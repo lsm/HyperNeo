@@ -35,7 +35,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
     tool(
       `${kind}_read`,
-      `Read current ${kind} for this conversation. Without id it reads the ten newest ${kind} and returns the open ones, so a page can be empty; text keeps only matches. Pass nextCursor as cursor for the next ten. id reads one in full and must come from a page.`,
+      `Read current ${kind} for this conversation. Without id it reads the ten newest ${kind}: with no text it returns the open ones, and with text it returns the matches, open or closed. A page can be empty. Pass nextCursor as cursor for the next ten. id reads one in full and must come from a page.`,
       Read,
       async (input) => {
         const value = await service.db.gateway.run(neoFrontReads, {
