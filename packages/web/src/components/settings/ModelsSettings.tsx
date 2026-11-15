@@ -1346,7 +1346,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
           </p>
         )}
         <NeoFrontSettings />
-        <div class="grid items-start gap-4 xl:grid-cols-2">
+        <div class="grid items-start gap-4">
           <section aria-label="Fast reply model">
             <FrontModelSettings
               groupedModels={groupedModels}
