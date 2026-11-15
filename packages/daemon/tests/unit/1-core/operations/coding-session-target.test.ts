@@ -158,4 +158,14 @@ describe('coding session target decision', () => {
     });
     expect(await decide(todo(), start())).toEqual({ value: start('dev') });
   });
+
+  test('a feature reserved by a todo that settled without a session is free to start again', async () => {
+    const { db, todo, decide } = setup();
+    const first = todo();
+    expect(await decide(first, start())).toEqual({ value: start('dev') });
+    db.prepare("UPDATE neo_todos SET state = 'removed' WHERE id = ?").run(first.id);
+    const next = todo();
+    expect(await decide(next, start())).toEqual({ value: start('dev') });
+    expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
 });
