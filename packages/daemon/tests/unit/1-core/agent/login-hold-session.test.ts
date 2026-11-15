@@ -378,6 +378,21 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
+  it('a provider switch does not leave the old hold armed on the new provider', async () => {
+    const h = await harness();
+    h.setNeedsLogin('anthropic', Date.now());
+    await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
+    const recovery = (h.agent as unknown as { loginRecovery: { isHeld(id: string): boolean } })
+      .loginRecovery;
+    expect(recovery.isHeld('anthropic')).toBe(true);
+
+    h.agent.getSessionData().config.provider = 'glm';
+    await h.agent.restart().catch(() => {});
+
+    expect(recovery.isHeld('anthropic')).toBe(false);
+    await h.agent.cleanup();
+  });
+
   it('a saved login hold does not come back as a usage-limit cooldown', async () => {
     const h = await harness({
       processingState: JSON.stringify({

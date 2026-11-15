@@ -3043,7 +3043,7 @@ export class AgentSession
 
   private stopLoginHold(): void {
     if (!this.loginRecovery) return;
-    this.loginRecovery.stop(this.providerId());
+    this.loginRecovery.stopAll();
     const state = this.stateManager.getState();
     if (state.status === 'rate_limit_cooldown' && state.reason === 'login')
       void this.stateManager.setIdle().catch(() => {});
