@@ -174,6 +174,9 @@ export interface CodingMergePolicy {
   humanSignoff?: readonly string[];
 }
 
+export const codingReviewerProvenance = (policy: CodingMergePolicy) =>
+  policy.provenance !== false || policy.crossModelReview === true;
+
 export function codingPrState(
   pr: Node,
   repoHasCi = false,
@@ -561,8 +564,7 @@ export class CodingPrLedgerRepository {
   }
 
   reviewerProvenance(repo: string) {
-    const policy = this.policy(repo);
-    return policy.provenance !== false || policy.crossModelReview === true;
+    return codingReviewerProvenance(this.policy(repo));
   }
 
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {

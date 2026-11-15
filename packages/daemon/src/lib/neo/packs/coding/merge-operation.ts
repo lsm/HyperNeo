@@ -12,6 +12,7 @@ import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { defineOperation } from '../../../operations/registry.ts';
 import { codingReviewerPolicy } from './stage-facts.ts';
+import { codingReviewerProvenance } from './pr-ledger.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import type { prepareCodingMerge } from './merge-gates.ts';
@@ -152,7 +153,7 @@ export function createCodingMergeOperation(deps: Deps) {
         )
           return { accepted: false, reason: 'Resolve repository review policy before merging.' };
         const provenance = codingReviewerPolicy(
-          state.policy.provenance !== false,
+          codingReviewerProvenance(state.policy),
           pr.body,
           review.actor ?? { kind: 'human', id: 'bot-route' }
         );
