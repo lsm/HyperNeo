@@ -152,20 +152,35 @@ describe('planNeoAlignment', () => {
 describe('planPreferredReturn', () => {
   const preference = { model: 'flash', provider: 'deepseek', thinkingLevel: 'off' as const };
   const onFallback = { model: 'opus', provider: 'anthropic', thinkingLevel: 'off' };
-
-  test('returns to the preferred model once its recorded limit has passed', () => {
-    expect(planPreferredReturn(onFallback, preference, { 'deepseek/flash': 100 }, 100)).toEqual({
-      model: true,
-      thinking: false,
-    });
+  const limited = (until: number) => ({
+    'deepseek/flash': { until, fallback: 'anthropic/opus' },
   });
 
-  test('stays on the fallback while the limit lasts, without a recorded limit, or once back', () => {
-    expect(planPreferredReturn(onFallback, preference, { 'deepseek/flash': 101 }, 100)).toBeNull();
+  test('returns once the limit passed while the session is still on the fallback it chose', () => {
+    expect(planPreferredReturn(onFallback, preference, limited(100), 100)).toBe('return');
+  });
+
+  test('follows the chain when the first fallback was limited too', () => {
+    const chain = {
+      'deepseek/flash': { until: 100, fallback: 'anthropic/opus' },
+      'anthropic/opus': { until: 500, fallback: 'glm/glm-5' },
+    };
+    expect(planPreferredReturn({ model: 'glm-5', provider: 'glm' }, preference, chain, 100)).toBe(
+      'return'
+    );
+  });
+
+  test('waits while the limit lasts and leaves a session without a record alone', () => {
+    expect(planPreferredReturn(onFallback, preference, limited(101), 100)).toBeNull();
     expect(planPreferredReturn(onFallback, preference, {}, 100)).toBeNull();
+  });
+
+  test('forgets the record once back, after a human picked another model, or with a queued pick', () => {
+    expect(planPreferredReturn({ ...preference }, preference, limited(1), 100)).toBe('forget');
     expect(
-      planPreferredReturn({ ...preference }, preference, { 'deepseek/flash': 1 }, 100)
-    ).toBeNull();
+      planPreferredReturn({ model: 'glm-5', provider: 'glm' }, preference, limited(1), 100)
+    ).toBe('forget');
+    expect(planPreferredReturn(onFallback, preference, limited(1), 100, true)).toBe('forget');
   });
 });
 
@@ -856,12 +871,18 @@ describe('neo.preferences.set', () => {
     await db.createSession({
       ...frontRow,
       config: { ...frontRow.config, model: 'glm-5', provider: 'glm' },
-      metadata: { ...frontRow.metadata, modelLimits: { [`${opus.provider}/${opus.id}`]: 1000 } },
+      metadata: {
+        ...frontRow.metadata,
+        modelLimits: { [`${opus.provider}/${opus.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
     });
     const root = db.getSession('neo:root')!;
     await db.updateSession('neo:root', {
       config: { ...root.config, model: 'glm-5', provider: 'glm' },
-      metadata: { ...root.metadata, modelLimits: { [`${flash.provider}/${flash.id}`]: 1000 } },
+      metadata: {
+        ...root.metadata,
+        modelLimits: { [`${flash.provider}/${flash.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
     });
     await service.returnToPreferredModels(999);
     expect(switched).toEqual([]);
@@ -878,6 +899,22 @@ describe('neo.preferences.set', () => {
         [frontId, `${opus.provider}/${opus.id}`],
       ])
     );
+  });
+
+  test('leaves a model the human picked after a fallback and forgets the old limit', async () => {
+    const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await gatewayFor(db.getDatabase()).call(globalSettingsWrites, 'neoPreferences', neo);
+    const root = db.getSession('neo:root')!;
+    await db.updateSession('neo:root', {
+      config: { ...root.config, model: 'claude-opus', provider: 'anthropic' },
+      metadata: {
+        ...root.metadata,
+        modelLimits: { [`${flash.provider}/${flash.id}`]: { until: 1000, fallback: 'glm/glm-5' } },
+      },
+    });
+    await service.returnToPreferredModels(1000);
+    expect(switched).toEqual([]);
+    expect(forgotten).toEqual([['neo:root', `${flash.provider}/${flash.id}`]]);
   });
 
   test('saves a fallback again unchanged after a forced refresh lists it under its remote id', async () => {

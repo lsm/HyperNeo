@@ -1154,17 +1154,24 @@ describe('RateLimitWatchdog', () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       await watchdog.scheduleRetry('usage limit', { uuid: 'm1', content: 'hi' }, { resetAtMs });
       await flush();
-      expect(watchdog.getState().modelLimits).toEqual({ 'anthropic/sonnet': resetAtMs });
+      expect(watchdog.getState().modelLimits).toEqual({
+        'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' },
+      });
       watchdog.forgetModelLimit('anthropic/sonnet');
       expect(watchdog.getState().modelLimits).toEqual({});
-      expect(saved).toEqual([{ 'anthropic/sonnet': resetAtMs }, {}]);
+      expect(saved).toEqual([
+        { 'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' } },
+        {},
+      ]);
     });
 
     it('starts from the limits a previous run saved', () => {
       const { deps } = createMockDeps();
-      deps.initialModelLimits = { 'anthropic/sonnet': 42 };
+      deps.initialModelLimits = { 'anthropic/sonnet': { until: 42, fallback: 'glm/glm-4.6' } };
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
-      expect(watchdog.getState().modelLimits).toEqual({ 'anthropic/sonnet': 42 });
+      expect(watchdog.getState().modelLimits).toEqual({
+        'anthropic/sonnet': { until: 42, fallback: 'glm/glm-4.6' },
+      });
     });
 
     it('assumes the first backoff step when the limit names no reset time', async () => {
@@ -1176,7 +1183,7 @@ describe('RateLimitWatchdog', () => {
       const before = Date.now();
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
-      const until = watchdog.getState().modelLimits['anthropic/sonnet'];
+      const until = watchdog.getState().modelLimits['anthropic/sonnet'].until;
       expect(until).toBeGreaterThanOrEqual(before + BACKOFF_LADDER_MS[0]);
       expect(until).toBeLessThanOrEqual(Date.now() + BACKOFF_LADDER_MS[0]);
     });
