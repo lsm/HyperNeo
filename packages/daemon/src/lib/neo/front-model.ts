@@ -74,26 +74,11 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       workOn
     );
   };
-  const handOff = async (
-    ids: readonly string[],
-    said: { fullText: string; workOn: boolean } | null,
-    required: readonly string[]
-  ) => {
+  const handOff = async (ids: readonly string[], required: readonly string[]) => {
     const outcomes = new Map<string, string>();
     for (const id of ids) {
       const ask = service.asks.find(conversationId, id);
-      outcomes.set(
-        id,
-        ask
-          ? await handOffToNeo(
-              service,
-              conversationId,
-              [ask],
-              [id],
-              said ? [{ replyTo: [id], ...said }] : []
-            )
-          : 'ineligible'
-      );
+      outcomes.set(id, ask ? await handOffToNeo(service, conversationId, ask, id) : 'ineligible');
     }
     const failed = (required.length ? required : ids).find((id) => outcomes.get(id) !== 'reserved');
     return failed === undefined
@@ -150,27 +135,25 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
           if (named.some((id) => !service.asks.find(conversationId, id))) {
-            await handOff(recorded, null, recorded);
+            await handOff(recorded, recorded);
             return result({ accepted: false, reason: 'unknown_reply_target' });
           }
           const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
-          if (!receipt.accepted && !second) return result(frontReceipt(receipt));
+          if (!receipt.accepted && !second) {
+            await handOff(recorded, recorded);
+            return result(frontReceipt(receipt));
+          }
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
           const sameTargets = (ids: readonly string[] = []) =>
             [...ids].sort().join() === [...input.replyTo].sort().join();
-          if (second && !(existing && sameTargets(existing.replyTo)))
+          if (second && !(existing && sameTargets(existing.replyTo))) {
+            await handOff(recorded, recorded);
             return result({ accepted: false, reason: 'publication_conflict' });
-          const handed = await handOff(
-            targets,
-            {
-              fullText: existing?.fullText ?? text,
-              workOn: existing ? (existing.workOn ?? workOn) : workOn,
-            },
-            recorded
-          );
+          }
+          const handed = await handOff(targets, recorded);
           return result(
             handed.started
               ? { ...(receipt.accepted ? receipt : { accepted: true }), ...handed }

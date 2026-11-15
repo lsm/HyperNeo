@@ -78,8 +78,7 @@ export async function settleConvoInput(
     if (!openAsk) return 'settled' as const;
     const origin = openAsk.askOrigin.sessionId;
     if (!service.db.getSession(origin)) return markFailed(id, origin);
-    const said = await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, id);
-    const reserved = await handOffToNeo(service, conversationId, [openAsk], [id], said);
+    const reserved = await handOffToNeo(service, conversationId, openAsk, id);
     if (reserved === 'reserved') return 'handed_off' as const;
     return markFailed(id, origin);
   };

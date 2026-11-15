@@ -116,7 +116,6 @@ export class NeoFrontInputRepository {
         (row) =>
           JSON.parse(row.payload) as { replyTo?: string[]; fullText: string; workOn?: boolean }
       )
-      .filter((row) => !row.replyTo?.length || row.replyTo.includes(messageId))
       .map(({ replyTo, fullText, workOn }) => ({
         replyTo: replyTo?.length ? replyTo : [messageId],
         fullText,
@@ -287,21 +286,26 @@ export class NeoFrontInputRepository {
       for (const prompt of prompts) {
         const uuid = prompt.message.uuid!;
         const status = sdk.getUserSendStatus(prompt.sessionId, uuid);
-        let message = prompt.message;
-        if (status === 'failed') {
-          const failed = sdk.getMessageByStatusAndUuid(prompt.sessionId, 'failed', uuid);
-          if (!failed || sdk.reopenDeliveryByUuid(prompt.sessionId, uuid) === null)
-            throw new Error('front_handoff_reopen_failed');
-          const { dbId: _dbId, timestamp: _timestamp, ...stored } = failed;
-          message = stored as typeof prompt.message;
+        if (status === 'failed' || status === 'enqueued' || status === 'deferred') {
+          const stored = sdk.getMessageByStatusAndUuid(prompt.sessionId, status, uuid);
+          if (
+            !stored ||
+            (status === 'failed' && sdk.reopenDeliveryByUuid(prompt.sessionId, uuid) === null) ||
+            !sdk.deletePendingUserMessage(
+              prompt.sessionId,
+              stored.dbId,
+              status === 'deferred' ? 'deferred' : 'enqueued'
+            )
+          )
+            throw new Error('front_handoff_replace_failed');
         } else if (status) continue;
         ensurePromptInTransaction({
           sessionId: prompt.sessionId,
-          message,
+          message: prompt.message,
           db: this.db,
           sdkMessageRepo: sdk,
           jobQueue,
-          hold: 'immediate',
+          hold: status === 'deferred' ? 'manual' : 'immediate',
           delivery: { origin: 'chat' },
         });
       }
