@@ -15,6 +15,7 @@ import {
   neoCancelledPrerequisiteKey,
   neoCancelledPrerequisiteNote,
   neoTodoPrerequisiteRefusal,
+  neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
@@ -673,18 +674,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { reason: { ok: true as const, todo: store.getTodo(todoId) ?? todo } };
   };
 
-  const chooseTarget = async (todoId: string): Promise<Gate<NeoTodoTarget | null>> => {
+  const chooseTarget = async (
+    todoId: string,
+    hold: string | null
+  ): Promise<Gate<NeoTodoTarget | null>> => {
     const todo = store.getTodo(todoId);
     const ask = todo && store.getAsk(todo.askId);
     const target = sessions.get(todoId);
     const pack = deps.packs().find((candidate) => candidate.id === todo?.check?.pack);
     if (
       !todo?.instruction ||
-      !ask ||
+      ask?.status !== 'open' ||
       !pack?.workerTarget ||
       todo.state !== 'todo' ||
       todo.startedAt !== null ||
-      (target?.verb !== 'start' && target?.verb !== 'send')
+      (target?.verb !== 'start' && target?.verb !== 'send') ||
+      neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
     )
       return { value: null };
     const decision = await pack.workerTarget(todo, target, (ref) =>
@@ -713,16 +718,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
-    .pipe(chooseTarget, 'todoId', 'chosen')
+    .pipe(async (todoId: string) => (await trackerHolds())[todoId] ?? null, 'todoId', 'hold')
+    .pipe(chooseTarget, ['todoId', 'hold'], 'chosen')
     .pipe((chosen: Gate<NeoTodoTarget | null>) => chosen, 'chosen', 'result:outcome')
     .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
-      async (todoId: string) =>
-        deps.write(neoTodoRunnerWrites, {
-          method: 'claim',
-          args: [todoId, Date.now(), (await trackerHolds())[todoId] ?? null],
-        }),
-      'todoId',
+      (todoId: string, hold: string | null) =>
+        deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now(), hold] }),
+      ['todoId', 'hold'],
       'receipt'
     )
     .pipe(
