@@ -152,9 +152,7 @@ test('a failed ask read exposes messageDbId matching its sdk_messages row', asyn
     delivery: { state: 'failed' },
     askOrigin: { sessionId, messageId: failed },
   });
-  const origins = items.map(
-    (item) => (item.askOrigin as { messageDbId?: string | null }).messageDbId
-  );
+  const origins = items.map((item) => item.askOrigin.messageDbId);
   expect(origins[0]).toBeNull();
   expect(origins[1]).toBe(db.getSDKMessageRepo().findMessageIdByUuid(sessionId, failed));
 });
@@ -284,7 +282,7 @@ test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
     });
     const facts = mock(async () => {
       await gate;
-      return [{ sendStatus: 'consumed', processing: null, answered: true }];
+      return [{ sendStatus: 'consumed', processing: null, answered: true, messageDbId: null }];
     });
     Object.assign(db, { getNeoMessageStatusFactsAsync: facts });
     let completed = false;

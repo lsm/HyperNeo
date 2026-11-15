@@ -464,7 +464,7 @@ test('Neo status facts share the serial metadata reader without transferring ask
       askOrigin: { sessionId: args.sessionId, messageId: 'message-1' },
     },
   ];
-  const facts = [{ sendStatus: 'consumed', processing: null, answered: true }];
+  const facts = [{ sendStatus: 'consumed', processing: null, answered: true, messageDbId: null }];
   const first = reader.read(args),
     next = reader.readNeoMessageStatusFacts(refs);
   await tick();

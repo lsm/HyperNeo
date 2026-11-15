@@ -26644,6 +26644,12 @@
                         "askOrigin": {
                           "additionalProperties": false,
                           "properties": {
+                            "messageDbId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "messageId": {
                               "format": "uuid",
                               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -27222,6 +27228,12 @@
                             "askOrigin": {
                               "additionalProperties": false,
                               "properties": {
+                                "messageDbId": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "messageId": {
                                   "format": "uuid",
                                   "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -27533,6 +27545,17 @@
                             "answerInput": {
                               "additionalProperties": false,
                               "properties": {
+                                "messageDbId": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 160,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "messageId": {
                                   "maxLength": 160,
                                   "type": "string"
@@ -27551,6 +27574,17 @@
                             "answerOrigin": {
                               "additionalProperties": false,
                               "properties": {
+                                "messageDbId": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 160,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "messageId": {
                                   "maxLength": 160,
                                   "type": "string"
@@ -27669,6 +27703,17 @@
                             "askOrigin": {
                               "additionalProperties": false,
                               "properties": {
+                                "messageDbId": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 160,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "messageId": {
                                   "maxLength": 160,
                                   "type": "string"
@@ -27795,6 +27840,17 @@
                             "producerInput": {
                               "additionalProperties": false,
                               "properties": {
+                                "messageDbId": {
+                                  "anyOf": [
+                                    {
+                                      "maxLength": 160,
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
                                 "messageId": {
                                   "maxLength": 160,
                                   "type": "string"
@@ -27847,6 +27903,17 @@
                                   "askOrigin": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "messageDbId": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 160,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
                                       "messageId": {
                                         "maxLength": 160,
                                         "type": "string"
@@ -27878,6 +27945,17 @@
                                   "producerInput": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "messageDbId": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 160,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
                                       "messageId": {
                                         "maxLength": 160,
                                         "type": "string"
@@ -32509,6 +32587,17 @@
                   "answerInput": {
                     "additionalProperties": false,
                     "properties": {
+                      "messageDbId": {
+                        "anyOf": [
+                          {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "messageId": {
                         "maxLength": 160,
                         "type": "string"
@@ -32527,6 +32616,17 @@
                   "answerOrigin": {
                     "additionalProperties": false,
                     "properties": {
+                      "messageDbId": {
+                        "anyOf": [
+                          {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "messageId": {
                         "maxLength": 160,
                         "type": "string"
@@ -32645,6 +32745,17 @@
                   "askOrigin": {
                     "additionalProperties": false,
                     "properties": {
+                      "messageDbId": {
+                        "anyOf": [
+                          {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "messageId": {
                         "maxLength": 160,
                         "type": "string"
@@ -32769,6 +32880,17 @@
                   "producerInput": {
                     "additionalProperties": false,
                     "properties": {
+                      "messageDbId": {
+                        "anyOf": [
+                          {
+                            "maxLength": 160,
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "messageId": {
                         "maxLength": 160,
                         "type": "string"
@@ -32821,6 +32943,17 @@
                         "askOrigin": {
                           "additionalProperties": false,
                           "properties": {
+                            "messageDbId": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 160,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "messageId": {
                               "maxLength": 160,
                               "type": "string"
@@ -32852,6 +32985,17 @@
                         "producerInput": {
                           "additionalProperties": false,
                           "properties": {
+                            "messageDbId": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 160,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "messageId": {
                               "maxLength": 160,
                               "type": "string"
@@ -33110,6 +33254,17 @@
                     "answerInput": {
                       "additionalProperties": false,
                       "properties": {
+                        "messageDbId": {
+                          "anyOf": [
+                            {
+                              "maxLength": 160,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "messageId": {
                           "maxLength": 160,
                           "type": "string"
@@ -33128,6 +33283,17 @@
                     "answerOrigin": {
                       "additionalProperties": false,
                       "properties": {
+                        "messageDbId": {
+                          "anyOf": [
+                            {
+                              "maxLength": 160,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "messageId": {
                           "maxLength": 160,
                           "type": "string"
@@ -33246,6 +33412,17 @@
                     "askOrigin": {
                       "additionalProperties": false,
                       "properties": {
+                        "messageDbId": {
+                          "anyOf": [
+                            {
+                              "maxLength": 160,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "messageId": {
                           "maxLength": 160,
                           "type": "string"
@@ -33372,6 +33549,17 @@
                     "producerInput": {
                       "additionalProperties": false,
                       "properties": {
+                        "messageDbId": {
+                          "anyOf": [
+                            {
+                              "maxLength": 160,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "messageId": {
                           "maxLength": 160,
                           "type": "string"
@@ -33424,6 +33612,17 @@
                           "askOrigin": {
                             "additionalProperties": false,
                             "properties": {
+                              "messageDbId": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 160,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "messageId": {
                                 "maxLength": 160,
                                 "type": "string"
@@ -33455,6 +33654,17 @@
                           "producerInput": {
                             "additionalProperties": false,
                             "properties": {
+                              "messageDbId": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 160,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "messageId": {
                                 "maxLength": 160,
                                 "type": "string"

@@ -9,7 +9,12 @@ import { parseProcessingState } from '../session/space-session-reads.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
-export type Fact = { sendStatus: string | null; processing: string | null; answered: boolean };
+export type Fact = {
+  sendStatus: string | null;
+  processing: string | null;
+  answered: boolean;
+  messageDbId: string | null;
+};
 export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
 export function readMessageFacts(db: Database, items: readonly NeoMessageStatusRef[]): Fact[] {
@@ -35,6 +40,10 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
       INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
       AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS sendStatus,
+      (SELECT id FROM sdk_messages
+      INDEXED BY idx_sdk_messages_session_uuid
+      WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
+      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS messageDbId,
       s.processing_state AS processing FROM json_each(?) ref LEFT JOIN sessions s
       ON s.id = json_extract(ref.value, '$.sessionId') ORDER BY CAST(ref.key AS INTEGER)`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
@@ -68,6 +77,7 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
     const messageStatus = describeMessageStatus(item, facts[index]);
     return {
       ...item,
+      askOrigin: { ...item.askOrigin, messageDbId: facts[index].messageDbId },
       messageStatus,
       ...(messageStatus === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
     };

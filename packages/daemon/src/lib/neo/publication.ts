@@ -19,7 +19,13 @@ const text = (max: number) =>
     .string()
     .max(max)
     .refine((value) => !!value.trim());
-const origin = z.object({ sessionId: text(160), messageId: text(160) }).strict();
+const origin = z
+  .object({
+    sessionId: text(160),
+    messageId: text(160),
+    messageDbId: text(160).nullable().optional(),
+  })
+  .strict();
 
 export const NeoPublicationObject = z
   .object({

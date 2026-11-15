@@ -28,6 +28,7 @@ export const NeoConversationAskSchema = z
           .max(160)
           .refine((id) => !!id.trim()),
         messageId: z.uuid(),
+        messageDbId: z.string().nullable().optional(),
       })
       .strict(),
     content: SessionContentSchema,
