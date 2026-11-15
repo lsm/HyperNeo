@@ -594,11 +594,12 @@ export class NeoService {
       [conversation ? frontSessionId(conversation) : undefined, settings.neo?.front?.model],
     ];
     for (const [sessionId, preference] of targets) {
-      const config = sessionId && preference ? this.db.getSession(sessionId)?.config : undefined;
-      if (!sessionId || !preference || !config) continue;
+      const stored = sessionId && preference ? this.db.getSession(sessionId) : null;
+      if (!sessionId || !preference || !stored) continue;
+      const limits = stored.metadata.modelLimits ?? {};
+      if (!planPreferredReturn(stored.config, preference, limits, now)) continue;
       const live = await this.sessions.getSessionForControl(sessionId);
-      const limits = live?.getRateLimitWatchdogState?.().modelLimits ?? {};
-      if (!live || !planPreferredReturn(config, preference, limits, now)) continue;
+      if (!live) continue;
       await this.alignModelPreference(sessionId, preference);
       const after = this.db.getSession(sessionId)?.config;
       if (after && !planNeoAlignment(after, preference)?.model)

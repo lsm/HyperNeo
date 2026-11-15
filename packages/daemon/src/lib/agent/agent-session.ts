@@ -712,6 +712,13 @@ export class AgentSession
     this.sessionConfigHandler = new SessionConfigHandler(this);
 
     this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager, {
+      initialModelLimits: this.session.metadata.modelLimits,
+      persistModelLimits: (limits) => {
+        this.session.metadata.modelLimits = Object.keys(limits).length ? limits : undefined;
+        this.db
+          .updateSession(this.session.id, { metadata: this.session.metadata })
+          .catch((error) => this.logger.error('Failed to persist model limits:', error));
+      },
       getCurrentModel: () => ({
         provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
         model: this.session.config.model ?? 'sonnet',

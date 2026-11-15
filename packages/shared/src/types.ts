@@ -368,6 +368,7 @@ export interface SessionMetadata {
   titleSetBy?: 'user' | 'auto';
   workspaceInitialized?: boolean;
   lastContextInfo?: ContextInfo | null;
+  modelLimits?: Record<string, number>;
   inputDraft?: string | null;
   inputDraftVoicePending?: string | null;
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
