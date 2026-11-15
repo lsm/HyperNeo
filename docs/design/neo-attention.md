@@ -175,6 +175,8 @@ The sweep computes a pure `nextStepOwner(facts)` for each approved, unfinished t
 | an open card covers the todo | human |
 | the todo is failed, or a prerequisite is failed or removed | neo |
 | a prerequisite is still unfinished | that prerequisite's owner (no item for this todo) |
+| blocked on `question` or `needs-human` with no open card: an answer still being delivered | daemon (the delivery resumes it) |
+| blocked on `question` or `needs-human` with no open card, otherwise (even with a start target) | neo |
 | live status unknown | daemon (reconcile first, no wake) |
 | worker running | worker |
 | a pack says it is waiting (for example an open PR) | pack (its own kind, such as `coding.idle_with_open_pr`) |
