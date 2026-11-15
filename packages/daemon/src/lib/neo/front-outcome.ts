@@ -4,7 +4,7 @@ import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
-import { neoIntakeMessage, readNeoReply } from './intake.ts';
+import { handOffToNeo } from './front-handoff.ts';
 import type { NeoService } from './service.ts';
 
 const SETTLEMENT_TIMEOUT_MS = 30 * 60_000;
@@ -64,33 +64,32 @@ export async function settleConvoInput(
     if (input?.owner === 'neo') continue;
     open.push(id);
   }
-  const markFailed = async (id: string) => {
-    const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
-    if (!failedAsk) return 'settled' as const;
-    const origin = failedAsk.askOrigin.sessionId;
-    return service.db.gateway.call(
+  const markFailed = (id: string, origin: string) =>
+    service.db.gateway.call(
       neoFrontInputWrites,
       'failSettled',
       conversationId,
       sessionId,
       id,
-      {
-        sessionId: origin,
-        message: neoIntakeMessage(
-          { ...failedAsk, sessionId: origin },
-          origin,
-          readNeoReply(failedAsk.replyTo, service.todos),
-          null,
-          undefined,
-          failedAsk.previewContext ?? null
-        ),
-      }
+      origin
     );
+  const handOff = async (id: string) => {
+    const openAsk = id === messageId ? ask : service.asks.find(conversationId, id);
+    if (!openAsk) return 'settled' as const;
+    const origin = openAsk.askOrigin.sessionId;
+    if (!service.db.getSession(origin)) return markFailed(id, origin);
+    const reserved = await handOffToNeo(service, conversationId, openAsk, id);
+    if (reserved === 'reserved') return 'handed_off' as const;
+    if (reserved === 'stale') return 'stale' as const;
+    return markFailed(id, origin);
   };
   let self = 'failed';
+  let contended = false;
   for (const id of open) {
-    const outcome = await markFailed(id);
+    const outcome = await handOff(id);
+    if (outcome === 'stale') contended = true;
     if (id === messageId) self = outcome;
   }
+  if (contended) return pending();
   return { delivered: true, outcome: self === 'handed_off' ? 'handed_off' : 'failed' };
 }

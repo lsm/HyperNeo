@@ -223,7 +223,7 @@ test('a hand-off reserves its inputs and enqueues the human message together, or
   expect(inputs.get('conversation', 'handed')?.owner).toBe('neo');
 });
 
-test('a failed delivery alone cannot reserve an input for Neo', async () => {
+test('a failed Neo delivery is reopened when the input is reserved', async () => {
   await db.createSession(createTestSession(sessionId));
   inputs.accept('conversation', 'failed', true);
   const uuid = crypto.randomUUID();
@@ -235,9 +235,8 @@ test('a failed delivery alone cannot reserve an input for Neo', async () => {
     message: { role: 'user', content: 'Check the build.' },
   } as never;
   await db.saveUserMessage(sessionId, message, 'failed');
-  expect(inputs.reserve('conversation', ['failed'], [{ sessionId, message }])).toBe(
-    'undeliverable'
-  );
-  expect(inputs.get('conversation', 'failed')?.owner).toBeNull();
-  expect(db.getSDKMessageRepo().getUserSendStatus(sessionId, uuid)).toBe('failed');
+  expect(inputs.reserve('conversation', ['failed'], [{ sessionId, message }])).toBe('reserved');
+  expect(inputs.get('conversation', 'failed')?.owner).toBe('neo');
+  expect(db.getSDKMessageRepo().getUserSendStatus(sessionId, uuid)).toBe('enqueued');
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [uuid])).toHaveLength(1);
 });

@@ -1,8 +1,8 @@
 import type { Database } from '../sqlite-compat.ts';
 import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
+import { sdkPendingRemoval } from './sdk-message-transactions.ts';
 import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
@@ -84,6 +84,63 @@ export class NeoFrontInputRepository {
         (id) => this.get(conversationId, id)?.owner !== 'neo'
       ),
     };
+  }
+
+  currentInputs(conversationId: string, sessionId: string): string[] {
+    return (
+      this.db
+        .prepare(`SELECT f.message_id AS id FROM neo_front_inputs f
+        JOIN sdk_messages u ON u.session_id = ?2 AND u.sdk_uuid = f.message_id
+          AND u.message_type = 'user' AND COALESCE(u.send_status, 'consumed') <> 'failed'
+        WHERE f.conversation_id = ?1 AND f.eligible = 1
+          AND (u.consumed_seq IS NULL OR u.consumed_seq > COALESCE((SELECT MAX(consumed_seq)
+            FROM sdk_messages WHERE session_id = ?2 AND ${SESSION_BILLING_TERMINAL}), 0))
+        ORDER BY u.rowid`)
+        .all(conversationId, sessionId) as { id: string }[]
+    ).map((row) => row.id);
+  }
+
+  frontSaidThrough(conversationId: string): number {
+    return (
+      (
+        this.db
+          .prepare(`SELECT MAX(sequence) AS through FROM neo_publications
+          WHERE conversation_id = ? AND json_extract(payload_json, '$.publishedBy') = 'front'`)
+          .get(conversationId) as { through: number | null }
+      ).through ?? 0
+    );
+  }
+
+  frontSaid(conversationId: string, messageId: string, since?: string) {
+    const input = this.db
+      .prepare(`SELECT catch_up_through AS through FROM neo_front_inputs
+      WHERE conversation_id = ? AND message_id = ?`)
+      .get(conversationId, messageId) as { through: number | null } | null;
+    if (!input) return [];
+    const through = input.through;
+    return (
+      this.db
+        .prepare(`SELECT payload_json AS payload, created_at AS createdAt FROM neo_publications
+        WHERE conversation_id = ? AND sequence > ?
+          AND json_extract(payload_json, '$.publishedBy') = 'front' ORDER BY sequence`)
+        .all(conversationId, through ?? 0) as { payload: string; createdAt: string }[]
+    )
+      .filter((row) => {
+        if (through != null) return true;
+        const replyTo = (JSON.parse(row.payload) as { replyTo?: string[] }).replyTo ?? [];
+        return replyTo.length
+          ? replyTo.includes(messageId)
+          : since !== undefined && row.createdAt >= since;
+      })
+      .map(
+        (row) =>
+          JSON.parse(row.payload) as { replyTo?: string[]; fullText: string; workOn?: boolean }
+      )
+      .map(({ replyTo, fullText, workOn }) => ({
+        replyTo: replyTo?.length ? replyTo : [messageId],
+        fullText,
+        ...(workOn === undefined ? {} : { workOn }),
+      }));
   }
 
   enqueueWithCatchUp(conversationId: string, entry: MailboxEntry): 'duplicate' | 'enqueued' {
@@ -211,13 +268,13 @@ export class NeoFrontInputRepository {
     conversationId: string,
     sessionId: string,
     messageId: string,
-    origin: { sessionId: string; message: SDKUserMessage }
+    originSessionId: string
   ): 'failed' | 'delivered' | 'handed_off' {
     const changes = new ChangeRecorder();
     const outcome = this.db.transaction(() => {
       if (this.get(conversationId, messageId)?.owner === 'neo') return 'handed_off' as const;
       const sdk = new SDKMessageRepository(this.db);
-      const status = sdk.getUserSendStatus(origin.sessionId, messageId);
+      const status = sdk.getUserSendStatus(originSessionId, messageId);
       if (status !== null && status !== 'failed') return 'delivered' as const;
       this.release(conversationId, [messageId]);
       sdkMessageWrites.run(
@@ -225,15 +282,6 @@ export class NeoFrontInputRepository {
         { method: 'markDeliveryFailedByUuidInclusive', args: [sessionId, messageId] },
         changes
       );
-      if (status === null)
-        sdkMessageWrites.run(
-          this.db,
-          {
-            method: 'saveUserMessage',
-            args: [origin.sessionId, origin.message, 'failed'],
-          },
-          changes
-        );
       return 'failed' as const;
     })();
     for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
@@ -243,34 +291,60 @@ export class NeoFrontInputRepository {
   reserve(
     conversationId: string,
     messageIds: readonly string[],
-    prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
-  ): 'reserved' | 'ineligible' | 'undeliverable' {
-    return this.db.transaction(() => {
+    prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message' | 'hold'>[],
+    saidThrough?: number
+  ): 'reserved' | 'ineligible' | 'stale' {
+    const changes = new ChangeRecorder();
+    const write = (method: 'reopenDeliveryByUuid', args: unknown[]) =>
+      sdkMessageWrites.run(this.db, { method, args }, changes);
+    const outcome = this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
       if (rows.some((row) => !row?.eligible)) return 'ineligible';
+      if (saidThrough !== undefined && this.frontSaidThrough(conversationId) > saidThrough)
+        return 'stale';
       const sdk = new SDKMessageRepository(this.db);
-      const statuses = prompts.map((prompt) =>
-        sdk.getUserSendStatus(prompt.sessionId, prompt.message.uuid!)
-      );
-      if (statuses.includes('failed')) return 'undeliverable';
+      const jobQueue = new JobQueueRepository(this.db);
       for (const id of messageIds)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
           WHERE conversation_id = ? AND message_id = ?`)
           .run(conversationId, id);
-      prompts.forEach((prompt, index) => {
-        if (statuses[index]) return;
+      for (const prompt of prompts) {
+        const uuid = prompt.message.uuid!;
+        const status = sdk.getUserSendStatus(prompt.sessionId, uuid);
+        if (status === 'failed' || status === 'enqueued' || status === 'deferred') {
+          const stored = sdk.getMessageByStatusAndUuid(prompt.sessionId, status, uuid);
+          if (
+            !stored ||
+            (status === 'failed' &&
+              write('reopenDeliveryByUuid', [prompt.sessionId, uuid]) == null) ||
+            !sdkPendingRemoval.run(
+              this.db,
+              {
+                sessionId: prompt.sessionId,
+                messageDbId: stored.dbId,
+                mode: 'remove',
+                ...(status === 'deferred' ? { expectedStatus: 'deferred' as const } : {}),
+              },
+              changes
+            )
+          )
+            throw new Error('front_handoff_replace_failed');
+        } else if (status) continue;
         ensurePromptInTransaction({
-          ...prompt,
+          sessionId: prompt.sessionId,
+          message: prompt.message,
           db: this.db,
           sdkMessageRepo: sdk,
-          jobQueue: new JobQueueRepository(this.db),
-          hold: 'immediate',
+          jobQueue,
+          hold: status === 'deferred' ? 'manual' : (prompt.hold ?? 'immediate'),
           delivery: { origin: 'chat' },
         });
-      });
+      }
       return 'reserved' as const;
     })();
+    for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
+    return outcome;
   }
 }
 
@@ -292,5 +366,5 @@ export const neoFrontInputReads = defineRepositoryOp(
   'neo.front.outcomes',
   'read',
   NeoFrontInputRepository,
-  ['get', 'terminal']
+  ['get', 'terminal', 'frontSaid', 'frontSaidThrough', 'currentInputs']
 );

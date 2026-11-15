@@ -4,11 +4,9 @@ import { neoFrontReads } from '../../storage/repositories/neo-front-read-worker.
 import { NeoSpeechSay } from './speech.ts';
 import { NeoPublicationDraft, publicationIdFor } from './publication-operation.ts';
 import { frontSessionId } from './front-mode.ts';
-import { catchUpBlock } from './front-catch-up.ts';
 import type { NeoService } from './service.ts';
-import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
-import { neoIntakeMessage, readNeoReply } from './intake.ts';
-import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
+import { handOffToNeo } from './front-handoff.ts';
+import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 import { NEO_FRONT_REPLY_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
 
@@ -77,36 +75,19 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       workOn
     );
   };
-  const handOff = async (
-    asks: NeoConversationAsk[],
-    messageIds: string[],
-    saidText: string,
-    workOn: boolean
-  ) => {
-    const block = catchUpBlock([{ replyTo: messageIds, fullText: saidText, workOn }]);
-    const reserved = await service.db.gateway.call(
-      neoFrontInputWrites,
-      'reserve',
-      conversationId,
-      messageIds,
-      asks.map((ask) => ({
-        sessionId: ask.askOrigin.sessionId,
-        message: neoIntakeMessage(
-          { ...ask, sessionId: ask.askOrigin.sessionId },
-          ask.askOrigin.sessionId,
-          readNeoReply(ask.replyTo, service.todos),
-          null,
-          undefined,
-          ask.previewContext ?? null,
-          block
-        ),
-      }))
-    );
-    return reserved === 'reserved'
+  const handOff = async (ids: readonly string[], required: readonly string[]) => {
+    const outcomes = new Map<string, string>();
+    for (const id of ids) {
+      const ask = service.asks.find(conversationId, id);
+      outcomes.set(id, ask ? await handOffToNeo(service, conversationId, ask, id) : 'ineligible');
+    }
+    const failed = (required.length ? required : ids).find((id) => outcomes.get(id) !== 'reserved');
+    return failed === undefined
       ? { started: true }
       : {
           started: false,
-          reason: reserved === 'ineligible' ? 'unknown_reply_target' : 'delivery_failed',
+          reason:
+            outcomes.get(failed) === 'ineligible' ? 'unknown_reply_target' : 'delivery_failed',
         };
   };
   return createSdkMcpServer({
@@ -132,39 +113,48 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
           work_on: z.boolean(),
         },
-        async ({ text, work_on: workOn, ...input }) => {
+        async ({ text, work_on: workOn, ...given }) => {
           const body = { text };
-          const targets = input.replyTo ?? [];
+          const named = given.replyTo ?? [];
+          const recorded = await service.db.gateway.call(
+            neoFrontInputReads,
+            'currentInputs',
+            conversationId,
+            sessionId
+          );
+          const targets = [...new Set([...recorded, ...named])];
+          const input = { ...given, replyTo: named };
           if (!targets.length)
             return result(
               workOn
                 ? { accepted: false, reason: 'work_on_needs_reply_to' }
                 : frontReceipt(await publish({ ...input, ...body }, workOn))
             );
-          const asks = targets.map((id) => service.asks.find(conversationId, id));
-          if (asks.some((ask) => !ask))
-            return result({ accepted: false, reason: 'unknown_reply_target' });
           if (
             service.repo.readConversationId() !== conversationId ||
             service.db.getGlobalSettings().neo?.front?.enabled !== true
           )
             return result({ accepted: false, reason: 'front_not_speaking' });
+          if (named.some((id) => !service.asks.find(conversationId, id))) {
+            await handOff(recorded, recorded);
+            return result({ accepted: false, reason: 'unknown_reply_target' });
+          }
           const receipt = await publish({ ...input, ...body }, workOn);
           const second = !receipt.accepted && receipt.reason === 'publication_conflict';
-          if (!receipt.accepted && !second) return result(frontReceipt(receipt));
+          if (!receipt.accepted && !second) {
+            await handOff(recorded, recorded);
+            return result(frontReceipt(receipt));
+          }
           const existing = second
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
           const sameTargets = (ids: readonly string[] = []) =>
-            [...ids].sort().join() === [...targets].sort().join();
-          if (second && !(existing && sameTargets(existing.replyTo)))
+            [...ids].sort().join() === [...input.replyTo].sort().join();
+          if (second && !(existing && sameTargets(existing.replyTo))) {
+            await handOff(recorded, recorded);
             return result({ accepted: false, reason: 'publication_conflict' });
-          const handed = await handOff(
-            asks.map((ask) => ask!),
-            targets,
-            existing?.fullText ?? text,
-            existing ? (existing.workOn ?? workOn) : workOn
-          );
+          }
+          const handed = await handOff(targets, recorded);
           return result(
             handed.started
               ? { ...(receipt.accepted ? receipt : { accepted: true }), ...handed }
