@@ -845,7 +845,7 @@ describe('neo.preferences.set', () => {
     expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
   });
 
-  test('moves root Neo and the front back to their preferred models once the limit passed', async () => {
+  test('moves root Neo and the front back from limits a previous run saved once they passed', async () => {
     const neo = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
     const front = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' as const };
     const writes = gatewayFor(db.getDatabase());
@@ -856,11 +856,13 @@ describe('neo.preferences.set', () => {
     await db.createSession({
       ...frontRow,
       config: { ...frontRow.config, model: 'glm-5', provider: 'glm' },
+      metadata: { ...frontRow.metadata, modelLimits: { [`${opus.provider}/${opus.id}`]: 1000 } },
     });
+    const root = db.getSession('neo:root')!;
     await db.updateSession('neo:root', {
-      config: { ...db.getSession('neo:root')!.config, model: 'glm-5', provider: 'glm' },
+      config: { ...root.config, model: 'glm-5', provider: 'glm' },
+      metadata: { ...root.metadata, modelLimits: { [`${flash.provider}/${flash.id}`]: 1000 } },
     });
-    limits = { [`${flash.provider}/${flash.id}`]: 1000, [`${opus.provider}/${opus.id}`]: 1000 };
     await service.returnToPreferredModels(999);
     expect(switched).toEqual([]);
     await service.returnToPreferredModels(1000);

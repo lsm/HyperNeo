@@ -1148,6 +1148,8 @@ describe('RateLimitWatchdog', () => {
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [A],
       });
+      const saved: Record<string, number>[] = [];
+      deps.persistModelLimits = (limits) => saved.push(limits);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       await watchdog.scheduleRetry('usage limit', { uuid: 'm1', content: 'hi' }, { resetAtMs });
@@ -1155,6 +1157,14 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().modelLimits).toEqual({ 'anthropic/sonnet': resetAtMs });
       watchdog.forgetModelLimit('anthropic/sonnet');
       expect(watchdog.getState().modelLimits).toEqual({});
+      expect(saved).toEqual([{ 'anthropic/sonnet': resetAtMs }, {}]);
+    });
+
+    it('starts from the limits a previous run saved', () => {
+      const { deps } = createMockDeps();
+      deps.initialModelLimits = { 'anthropic/sonnet': 42 };
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      expect(watchdog.getState().modelLimits).toEqual({ 'anthropic/sonnet': 42 });
     });
 
     it('assumes the first backoff step when the limit names no reset time', async () => {
