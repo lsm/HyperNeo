@@ -82,7 +82,7 @@ Tests give the expected output for: a configured line with no usage reader (rank
 ## Work kinds and coding
 
 - A new optional pack field, `workKinds`, lists a pack's kinds with labels, prefixed by the pack id: coding gives `coding.write`, `coding.review`, `coding.verify`. Core adds `general`. A todo's kind is `named.workKind`, or `general` when it has none.
-- A new core function, `chooseLine(kind, candidates, scope)`, calls the `models` pack when it is enabled and otherwise returns the candidates unchanged.
+- A new optional pack hook, `rankLines`, next to `workKinds` in `pack-contract.ts`. The `models` pack implements it. A new core function, `chooseLine(kind, candidates, scope)`, calls the `rankLines` of the enabled pack that provides one and otherwise returns the candidates unchanged. Core never names a pack id. At most one enabled pack may provide `rankLines`; enabling a second is refused.
 - Coding keeps its eligibility rules, its provenance check, its tie-break and its session strategy. It filters candidates first, calls `chooseLine` with only the eligible ones, and keeps its own tie-break when ranking ties or the pack is off. Its three model and three effort preferences are replaced by `routes`. Where an installation has saved values, coding keeps reading them until the migration proposal for them is confirmed. Its three harness preferences, and the harness scoring in `stage-preferences.ts`, stay as they are.
 
 ## Moving a held todo
@@ -112,7 +112,7 @@ A move is not a new mechanism. The daemon already moves a stalled todo to a fres
 
 ## Change (first delivery)
 
-1. **Core:** the `routes`, `lineRules` and `holdRules` preference types (validation in `preference-operations.ts`), the `workKinds` field, and `chooseLine`, which passes candidates through when no pack ranks them. Test: with no pack, the order is unchanged.
+1. **Core:** the `routes`, `lineRules` and `holdRules` preference types (validation in `preference-operations.ts`), the `workKinds` field, the `rankLines` hook, and `chooseLine`, which passes candidates through when no pack ranks them. Tests: with no pack, the order is unchanged; a second pack providing `rankLines` is refused.
 2. **Pack:** `rankLines`, reading holds, `settings.provider.usage` and availability. Tests: each skip reason, `stopAtPercent`, unknown versus held, a stale reading, an exhausted ranking.
 3. **Pack:** `onLineHeld` on the hold state, telling Neo once per episode. Tests: a short limit hold waits, a long one tells once, and overloaded follows `onHold`.
 4. **Core:** `neo.todo.retarget` on top of `neo.todo.redispatch`, the confirmed stop, and clearing the held prompt. Tests: an unsupported stop, an adopted worker and a stop that leaves the worker live each refuse and start nothing; a shared session is refused; two concurrent calls start one worker; a repeated call with an old `fromRef` changes nothing; the restart skips the held line; two calls that both pass the first check, where the first completes before the second resumes, leave the replacement running and start one worker; a crash between stop and reopen, followed by a restart of the real loop from that `doing` state on a stopped worker, ends with one new worker and no manual step; the existing stall redispatch now refuses an unconfirmed stop too.
