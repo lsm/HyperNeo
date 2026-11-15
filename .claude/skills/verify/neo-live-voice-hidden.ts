@@ -37,7 +37,15 @@ let browser: { newContext(options?: unknown): Promise<any>; close(): Promise<voi
 try {
   await app.spaceRuntimeService.ready();
   await app.jobProcessor.stop();
-  await app.settingsManager.updateGlobalSettings({ language: 'en' });
+  await app.settingsManager.updateGlobalSettings({
+    language: 'en',
+    voice: {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
+      model: 'stub',
+      allowPrivateNetwork: true,
+    },
+  });
   const now = new Date().toISOString();
   await app.db.createSession({
     id: sessionId,
@@ -117,8 +125,13 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${front.port}/neo`);
       const mic = page.locator('button[aria-label="Start voice input"]');
-      await mic.waitFor({ state: 'visible', timeout: 30_000 });
-      await wait(async () => !(await mic.isDisabled()));
+      try {
+        await mic.waitFor({ state: 'visible', timeout: 30_000 });
+      } catch (error) {
+        await page.screenshot({ path: join(run, `evidence/failure-${colorScheme}.png`) });
+        throw error;
+      }
+      await wait(async () => (await page.locator('form.neo-composer-input').count()) > 0);
       assert.equal(await page.locator('button[aria-label="Realtime voice"]').count(), 0);
       assert.equal(await page.locator('button[aria-label="Stop realtime voice"]').count(), 0);
       await page.locator('form.neo-composer-input').screenshot({
@@ -126,6 +139,7 @@ try {
       });
       (evidence.schemes as Record<string, unknown>)[colorScheme] = {
         micVisible: true,
+        micEnabled: !(await mic.isDisabled()),
         realtimeButtons: 0,
       };
     } finally {

@@ -15,8 +15,11 @@ web bundle beside the daemon, pairs a headless Chromium context through the real
 `/pair` endpoint and opens `/neo` once per color scheme.
 
 In each scheme the journey requires the composer's "Start voice input" button to
-be visible and enabled, and requires zero "Realtime voice" or "Stop realtime
-voice" buttons on the page. It then screenshots the composer form.
+be visible, and requires zero "Realtime voice" or "Stop realtime voice" buttons
+on the page. It then screenshots the composer form. The mic renders only when
+the daemon's voice settings are enabled, so the helper enables them; a headless
+browser without `navigator.mediaDevices` may still show it disabled, which the
+evidence records without failing presence.
 
 Inspect composer-light.png and composer-dark.png in the evidence directory and
 neo-live-voice-hidden.json, and trust the wrapper's exit status. This proves the
