@@ -2,9 +2,11 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import type { CodingSessionStrategy } from './session-strategy.ts';
+import { type CodingSessionStrategy, codingSessionStrategy } from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
+type PoolSession = { ref: WorkRef; name: string; held: boolean };
+const workKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? ''}:${ref.id}`;
 
 const SESSION_OF = `COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref`;
 
@@ -32,6 +34,43 @@ class CodingSessionAssignments {
     if (held) return held;
     if (input.strategy === 'long_lived') return this.feature(input.repo, input.featureKey);
     return this.session(input.todoId);
+  }
+
+  dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
+    const repo = (
+      this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(input.todoId) as {
+        repo: string | null;
+      } | null
+    )?.repo;
+    if (!repo) return null;
+    const strategy = codingSessionStrategy(this.db, repo);
+    const rows = this.db
+      .prepare(
+        `SELECT t.id, t.state, ${SESSION_OF}, json_extract(s.target, '$.name') AS name
+         FROM neo_todo_sessions s JOIN pack_coding_todos p ON p.todo_id = s.todo_id
+         JOIN neo_todos t ON t.id = s.todo_id WHERE lower(p.repo) = lower(?)`
+      )
+      .all(repo) as { id: string; state: string; ref: string | null; name: string | null }[];
+    const pool = new Map<string, PoolSession>();
+    for (const row of rows) {
+      if (!row.ref) continue;
+      const ref = JSON.parse(row.ref) as WorkRef;
+      const known = pool.get(workKey(ref)) ?? { ref, name: '', held: false };
+      known.name ||= row.name ?? '';
+      known.held ||= row.id !== input.todoId && ['doing', 'blocked', 'failed'].includes(row.state);
+      pool.set(workKey(ref), known);
+    }
+    const owner = this.owner({ ...input, repo, strategy });
+    return {
+      repo,
+      strategy,
+      owner: owner && {
+        todoId: owner.todoId,
+        session:
+          owner.ref && (pool.get(workKey(owner.ref)) ?? { ref: owner.ref, name: '', held: false }),
+      },
+      pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
+    };
   }
 
   private feature(repo: string, featureKey: string): Owner | null {
@@ -76,7 +115,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner']
+  ['owner', 'dispatchFacts']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',

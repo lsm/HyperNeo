@@ -36,6 +36,7 @@ import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
+import { decideCodingSessionTarget } from './session-target.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -214,6 +215,8 @@ export function createCodingPack(deps: {
       sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
+    workerTarget: (todo, target, status) =>
+      decideCodingSessionTarget(deps.database(), todo, target, status),
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
     review: runCodingReview,
     todos: {
