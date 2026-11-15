@@ -269,56 +269,42 @@ export class NeoFrontInputRepository {
     return outcome;
   }
 
-  reopenForNeo(conversationId: string, messageId: string, originSessionId: string): boolean {
-    const changes = new ChangeRecorder();
-    const reopened = this.db.transaction(() => {
-      const sdk = new SDKMessageRepository(this.db);
-      if (sdk.getUserSendStatus(originSessionId, messageId) !== 'failed') return false;
-      this.db
-        .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
-        WHERE conversation_id = ? AND message_id = ?`)
-        .run(conversationId, messageId);
-      return (
-        sdkMessageWrites.run(
-          this.db,
-          { method: 'reopenDeliveryByUuid', args: [originSessionId, messageId] },
-          changes
-        ) !== null
-      );
-    })();
-    for (const change of changes.changes) this.changes?.notifyChange(change.table, change.scope);
-    return reopened;
-  }
-
   reserve(
     conversationId: string,
     messageIds: readonly string[],
     prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
-  ): 'reserved' | 'ineligible' | 'undeliverable' {
+  ): 'reserved' | 'ineligible' {
     return this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
       if (rows.some((row) => !row?.eligible)) return 'ineligible';
       const sdk = new SDKMessageRepository(this.db);
-      const statuses = prompts.map((prompt) =>
-        sdk.getUserSendStatus(prompt.sessionId, prompt.message.uuid!)
-      );
-      if (statuses.includes('failed')) return 'undeliverable';
+      const jobQueue = new JobQueueRepository(this.db);
       for (const id of messageIds)
         this.db
           .prepare(`UPDATE neo_front_inputs SET owner = 'neo'
           WHERE conversation_id = ? AND message_id = ?`)
           .run(conversationId, id);
-      prompts.forEach((prompt, index) => {
-        if (statuses[index]) return;
+      for (const prompt of prompts) {
+        const uuid = prompt.message.uuid!;
+        const status = sdk.getUserSendStatus(prompt.sessionId, uuid);
+        let message = prompt.message;
+        if (status === 'failed') {
+          const failed = sdk.getMessageByStatusAndUuid(prompt.sessionId, 'failed', uuid);
+          if (!failed || sdk.reopenDeliveryByUuid(prompt.sessionId, uuid) === null)
+            throw new Error('front_handoff_reopen_failed');
+          const { dbId: _dbId, timestamp: _timestamp, ...stored } = failed;
+          message = stored as typeof prompt.message;
+        } else if (status) continue;
         ensurePromptInTransaction({
-          ...prompt,
+          sessionId: prompt.sessionId,
+          message,
           db: this.db,
           sdkMessageRepo: sdk,
-          jobQueue: new JobQueueRepository(this.db),
+          jobQueue,
           hold: 'immediate',
           delivery: { origin: 'chat' },
         });
-      });
+      }
       return 'reserved' as const;
     })();
   }
@@ -328,7 +314,7 @@ export const neoFrontInputWrites = defineRepositoryOp(
   'neo.front.inputs',
   'write',
   NeoFrontInputRepository,
-  ['claim', 'claimUnowned', 'release', 'reserve', 'reopenForNeo', 'failSettled']
+  ['claim', 'claimUnowned', 'release', 'reserve', 'failSettled']
 );
 
 export const neoFrontDeliveryWrites = defineRepositoryOp(
