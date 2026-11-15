@@ -13,6 +13,7 @@ import type { Session } from '@hyperneo/shared';
 const run = resolve(process.argv.at(-1)!);
 const role = process.argv.includes('--front') ? 'front' : 'neo';
 const restart = process.argv.includes('--restart');
+const pick = process.argv.includes('--pick');
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -159,6 +160,7 @@ const evidence: Record<string, unknown> = {
   scriptedSdk: true,
   role,
   restart,
+  pick,
   passed: false,
   starts,
 };
@@ -248,16 +250,31 @@ try {
     assert(app.db.getSession(sessionId)?.metadata.modelLimits?.['anthropic/haiku']);
   }
 
+  if (pick) {
+    evidence.pickReply = await hub.request('session.model.switch', {
+      sessionId,
+      model: 'sonnet',
+      provider: 'anthropic',
+    });
+    evidence.afterPick = {
+      model: (await read()).config.model,
+      storedLimits: app.db.getSession(sessionId)?.metadata.modelLimits ?? null,
+    };
+    assert.equal((evidence.afterPick as { storedLimits: unknown }).storedLimits, null);
+  }
+
   await until(() => Date.now() > resetAt, 'Reset time never passed', 10000);
   await service.returnToPreferredModels();
-  await until(async () => (await read()).config.model === 'haiku', 'Session did not return');
+  const expected = pick ? 'sonnet' : 'haiku';
+  await until(async () => (await read()).config.model.includes(expected), 'Session did not settle');
   evidence.afterReset = { model: (await read()).config.model, limits: agent().getRateLimitWatchdogState().modelLimits };
 
   await hub.request('message.send', { sessionId, content: 'Next turn after the limit cleared.' });
   await until(
-    async () => (await answers()).some((text) => text.startsWith('ANSWERED_ON haiku')),
-    'The next turn did not run on the preferred model'
+    async () => (await answers()).filter((text) => text.startsWith(`ANSWERED_ON ${expected}`)).length >= (pick ? 2 : 1),
+    'The next turn did not run on the expected model'
   );
+  if (pick) assert((await read()).config.model.includes('sonnet'));
   evidence.answers = await answers();
   await until(() => !agent().isLimitRecoveryPending(), 'Recovery did not settle at the end');
   await agent().replayPendingMessagesForImmediateMode({ waitForPostSettlementFlush: true });

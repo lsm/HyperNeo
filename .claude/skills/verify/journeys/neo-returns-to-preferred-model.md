@@ -21,4 +21,10 @@ the daemon and boots a new one on the same database. The session must still be
 on Sonnet with Haiku's reset time stored in its metadata, and the sweep after
 the reset must move it back to Haiku. Without the stored record this fails.
 
-Retain the four `return-to-preferred-*.json` files.
+Repeat all four runs with `--pick`: after the fallback (and after the restart,
+when given) a human picks Sonnet through `session.model.switch`, the picker's
+RPC. Sonnet is the fallback the limit record names, so only the pick itself can
+stop the return. The stored record must be gone after the pick, and after the
+reset the session stays on Sonnet and the next turn answers there.
+
+Retain the eight `return-to-preferred-*.json` files.
