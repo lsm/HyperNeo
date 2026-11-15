@@ -48,7 +48,7 @@ Three new generic preference types go in core, so any pack can use them. Each is
 |---|---|---|---|
 | `routes` | `routes` | For each kind (and optionally repo), the lines to prefer, in order. `stopAtPercent` stops new work on a line above that usage. | empty: the caller's order |
 | `rules` | `lineRules` | Where a line may or may not be used | none |
-| `onHold` | `holdRules` | What happens when a todo's worker is held | every reason: `wait` |
+| `onHold` | `holdRules` | What happens when a todo's worker is held | `limit` and `login`: `move` after 30 minutes; `overloaded` and `network`: `wait` |
 
 `afterMinutes` means: move when the hold has already lasted that long, or when the known reset is further away than that, whichever comes first. With `0`, a matching hold moves at once. Measuring the elapsed time as well means a reset time that keeps sliding cannot make a todo wait forever.
 
@@ -87,34 +87,24 @@ Tests give the expected output for: a configured line with no usage reader (rank
 
 ## Moving a held todo
 
-Neo moves a todo with one core operation, `neo.todo.retarget {todoId, line, requestId}`. Neo chooses `requestId`; the same id always returns the same recorded outcome. The `models` pack offers the operation as the action on its notice. The operation is core, because it changes a todo's worker.
+A move is not a new mechanism. The daemon already moves a stalled todo to a fresh worker with `neo.todo.redispatch` (`todo-runner.ts`): stop the old worker, mark it unusable, reopen the todo as `todo`, and start it through the normal start path (`neo.todo.start`). That start path already has the start receipt, the capacity and busy-worker holds, and the uncertain-start handling (`recordStartInterrupted`, `start_uncertain`, `work.find`). A held todo moves through the same pipeline. The only difference is which line the restart picks.
 
-**Admission (first delivery).** The move is refused unless the old worker session serves only this todo:
-- no other todo is bound to it;
-- no outstanding delivery for another todo;
-- its current input belongs to this todo.
+**Picking the line.** The start path asks the todo's pack for its target (`pack.workerTarget`), and a `start` target chosen there replaces the stored one. Coding's `workerTarget` calls `chooseLine`, so a reopened todo is ranked again. The held line is skipped by its own hold, so the restart lands on the best usable line without anyone naming it. When Neo names a line, it is passed as the first candidate.
 
-Moving work off a shared session is later work.
+**The operation.** `neo.todo.retarget {todoId, fromRef, line?}` lets Neo ask for a move. `fromRef` is the worker Neo wants to move off. If the todo's current worker is no longer `fromRef`, the move already happened, and the call returns the todo as it is. That makes a repeated call harmless with no request store. It then runs `neo.todo.redispatch`.
 
-**Steps.** One superpipe. Each step records its phase on a `neo_todo_moves` row (move id, todo, request id, from line, to line, phase, outcome, times) before acting. Every step is safe to run again, so recovery re-runs the step of the recorded phase instead of skipping ahead:
-1. **Claim.** One guarded insert. It fails if an open move exists for the todo, and returns the recorded outcome if the request id exists.
-2. **Stop and confirm** (phase `stopping`). Stop the old worker with `work.stop`, then read its live status again. Continue only if the stop returned `ok` and the worker now reads as terminal, or if it was already terminal before the stop. These refuse the move and record `stop_unconfirmed`: an unsupported stop, an adopted worker, and a worker still live. The existing stop helper treats `unsupported` as success and skips adopted workers (`todo-runner.ts:1648-1691`), so retarget needs this stricter check. For a HyperNeo session, the held prompt in its hold state is cleared as well, so the old session cannot resume the moved work. Clearing is idempotent: clearing an already-empty prompt succeeds. Replace is not reached until the stop is confirmed and the prompt is cleared. That is a small new session-control step: today only the restart-resume marker has a drop call (`dropRestartResume`, `hyperneo-adapter.ts:123`).
-3. **Replace** (phase `replacing`). In one transaction, write the new target on the todo-session row and set the phase to `dispatching`, so no crash can leave one without the other. The place stays the same: machine, folder and worktree. The verb is `start`: retarget always starts a new session and never sends to an existing one, so it never reuses the held session.
-4. **Dispatch** (phase `dispatching`). Start the worker through the existing dispatch, with the existing start receipt. The brief's first line names the move id (`Move <move id>`), so the new worker can be recognised later. A successful start is recorded through the normal dispatch record (`recordDispatch`, `neo-todo-session-repository.ts:107`), which keeps the `start` target and the delivery evidence. That record is the move's receipt. The brief is the todo's instruction plus the old worker's latest report. A domain pack adds its hand-off through `workerStartBrief`. Coding gets new edge work for this, counted in its slice: read the branch, uncommitted and unpushed changes, and the PR link.
-5. **Settle.** Record `moved` or `failed` with the reason. The row is kept as the outcome.
+**Two fixes to the shared pipeline**, which also make the existing stall redispatch safe:
+- **Stop must be confirmed.** The stop helper treats an `unsupported` stop as success and skips adopted workers (`neo.todo.stop-current-worker`, `todo-runner.ts`). A move continues only when the old worker reads as terminal after the stop. Otherwise it is refused, the todo stays where it is, and Neo is told once. This rule prevents two live workers on one todo.
+- **A held session drops its held prompt.** For a HyperNeo session in a hold, the stop also clears the held prompt, so the old session cannot resume the moved work later. Clearing an empty prompt succeeds.
 
-**Recovery.** The 5-minute sweep re-runs the step of any move row left in a phase:
-- `claimed` or `stopping`: Stop and confirm again, including clearing the held prompt. A live worker records `stop_unconfirmed`; a confirmed stop continues to Replace.
-- `replacing`: Replace again. It is one transaction, so either nothing was written or the phase already reads `dispatching`.
-- `dispatching` with the new session already recorded: record `moved`.
-- `dispatching` with no recorded session: the start may or may not have happened. The todo blocks as `start_uncertain`, like today's interrupted start (`recordStartInterrupted`, `todo-runner.ts:526`, refused at `:227`). The sweep runs `work.find` in the place's folder for the move id:
-  - exactly one match: record it with `recordDispatch`, as a normal start would have, clear the interrupted mark (a small new repository call; today only `bind` clears it, `neo-todo-session-repository.ts:449`), and record `moved`. It must not use `bind`: that writes an `adopt` target and clears delivery evidence, and retarget refuses adopted workers, so the replacement could never be moved again;
-  - several matches: stay blocked and tell Neo;
-  - no match: stay blocked. An empty result is not proof, because a find can miss sources (`unreachable`) or be cut short (`more`, `limit`) (`find-operation.ts:35-43`). Neo is told once, with the find result.
+**Every case, with no new state:**
+- Two moves at once: the start claim is one transaction, so only one worker starts. The second call sees a new worker and returns.
+- A crash after the stop and before the reopen: the todo is `doing` on a stopped worker. The existing stall rescue (`neo.todo.rescue-stalled`) picks it up and moves it.
+- A crash during the start: the existing uncertain-start path handles it, as for any start.
+- A shared session (another todo is bound to it, or has a delivery outstanding): refused, because marking it unusable would stop the other todo too. Moving work off a shared session is later work.
+- No usable line: the start path waits, as it does today, and `onLineHeld` has already told Neo with `exhausted`.
 
-  An uncertain move is released in only two ways: the found worker is recorded as above, or the human confirms that no worker started. Until then, no new move or retry is admitted.
-
-Moving to a fresh worktree is not in the first delivery.
+**The hand-off.** The new worker's brief is the todo's instruction plus the old worker's latest report. A domain pack adds its own hand-off through `workerStartBrief`. Coding adds the branch, uncommitted and unpushed changes, and the PR link, so the new worker continues in the same folder and worktree instead of starting over.
 
 ## Notices
 
@@ -125,7 +115,7 @@ Moving to a fresh worktree is not in the first delivery.
 1. **Core:** the `routes`, `lineRules` and `holdRules` preference types (validation in `preference-operations.ts`), the `workKinds` field, and `chooseLine`, which passes candidates through when no pack ranks them. Test: with no pack, the order is unchanged.
 2. **Pack:** `rankLines`, reading holds, `settings.provider.usage` and availability. Tests: each skip reason, `stopAtPercent`, unknown versus held, a stale reading, an exhausted ranking.
 3. **Pack:** `onLineHeld` on the hold state, telling Neo once per episode. Tests: a short limit hold waits, a long one tells once, and overloaded follows `onHold`.
-4. **Core:** `neo.todo.retarget`, the `neo_todo_moves` table, the stricter stop confirmation, clearing the held prompt, and sweep recovery. Tests: an unsupported stop, an adopted worker and a failed stop each refuse and start nothing; a shared session is refused; two concurrent requests start one worker; the same request id returns the first outcome; a crash before and after clearing the held prompt each end with the prompt cleared and one new worker; a crash inside Replace leaves either no change or `dispatching`; an unclear dispatch with one find match records `moved` with a `start` target, and a second hold on that replacement can be moved again; with no match, or with `unreachable` or `more` set, it stays blocked and admits no new move.
+4. **Core:** `neo.todo.retarget` on top of `neo.todo.redispatch`, the confirmed stop, and clearing the held prompt. Tests: an unsupported stop, an adopted worker and a stop that leaves the worker live each refuse and start nothing; a shared session is refused; two concurrent calls start one worker; a repeated call with an old `fromRef` changes nothing; the restart skips the held line; a crash between stop and reopen is picked up by the stall rescue; the existing stall redispatch now refuses an unconfirmed stop too.
 5. **Coding:** name its kinds, filter and then call `chooseLine`, replace the six model and effort preferences, and add the hand-off facts to `workerStartBrief` (branch, uncommitted and unpushed changes, PR link).
 6. **Migration:** proposals for the structured part of a saved routing rule, then a rewrite of the rule down to its remaining clauses. Both need the human's yes.
 
