@@ -1,3 +1,4 @@
+import { codingDesignFollowupReads } from '../../lib/neo/packs/coding/design-followup-worker.ts';
 import { workerInputReads, workerInputWrites } from '../repositories/worker-input-worker.ts';
 import { neoFrontReads } from '../repositories/neo-front-read-worker.ts';
 import { anthropicRateLimitEventsRead } from '../repositories/anthropic-usage-read.ts';
@@ -306,6 +307,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingTodoStorageWrites,
     codingDeliveryWrites,
     codingSweepReads,
+    codingDesignFollowupReads,
     codingTurnPrReads,
     codingSweepWrites,
     claudeDesktopOutboxWrites,

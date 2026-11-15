@@ -68,6 +68,7 @@ export type NeoTodoCommit = (
 ) => NeoTodo;
 
 export interface NeoTodoStorageBoundary {
+  settlementRefusal?(askId: string): string | null;
   insert(commit: NeoTodoCommit, args: Parameters<NeoTodoInsert>): NeoTodo;
 }
 
@@ -576,6 +577,10 @@ export class NeoAskTodoRepository {
       .run(outcome, now, id);
     this.changed();
     return this.getAsk(id)!;
+  }
+
+  settlementRefusal(askId: string): string | null {
+    return this.storage.settlementRefusal?.(askId) ?? null;
   }
 
   settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {

@@ -1,3 +1,4 @@
+import { wakeCodingDesignFollowups } from './design-followups.ts';
 import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
 import { listPackPreferences } from '../../preference-operations.ts';
@@ -240,6 +241,13 @@ export function createCodingPack(deps: {
       );
       await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now, prSweepDeps.delivery);
       await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
+      await wakeCodingDesignFollowups(
+        deps.database(),
+        deps.todoPrs,
+        deps.readPrs,
+        prSweepDeps.wake,
+        now
+      );
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(

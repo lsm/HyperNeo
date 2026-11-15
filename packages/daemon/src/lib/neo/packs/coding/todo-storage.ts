@@ -1,3 +1,4 @@
+import { CodingDesignFollowupRepository } from './design-followup-worker.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../../../../storage/reactive-database.ts';
@@ -16,6 +17,10 @@ class CodingTodoStorage implements NeoTodoStorageBoundary {
     private readonly db: Database,
     private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
   ) {}
+
+  settlementRefusal(askId: string): string | null {
+    return new CodingDesignFollowupRepository(this.db).settlementRefusal(askId);
+  }
 
   prepare(): void {
     prepareCodingTodoStorage(this.db);

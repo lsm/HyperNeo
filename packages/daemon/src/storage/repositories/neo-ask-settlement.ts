@@ -10,7 +10,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 
 type Input = { askId: string; status: 'done' | 'dropped'; outcome: string };
-type Snapshot = { ask: NeoAsk; todos: NeoTodo[] };
+type Snapshot = { ask: NeoAsk; todos: NeoTodo[]; settlementRefusal?: string | null };
 type Rejection = { ok: false; reason: string };
 type Receipt = {
   ok: true;
@@ -26,7 +26,11 @@ const snapshot = (superpipe({})('neo.ask.settlement-snapshot') as PipelineAPI)
     'result:outcome'
   )
   .pipe(
-    (store: NeoAskTodoRepository, ask: NeoAsk) => ({ ask, todos: store.listTodos(ask.id) }),
+    (store: NeoAskTodoRepository, ask: NeoAsk) => ({
+      ask,
+      todos: store.listTodos(ask.id),
+      settlementRefusal: store.settlementRefusal(ask.id),
+    }),
     ['store', 'outcome'],
     'outcome'
   )
@@ -37,6 +41,8 @@ export function requireNeoAskSettlement(
   input: Input
 ): { value: Snapshot } | { reason: Rejection } {
   if ('ok' in current) return { reason: current };
+  if (input.status === 'done' && current.settlementRefusal)
+    return { reason: { ok: false, reason: current.settlementRefusal } };
   const unfinished =
     input.status === 'done'
       ? current.todos.filter(
@@ -292,6 +298,8 @@ export function requireNeoAskTurnedSettle(
   current: TurnedSnapshot | Rejection
 ): { value: TurnedSnapshot } | { reason: Rejection } {
   if ('ok' in current) return { reason: current };
+  if (current.settlementRefusal)
+    return { reason: { ok: false, reason: current.settlementRefusal } };
   if (!current.todos.length) return { reason: { ok: false, reason: 'todos_empty' } };
   if (current.todos.some((todo) => ['todo', 'doing', 'blocked'].includes(todo.state)))
     return { reason: { ok: false, reason: 'todos_live' } };

@@ -12,6 +12,8 @@ export const NEO_WORK_PR_READ_MS = 2 * 60_000;
 export const NEO_SETTLED_PR_READ_MS = 12 * 60 * 60_000;
 const GhPrSchema = z.object({
   url: z.string(),
+  files: z.array(z.object({ path: z.string() })).optional(),
+  changedFiles: z.number().int().nonnegative().optional(),
   createdAt: z.string().optional(),
   mergedAt: z.string().nullish(),
   closedAt: z.string().nullish(),
@@ -81,6 +83,7 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
   const closed = Date.parse(parsed.data.closedAt ?? '');
   return {
     url,
+    ...(parsed.data.files ? { files: parsed.data.files.map((file) => file.path) } : {}),
     state,
     checks,
     review,
@@ -392,6 +395,8 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
   .input(['url', 'spawnImpl'])
   .pipe(
     async (url: string, spawnImpl: SpawnFn) => {
+      const pr = parsePrUrl(url);
+      if (!pr) return { raw: null };
       const outcome = await gh(
         [
           'gh',
@@ -399,7 +404,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences,files,changedFiles',
         ],
         spawnImpl,
         'graphql'
@@ -409,6 +414,67 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
       const rollup = await readCheckRollup(url, raw, spawnImpl);
       if (rollup === null) return { raw: null };
       raw.statusCheckRollup = rollup;
+      if (raw.state === 'MERGED') {
+        const meta = GhPrSchema.safeParse(raw);
+        if (meta?.success && meta.data.files && meta.data.changedFiles !== meta.data.files.length) {
+          const pages = await gh(
+            [
+              'gh',
+              'api',
+              'graphql',
+              '--hostname',
+              pr.host,
+              '--paginate',
+              '--slurp',
+              '-f',
+              `owner=${pr.owner}`,
+              '-f',
+              `name=${pr.repo}`,
+              '-F',
+              `number=${pr.number}`,
+              '-f',
+              'query=query CodingWorkFiles($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid files(first:100,after:$endCursor){nodes{path} pageInfo{hasNextPage endCursor}}}}}',
+            ],
+            spawnImpl,
+            'graphql'
+          );
+          const filePage = z.object({
+            data: z.object({
+              repository: z.object({
+                pullRequest: z.object({
+                  headRefOid: z.string(),
+                  files: z.object({
+                    nodes: z.array(z.object({ path: z.string() })),
+                    pageInfo: z.object({
+                      hasNextPage: z.boolean(),
+                      endCursor: z.string().nullable(),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            errors: z.array(z.unknown()).optional(),
+          });
+          const parsed = pages.ok ? z.array(filePage).min(1).safeParse(pages.data) : null;
+          if (
+            !parsed?.success ||
+            parsed.data.some(
+              (page, i, all) =>
+                page.errors?.length ||
+                page.data.repository.pullRequest.headRefOid !== meta.data.headRefOid ||
+                page.data.repository.pullRequest.files.pageInfo.hasNextPage !== i < all.length - 1
+            )
+          )
+            return { raw: null };
+          const files = parsed.data.flatMap((page) => page.data.repository.pullRequest.files.nodes);
+          if (
+            files.length !== meta.data.changedFiles ||
+            new Set(files.map((file) => file.path)).size !== files.length
+          )
+            return { raw: null };
+          raw.files = files;
+        }
+      }
       return { raw };
     },
     ['url', 'spawnImpl'],

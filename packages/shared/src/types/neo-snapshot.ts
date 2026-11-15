@@ -119,6 +119,7 @@ export interface NeoPackRows {
 }
 
 export interface NeoWorkPr {
+  files?: string[];
   url: string;
   state: 'OPEN' | 'MERGED' | 'CLOSED';
   checks: 'pending' | 'failing' | 'passing' | 'none';
