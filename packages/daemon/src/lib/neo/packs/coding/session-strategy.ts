@@ -21,10 +21,15 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
 
 /** @public */
 export function codingSessionStrategy(db: Database, repo: string): Strategy {
+  const scope = db
+    .prepare(
+      "SELECT scope_key FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = 'sessionStrategy'"
+    )
+    .get(repo) as { scope_key: string } | undefined;
   const value = getNeoPackPreference(
     db,
     'coding',
-    { kind: 'repo', key: repo },
+    { kind: 'repo', key: scope?.scope_key ?? repo },
     'sessionStrategy'
   )?.value;
   return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
