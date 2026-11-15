@@ -217,8 +217,9 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
 6. **Wire: digest renderer and `neo.attention.wait`.** One prompt line in `root-turn-end.md`, about digest items and `wait`.
 7. **Read the shadow week.** Then switch kinds live, one PR per producer, each a few lines. Shadow rows never count as told: going live starts every item at `open`. Each live switch carries its cutover:
    - The kind's `read` also reads the producer's old receipt (for example `stalled_wake_at`, `pack_coding_daemon_merge_notices`, turn-report receipts) as "already told at". An incident told before the switch is not told again.
-   - Outbox rows the old producer already queued (`mailbox` or `neo_notes` jobs) are left to deliver as they are. The old producer stops writing in the same PR, so nothing is queued twice.
-   - Tests: an incident told before the switch is not re-told; a queued but undelivered old notice is delivered once.
+   - Old producers enqueue first and write their receipt afterwards (`stalled-asks.ts`, `turn-report-receipts.ts`), so a crash can leave a queued old notice with no receipt. The receipt alone is not enough. The kind's `read` therefore also counts an old notice as told when its message uuid is an active `mailbox` or `neo_notes` job or an existing SDK message for Neo's session, using the checks `enqueueDelivery` already makes (`listActiveByPayload`, `findMessageIdByUuid`). The kind names the uuid its old producer used for the subject.
+   - Old queued rows are left to deliver as they are. The old producer stops writing in the same PR, so nothing is queued twice.
+   - Tests: an incident told before the switch is not re-told; a queued old notice whose receipt was never written is delivered once and gets no attention notice.
 8. **Delete**, at least one release after the last kind went live, so a rollback still finds the old receipts. A rollback in that window can re-tell an incident first told by the new code once; that is accepted. Remove these, one PR each:
    - `stalled_wake_at` use, `pack_coding_daemon_merge_notices`, the unowned pending slot and the in-memory `noted` sets;
    - the per-producer `neoWakeEvent` flags, now set only by `admit`;
