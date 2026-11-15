@@ -111,7 +111,7 @@ import {
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
-import { neoAskSettleRefusal } from './pack-contract.ts';
+import { neoTodoFollowUpRefusal, wakeNeoFollowUpGaps } from './todo-follow-up.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -1157,6 +1157,9 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    await wakeNeoFollowUpGaps(this.todos, this.wakeNeo.bind(this)).catch((error) =>
+      this.log.warn('Follow-up wake pending', error)
+    );
     const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
     for (const { question, todo } of await this.todos.read('openQuestionChecks'))
       await retire(question, todo, Date.now()).catch((error) =>
@@ -1202,7 +1205,7 @@ export class NeoService {
       const versions: Record<string, string> = {};
       for (const id of settleReady ?? []) {
         const todos = this.todos.listTodos(id);
-        if (!neoAskSettleRefusal(this.packs(), todos)) versions[id] = neoAskTodosVersion(todos);
+        if (!neoTodoFollowUpRefusal(todos)) versions[id] = neoAskTodosVersion(todos);
       }
       const settleIds = Object.keys(versions);
       if (settleIds.length)

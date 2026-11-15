@@ -21930,6 +21930,10 @@
                   ],
                   "type": "string"
                 },
+                "producesFollowUp": {
+                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+                  "type": "boolean"
+                },
                 "target": {
                   "oneOf": [
                     {
@@ -40076,6 +40080,10 @@
               "urgent"
             ],
             "type": "string"
+          },
+          "producesFollowUp": {
+            "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+            "type": "boolean"
           },
           "target": {
             "oneOf": [

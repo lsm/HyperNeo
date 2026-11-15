@@ -21,12 +21,6 @@ import { createCodingPackTables } from './schema/coding-tables.ts';
 import { neoRepositoryIdentity } from '../../project-mirror.ts';
 import type { NeoTodoRepositoryDraft, NeoTodoPolicyScope } from '../../pack-contract.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
-import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
-import {
-  codingDesignFollowUpRefusal,
-  codingDesignWithoutFollowUp,
-  type CodingDesignGap,
-} from './design-follow-up.ts';
 
 export class CodingTodoPrRepository {
   readonly stageFacts: CodingStageFactsRepository;
@@ -156,18 +150,6 @@ export class CodingTodoPrRepository {
 
   isWaiting(todoId: string): boolean {
     return this.prs(todoId).some((pr) => pr.state === 'OPEN');
-  }
-
-  designGaps(): (CodingDesignGap & { askId: string; askTitle: string })[] {
-    const store = new NeoAskTodoRepository(this.db);
-    return store.listOpenAsks().flatMap((ask) => {
-      const gap = codingDesignWithoutFollowUp(store.listTodos(ask.id), (id) => this.prs(id));
-      return gap ? [{ ...gap, askId: ask.id, askTitle: ask.title }] : [];
-    });
-  }
-
-  readDesignGaps(): Promise<(CodingDesignGap & { askId: string; askTitle: string })[]> {
-    return gatewayFor(this.db).call(codingTodoPrReads, 'designGaps');
   }
 
   readWaiting(todoId: string): Promise<boolean> {
@@ -546,10 +528,6 @@ export function createCodingTodoPack(
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.readWaiting(todo.id),
-    refuseSettle: (todos) => {
-      const gap = codingDesignWithoutFollowUp(todos, (id) => repo.prs(id));
-      return gap ? codingDesignFollowUpRefusal(gap) : null;
-    },
     ...createCodingTodoPolicy(repo),
   };
 }
@@ -565,5 +543,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['isWaiting', 'holder', 'linkedIssues', 'designGaps']
+  ['isWaiting', 'holder', 'linkedIssues']
 );

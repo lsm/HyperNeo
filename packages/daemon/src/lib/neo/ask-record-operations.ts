@@ -23,7 +23,8 @@ import {
 } from './todo-operations.ts';
 import { recordNeoTodoAdmission } from './todo-add-operation.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
-import { neoAskSettleRefusal, neoTodoRepository } from './pack-contract.ts';
+import { neoTodoRepository } from './pack-contract.ts';
+import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
 import {
@@ -453,7 +454,7 @@ export function createNeoAskRecordOperations(
     )
     .pipe(
       (current: { ask: NeoAsk; todos: NeoTodo[] }, input: z.infer<typeof Settle>) => {
-        const reason = input.status === 'done' && neoAskSettleRefusal(packs(), current.todos);
+        const reason = input.status === 'done' && neoTodoFollowUpRefusal(current.todos);
         return reason ? { reason: { ok: false as const, reason } } : { value: current };
       },
       ['outcome', 'input'],
@@ -490,7 +491,7 @@ export function createNeoAskRecordOperations(
         }
         const fresh = await settlement.gateway.call(neoAskSettlementReads, 'snapshot', input.askId);
         if ('ok' in fresh) return fresh;
-        const late = input.status === 'done' && neoAskSettleRefusal(packs(), fresh.todos);
+        const late = input.status === 'done' && neoTodoFollowUpRefusal(fresh.todos);
         if (late) return { ok: false, reason: late };
         const committed = await settlement.gateway.call(
           neoAskSettlementWrites,
