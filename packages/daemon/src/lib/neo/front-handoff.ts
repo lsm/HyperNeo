@@ -25,7 +25,13 @@ export async function handOffToNeo(
       conversationId
     );
     const block = catchUpBlock(
-      await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, messageId)
+      await service.db.gateway.call(
+        neoFrontInputReads,
+        'frontSaid',
+        conversationId,
+        messageId,
+        ask.createdAt
+      )
     );
     const reserved = await service.db.gateway.call(
       neoFrontInputWrites,

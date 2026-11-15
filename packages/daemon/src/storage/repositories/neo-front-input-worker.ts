@@ -110,7 +110,7 @@ export class NeoFrontInputRepository {
     );
   }
 
-  frontSaid(conversationId: string, messageId: string) {
+  frontSaid(conversationId: string, messageId: string, since?: string) {
     const input = this.db
       .prepare(`SELECT catch_up_through AS through FROM neo_front_inputs
       WHERE conversation_id = ? AND message_id = ?`)
@@ -119,16 +119,22 @@ export class NeoFrontInputRepository {
     const through = input.through;
     return (
       this.db
-        .prepare(`SELECT payload_json AS payload FROM neo_publications
+        .prepare(`SELECT payload_json AS payload, created_at AS createdAt FROM neo_publications
         WHERE conversation_id = ? AND sequence > ?
           AND json_extract(payload_json, '$.publishedBy') = 'front' ORDER BY sequence`)
-        .all(conversationId, through ?? 0) as { payload: string }[]
+        .all(conversationId, through ?? 0) as { payload: string; createdAt: string }[]
     )
+      .filter((row) => {
+        if (through != null) return true;
+        const replyTo = (JSON.parse(row.payload) as { replyTo?: string[] }).replyTo ?? [];
+        return replyTo.length
+          ? replyTo.includes(messageId)
+          : since !== undefined && row.createdAt >= since;
+      })
       .map(
         (row) =>
           JSON.parse(row.payload) as { replyTo?: string[]; fullText: string; workOn?: boolean }
       )
-      .filter((said) => through != null || (said.replyTo ?? []).includes(messageId))
       .map(({ replyTo, fullText, workOn }) => ({
         replyTo: replyTo?.length ? replyTo : [messageId],
         fullText,
