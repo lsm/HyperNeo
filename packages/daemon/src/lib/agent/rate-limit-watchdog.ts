@@ -159,11 +159,6 @@ export class RateLimitWatchdog {
     };
   }
 
-  forgetModelLimit(key: string): void {
-    if (this.modelLimits.delete(key))
-      this.deps.persistModelLimits?.(Object.fromEntries(this.modelLimits));
-  }
-
   async forgetModelLimits(): Promise<void> {
     if (this.modelLimits.size === 0) return;
     this.modelLimits.clear();

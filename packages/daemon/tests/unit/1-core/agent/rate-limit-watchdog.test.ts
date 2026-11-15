@@ -1159,7 +1159,7 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().modelLimits).toEqual({
         'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' },
       });
-      watchdog.forgetModelLimit('anthropic/sonnet');
+      await watchdog.forgetModelLimits();
       expect(watchdog.getState().modelLimits).toEqual({});
       expect(saved).toEqual([
         { 'anthropic/sonnet': { until: resetAtMs, fallback: 'glm/glm-4.6' } },

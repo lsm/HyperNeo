@@ -559,7 +559,8 @@ export class NeoService {
 
   private async alignModelPreference(
     sessionId: string,
-    preference: NeoModelPreference | null = this.modelPreference()
+    preference: NeoModelPreference | null = this.modelPreference(),
+    stillWanted?: () => boolean
   ): Promise<void> {
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
@@ -568,6 +569,7 @@ export class NeoService {
     if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
       return;
+    if (stillWanted && !stillWanted()) return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
@@ -576,7 +578,11 @@ export class NeoService {
     if (!plan.model) return;
     let restored = false;
     try {
-      const switched = await live.requestModelSwitch(preference.model, preference.provider);
+      const switched = await live.requestModelSwitch(
+        preference.model,
+        preference.provider,
+        stillWanted
+      );
       restored = switched.success && !switched.pending;
       if (!switched.success)
         this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
@@ -598,24 +604,20 @@ export class NeoService {
     for (const [sessionId, preference] of targets) {
       const stored = sessionId && preference ? this.db.getSession(sessionId) : null;
       if (!sessionId || !preference || !stored) continue;
-      const action = planPreferredReturn(
-        stored.config,
-        preference,
-        stored.metadata.modelLimits ?? {},
-        now,
-        Boolean(stored.metadata.pendingModelSwitch)
-      );
-      if (!action) continue;
+      const plan = (session: Session) =>
+        planPreferredReturn(
+          session.config,
+          preference,
+          session.metadata.modelLimits ?? {},
+          now,
+          Boolean(session.metadata.pendingModelSwitch)
+        );
+      if (!plan(stored)) continue;
       const live = await this.sessions.getSessionForControl(sessionId);
       if (!live) continue;
-      if (action === 'forget') {
-        live.forgetModelLimit?.(`${preference.provider}/${preference.model}`);
-        continue;
-      }
-      await this.alignModelPreference(sessionId, preference);
-      const after = this.db.getSession(sessionId)?.config;
-      if (after && !planNeoAlignment(after, preference)?.model)
-        live.forgetModelLimit?.(`${preference.provider}/${preference.model}`);
+      const due = () => plan(live.getSessionData()) === 'return';
+      if (due()) await this.alignModelPreference(sessionId, preference, due);
+      await live.forgetModelLimits?.();
     }
   }
 

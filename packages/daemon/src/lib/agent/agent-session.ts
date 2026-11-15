@@ -1787,8 +1787,8 @@ export class AgentSession
     return this.rateLimitWatchdog.getState();
   }
 
-  forgetModelLimit(key: string): void {
-    this.rateLimitWatchdog.forgetModelLimit(key);
+  forgetModelLimits(): Promise<void> {
+    return this.rateLimitWatchdog.forgetModelLimits();
   }
 
   async handleQuestionResponse(
@@ -1846,9 +1846,14 @@ export class AgentSession
 
   requestModelSwitch(
     model: string,
-    provider: string
+    provider: string,
+    stillWanted?: () => boolean
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
-    return this.queueModelSwitch(() => this.runModelSwitchRequest(model, provider));
+    return this.queueModelSwitch(async () =>
+      stillWanted && !stillWanted()
+        ? { success: false, model: this.session.config.model, error: 'The switch was superseded' }
+        : this.runModelSwitchRequest(model, provider)
+    );
   }
 
   private async runModelSwitchRequest(
