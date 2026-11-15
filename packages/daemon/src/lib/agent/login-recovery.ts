@@ -91,6 +91,7 @@ export function createLoginRecovery(deps: LoginRecoveryDeps) {
     const seenWrites = writeCount(providerId);
     const written = () => writeCount(providerId) !== seenWrites;
     if (
+      !retried &&
       attemptEpoch !== undefined &&
       writeCount(providerId) > attemptEpoch &&
       mayResume(deps.facts(providerId, false))

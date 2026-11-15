@@ -247,6 +247,15 @@ describe('createLoginRecovery', () => {
     expect(recovery.isHeld('anthropic')).toBe(false);
   });
 
+  test('a rejection after a refresh this turn already made asks for sign-in', async () => {
+    const h = recoveryDeps({ outcomes: ['skipped'] });
+    const recovery = createLoginRecovery(h.deps);
+    await recovery.maybeResume('anthropic');
+
+    expect(await recovery.recover('anthropic', null, true, 0)).toBe('sign_in');
+    expect(h.state.needsLoginAt).not.toBeNull();
+  });
+
   test('a health-only change leaves a login hold in place', async () => {
     const h = recoveryDeps({ outcomes: ['definitive'] });
     const recovery = createLoginRecovery(h.deps);
