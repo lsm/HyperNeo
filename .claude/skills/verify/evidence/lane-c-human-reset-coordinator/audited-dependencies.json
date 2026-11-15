@@ -1,7 +1,7 @@
 {
   "resetReceipt": {
     "lines": 144,
-    "sha256": "19628b7ba878dc2d723077d6f034e5f77ffe1425595bbc319bc556553392ec6e",
+    "sha256": "4f69412dec0ce45e2c4431bfa309e4da7c32a9ca0f20c965d867e32e89c637e6",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/human-device-reset-read.ts",
@@ -33,7 +33,7 @@
         "start": 20,
         "end": 20,
         "lines": 1,
-        "sha256": "0ed2cae4c65c01a96c78d844f95d74f78f0cd07e932149471b48458408487503"
+        "sha256": "1b75b7035ed0c9e6854549b7ab66eae300d9d2e1ba09ce0974c04a4d70269d20"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-repository.ts",
@@ -71,7 +71,7 @@
   },
   "coreAppend": {
     "lines": 413,
-    "sha256": "31055bd104003b012c6176c1b62547f97c8f0a53e08f2be4c7b79e74cebe3192",
+    "sha256": "0989a66e3f8f557255ef0f07f291e7e5c189667411adea9038df7154e1ba7169",
     "units": [
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -79,7 +79,7 @@
         "start": 24,
         "end": 24,
         "lines": 1,
-        "sha256": "15c4f0ce87fd91890c8408d8219fe68114e9d6796913123aa9ab2ffad80ab2da"
+        "sha256": "824bc59be26253f31b497087bf7efa549a8899653a67c7bfdcc3f98ff8258231"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -103,7 +103,7 @@
         "start": 232,
         "end": 268,
         "lines": 37,
-        "sha256": "1fed4dadd8191ea8a1a4df6820d217e1a29ef554186a501660383498921c97a4"
+        "sha256": "7417c45dd1e6b0c6d5a8a3c6671e125e659d408173636ee3228f7713bc007eb2"
       },
       {
         "file": "packages/daemon/src/storage/repositories/neo-publication-repository.ts",
@@ -127,7 +127,7 @@
         "start": 386,
         "end": 391,
         "lines": 6,
-        "sha256": "cf3dd1b27b91d44ea307fd33f3eccb5818c255cc43fcd8610eec74b7a629299e"
+        "sha256": "d3580e3b7fa17c98b43494e1e16b64bcf5ac78875ebf226c3c5b26e4499917f1"
       },
       {
         "file": "packages/daemon/src/lib/neo/publication.ts",
@@ -183,7 +183,7 @@
         "start": 13,
         "end": 13,
         "lines": 1,
-        "sha256": "99689af8a65c1cbb504ee9310b76024e620e238ab5a01bcc0d3a5eb4951b0392"
+        "sha256": "e8fd7ba60989e9c32f89be1b6fb3dde6417f10f081a8b1435d3d1c622c61de55"
       },
       {
         "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
@@ -191,7 +191,7 @@
         "start": 14,
         "end": 14,
         "lines": 1,
-        "sha256": "47239eb05f0f11fdcf5be4c8dfef7d630b09cf33d4cec621978393db453138ab"
+        "sha256": "7cf5c80d753afcf83e402db33ed9a0d2d148b527d4127608b12220d981aec090"
       },
       {
         "file": "packages/daemon/src/lib/artifacts/file-contracts.ts",
@@ -199,7 +199,7 @@
         "start": 32,
         "end": 42,
         "lines": 11,
-        "sha256": "e44720f37169f0f6f12e0c2b6ed18460fd8a690d45c1dcddd2819436e62297a0"
+        "sha256": "f2fbf412f30944e4585cc76defbb16d80b81c23d1690aaa0880d350528f2c996"
       },
       {
         "file": "packages/shared/src/types/artifact-file.ts",
@@ -215,7 +215,7 @@
         "start": 17,
         "end": 22,
         "lines": 6,
-        "sha256": "81eb7266ccec942aa48572305e1132e5f6a5baec837f1e7a59bc6ae93a9adc44"
+        "sha256": "910d73050755b8c004affca007f32de992c0cd737642c78bcc9bcd62737b0af7"
       },
       {
         "file": "packages/daemon/src/lib/handoffs/outbox.ts",
@@ -223,7 +223,7 @@
         "start": 23,
         "end": 31,
         "lines": 9,
-        "sha256": "382ebac13368eae04ca46b270f832eefb0ada86df44777d48ec4ebe40ead9ee1"
+        "sha256": "7b94affc1018b192224ed0b2d0202cbd3670a82d21bbcce9c96bd86cdb4c9814"
       },
       {
         "file": "packages/daemon/src/lib/handoffs/outbox.ts",
@@ -231,7 +231,7 @@
         "start": 33,
         "end": 35,
         "lines": 3,
-        "sha256": "931ab9cf69c4ec7eb405dab3ddfe1edcbbd45cd127afc02c5e85bd22b26d19fc"
+        "sha256": "13cddbf4f7f09d1657e8deff70ed245237787c505b3682e627433c73c858cb1b"
       },
       {
         "file": "packages/daemon/src/lib/secret-file-name.ts",

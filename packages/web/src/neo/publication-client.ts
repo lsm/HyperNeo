@@ -107,9 +107,14 @@ export function admitPublicationLifetime(current: boolean): { value: true } | { 
 function optionalOrigin(value: unknown): NeoPublication['askOrigin'] | null | undefined {
   if (value === undefined) return undefined;
   const row = object(value);
-  return row && text(row.sessionId, 160) && text(row.messageId, 160)
-    ? { sessionId: row.sessionId, messageId: row.messageId }
-    : null;
+  if (!row || !text(row.sessionId, 160) || !text(row.messageId, 160)) return null;
+  if (row.messageDbId !== undefined && row.messageDbId !== null && !text(row.messageDbId, 160))
+    return null;
+  return {
+    sessionId: row.sessionId,
+    messageId: row.messageId,
+    ...(row.messageDbId !== undefined ? { messageDbId: row.messageDbId } : {}),
+  };
 }
 
 function revision(value: unknown): NonNullable<NeoPublication['revisions']>[number] | null {

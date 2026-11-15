@@ -36,16 +36,14 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
     messageId: item.askOrigin.messageId,
   }));
   const rows = db
-    .prepare(`SELECT (SELECT COALESCE(send_status, 'consumed') FROM sdk_messages
-      INDEXED BY idx_sdk_messages_session_uuid
+    .prepare(`SELECT json_extract(packed, '$.sendStatus') AS sendStatus,
+      json_extract(packed, '$.id') AS messageDbId, processing, ord FROM
+      (SELECT (SELECT json_object('sendStatus', COALESCE(send_status, 'consumed'), 'id', id)
+      FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
-      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS sendStatus,
-      (SELECT id FROM sdk_messages
-      INDEXED BY idx_sdk_messages_session_uuid
-      WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
-      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS messageDbId,
-      s.processing_state AS processing FROM json_each(?) ref LEFT JOIN sessions s
-      ON s.id = json_extract(ref.value, '$.sessionId') ORDER BY CAST(ref.key AS INTEGER)`)
+      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS packed,
+      s.processing_state AS processing, CAST(ref.key AS INTEGER) AS ord FROM json_each(?) ref
+      LEFT JOIN sessions s ON s.id = json_extract(ref.value, '$.sessionId')) ORDER BY ord`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
   return rows.map((row, i) => ({
     ...row,
