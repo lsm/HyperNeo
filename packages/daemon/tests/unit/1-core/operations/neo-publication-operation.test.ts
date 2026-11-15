@@ -605,13 +605,15 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       publication: { shortText: 'Merged and green.', fullText: long },
     });
-    expect(await send('fold', `${'a'.repeat(195)}`, 'b'.repeat(3))).toMatchObject({
+    expect(await send('fold', 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), 'b'.repeat(3))).toMatchObject({
       accepted: true,
-      publication: { verbatim: true, fullText: `${'a'.repeat(195)}\n\nbbb` },
+      publication: { verbatim: true, fullText: `${'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5)}\n\nbbb` },
     });
-    expect(await send('no-fold', `${'a'.repeat(195)}`, 'b'.repeat(20))).toMatchObject({
+    expect(
+      await send('no-fold', 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), 'b'.repeat(20))
+    ).toMatchObject({
       accepted: true,
-      publication: { shortText: 'a'.repeat(195), fullText: 'b'.repeat(20) },
+      publication: { shortText: 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), fullText: 'b'.repeat(20) },
     });
     expect(ledger.list(conversationId)).toHaveLength(7);
   });
