@@ -12,11 +12,12 @@ import type { NeoService } from './service.ts';
 const InputEntry = ModelPreference.extend({
   autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
 }).strict();
-const Input = InputEntry.extend({ fallbacks: z.array(InputEntry).max(10).optional() }).strict();
+const FallbackEntry = ModelPreference.strict();
+const Input = InputEntry.extend({ fallbacks: z.array(FallbackEntry).max(10).optional() }).strict();
 const SavedEntry = ModelPreference.extend({
   autoCompactPercent: z.number().int().optional(),
 }).strict();
-const Saved = SavedEntry.extend({ fallbacks: z.array(SavedEntry).optional() }).strict();
+const Saved = SavedEntry.extend({ fallbacks: z.array(FallbackEntry).optional() }).strict();
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({ ok: z.literal(true), preferences: Saved }),
