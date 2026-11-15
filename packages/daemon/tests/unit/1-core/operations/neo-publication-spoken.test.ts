@@ -260,7 +260,8 @@ describe('publication speech follows the committed version', () => {
       const refused = await send({ ...textOnly, requestId, text, details, cardReply });
       expect(refused).toMatchObject({ accepted: false });
       expect(String(refused.reason)).toStartWith(reason);
-      expect(String(refused.reason)).toContain('60 words (400 characters) and 5 lines');
+      expect(String(refused.reason)).toContain('server ceiling of 400 characters and 5 lines');
+      expect(String(refused.reason)).toContain('Write at most 60 words:');
     }
     expect(ledger.list(conversationId)).toHaveLength(1);
   });

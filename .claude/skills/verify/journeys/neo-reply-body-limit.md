@@ -7,8 +7,9 @@ handler and the human RPC reader, with no model subprocess:
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/publication-body-limit.ts
 ```
 
-The reply text is at most 60 words (400 characters) and at most 5 lines counting
-every line including blank ones, the title counting as a line. The limit applies with or
+Neo is asked to write at most 60 words. Separately, the server refuses reply text
+over 400 characters or 5 lines counting every line including blank ones, the
+title counting as a line; it counts characters and lines, not words. The limit applies with or
 without details, so a text over it is refused either way: without details as
 `reply_needs_details`, with details as `reply_summary_too_long`, each explained
 with "keep the title, the conclusion and any decision in text and supporting

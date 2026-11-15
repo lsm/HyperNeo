@@ -5,11 +5,12 @@ import {
   NEO_REPLY_WORD_LIMIT,
 } from './neo-publication.ts';
 
-const REPLY_LIMIT = `${NEO_REPLY_WORD_LIMIT} words (${NEO_REPLY_CHAR_LIMIT} characters) and ${NEO_REPLY_LINE_LIMIT} lines`;
+const REPLY_LIMIT = `${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines`;
+const WRITING_RULE = `Write at most ${NEO_REPLY_WORD_LIMIT} words:`;
 
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
-  reply_needs_details: `The reply text is over the limit of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. Keep the title, the conclusion and any decision the human must make in text, and move supporting material to details.`,
-  reply_summary_too_long: `The reply text is over the limit of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. Shorten text to the title, the conclusion and any decision, and keep supporting material in details.`,
+  reply_needs_details: `The reply text is over the server ceiling of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. ${WRITING_RULE} keep the title, the conclusion and any decision the human must make in text, and move supporting material to details.`,
+  reply_summary_too_long: `The reply text is over the server ceiling of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. ${WRITING_RULE} shorten text to the title, the conclusion and any decision, and keep supporting material in details.`,
   deliverable_with_details:
     'A deliverable carries no details. Resend it with deliverable: true, the whole copyable content in text, and no details.',
   deliverable_card_reply: `A card reply answers the question itself, within ${REPLY_LIMIT}, so it cannot carry a deliverable. Answer here, then send the copyable text as its own publication with deliverable: true and no details.`,

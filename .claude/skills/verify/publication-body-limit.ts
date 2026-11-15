@@ -145,12 +145,12 @@ try {
   evidence.emojiOver = await publish('emoji-over', `${emoji}😀`);
   assert.match(
     (evidence.emojiOver as { reason: string }).reason,
-    /^reply_needs_details: .*60 words \(400 characters\) and 5 lines/
+    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
   );
   evidence.charsOver = await publish('chars-over', 'x'.repeat(401));
   assert.match(
     (evidence.charsOver as { reason: string }).reason,
-    /^reply_needs_details: .*60 words \(400 characters\) and 5 lines/
+    /^reply_needs_details: .*server ceiling of 400 characters and 5 lines.*Write at most 60 words:/
   );
   const before = await read();
   evidence.before = before;
