@@ -84,6 +84,8 @@ export function NeoVoice({
   const recorder = useVoiceRecorder(sessionId, { autoAdopt: false });
   const latest = useRef(recorder);
   latest.current = recorder;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
   const liveStream = useRef<VoiceLiveStream | null>(null);
   const interim = useRef(onInterim);
   const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
@@ -125,7 +127,8 @@ export function NeoVoice({
     return () => {
       mounted.current = false;
       dropLiveStream();
-      if (!pending.current) void finalizeUnmountedRecording(sessionId, latest.current.ownerId);
+      if (!pending.current)
+        void finalizeUnmountedRecording(sessionIdRef.current, latest.current.ownerId);
       else void latest.current.cancel();
     };
   }, []);
