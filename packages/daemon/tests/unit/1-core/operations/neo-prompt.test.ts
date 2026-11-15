@@ -6,11 +6,21 @@ import {
   NEO_PACK_CODING_WORKER_RULES,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
+  neoToolDescription,
 } from '@hyperneo/prompts';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
+  test('never points Neo at a [message id: …] line the intake no longer writes', () => {
+    for (const text of [
+      neoPrompt([]),
+      neoPrompt(neoSettingsPackBriefs()),
+      neoToolDescription('neo.rule.save'),
+    ])
+      expect(text).not.toContain('[message id');
+    expect(neoPrompt([])).toContain('<human-message');
+  });
   test('adds every ask step with after before starting the first', () => {
     expect(NEO_ROOT_PROMPT).toContain(
       'Add all ask steps as todos, each with after, before starting the first.'

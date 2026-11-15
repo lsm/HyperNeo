@@ -118,7 +118,7 @@ const Add = TodoDraft.extend({
     'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
   ),
   input: Text.optional().describe(
-    'The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
+    'The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
   ),
   after: z
     .array(Text)
