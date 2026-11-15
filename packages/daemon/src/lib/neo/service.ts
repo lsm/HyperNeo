@@ -15,6 +15,7 @@ import {
   neoAskSettlementWrites,
   neoAskTurnedSettleReads,
   neoAskTurnedSettleWrites,
+  neoAskTodosVersion,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
@@ -1198,13 +1199,17 @@ export class NeoService {
         this.log.warn('Ask auto-settle pending', error);
         return null;
       });
-      const settleIds = settleReady?.filter(
-        (id) => !neoAskSettleRefusal(this.packs(), this.todos.listTodos(id))
-      );
-      if (settleIds?.length)
+      const versions: Record<string, string> = {};
+      for (const id of settleReady ?? []) {
+        const todos = this.todos.listTodos(id);
+        if (!neoAskSettleRefusal(this.packs(), todos)) versions[id] = neoAskTodosVersion(todos);
+      }
+      const settleIds = Object.keys(versions);
+      if (settleIds.length)
         await this.runDbOp(neoAskTurnedSettleWrites, {
           now: Date.now(),
           ids: settleIds,
+          versions,
         }).catch((error) => this.log.warn('Ask auto-settle pending', error));
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)

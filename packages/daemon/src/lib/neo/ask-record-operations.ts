@@ -30,6 +30,7 @@ import {
   neoAskSettlementReads,
   requireNeoAskSettlement,
   neoAskSettlementWrites,
+  neoAskTodosVersion,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
 
@@ -487,10 +488,14 @@ export function createNeoAskRecordOperations(
             }, and those sessions may still run.`,
           };
         }
+        const fresh = await settlement.gateway.call(neoAskSettlementReads, 'snapshot', input.askId);
+        if ('ok' in fresh) return fresh;
+        const late = input.status === 'done' && neoAskSettleRefusal(packs(), fresh.todos);
+        if (late) return { ok: false, reason: late };
         const committed = await settlement.gateway.call(
           neoAskSettlementWrites,
           'settle',
-          input,
+          { ...input, todosVersion: neoAskTodosVersion(fresh.todos) },
           Date.now()
         );
         if (!committed.ok) return committed;
