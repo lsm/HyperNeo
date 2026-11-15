@@ -20489,6 +20489,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -21578,6 +21582,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -22473,6 +22481,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -23005,6 +23017,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -24073,6 +24089,10 @@
                               ],
                               "type": "string"
                             },
+                            "producesFollowUp": {
+                              "const": true,
+                              "type": "boolean"
+                            },
                             "reason": {
                               "type": [
                                 "string",
@@ -24786,6 +24806,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -25318,6 +25342,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -30903,6 +30931,10 @@
                               "urgent"
                             ],
                             "type": "string"
+                          },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
                           },
                           "reason": {
                             "type": [
@@ -39366,6 +39398,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -40478,6 +40514,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -40867,6 +40907,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -41239,6 +41283,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -41609,6 +41657,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -42282,6 +42334,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -42662,6 +42718,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -43029,6 +43089,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -43389,6 +43453,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -43775,6 +43843,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -44141,6 +44213,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
