@@ -17,6 +17,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
@@ -235,6 +236,48 @@ describe('neo.ask.open and neo.ask.settle', () => {
       ok: true,
       todos: [{ state: 'closed_unverified', reason: 'Outcome not checked' }],
     });
+  });
+
+  test('refuses to settle done while a merged design PR has no follow-up todo', async () => {
+    const h = setup();
+    const opened = await h.call(
+      'neo.ask.open',
+      {
+        title: 'Cache design',
+        request: 'Design the cache layer',
+        todos: [{ after: [], check: pendingTodoCheck, title: 'Design doc', doneWhen: 'Merged' }],
+      },
+      turn('m1')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    h.store.updateTodo(opened.todos[0], { state: 'done' }, 2);
+    new CodingTodoPrRepository(h.db).record(
+      opened.todos[0].id,
+      [
+        {
+          url: 'https://github.com/example/project/pull/7',
+          state: 'MERGED',
+          checks: 'passing',
+          review: 'approved',
+          design: true,
+        },
+      ],
+      2
+    );
+    const settle = (status: 'done' | 'dropped') =>
+      h.call('neo.ask.settle', { askId: opened.ask.id, status, outcome: 'Settled' }, turn('m2'));
+    const refused = await settle('done');
+    expect(refused.ok).toBe(false);
+    expect(!refused.ok && refused.reason).toContain('design_follow_up_missing');
+    expect(h.store.getAsk(opened.ask.id)?.status).toBe('open');
+    h.store.addTodo(
+      'todo-build',
+      opened.ask.id,
+      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
+      3
+    );
+    h.store.updateTodo(h.store.getTodo('todo-build')!, { state: 'done' }, 4);
+    expect((await settle('done')).ok).toBe(true);
   });
 
   test('records a settled discussion decision and links while execution stays open', async () => {

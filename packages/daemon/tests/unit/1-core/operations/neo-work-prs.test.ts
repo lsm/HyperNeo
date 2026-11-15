@@ -26,6 +26,13 @@ const pr: NeoWorkPr = {
 };
 
 describe('summarizeNeoWorkPr', () => {
+  test('marks a PR that changes design docs', () => {
+    const files = (...paths: string[]) => paths.map((path) => ({ path }));
+    expect(summarizeNeoWorkPr(ghPr({ files: files('docs/design/cache.md') }))?.design).toBe(true);
+    expect(summarizeNeoWorkPr(ghPr({ files: files('src/cache.ts') }))?.design).toBeUndefined();
+    expect(summarizeNeoWorkPr(ghPr())?.design).toBeUndefined();
+  });
+
   test('keeps when a closed PR was closed', () => {
     expect(
       summarizeNeoWorkPr(ghPr({ state: 'CLOSED', closedAt: '2026-10-19T03:00:00Z' }))?.closedAt
