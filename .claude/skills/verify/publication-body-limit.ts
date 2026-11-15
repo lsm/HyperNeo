@@ -140,23 +140,37 @@ try {
     (evidence.deliverableWithDetails as { reason: string }).reason,
     /^deliverable_with_details: .*no details/
   );
+  const emoji = '😀'.repeat(200);
+  assert.equal(emoji.length, 400);
+  evidence.emojiOver = await publish('emoji-over', `${emoji}😀`);
+  assert.match(
+    (evidence.emojiOver as { reason: string }).reason,
+    /^reply_needs_details: .*200 characters and 5 lines/
+  );
+  evidence.charsOver = await publish('chars-over', 'x'.repeat(201));
+  assert.match(
+    (evidence.charsOver as { reason: string }).reason,
+    /^reply_needs_details: .*200 characters and 5 lines/
+  );
   const before = await read();
   evidence.before = before;
   assert.equal(before.items.length, 0);
   evidence.split = await publish('split', 'Merged and CI is green.', long);
   evidence.short = await publish('short', '**Merged**\n- CI green\n- 已部署');
   evidence.deliverable = await publish('deliverable', letter, undefined, { deliverable: true });
-  for (const key of ['split', 'short', 'deliverable'])
+  evidence.emojiAtLimit = await publish('emoji-at-limit', emoji);
+  for (const key of ['split', 'short', 'deliverable', 'emojiAtLimit'])
     assert.equal((evidence[key] as { accepted: boolean }).accepted, true);
   const after = await read();
   evidence.after = after;
-  assert.equal(after.items.length, 3);
+  assert.equal(after.items.length, 4);
   assert.deepEqual(
     after.items.map((item) => [item.shortText, item.fullText]),
     [
       ['Merged and CI is green.', long],
       [undefined, '**Merged**\n- CI green\n- 已部署'],
       [undefined, letter],
+      [undefined, emoji],
     ]
   );
   evidence.passed = true;

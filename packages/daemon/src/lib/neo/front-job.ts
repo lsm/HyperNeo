@@ -8,7 +8,7 @@ import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
-import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
+import { escapeSessionText } from '../messaging/session-envelope.ts';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 
 const Receipt = z.object({ conversationId: z.uuid(), messageId: z.uuid() }).strict();
@@ -81,16 +81,7 @@ export function createNeoFrontHandler(service: NeoService) {
                     },
                   ]
                 : []),
-              { type: 'text', text: `<human-message id="${attribute(messageId)}">` },
-              ...(typeof message.message.content === 'string'
-                ? [{ type: 'text' as const, text: escapeSessionText(message.message.content) }]
-                : (message.message.content as Exclude<MailboxMessageContent, string>).map(
-                    (block) =>
-                      block.type === 'text'
-                        ? { ...block, text: escapeSessionText(block.text) }
-                        : block
-                  )),
-              { type: 'text', text: '</human-message>' },
+              ...(message.message.content as Exclude<MailboxMessageContent, string>),
             ],
             ask.askOrigin.sessionId,
             conversationId

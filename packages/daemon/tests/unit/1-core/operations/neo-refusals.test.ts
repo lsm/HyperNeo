@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { explainNeoRefusal, NEO_REFUSALS } from '@hyperneo/shared/types/neo-refusals';
+import { NEO_REPLY_CHAR_LIMIT, NEO_REPLY_LINE_LIMIT } from '@hyperneo/shared/types/neo-publication';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
   createOperationRegistry,
@@ -76,6 +77,14 @@ describe('NEO_REFUSALS', () => {
   );
   test('explains every bare refusal code a Neo gate returns', () => {
     expect([...neoRefusalCodes()].filter((code) => !Object.hasOwn(NEO_REFUSALS, code))).toEqual([]);
+  });
+  test('states the shared reply limit in every refusal that quotes it', () => {
+    const quoted = ['reply_needs_details', 'reply_summary_too_long', 'deliverable_card_reply'];
+    for (const code of quoted) {
+      expect(NEO_REFUSALS[code]).toContain(
+        `${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines`
+      );
+    }
   });
 });
 

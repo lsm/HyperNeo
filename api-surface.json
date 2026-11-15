@@ -34492,7 +34492,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
+                "description": "The id on the `<human-message>` tag of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -34735,7 +34735,7 @@
                 "type": "boolean"
               },
               "input": {
-                "description": "The [message id] of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
+                "description": "The id on the `<human-message>` tag of the human message this question serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -40760,7 +40760,7 @@
             "type": "object"
           },
           "input": {
-            "description": "The [message id] of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
+            "description": "The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.",
             "minLength": 1,
             "type": "string"
           },

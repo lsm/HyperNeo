@@ -21,6 +21,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
+import {
+  NEO_REPLY_CHAR_LIMIT,
+  NEO_REPLY_LINE_LIMIT,
+  neoCharCount,
+} from '@hyperneo/shared/types/neo-publication';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -609,6 +614,53 @@ describe('Neo publication without runtime input attribution', () => {
       publication: { shortText: 'a'.repeat(195), fullText: 'b'.repeat(20) },
     });
     expect(ledger.list(conversationId)).toHaveLength(7);
+  });
+
+  test('refuses exactly one character over the reply limit', async () => {
+    expect(
+      await publish({ requestId: 'chars-over', text: 'x'.repeat(NEO_REPLY_CHAR_LIMIT + 1) }, caller)
+    ).toMatchObject({ accepted: false, reason: 'reply_needs_details' });
+    expect(ledger.list(conversationId) ?? []).toHaveLength(0);
+  });
+
+  test('counts an astral character once, not twice', async () => {
+    const emoji = '😀'.repeat(NEO_REPLY_CHAR_LIMIT);
+    expect(emoji.length).toBeGreaterThan(NEO_REPLY_CHAR_LIMIT);
+    expect(neoCharCount(emoji)).toBe(NEO_REPLY_CHAR_LIMIT);
+    expect(await publish({ requestId: 'emoji-at-limit', text: emoji }, caller)).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, fullText: emoji },
+    });
+    const over = '😀'.repeat(NEO_REPLY_CHAR_LIMIT + 1);
+    expect(await publish({ requestId: 'emoji-over', text: over }, caller)).toMatchObject({
+      accepted: false,
+      reason: 'reply_needs_details',
+    });
+    expect(ledger.list(conversationId)).toHaveLength(1);
+  });
+
+  test('accepts a deliverable at its ceiling and refuses one character more', async () => {
+    const atCeiling = 'x'.repeat(DELIVERABLE_CHAR_LIMIT);
+    expect(
+      await publish(
+        { requestId: 'deliverable-at-ceiling', text: atCeiling, deliverable: true },
+        caller
+      )
+    ).toMatchObject({
+      accepted: true,
+      publication: { verbatim: true, deliverable: true, fullText: atCeiling },
+    });
+    expect(
+      await publish(
+        {
+          requestId: 'deliverable-over',
+          text: 'x'.repeat(DELIVERABLE_CHAR_LIMIT + 1),
+          deliverable: true,
+        },
+        caller
+      )
+    ).toMatchObject({ accepted: false, reason: 'invalid_publication' });
+    expect(ledger.list(conversationId)).toHaveLength(1);
   });
 
   test('exempts a deliverable from the limit and refuses details beside it', async () => {

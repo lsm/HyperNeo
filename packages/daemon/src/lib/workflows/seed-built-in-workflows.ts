@@ -1,25 +1,12 @@
-import { createHash } from 'node:crypto';
-import { CODER_OWNED_MERGE_PROMPT } from '@hyperneo/prompts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
-import { patchLegacyStableSlotPrompt } from './built-in-legacy-slot-prompts.ts';
-import { patchKnownBuiltInPromptDrift } from './built-in-prompt-drift.ts';
-import {
-  RETIRED_MERGE_INSTRUCTIONS_SHA256,
-  RETIRED_MERGER_RAW_MERGE_GUARD,
-  RETIRED_MERGER_SLOT_NAMES,
-  RETIRED_POST_APPROVAL_NODE,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
-  stripRetiredPostApproval,
-} from './built-in-retired-post-approval.ts';
 import {
   mergeChannelsFromTemplate,
   mergeHooksFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
 } from './built-in-template-merge.ts';
 import { getBuiltInWorkflows, LEGACY_CODING_TEMPLATE_IDENTITIES } from './built-in-workflows.ts';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import type { SpaceWorkflowManager } from './workflow-manager.ts';
 
@@ -121,73 +108,6 @@ export function seedBuiltInWorkflows(
       if (row.templateHash === expectedHash) continue;
 
       if (hasActiveRuns?.(row.id)) {
-        const templateNodesByName = new Map(template.nodes.map((node) => [node.name, node]));
-        const nodes = row.nodes.map((node) => {
-          const templateNode = templateNodesByName.get(node.name);
-          const agents = node.agents.map((agent) => {
-            const templateAgent = templateNode?.agents.find(
-              (candidate) => candidate.name === agent.name
-            );
-            if (!templateAgent) return agent;
-            const driftedPrompt = patchKnownBuiltInPromptDrift(
-              agent.customPrompt,
-              templateAgent.customPrompt
-            );
-            const prompt = patchLegacyStableSlotPrompt(
-              driftedPrompt?.value,
-              templateAgent.customPrompt?.value,
-              node.name,
-              agent.name
-            );
-            return prompt === agent.customPrompt?.value
-              ? agent
-              : { ...agent, customPrompt: prompt === undefined ? undefined : { value: prompt } };
-          });
-          if (node.name !== RETIRED_POST_APPROVAL_NODE) {
-            return JSON.stringify(agents) === JSON.stringify(node.agents)
-              ? node
-              : { ...node, agents };
-          }
-          const merger = agents.find((agent) => RETIRED_MERGER_SLOT_NAMES.has(agent.name));
-          if (
-            !merger ||
-            merger.customPrompt?.value !== RETIRED_PR_MERGER_SLOT_PROMPT ||
-            merger.model !== undefined ||
-            merger.provider !== undefined ||
-            merger.thinkingLevel !== undefined ||
-            merger.replaceAgentPrompt === true ||
-            merger.disabledSkillIds !== undefined ||
-            merger.extraMcpServers !== undefined ||
-            merger.resetContextPerTurn !== undefined ||
-            JSON.stringify(merger.toolGuards) !==
-              JSON.stringify([RETIRED_MERGER_RAW_MERGE_GUARD]) ||
-            node.postApproval?.targetAgent !== merger.name ||
-            typeof node.postApproval.instructions !== 'string' ||
-            createHash('sha256').update(node.postApproval.instructions).digest('hex') !==
-              RETIRED_MERGE_INSTRUCTIONS_SHA256
-          ) {
-            return node;
-          }
-          return {
-            ...node,
-            agents: agents.map((agent) =>
-              agent === merger
-                ? {
-                    ...agent,
-                    customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
-                    toolGuards: undefined,
-                  }
-                : agent
-            ),
-            postApproval: {
-              ...node.postApproval,
-              instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
-            },
-          };
-        });
-        if (JSON.stringify(nodes) !== JSON.stringify(row.nodes)) {
-          workflowManager.updateWorkflow(row.id, { nodes });
-        }
         builtInSeederLog.info(
           `deferred re-stamp of built-in workflow '${template.name}' (id=${row.id}) ` +
             `in space ${spaceId}: an active workflow run still references it`
@@ -209,21 +129,13 @@ export function seedBuiltInWorkflows(
           mergedNodes,
           row.hooks
         );
-        const stripped = stripRetiredPostApproval({
-          templateName: template.name,
-          nodes: mergedNodes,
-          channels: mergedChannels,
-          hooks: mergedHooks,
-        });
-        const writeChannels =
-          JSON.stringify(mergedChannels) !== JSON.stringify(row.channels) ||
-          stripped.channelsChanged;
+        const writeChannels = JSON.stringify(mergedChannels) !== JSON.stringify(row.channels);
 
         const mergedHash = computeWorkflowHash({
           ...row,
-          nodes: stripped.nodes,
-          hooks: stripped.hooks ?? undefined,
-          channels: writeChannels ? stripped.channels : row.channels,
+          nodes: mergedNodes,
+          hooks: mergedHooks ?? undefined,
+          channels: writeChannels ? mergedChannels : row.channels,
           completionAutonomyLevel: template.completionAutonomyLevel,
           postApproval: undefined,
         });
@@ -232,9 +144,9 @@ export function seedBuiltInWorkflows(
         workflowManager.updateWorkflow(row.id, {
           completionAutonomyLevel: template.completionAutonomyLevel,
           postApproval: null,
-          hooks: stripped.hooks ?? null,
-          nodes: stripped.nodes,
-          ...(writeChannels ? { channels: stripped.channels } : {}),
+          hooks: mergedHooks ?? null,
+          nodes: mergedNodes,
+          ...(writeChannels ? { channels: mergedChannels } : {}),
           templateHash: stampedHash,
         });
         restamped.push(template.name);

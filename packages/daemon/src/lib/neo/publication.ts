@@ -1,16 +1,19 @@
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import {
   NEO_DELIVERABLE_CHAR_LIMIT,
+  NEO_REPLY_CHAR_LIMIT,
   NEO_REPLY_FIELD_LIMIT,
+  NEO_REPLY_LINE_LIMIT,
   NEO_SHORT_TEXT_LIMIT,
+  neoCharCount,
 } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
 import { PublicHandoffReference } from '../handoffs/outbox.ts';
 import { WorkerOpenSourceSchema } from '../drivers/worker-identity-schema.ts';
 
-export const REPLY_CHAR_LIMIT = 200;
-export const REPLY_LINE_LIMIT = 5;
+export const REPLY_CHAR_LIMIT = NEO_REPLY_CHAR_LIMIT;
+export const REPLY_LINE_LIMIT = NEO_REPLY_LINE_LIMIT;
 export const REPLY_FIELD_LIMIT = NEO_REPLY_FIELD_LIMIT;
 export const DELIVERABLE_CHAR_LIMIT = NEO_DELIVERABLE_CHAR_LIMIT;
 
@@ -154,7 +157,8 @@ export function replyBodyRefusal({
   text: string;
   details?: string;
 }): 'reply_needs_details' | 'reply_summary_too_long' | undefined {
-  if (text.length <= REPLY_CHAR_LIMIT && replyLines(text) <= REPLY_LINE_LIMIT) return undefined;
+  if (neoCharCount(text) <= REPLY_CHAR_LIMIT && replyLines(text) <= REPLY_LINE_LIMIT)
+    return undefined;
   return details === undefined ? 'reply_needs_details' : 'reply_summary_too_long';
 }
 

@@ -10,8 +10,9 @@ import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation
 import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { neoFrontInputWrites } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
+import { NEO_FRONT_REPLY_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
 
-const FRONT_REPLY_MAX_CHARS = 150;
+const FRONT_REPLY_MAX_CHARS = NEO_FRONT_REPLY_CHAR_LIMIT;
 
 const Read = {
   id: z.string().min(1).max(200).optional(),
@@ -88,29 +89,18 @@ export function createFrontTools(service: NeoService, conversationId: string) {
       'reserve',
       conversationId,
       messageIds,
-      asks.map((ask) => {
-        const message = neoIntakeMessage(
+      asks.map((ask) => ({
+        sessionId: ask.askOrigin.sessionId,
+        message: neoIntakeMessage(
           { ...ask, sessionId: ask.askOrigin.sessionId },
           ask.askOrigin.sessionId,
           readNeoReply(ask.replyTo, service.todos),
           null,
           undefined,
-          ask.previewContext ?? null
-        );
-        return {
-          sessionId: ask.askOrigin.sessionId,
-          message: {
-            ...message,
-            message: {
-              ...message.message,
-              content: [
-                ...(message.message.content as Exclude<typeof message.message.content, string>),
-                { type: 'text' as const, text: block },
-              ],
-            },
-          },
-        };
-      })
+          ask.previewContext ?? null,
+          block
+        ),
+      }))
     );
     return reserved === 'reserved'
       ? { started: true }

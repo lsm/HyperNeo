@@ -145,17 +145,26 @@ describe('neo.message.send replyTo', () => {
       human
     );
   const prompt = (requestId: string) => {
-    const stored = JSON.parse(
+    const raw: {
+      session_id?: string;
+      message: { content: { text?: string }[] };
+    } = JSON.parse(
       (
         mailbox.db
           .prepare('SELECT session_id, sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const [identifier, time, ...content] = stored.message.content;
-    expect(identifier.text).toBe(`[message id: ${requestId}]`);
-    expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
-    return { ...stored, message: { ...stored.message, content } };
+    const text = raw.message.content.map((block) => block.text ?? '').join('');
+    expect(text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)\n/);
+    expect(text).toContain(`\n<human-message id="${requestId}"`);
+    expect(text).toEndWith('</human-message>');
+    const reference = text.match(/<reference[^>]*>\n([\s\S]*?)\n<\/reference>/)?.[1] ?? '';
+    const after = reference
+      ? text.slice(text.indexOf('</reference>') + '</reference>'.length)
+      : text.slice(text.indexOf('>\n') + 2);
+    const words = after.replace(/<\/human-message>$/, '').trim();
+    return { ...raw, reference, words, text };
   };
   const ledger = (requestId: string) =>
     JSON.parse(
@@ -171,16 +180,11 @@ describe('neo.message.send replyTo', () => {
     expect(await send(id, '在做 / 做完', { kind: 'question', id: 'q1' })).toMatchObject({
       value: { ok: true, created: true },
     });
-    expect(prompt(id)).toMatchObject({
-      session_id: root,
-      replyTo: { kind: 'question', id: 'q1' },
-      message: {
-        content: [
-          { type: 'text', text: 'The human answered your question "What should the status say?":' },
-          { type: 'text', text: '在做 / 做完' },
-        ],
-      },
-    });
+    const sent = prompt(id);
+    expect(sent).toMatchObject({ session_id: root, replyTo: { kind: 'question', id: 'q1' } });
+    expect(sent.reference).toBe('What should the status say?');
+    expect(sent.words).toBe('在做 / 做完');
+    expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
     expect(ledger(id)).toMatchObject({
       content: [{ type: 'text', text: '在做 / 做完' }],
       replyTo: { kind: 'question', id: 'q1' },
@@ -337,9 +341,7 @@ describe('neo.message.send replyTo', () => {
     );
     const id = crypto.randomUUID();
     await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
-    expect(prompt(id).message.content[0].text).toBe(
-      'The human replied about your start question "Start "Todo rows"?" (it stays open; only its Start button starts todos):'
-    );
+    expect(prompt(id).reference).toBe('Start "Todo rows"?');
     expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
     expect(store.getTodo('t1')?.state).toBe('todo');
   });
@@ -409,9 +411,7 @@ describe('neo.message.send replyTo', () => {
       const id = crypto.randomUUID();
       await send(id, words, { kind: 'question', id: `c${index}` });
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
-      expect(prompt(id).message.content[0].text).toBe(
-        `The human answered your question "Which layout?" with ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}):`
-      );
+      expect(prompt(id).reference).toBe('Which layout?');
     }
     choice('many', true);
     await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
@@ -435,7 +435,7 @@ describe('neo.message.send replyTo', () => {
   test('a reply about a todo goes to root Neo without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
-    expect(prompt(id).message.content[0].text).toBe('The human replied about todo t1:');
+    expect(prompt(id).reference).toBe('Todo rows');
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
@@ -445,12 +445,8 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: { kind: 'ask', id: 'ask' },
-      message: {
-        content: [
-          { type: 'text', text: 'The human replied to the work card "iOS card":' },
-          { type: 'text', text: 'Where is this stuck?' },
-        ],
-      },
+      reference: 'iOS card',
+      words: 'Where is this stuck?',
       humanContent: [{ type: 'text', text: 'Where is this stuck?' }],
     });
     expect(store.getQuestion('q1')?.state).toBe('open');
@@ -460,10 +456,12 @@ describe('neo.message.send replyTo', () => {
     mailbox.db.prepare('UPDATE neo_asks SET session_id = ?').run(holder);
     const id = crypto.randomUUID();
     await send(id, '在做', { kind: 'question', id: 'q1' });
-    expect(prompt(id)).toMatchObject({
-      session_id: root,
-      message: { content: [{ type: 'text', text: '在做' }] },
-    });
+    const sent = prompt(id);
+    expect(sent.session_id).toBe(root);
+    expect(sent.text).toContain(`\n<human-message id="${id}" ask="ask" question="q1">\n`);
+    expect(sent.words).toBe('在做');
+    expect(sent.reference).toBe('');
+    expect(sent.text).toMatch(/\n\n<\/human-message>$/);
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
@@ -506,12 +504,8 @@ describe('neo.message.send replyTo', () => {
     expect(prompt(id)).toMatchObject({
       session_id: root,
       replyTo: snapshot,
-      message: {
-        content: [
-          { type: 'text', text: 'The human replied to the Neo message "Card is redone.":' },
-          { type: 'text', text: 'Thanks' },
-        ],
-      },
+      reference: 'Card is redone.',
+      words: 'Thanks',
     });
     expect(ledger(id)).toEqual(
       expect.objectContaining({ content: [{ type: 'text', text: 'Thanks' }], replyTo: snapshot })
@@ -519,9 +513,9 @@ describe('neo.message.send replyTo', () => {
     const unknown = crypto.randomUUID();
     await reply(unknown, 'pub-1');
     expect(prompt(unknown).session_id).toBe(root);
-    expect([ledger(unknown).replyTo, prompt(unknown).message.content]).toEqual([
+    expect([ledger(unknown).replyTo, prompt(unknown).words]).toEqual([
       { kind: 'message', id: 'pub-1' },
-      [{ type: 'text', text: 'Thanks' }],
+      'Thanks',
     ]);
   });
 
@@ -590,7 +584,7 @@ describe('neoReplySnapshot', () => {
 describe('neoQuoteFact', () => {
   test('quotes the original only when the snapshot has one', () => {
     expect(neoQuoteFact({ kind: 'message', id: 'm', author: 'user', excerpt: 'Ship it' })).toBe(
-      'The human replied to their earlier message "Ship it":'
+      'Ship it'
     );
     expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
   });

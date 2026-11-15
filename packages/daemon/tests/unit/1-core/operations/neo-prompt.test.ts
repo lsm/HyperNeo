@@ -8,10 +8,24 @@ import {
   NEO_ROOT_TURN_END,
   neoToolDescription,
 } from '@hyperneo/prompts';
+import {
+  NEO_DELIVERABLE_CHAR_LIMIT,
+  NEO_REPLY_CHAR_LIMIT,
+  NEO_REPLY_LINE_LIMIT,
+} from '@hyperneo/shared/types/neo-publication';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('root Neo system prompt', () => {
+  test('never points Neo at a [message id: …] line the intake no longer writes', () => {
+    for (const text of [
+      neoPrompt([]),
+      neoPrompt(neoSettingsPackBriefs()),
+      neoToolDescription('neo.rule.save'),
+    ])
+      expect(text).not.toContain('[message id');
+    expect(neoPrompt([])).toContain('<human-message');
+  });
   test('adds every ask step with after before starting the first', () => {
     expect(NEO_ROOT_PROMPT).toContain(
       'Add all ask steps as todos, each with after, before starting the first.'
@@ -183,9 +197,11 @@ describe('root Neo system prompt', () => {
 
   test('states the reply length rule once, in the publish description', () => {
     const prompt = neoPrompt([]);
-    expect(neoToolDescription('neo.publication.publish')).toContain(
-      'at most 200 characters and 5 lines counting every line including blank ones'
+    const publish = neoToolDescription('neo.publication.publish');
+    expect(publish).toContain(
+      `at most ${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines counting every line including blank ones`
     );
+    expect(publish).toContain(`at most ${NEO_DELIVERABLE_CHAR_LIMIT} characters`);
     for (const stale of [
       'a few bullets or a small comparison table',
       'Bold the key choice',

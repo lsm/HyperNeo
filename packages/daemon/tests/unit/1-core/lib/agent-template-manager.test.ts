@@ -421,10 +421,9 @@ describe('SpaceAgentTemplateManager', () => {
       }
     });
 
-    test('still rejects legacy alias keys of built-in templates', async () => {
+    test('no longer treats worker.coder as a retired alias', async () => {
       const result = await manager.createIn(OWNER, { ...fullParams(), key: 'worker.coder' });
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('retired alias');
+      expect(result.ok).toBe(true);
     });
 
     test('does not allow reuse of the retired Task Manager key', async () => {

@@ -853,14 +853,18 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );
-    expect(human.map((part) => part.text).slice(-4)).toEqual([
-      expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
-      'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+    const turn = human.map((part) => part.text).join('');
+    expect(turn).toMatch(/\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)\n/);
+    expect(turn).toContain(
+      `\n<human-message id="${requestId}">\n\nTell me about the fictional moon garden. Keep synthetic garden changes as drafts.\n\n</human-message>`
+    );
+    expect(turn).not.toContain('<human-input>');
+    expect(turn).not.toContain('[message id:');
+    expect(turn.match(/<human-message id="/g)).toHaveLength(1);
+    expect(human.map((part) => part.text).slice(-2)).toEqual([
       '[listening: no]\nBefore time-consuming work, publish one short reply first: what you will do, plus a line or two of what you already know. Answer a quick question directly instead. Then continue.',
       '[listening: no]',
     ]);
-    expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
-    expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);
   } finally {
     releasePublication();
     QueryOptionsBuilder.prototype.build = build;

@@ -1,12 +1,3 @@
-export function legacyGitHubTopic(topic: string): string | null {
-  const segments = topic.split('/');
-  if (segments.length !== 5 || segments[0] !== 'github') return null;
-  const [source, owner, repo, resource, entityAction] = segments;
-  const dotIndex = entityAction.indexOf('.');
-  if (dotIndex <= 0 || dotIndex === entityAction.length - 1) return null;
-  return `${source}/${owner}/${repo}/${resource}.${entityAction.slice(dotIndex + 1)}`;
-}
-
 function rejectSlashSeparatedGitHubAction(topic: string): never {
   throw new Error(
     `GitHub topic "${topic}" must use dotted entity actions like "pull_request/42.closed"`
