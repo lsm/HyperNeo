@@ -886,7 +886,7 @@ describe('planCodingLedgerRead cross-model review', () => {
       response([pr]),
       0,
       () => ({ ...policy, crossModelReview }),
-      (url) => (url === 'https://github.com/x/x/pull/1' ? reviews : [])
+      (repo, number) => (repo === 'x/x' && number === 1 ? reviews : [])
     )?.rows[0].state;
 
   test('an approved green PR waits for a review by a different model', () => {

@@ -68,7 +68,8 @@ export function planCodingPrNudge(
   now: number
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
   if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
-  if (!STATE_TEXT[row.state] || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
+  if (!STATE_TEXT[row.state] || now - row.readAt > CODING_PR_FRESH_MS) return null;
+  if (!row.owner && row.state !== 'waiting_cross_review') return null;
   return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
 
@@ -107,15 +108,15 @@ export class CodingPrSweepRepository {
         .prepare(
           `SELECT repo, number, title, head, state, state_since AS stateSince, read_at AS readAt,
                   nudges, owner FROM pack_coding_pr_ledger
-            WHERE owner IS NOT NULL AND closed_at IS NULL`
+            WHERE (owner IS NOT NULL OR state = 'waiting_cross_review') AND closed_at IS NULL`
         )
-        .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string })[]
+        .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string | null })[]
     )
       .filter((row) => codingRepoWatched(this.db, row.repo))
       .map((row) => ({
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
-        owner: JSON.parse(row.owner) as WorkRef,
+        owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
       }));
   }
 
@@ -151,7 +152,7 @@ export async function sweepCodingPrs(
       (await deps
         .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
         .catch(() => false));
-    if (nudge.kind === 'remind')
+    if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       await repo.markLater(row, nudge.nudges, now);

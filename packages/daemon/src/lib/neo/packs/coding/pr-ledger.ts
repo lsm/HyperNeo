@@ -245,7 +245,7 @@ export function planCodingLedgerRead(
   raw: unknown,
   now: number,
   readPolicy: (repo: string) => CodingMergePolicy = () => ({}),
-  readStageFacts: (url: string) => readonly CodingStageFact[] = () => []
+  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => []
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -269,9 +269,7 @@ export function planCodingLedgerRead(
         pr,
         repoHasCi,
         policy,
-        policy.crossModelReview
-          ? readStageFacts(codingLedgerPrUrl({ repo: canonical, number: pr.number }))
-          : []
+        policy.crossModelReview ? readStageFacts(canonical, pr.number) : []
       ),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
@@ -504,7 +502,10 @@ export class CodingPrLedgerRepository {
       raw,
       now,
       (canonical) => this.policy(canonical),
-      (url) => this.stageFacts.read(url)
+      (repo, number) =>
+        this.stageFacts.read(
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`
+        )
     );
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);

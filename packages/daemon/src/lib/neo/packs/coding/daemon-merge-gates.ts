@@ -101,9 +101,9 @@ export const decideCodingDaemonMerge = (superpipe({})('coding.decide-daemon-merg
   .pipe(requireCi, 'decision', 'result:decision')
   .pipe(requireCommitReady, 'decision', 'result:decision')
   .pipe(requireReview, ['decision', 'policy'], 'result:decision')
-  .pipe(requireCrossModelReview, ['decision', 'policy'], 'result:decision')
   .pipe(requireResolved, 'decision', 'result:decision')
   .pipe(requireNoSignoff, ['decision', 'policy'], 'result:decision')
+  .pipe(requireCrossModelReview, ['decision', 'policy'], 'result:decision')
   .pipe(
     (facts: Facts): Gate =>
       facts.linkedIssueReason ? skip(facts.linkedIssueReason) : { value: facts },
