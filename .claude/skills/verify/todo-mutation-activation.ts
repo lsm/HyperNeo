@@ -71,7 +71,7 @@ try {
   store.addTodo('peer','ask',{ approvedAt: 1,title:'peer',doneWhen:'Pending evidence',check,instruction:null,named:null},3);
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible();
-  const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});
+  const blocked=await commit({kind:'edit',todoId:'peer',done:'met',evidence:'Finished'});
   assert(!blocked.ok && blocked.reason.startsWith('card_unanswered:')); assert.equal(events,prior);
   record=false; assert.deepEqual(await visible(),withCard); result.unansweredCardRefused=true;
   db.exec("CREATE TRIGGER refuse_ask_touch BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END");

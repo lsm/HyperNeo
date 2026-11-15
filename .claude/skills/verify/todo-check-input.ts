@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -82,7 +83,7 @@ try {
     originMessageId: null,
     createdAt: Date.now(),
   });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
     ws!.onerror = () => fail(new Error('WebSocket open failed'));
@@ -119,7 +120,7 @@ try {
   assert.equal(edited.todo.doneWhen, `File ${check.params.path} exists.`);
   assert.deepEqual(edited.todo.check, check);
   writeFileSync(check.params.path, 'Synthetic outcome');
-  const closed = await rpc('neo.todo.close', { todoId: edited.todo.id, reason: 'Observed result' });
+  const closed = await rpc('neo.todo.edit', { todoId: edited.todo.id, done: 'met', evidence: 'Observed result' });
   assert.equal(closed.todo?.state, 'done');
   receipts.push({ final: store.listTodos('ask'), isolatedPort: app.server.port });
   console.log(

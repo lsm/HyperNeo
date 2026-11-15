@@ -27,7 +27,7 @@
    It overlaps a completion check awaiting GitHub with 20 URL additions on that
    same todo. Every URL must remain in its check; the stale completion is refused
    and the todo remains open. Repeat in fresh run directories with a final
-   argument `edit`, `close`, and `sweep` to cover plain completion, closure and the
+   argument `edit` and `sweep` to cover plain completion and the
    real periodic background check. Each mode pauses the local gh stub after its
    check starts, adds 20 URLs through RPC, then releases the old result. None may
    finish the todo. The sweep mode can take up to 3 minutes to begin.

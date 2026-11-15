@@ -44,10 +44,6 @@ reply() {
 sleep 20
 echo "before: gated=$(row gated) next=$(row next)"
 [ "$(row next)" = todo/unstarted ] || { echo "the waiting todo started before its prerequisite was done"; exit 1; }
-closed=$(reply neo.todo.close '{"todoId":"gated","reason":"No longer needed"}')
-echo "neo.todo.close, the gated name: $closed"
-[ "$closed" = 'refused card_unanswered' ]
-
 marked=$(reply neo.todo.done '{"todoId":"gated"}')
 echo "neo.todo.done: $marked"
 [ "$marked" = 'ok todo=done' ]

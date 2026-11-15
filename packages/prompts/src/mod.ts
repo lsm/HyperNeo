@@ -206,13 +206,11 @@ import mdToolQuestionAnswer from './neo/tools/neo.question.answer.md' with { typ
 import mdToolQuestionAsk from './neo/tools/neo.question.ask.md' with { type: 'text' };
 import mdToolQuestionGet from './neo/tools/neo.question.get.md' with { type: 'text' };
 import mdToolQuestionRelay from './neo/tools/neo.question.relay.md' with { type: 'text' };
-import mdToolQuestionResolve from './neo/tools/neo.question.resolve.md' with { type: 'text' };
 import mdToolQuestionRetire from './neo/tools/neo.question.retire.md' with { type: 'text' };
 import mdToolRuleApplyAnswer from './neo/tools/neo.rule.applyAnswer.md' with { type: 'text' };
 import mdToolRuleAsk from './neo/tools/neo.rule.ask.md' with { type: 'text' };
 import mdToolTodoAdd from './neo/tools/neo.todo.add.md' with { type: 'text' };
 import mdToolTodoBind from './neo/tools/neo.todo.bind.md' with { type: 'text' };
-import mdToolTodoClose from './neo/tools/neo.todo.close.md' with { type: 'text' };
 import mdToolTodoContinue from './neo/tools/neo.todo.continue.md' with { type: 'text' };
 import mdToolTodoDone from './neo/tools/neo.todo.done.md' with { type: 'text' };
 import mdToolTodoEdit from './neo/tools/neo.todo.edit.md' with { type: 'text' };
@@ -672,13 +670,11 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.question.ask.md': mdToolQuestionAsk,
     'neo/tools/neo.question.get.md': mdToolQuestionGet,
     'neo/tools/neo.question.relay.md': mdToolQuestionRelay,
-    'neo/tools/neo.question.resolve.md': mdToolQuestionResolve,
     'neo/tools/neo.question.retire.md': mdToolQuestionRetire,
     'neo/tools/neo.rule.applyAnswer.md': mdToolRuleApplyAnswer,
     'neo/tools/neo.rule.ask.md': mdToolRuleAsk,
     'neo/tools/neo.todo.add.md': mdToolTodoAdd,
     'neo/tools/neo.todo.bind.md': mdToolTodoBind,
-    'neo/tools/neo.todo.close.md': mdToolTodoClose,
     'neo/tools/neo.todo.continue.md': mdToolTodoContinue,
     'neo/tools/neo.todo.done.md': mdToolTodoDone,
     'neo/tools/neo.todo.edit.md': mdToolTodoEdit,

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
@@ -77,7 +78,7 @@ const open = async () => {
   assert.notEqual(app.server.port, 8399);
   store = new NeoAskTodoRepository(app.db.getDatabase());
   sessions = new NeoTodoSessionRepository(app.db.getDatabase());
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC unavailable')); });
 };
 const rpc = (name: string, input: unknown) => new Promise<any>((done, fail) => {
@@ -170,10 +171,10 @@ try {
     assert.equal(store.getTodo(silentTodo.id)?.report, null);
     await refresh();
     assert.equal(received().length, 1);
-    evidence.unmetClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Worker says complete' });
+    evidence.unmetClose = await rpc('neo.todo.edit', { todoId: 'explicit', done: 'met', evidence: 'Worker says complete' });
     assert.equal((evidence.unmetClose as any).ok, false);
     assert.equal(starts(), 0);
-    evidence.humanClose = await rpc('neo.todo.close', { todoId: 'human', reason: 'Human confirms the synthetic result' });
+    evidence.humanClose = await rpc('neo.todo.done', { todoId: 'human', reason: 'Human confirms the synthetic result' });
     assert.equal((evidence.humanClose as any).todo.state, 'done');
     assert.equal(store.getTodo('human')?.report, `Agent: ${report}`);
     await refresh();
@@ -195,7 +196,7 @@ try {
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.replyReport, `Agent: ${report}`);
     assert.equal(starts(), 0);
     writeFileSync(join(run, 'pr.json'), JSON.stringify({ url: pr, state: 'MERGED', mergedAt: new Date().toISOString(), headRefOid: 'a'.repeat(40), reviews: [], statusCheckRollup: [] }));
-    evidence.factClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Synthetic pack fact now met' });
+    evidence.factClose = await rpc('neo.todo.edit', { todoId: 'explicit', done: 'met', evidence: 'Synthetic pack fact now met' });
     assert.equal((evidence.factClose as any).ok, true);
     await refresh();
     await refresh();

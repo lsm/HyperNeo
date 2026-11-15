@@ -151,7 +151,6 @@ function fixture(path = ':memory:') {
     undefined,
     undefined,
     undefined,
-    undefined,
     () => [...packs, { id: 'test', todos: { doneWhen: () => 'Fact observed' } }]
   ).find((op) => op.name === 'neo.question.ask')!;
   const ask = async (input: Record<string, unknown>) =>

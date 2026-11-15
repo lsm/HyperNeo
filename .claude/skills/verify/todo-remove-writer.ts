@@ -51,7 +51,7 @@ const timer = setInterval(() => { const now = performance.now(); if (measureLag)
 db.prepare = ((sql: string) => { if (recording && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) mainSql++; return prepare(sql); }) as typeof db.prepare;
 const report: Record<string, unknown> = { mode, surface: 'real remove RPC, independent observer and opened Work card' };
 type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; todos: NeoTodo[] };
-const finish = async (kind: 'close' | 'remove', todoId: string) => {
+const finish = async (kind: 'remove', todoId: string) => {
   recording++;
   try { return await hub.request<Receipt>('operation.invoke', { name: `neo.todo.${kind}`, input: { todoId, reason: 'Synthetic decision' } }); }
   finally { recording--; }

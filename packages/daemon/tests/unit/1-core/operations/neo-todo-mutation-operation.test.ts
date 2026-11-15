@@ -18,7 +18,6 @@ describe('Writer-backed todo operation activation', () => {
   let store: NeoAskTodoRepository;
   let gateway: DbGateway;
   let order: string[];
-  let duringStop: () => void;
   let stopFailure: string | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
@@ -31,7 +30,6 @@ describe('Writer-backed todo operation activation', () => {
     store = new NeoAskTodoRepository(db);
     gateway = new DbGateway(':memory:', db);
     order = [];
-    duringStop = () => {};
     stopFailure = null;
     checkDone = true;
     workerRemotes = undefined;
@@ -68,7 +66,6 @@ describe('Writer-backed todo operation activation', () => {
       );
     const stop = async () => {
       order.push('stop');
-      duringStop();
       return stopFailure;
     };
     const start = async (id: string) => {
@@ -248,20 +245,11 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual(['commit', 'announce']);
   });
 
-  test('close stops first, commits, then lets the queue start the successor', async () => {
-    const result = await call('neo.todo.close', { todoId: 'first', reason: 'Finished' });
+  test('done stops first, commits, then lets the queue start the successor', async () => {
+    const result = await call('neo.todo.done', { todoId: 'first', reason: 'Finished' });
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
     expect(order).toEqual(['stop', 'commit', 'announce', 'start:peer']);
     expect(store.getTodo('peer')?.state).toBe('doing');
-  });
-
-  test('close refuses a never-started todo whose check has not passed and points to remove', async () => {
-    checkDone = false;
-    const before = store.getTodo('first')!;
-    const result = await call('neo.todo.close', { todoId: 'first', reason: 'Never started' });
-    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('neo.todo.remove') });
-    expect(store.getTodo('first')).toEqual(before);
-    expect(order).toEqual([]);
   });
 
   test('done marks a never-started todo with an unmet check done, with no reason, and its dependent starts', async () => {
@@ -328,10 +316,6 @@ describe('Writer-backed todo operation activation', () => {
       { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Answer first' },
       3
     );
-    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
-      ok: true,
-      todo: { state: 'blocked', blockedBy: 'needs-human' },
-    });
     expect(await call('neo.todo.done', { todoId: 'first' })).toMatchObject({
       ok: true,
       todo: { state: 'done', blockedBy: null },
@@ -350,60 +334,11 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual([]);
   });
 
-  test('close of a started todo whose check has not passed still waits on the check', async () => {
-    checkDone = false;
-    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 2 }, 2);
-    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
-      ok: true,
-      todo: { state: 'blocked', blockedBy: 'check' },
-    });
-  });
-
   test('remove cancels a never-started todo whose check has not passed', async () => {
     checkDone = false;
     expect(
       await call('neo.todo.remove', { todoId: 'first', reason: 'Never started' })
     ).toMatchObject({ ok: true, todo: { state: 'removed', reason: 'Never started' } });
-  });
-
-  test('a new human card during stop prevents the final completion write', async () => {
-    duringStop = () => {
-      store.askQuestion(
-        'reply',
-        'ask',
-        {
-          kind: 'reply',
-          todoId: 'first',
-          text: 'Answer first',
-          options: null,
-          multiple: false,
-          yesLabel: null,
-          noLabel: null,
-        },
-        2
-      );
-    };
-    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('card_unanswered:'),
-    });
-    expect(store.getTodo('first')!.state).toBe('todo');
-    expect(order).toEqual(['stop']);
-  });
-
-  test('a check changed during stop cannot use the prior passed completion', async () => {
-    duringStop = () => {
-      store.updateTodo(
-        store.getTodo('first')!,
-        { check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/new-check' } } },
-        2
-      );
-    };
-    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Finished' })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('todo_changed:'),
-    });
-    expect(order).toEqual(['stop']);
   });
 
   test('a failed stop leaves the todo unchanged without announcing or dispatching', async () => {
@@ -427,7 +362,7 @@ describe('Writer-backed todo operation activation', () => {
 
   test('a settled ask stays a successful no-op without stop, announce or dispatch', async () => {
     store.settleAsk(store.getAsk('ask')!, 'done', 'Human settled it', 2);
-    expect(await call('neo.todo.close', { todoId: 'first', reason: 'Ignored' })).toMatchObject({
+    expect(await call('neo.todo.done', { todoId: 'first', reason: 'Ignored' })).toMatchObject({
       ok: true,
       todo: { worker: null },
       records: [expect.stringContaining('ask_settled:')],
