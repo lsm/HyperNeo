@@ -12,7 +12,14 @@ import type {
   NeoQuestionAnswer,
   NeoQuestionEntry,
   NeoTodoEntry,
+  NeoTodoPriority,
 } from '@hyperneo/shared/types/neo-ask';
+import {
+  NEO_TODO_PRIORITIES,
+  type NeoTodoControl,
+  neoTodoControllable,
+  neoTodoHoldable,
+} from './todo-controls.ts';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -155,6 +162,13 @@ function CardFileText({
   );
 }
 
+const PRIORITY_LABELS: Record<NeoTodoPriority, MessageKey> = {
+  urgent: 'todo.priority.urgent',
+  high: 'todo.priority.high',
+  normal: 'todo.priority.normal',
+  low: 'todo.priority.low',
+};
+
 function TodoRow({
   todo,
   number,
@@ -164,9 +178,13 @@ function TodoRow({
   expanded = false,
   anchorPrefix = '',
   onToggle,
+  onControl,
+  disabled,
   onDesktopControl,
 }: {
   todo: NeoTodoEntry;
+  onControl?: (control: NeoTodoControl) => Promise<void>;
+  disabled?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   expanded?: boolean;
   anchorPrefix?: string;
@@ -176,7 +194,19 @@ function TodoRow({
   onCheck?: (checked: boolean) => void;
   onOpen?: (link: string, title: string) => void;
 }) {
-  const [mark, color] = marks[todo.state];
+  const [mark, color] = todo.statusCodes?.some((code) =>
+    ['todo.held', 'todo.paused'].includes(code.code)
+  )
+    ? (['‖', 'text-warning'] as const)
+    : marks[todo.state];
+  const [controlError, setControlError] = useState<string | null>(null);
+  const control = (choice: NeoTodoControl) => {
+    setControlError(null);
+    void onControl?.(choice).catch((cause: unknown) =>
+      setControlError(cause instanceof Error ? cause.message : t('todo.controlFailed'))
+    );
+  };
+  const controls = onControl && neoTodoControllable(todo);
   const detailId = `${anchorPrefix}neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
   const nextAction = neoTodoNextAction(todo);
@@ -197,6 +227,14 @@ function TodoRow({
       {todo.addedAfterStart && todo.state !== 'removed' && (
         <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
           {t('todo.new')}
+        </span>
+      )}
+      {todo.priority !== 'normal' && neoTodoControllable(todo) && (
+        <span
+          data-todo-priority={todo.priority}
+          class={`ml-1.5 rounded border border-current px-1 text-xs font-semibold ${todo.priority === 'low' ? 'text-fg-muted' : 'text-warning'}`}
+        >
+          {t(PRIORITY_LABELS[todo.priority])}
         </span>
       )}
       {todo.worker && (
@@ -324,14 +362,64 @@ function TodoRow({
             ...((!onToggle || expanded) && number === undefined ? [nextAction ?? ''] : []),
           ].join('\n')}
         />
+        {controlError && (
+          <p role="alert" data-todo-control-error class="mt-1 break-words text-xs text-danger">
+            {controlError}
+          </p>
+        )}
       </div>
-      {todo.link && todo.state !== 'removed' && onOpen && (
+      {((todo.link && todo.state !== 'removed' && onOpen) || controls) && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
-          <NeoSessionOpen
-            kind={neoSessionKind(todo.worker?.adapter, todo.link)}
-            label={t('todo.openTitle', { title: todo.title })}
-            onOpen={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
-          />
+          {todo.link && todo.state !== 'removed' && onOpen && (
+            <NeoSessionOpen
+              kind={neoSessionKind(todo.worker?.adapter, todo.link)}
+              label={t('todo.openTitle', { title: todo.title })}
+              onOpen={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
+            />
+          )}
+          {controls && (
+            <Dropdown
+              position="right"
+              items={[
+                { label: t('todo.markDone'), onClick: () => control({ kind: 'done' }), disabled },
+                ...(neoTodoHoldable(todo)
+                  ? [
+                      {
+                        label: t(todo.startedAt === null ? 'todo.hold' : 'todo.pause'),
+                        onClick: () => control({ kind: 'hold' }),
+                        disabled,
+                      },
+                    ]
+                  : []),
+                { type: 'divider' as const },
+                ...NEO_TODO_PRIORITIES.map((priority) => ({
+                  label: t('todo.priorityItem', { priority: t(PRIORITY_LABELS[priority]) }),
+                  icon: <span aria-hidden="true">{priority === todo.priority ? '✓' : ''}</span>,
+                  onClick: () =>
+                    priority === todo.priority
+                      ? undefined
+                      : control({ kind: 'priority', priority }),
+                  disabled,
+                })),
+                { type: 'divider' as const },
+                {
+                  label: t('todo.cancel'),
+                  onClick: () => control({ kind: 'cancel' }),
+                  danger: true,
+                  disabled,
+                },
+              ]}
+              trigger={
+                <IconButton
+                  title={t('todo.actions', { title: todo.title })}
+                  size="sm"
+                  class="text-fg-faint"
+                >
+                  <NeoMoreIcon />
+                </IconButton>
+              }
+            />
+          )}
         </div>
       )}
     </div>
@@ -618,9 +706,11 @@ export function NeoAskTodos({
   onLoadDone,
   onLoadDetails,
   onTopic,
+  onControl,
   onDesktopControl,
 }: {
   entry: NeoAskEntry;
+  onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
   disabled?: boolean;
@@ -830,6 +920,8 @@ export function NeoAskTodos({
       key={todo.id}
       todo={todo}
       anchorPrefix={anchorPrefix}
+      disabled={disabled}
+      onControl={onControl && ((control) => onControl(todo, control))}
       onOpen={
         onOpen &&
         ((link, title) => {
@@ -963,6 +1055,8 @@ export function NeoAskTodos({
               key={todo.id}
               todo={todo}
               onOpen={onOpen}
+              disabled={disabled}
+              onControl={onControl && ((control) => onControl(todo, control))}
               expanded={expanded.includes(todo.id)}
               onDesktopControl={onDesktopControl}
               onToggle={

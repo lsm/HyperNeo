@@ -279,18 +279,16 @@ describe('cancelled prerequisites', () => {
         return;
       }
       if (mode === 'held') {
-        expect(store.getTodo(dependent.id)).toMatchObject({
-          blockedBy: 'held',
-          blockedReason: 'Human said wait.',
-        });
+        const hold = store
+          .listQuestions(dependent.askId)
+          .find((q) => q.state === 'open' && q.cause === 'hold');
+        expect(hold).toMatchObject({ todos: [dependent.id] });
         expect(
           store
             .listQuestions(dependent.askId)
             .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
         ).toHaveLength(0);
-        expect(await invoke('neo.todo.hold', { todoId: dependent.id, reason: null })).toMatchObject(
-          { ok: true }
-        );
+        store.answerQuestion(hold!, 'Start', 'button', Date.now());
       }
       await runner.refresh(() => {});
       await runner.refresh(() => {});

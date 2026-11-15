@@ -1080,6 +1080,7 @@ export function NeoLive() {
                     focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+                    onControl={(todo, control) => neo.controlTodo(todo, control)}
                     onReply={
                       ready
                         ? (question) =>

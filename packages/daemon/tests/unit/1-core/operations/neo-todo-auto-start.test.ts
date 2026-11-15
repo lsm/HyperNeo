@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { neoTodoLimits } from '@hyperneo/shared/types/settings';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
@@ -225,11 +226,10 @@ describe('todo automatic start', () => {
       store.updateTodo(store.getTodo(x.id)!, { state: 'done' }, Date.now());
       store.answerQuestion(unrelated, 'The next one', 'button', Date.now());
       await runner.refresh(() => {});
-      expect(store.getTodo(b.id)).toMatchObject({
-        state: 'blocked',
-        blockedBy: 'held',
-        startedAt: null,
-      });
+      expect(store.getTodo(b.id)).toMatchObject({ startedAt: null });
+      expect(
+        store.todoCards(store.getTodo(b.id)!).filter((card) => card.state === 'open')
+      ).toMatchObject([{ cause: 'hold', todos: [b.id] }]);
       expect(sent).toHaveLength(0);
     } finally {
       db.close();
@@ -357,5 +357,19 @@ describe('todo automatic start', () => {
       await removing;
       db.close();
     }
+  });
+});
+
+describe('neoTodoLimits', () => {
+  test('the queue reads the limits set in Neo settings, and a bad stored value falls back to the default', () => {
+    expect(neoTodoLimits(undefined)).toEqual({ running: 6, perGroup: 3 });
+    expect(neoTodoLimits({ maxRunningTodos: 2, maxRunningTodosPerProject: 1 })).toEqual({
+      running: 2,
+      perGroup: 1,
+    });
+    expect(neoTodoLimits({ maxRunningTodos: 0, maxRunningTodosPerProject: 1.5 })).toEqual({
+      running: 6,
+      perGroup: 3,
+    });
   });
 });

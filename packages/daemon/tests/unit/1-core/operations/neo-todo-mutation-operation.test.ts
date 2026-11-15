@@ -198,23 +198,54 @@ describe('Writer-backed todo operation activation', () => {
 
   test('a todo change returns only the changed todo', async () => {
     const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
-    expect(result).toMatchObject({ ok: true, todo: { id: 'first', state: 'blocked' } });
+    expect(result).toMatchObject({ ok: true, todo: { id: 'first', state: 'todo' } });
     expect(JSON.stringify(result)).not.toContain('Next task');
     expect('todos' in result).toBe(false);
   });
 
-  test('hold holds and releases through the atomic command', async () => {
+  test('hold opens a hold card; pausing a running todo stops its worker first', async () => {
     expect(
       await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.' })
-    ).toMatchObject({
-      ok: true,
-      todo: { id: 'peer', state: 'blocked', blockedBy: 'held', blockedReason: 'Human said wait.' },
+    ).toMatchObject({ ok: true, todo: { id: 'peer', state: 'todo' } });
+    expect(store.todoCards(store.getTodo('peer')!)).toMatchObject([
+      {
+        state: 'open',
+        cause: 'hold',
+        text: '"peer" is on hold: Human said wait. Start it, or remove it?',
+      },
+    ]);
+    expect(order).toEqual([]);
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+    stopFailure = 'stop_failed: the driver refused';
+    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('stop_failed'),
     });
+    const firstCards = () =>
+      store.todoCards(store.getTodo('first')!).filter((card) => card.todos.includes('first'));
+    expect(firstCards()).toEqual([]);
+    stopFailure = null;
+    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.' })).toMatchObject({
+      ok: true,
+      todo: { id: 'first', state: 'doing' },
+    });
+    expect(firstCards()).toMatchObject([
+      { state: 'open', cause: 'pause', options: ['Resume', 'Remove'] },
+    ]);
+    expect(order).toEqual(['stop', 'stop']);
+  });
+
+  test('releasing a todo an older start answer held still runs through the atomic command', async () => {
+    store.updateTodo(
+      store.getTodo('peer')!,
+      { state: 'blocked', blockedBy: 'held', blockedReason: 'Not ticked.' },
+      2
+    );
     expect(await call('neo.todo.hold', { todoId: 'peer', reason: null })).toMatchObject({
       ok: true,
       todo: { id: 'peer', state: 'todo', blockedBy: null },
     });
-    expect(order).toEqual(['commit', 'announce', 'commit', 'announce']);
+    expect(order).toEqual(['commit', 'announce']);
   });
 
   test('close stops first, commits, then lets the queue start the successor', async () => {

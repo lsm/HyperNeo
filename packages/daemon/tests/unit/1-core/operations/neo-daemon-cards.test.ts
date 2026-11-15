@@ -6,6 +6,7 @@ import {
   neoStartRetryDue,
   planNeoDaemonCardActions,
   planNeoDaemonCardPrune,
+  planNeoHoldCard,
   planNeoRetriesCard,
 } from '../../../../src/lib/neo/daemon-cards.ts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
@@ -25,8 +26,12 @@ const row = (id: string, patch: Partial<NeoTodo> = {}) => ({
   state: 'blocked' as NeoTodo['state'],
   blockedReason: 'host unreachable',
   updatedAt: 5,
+  startedAt: null as number | null,
   ...patch,
 });
+
+const held = (patch: Partial<NeoTodo>): NeoTodo =>
+  ({ ...row('a'), blockedBy: null, check: null, ...patch }) as NeoTodo;
 
 const card = (patch: Partial<NeoQuestion>) => ({
   id: 'card',
@@ -182,6 +187,73 @@ describe('planNeoDaemonCardActions', () => {
     ).toEqual([]);
     expect(planNeoDaemonCardActions(answered('removed_prerequisite', 'Remove'), todos)).toEqual([]);
   });
+
+  test('Resume continues a paused todo; Start leaves the queue to start a held one', () => {
+    const todos = [held({ state: 'doing', startedAt: 1 })];
+    expect(planNeoDaemonCardActions(answered('pause', 'Resume', ['a']), todos)).toEqual([
+      {
+        todoId: 'a',
+        name: 'neo.todo.continue',
+        input: { todoId: 'a', message: 'The human resumed this step. Carry on where you stopped.' },
+      },
+    ]);
+    expect(planNeoDaemonCardActions(answered('hold', 'Start', ['a']), todos)).toEqual([]);
+    expect(
+      planNeoDaemonCardActions(answered('hold', 'Remove', ['a']), todos).map((a) => a.name)
+    ).toEqual(['neo.todo.remove']);
+  });
+});
+
+describe('planNeoHoldCard', () => {
+  test('an unstarted todo gets a hold card, a running one a pause card, each saying why', () => {
+    expect(
+      planNeoHoldCard(held({ state: 'todo', blockedBy: null }), [], 'Wait for the human.')
+    ).toEqual({
+      value: expect.objectContaining({
+        cause: 'hold',
+        todos: ['a'],
+        todoId: 'a',
+        options: ['Start', 'Remove'],
+        text: '"a" is on hold: Wait for the human. Start it, or remove it?',
+      }),
+    });
+    expect(
+      planNeoHoldCard(held({ state: 'doing', blockedBy: null, startedAt: 1 }), [], 'Stop.')
+    ).toEqual({
+      value: expect.objectContaining({
+        cause: 'pause',
+        options: ['Resume', 'Remove'],
+        text: '"a" is paused: Stop. Resume it, or remove it?',
+      }),
+    });
+  });
+
+  test('a finished todo, or one an open card already covers, is refused', () => {
+    expect(planNeoHoldCard(held({ state: 'done', blockedBy: null }), [], 'x')).toEqual({
+      reason: expect.stringContaining('not_holdable'),
+    });
+    expect(
+      planNeoHoldCard(held({ state: 'todo', blockedBy: null }), [card({ todos: ['a'] })], 'x')
+    ).toEqual({ reason: expect.stringContaining('already_waiting') });
+  });
+});
+
+describe('planNeoDaemonCardPrune for hold and pause cards', () => {
+  test('the hold card retires when its todo starts or settles some other way', () => {
+    const hold = card({ cause: 'hold', todos: ['a'] });
+    const todo = held;
+    expect(planNeoDaemonCardPrune(hold, [todo({ state: 'todo', blockedBy: null })])).toBeNull();
+    expect(
+      planNeoDaemonCardPrune(hold, [todo({ state: 'removed', blockedBy: null })])
+    ).toMatchObject({ state: 'retired' });
+    const pause = card({ cause: 'pause', todos: ['a'] });
+    expect(
+      planNeoDaemonCardPrune(pause, [todo({ state: 'doing', blockedBy: null, startedAt: 1 })])
+    ).toBeNull();
+    expect(
+      planNeoDaemonCardPrune(pause, [todo({ state: 'done', blockedBy: null, startedAt: 1 })])
+    ).toMatchObject({ state: 'retired' });
+  });
 });
 
 describe('neoDaemonCardCodes', () => {
@@ -211,6 +283,24 @@ describe('neoDaemonCardCodes', () => {
       ],
       optionCodes: [
         { code: 'question.daemonMarkDone', params: {} },
+        { code: 'question.daemonRemove', params: {} },
+      ],
+    });
+  });
+
+  test('a hold card keeps its reason when the client localizes it', () => {
+    const waiting = held({ state: 'todo', blockedReason: null });
+    const draft = planNeoHoldCard(waiting, [], 'Wait for the launch.');
+    if (!('value' in draft)) throw new Error(draft.reason);
+    expect(neoDaemonCardCodes({ ...draft.value, todos: ['a'], cause: 'hold' }, [waiting])).toEqual({
+      textCodes: [
+        {
+          code: 'question.held',
+          params: { steps: '"a"', reason: 'Wait for the launch', retries: '2', hours: '24' },
+        },
+      ],
+      optionCodes: [
+        { code: 'question.daemonStart', params: {} },
         { code: 'question.daemonRemove', params: {} },
       ],
     });

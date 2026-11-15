@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import { BUILD_METADATA } from '../../../../src/lib/build-metadata.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { planNeoHoldCard } from '../../../../src/lib/neo/daemon-cards.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -212,6 +213,44 @@ test.each(
     expect(service.todos.getTodo(todo.id)?.state).toBe('done');
   }
 );
+
+test('a Start answer on a hold card fills the queue at once, not on the next refresh', async () => {
+  const store = service.todos;
+  store.openAsk({
+    id: 'ask',
+    title: 'Synthetic held work',
+    request: 'Hold, then start',
+    sessionId: 'neo',
+    projectId: null,
+    originMessageId: null,
+    createdAt: 1,
+  });
+  const held = store.addTodo(
+    'held',
+    'ask',
+    {
+      approvedAt: 1,
+      title: 'Held step',
+      doneWhen: 'Output exists',
+      instruction: 'Record a synthetic dispatch',
+      named: null,
+      check: null,
+    },
+    1
+  );
+  const plan = planNeoHoldCard(held, [], 'Wait for the human.');
+  if (!('value' in plan)) throw new Error(plan.reason);
+  const card = store.askQuestion('hold', 'ask', plan.value, 2);
+  const advance = spyOn(service.todoRunner, 'advance').mockResolvedValue(undefined);
+  try {
+    store.answerQuestion(card, 'Start', 'button', 3);
+    await service.deliverQuestionAnswers(card.id);
+    expect(advance).toHaveBeenCalledTimes(1);
+    expect(store.getQuestion('hold')?.actionsAppliedAt).toBeNumber();
+  } finally {
+    advance.mockRestore();
+  }
+});
 
 test('a queued confirmation starts its successor exactly once when the answer arrives', async () => {
   const store = service.todos;

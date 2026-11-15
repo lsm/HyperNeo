@@ -126,6 +126,24 @@ describe('neoTodoStatusLine', () => {
     );
   });
 
+  test('a step with an open pause or hold card says so instead of In progress', () => {
+    const card = (cause: string, state: 'open' | 'answered' = 'open') => ({
+      state,
+      cause,
+      todos: ['t'],
+    });
+    const running = todo({ id: 't', state: 'doing', startedAt: 1 });
+    expect(neoTodoStatusLine(running, [], packLine, [card('pause')])).toEqual(
+      coded('Paused', 'todo.paused')
+    );
+    expect(neoTodoStatusLine(todo({ id: 't' }), [], null, [card('hold')])).toEqual(
+      coded('On hold', 'todo.held')
+    );
+    expect(neoTodoStatusLine(running, [], null, [card('pause', 'answered')])).toEqual(
+      coded('In progress', 'todo.doing')
+    );
+  });
+
   test('a session that stopped without a check', () => {
     expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toEqual(
       coded('Turn finished; waiting for Neo to check', 'todo.awaitingNeo')
