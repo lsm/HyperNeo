@@ -39,7 +39,7 @@ const scripted=createOperationRegistry(registry.entries.map(entry=>entry.name!==
 }}));
 app.sessionManager.setOperationRegistryProvider(()=>scripted);
 type Receipt={ok:false;reason:string}|{ok:true;todo:NeoTodo;records?:string[]};
-const mutate=(kind:'close'|'remove',id:string,replacedBy?:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome',...(replacedBy?{replacedBy}:{})}});
+const mutate=(kind:'done'|'remove',id:string,replacedBy?:string)=>hub.request<Receipt>('operation.invoke',{name:`neo.todo.${kind}`,input:{todoId:id,reason:'Explicit human outcome',...(replacedBy?{replacedBy}:{})}});
 const visible=(askId='ask')=>hub.request<{ok:true;entry:{todos:NeoTodo[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});
 const seed=(id:string,askId='ask')=>{
  store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [], title:id,doneWhen:'Observed',check:null,instruction:null,named:null},1);
@@ -47,21 +47,21 @@ const seed=(id:string,askId='ask')=>{
  sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id}});sessions.recordRef(id,{adapter:'hyperneo',id},2);
 };
 const card=(id:string)=>store.askQuestion(`${id}-card`,'ask',{kind:'reply',todoId:id,text:'Choose first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
-const result:Record<string,unknown>={surface:'Real close/remove RPC and Work-card reads; scripted work.stop boundary'};
+const result:Record<string,unknown>={surface:'Real done/remove RPC and Work-card reads; scripted work.stop boundary'};
 try{
  await app.spaceRuntimeService.ready();await app.jobProcessor.stop();await transport.connect();
  const root='neo:10000000-0000-4000-8000-000000009077';
  await app.db.createSession({id:root,title:'Synthetic stop context',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
  for(const id of ['ask','settled'])store.openAsk({id,projectId:null,sessionId:root,originMessageId:null,title:id,request:'Keep work',createdAt:1});
- seed('close');watch=true;const closed=await mutate('close','close');watch=false;
- assert(closed.ok && closed.todo.state==='blocked' && closed.todo.blockedBy==='check');assert.equal(closed.todo.report,report);
+ seed('close');watch=true;const closed=await mutate('done','close');watch=false;
+ assert(closed.ok && closed.todo.state==='done');assert.equal(closed.todo.report,report);
  assert((await visible()).entry.todos.some(todo=>todo.id==='close' && todo.report===report));result.realClose=true;
  seed('remove');watch=true;const removed=await mutate('remove','remove');watch=false;
  assert(removed.ok && removed.todo.state==='removed');assert.equal(removed.todo.report,report);
  assert((await visible()).entry.todos.some(todo=>todo.id==='remove' && todo.state==='removed' && todo.report===report));result.realRemove=true;
  result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
- for(const kind of ['close','remove'] as const){
+ for(const kind of ['done','remove'] as const){
   const id=`failed-${kind}`;seed(id);throwing.add(id);const before=await visible();watch=true;const failed=await mutate(kind,id);watch=false;
   assert(!failed.ok && failed.reason.includes('stop_failed:') && failed.reason.includes('Synthetic disconnected driver'));assert.deepEqual(await visible(),before);
  }
@@ -87,8 +87,6 @@ try{
  assert.equal(vanished.todo.report,lateReport);
  assert((await visible()).entry.todos.some(todo=>todo.id==='vanishing-source' && todo.replacedBy===null && todo.report===lateReport));
  result.replacementRevalidatedAfterStop=true;result.concurrentReport={bytes:Buffer.byteLength(lateReport),sha256:createHash('sha256').update(lateReport).digest('hex')};
- seed('late-card');beforeStop=()=>{card('late-card');};const late=await mutate('close','late-card');beforeStop=()=>{};
- assert(!late.ok && late.reason.startsWith('card_unanswered:'));assert.equal(store.getTodo('late-card')!.state,'doing');assert.equal(store.getTodo('late-card')!.report,report);result.lateCardRefusesClose=true;
  seed('needs-human');card('needs-human');store.updateTodo(store.getTodo('needs-human')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Answer first'},5);
  const refresh=()=>app.db.gateway.call(neoTodoRunnerWrites,'recompute','needs-human',null,{},20,{state:'no_opinion'});
  assert.equal((await refresh()).todo!.blockedBy,'needs-human');
@@ -97,7 +95,7 @@ try{
  seed('pending-answer');card('pending-answer');store.questionAnswers.bind('pending-answer-card','pending-answer',{adapter:'hyperneo',id:'pending-answer'});store.answerQuestion(store.getQuestion('pending-answer-card')!,'yes','button',22);store.updateTodo(store.getTodo('pending-answer')!,{state:'blocked',blockedBy:'needs-human',blockedReason:'Deliver answer'},23);
  const pending=await app.db.gateway.call(neoTodoRunnerWrites,'recompute','pending-answer',null,{},24,{state:'no_opinion'});assert.equal(pending.todo!.blockedBy,'needs-human');result.needsHumanPreserved=true;
  seed('settled-work','settled');store.settleAsk(store.getAsk('settled')!,'done','Settled',30);const settled=await visible('settled'),count=calls.length;
- for(const kind of ['close','remove'] as const){const noop=await mutate(kind,'settled-work');assert(noop.ok && noop.records?.some(line=>line.startsWith('ask_settled:')));}
+ for(const kind of ['done','remove'] as const){const noop=await mutate(kind,'settled-work');assert(noop.ok && noop.records?.some(line=>line.startsWith('ask_settled:')));}
  assert.deepEqual(await visible('settled'),settled);assert.equal(calls.length,count);result.settledNoops=true;
  assert.equal(mainSql,0);result.stopMainSql=mainSql;result.driverOutsideTransaction=true;result.verified=true;
 }finally{

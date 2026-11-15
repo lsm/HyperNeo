@@ -141,10 +141,6 @@ describe('one completion rule for Neo todos', () => {
       expect(
         await call('neo.todo.edit', { todoId: 't', done: 'met', evidence: 'Both opened' })
       ).toMatchObject({ ok: true, todo: blocked });
-      expect(await call('neo.todo.close', { todoId: 't', reason: 'Looks done' })).toMatchObject({
-        ok: true,
-        todo: blocked,
-      });
       await runner.checkNow(['t'], () => {});
       expect(store.getTodo('t')).toMatchObject(blocked);
       expect(await call('neo.todo.edit', { todoId: 't', title: 'Land both PRs' })).toMatchObject({
@@ -180,7 +176,9 @@ describe('one completion rule for Neo todos', () => {
     store.updateTodo(todo, { startedAt: 1 }, 1);
     states.set(2, 'CLOSED');
     const reason = '#2 closed without merging and no pull request replaced it';
-    expect(await call('neo.todo.close', { todoId: todo.id, reason: 'done' })).toEqual({
+    expect(
+      await call('neo.todo.edit', { todoId: todo.id, done: 'reported', evidence: 'done' })
+    ).toEqual({
       ok: true,
       todo: expect.objectContaining({
         state: 'blocked',
@@ -204,7 +202,9 @@ describe('one completion rule for Neo todos', () => {
     store.updateTodo(todo, { startedAt: 1 }, 1);
     expect(await readNeoTodoCompletion([coding], todo)).toBeNull();
     expect(requireNeoTodoMayFinish({ todo }, null)).toEqual({ value: { todo } });
-    expect(await call('neo.todo.close', { todoId: todo.id, reason: 'Running' })).toMatchObject({
+    expect(
+      await call('neo.todo.edit', { todoId: todo.id, done: 'reported', evidence: 'Running' })
+    ).toMatchObject({
       ok: true,
       todo: {
         state: 'blocked',
@@ -248,7 +248,11 @@ describe('coding todo PR ownership through add and edit', () => {
       expect(store.getTodo(added.todo.id)?.state).not.toBe('done');
       store.updateTodo(store.getTodo(added.todo.id)!, { startedAt: 1 }, 1);
       expect(
-        await call('neo.todo.close', { todoId: added.todo.id, reason: 'PR remains unidentified' })
+        await call('neo.todo.edit', {
+          todoId: added.todo.id,
+          done: 'reported',
+          evidence: 'PR remains unidentified',
+        })
       ).toMatchObject({ ok: true, todo: { state: 'blocked', blockedBy: 'check' } });
     } finally {
       db.close();
@@ -391,7 +395,7 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['edit', 'close', 'sweep'] as const)(
+  test.each(['edit', 'sweep'] as const)(
     'an overlapping %s completion cannot ignore a newly pinned PR',
     async (path) => {
       const { db, store, call, runner, states } = setup();
@@ -400,12 +404,7 @@ describe('coding todo PR ownership through add and edit', () => {
         const pending =
           path === 'sweep'
             ? runner.checkNow(['same'], () => {})
-            : call(
-                `neo.todo.${path}`,
-                path === 'edit'
-                  ? { todoId: 'same', done: 'met', evidence: 'First merged' }
-                  : { todoId: 'same', reason: 'First merged' }
-              );
+            : call('neo.todo.edit', { todoId: 'same', done: 'met', evidence: 'First merged' });
         expect(await call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] })).toMatchObject({
           ok: true,
         });
@@ -425,39 +424,7 @@ describe('coding todo PR ownership through add and edit', () => {
       }
     }
   );
-  test('close rechecks required URLs after stopping its session', async () => {
-    let entered!: () => void;
-    let release!: () => void;
-    const stopping = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const stopped = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { db, store, call } = setup(async () => {
-      entered();
-      await stopped;
-      return null;
-    });
-    try {
-      store.addTodo('same', 'ask', draft([url(1)]), 1);
-      const closing = call('neo.todo.close', { todoId: 'same', reason: 'First merged' });
-      await stopping;
-      expect(await call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] })).toMatchObject({
-        ok: true,
-      });
-      release();
-      expect(await closing).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('todo_changed'),
-      });
-      expect(store.getTodo('same')?.state).not.toBe('done');
-    } finally {
-      release();
-      db.close();
-    }
-  });
-  test.each(['neo.todo.close', 'neo.todo.remove'])(
+  test.each(['neo.todo.remove'])(
     '%s retains a concurrent report and applies the requested state',
     async (name) => {
       const h = setup(async () => {
@@ -474,7 +441,7 @@ describe('coding todo PR ownership through add and edit', () => {
         expect(await h.call(name, { todoId: 'same', reason: 'Requested change' })).toMatchObject({
           ok: true,
           todo: {
-            state: name === 'neo.todo.close' ? 'done' : 'removed',
+            state: 'removed',
             report: 'New report while stopping 🦊',
           },
         });

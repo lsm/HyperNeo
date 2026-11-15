@@ -158,7 +158,6 @@ describe('todo and ask bookkeeping records through MCP', () => {
     'neo.todo.edit',
     'neo.todo.continue',
     'neo.todo.retry',
-    'neo.todo.close',
     'neo.todo.remove',
     'neo.todo.bind',
   ])('%s on a settled ask records without mutation', async (name) => {

@@ -13,7 +13,6 @@ import {
   neoTodoPlaceRefusal,
   planNeoTodoDraft,
   planNeoTodoEdit,
-  planNeoTodoClose,
   planNeoTodoDone,
   planNeoTodoRemove,
   requireNeoOpenTodo,
@@ -28,7 +27,6 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Input =
   | ({ kind: 'edit'; workerRemotes?: readonly string[] } & Parameters<typeof planNeoTodoEdit>[1])
-  | ({ kind: 'close' } & Parameters<typeof planNeoTodoClose>[1])
   | ({ kind: 'done' } & Parameters<typeof planNeoTodoDone>[1])
   | ({ kind: 'remove' } & Parameters<typeof planNeoTodoRemove>[2]);
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -125,11 +123,9 @@ class NeoTodoMutationPlanner {
         (todo: NeoTodo, input: Input, now: number) =>
           input.kind === 'edit'
             ? planNeoTodoEdit(todo, input, now)
-            : input.kind === 'close'
-              ? planNeoTodoClose(todo, input, now)
-              : input.kind === 'done'
-                ? planNeoTodoDone(todo, input, now)
-                : planNeoTodoRemove(todo, todos.listTodos(todo.askId), input),
+            : input.kind === 'done'
+              ? planNeoTodoDone(todo, input, now)
+              : planNeoTodoRemove(todo, todos.listTodos(todo.askId), input),
         ['outcome', 'input', 'now'],
         'result:outcome'
       )

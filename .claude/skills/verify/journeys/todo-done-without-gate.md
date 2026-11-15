@@ -6,8 +6,7 @@ that todo and a second todo that waits for it, and starts the daemon again.
 
 End state, printed by the script:
 
-- Before: the waiting todo is unstarted, and `neo.todo.close` still refuses the
-  first todo with `card_unanswered`, the first of the gates it keeps.
+- Before: the waiting todo is unstarted.
 - `neo.todo.done` with no reason returns the todo as `done`; it never started.
 - The card asked about it is `retired`.
 - The waiting todo starts. It then fails with `invalid_place`, because the

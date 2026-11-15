@@ -18,7 +18,6 @@ export const NEO_RESIDENT_FAMILIES = [
       'remove',
       'hold',
       'done',
-      'close',
       'bind',
       'retry',
       'proceed',

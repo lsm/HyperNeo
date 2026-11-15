@@ -20,7 +20,7 @@
     "source": "reconstructed from operation_refusals operation+reason, schema and Neo-supplied known alias"
   },
   {
-    "operation": "neo.todo.close",
+    "operation": "neo.todo.done",
     "input": { "todo_id": "synthetic-todo", "reason": "Synthetic completion" },
     "canonical": { "todoId": "synthetic-todo", "reason": "Synthetic completion" },
     "error": "invalid_input: missing todoId",

@@ -19,9 +19,8 @@ report when a legacy worker has no dispatch receipt, even though its input
 opening matches and its prose says complete. Matching receipt evidence must
 store every report byte, including whitespace and Unicode, and exclude a later
 unrelated turn. The coding todo stays doing while its PR is open; an explicit
-`neo.todo.close` attempt cannot substitute the worker's claim for pack facts.
-A non-pack todo stays doing until explicit human confirmation via the close
-operation, retaining the same report bytes.
+`neo.todo.edit` completion attempt cannot substitute the worker's claim for pack facts.
+A non-pack todo stays doing until explicit human confirmation via that edit, retaining the same report bytes.
 
 The actual daemon also dispatches a synthetic Codex worker that ends a turn with
 an empty final message and no `hyperneo send`. Observe a tagged report in Neo's

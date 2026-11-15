@@ -8,7 +8,7 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/todo-m
 ```
 
 This drives the actual public `operation.invoke` doors for `neo.todo.edit`,
-`neo.todo.close` and `neo.todo.remove`, then reads the actual full Work card
+`neo.todo.done` and `neo.todo.remove`, then reads the actual full Work card
 through `neo.ask.read`. The before run rejects main-thread todo SQL in the old
 edit path. The fixed run must perform that admission and edit in reader/writer
 workers, with zero matching SQL on main. External completion checks and worker

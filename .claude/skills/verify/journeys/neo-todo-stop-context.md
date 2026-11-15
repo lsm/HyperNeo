@@ -7,11 +7,11 @@ absolute evidence directory:
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/todo-stop-context.ts verify
 ```
 
-This calls the real public `neo.todo.close` and `neo.todo.remove` operations
+This calls the real public `neo.todo.done` and `neo.todo.remove` operations
 over WebSocket, with reader/writer workers and full `neo.ask.read` Work cards.
 Only `work.stop` uses a scripted operation boundary; no real provider, worker
 process, Desktop app, external GitHub request or GUI is exercised. Before the
-fix the public close fails on main-thread stop-context SQL.
+fix the public completion fails on main-thread stop-context SQL.
 
 Both operations must retain the entire Unicode report in their receipts and
 public cards. A thrown stop or driver refusal must leave the card unchanged;

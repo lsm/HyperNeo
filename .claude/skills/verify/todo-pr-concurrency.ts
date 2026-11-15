@@ -41,9 +41,7 @@ await writeFile(`${run}/pr.json`, JSON.stringify({ url: original, number: 14, st
 db.query(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('concurrent-ask',?,'Concurrent URLs','Keep every required PR','open',?,?)`).run(sessionId, now, now);
 db.query(`INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,instruction,state,created_at,updated_at) VALUES ('concurrent-todo','concurrent-ask',0,'Land every PR','Merged',?,'Land every PR','todo',?,?)`).run(JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [original] } }), now, now);
 const urls = Array.from({ length: 20 }, (_, i) => `https://github.com/verify-test/demo/pull/${1000+i}`);
-const completing = mode === 'sweep' ? Promise.resolve(null) : rpc(mode === 'close' ? 'neo.todo.close' : 'neo.todo.edit', mode === 'close'
-  ? { todoId: 'concurrent-todo', reason: 'Original merged' }
-  : { todoId: 'concurrent-todo', ...(mode === 'edit-urls' ? { addUrls: [original] } : {}), done: 'met', evidence: 'Original merged' });
+const completing = mode === 'sweep' ? Promise.resolve(null) : rpc('neo.todo.edit', { todoId: 'concurrent-todo', ...(mode === 'edit-urls' ? { addUrls: [original] } : {}), done: 'met', evidence: 'Original merged' });
 const deadline = Date.now() + 210000;
 while (await readFile(`${run}/evidence/pr-started`, 'utf8').then(() => false, () => true)) {
   if (Date.now() > deadline) throw new Error('No real GitHub check started');
