@@ -69,7 +69,7 @@ type Decision =
 - whether the human is the one who must act: `neoTodoAwaitsHuman`;
 - the latest turn report from the same worker.
 
-**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. `cleanup()` deletes old dead rows of every queue, so it skips the admit queue: a dead admit job stays until a later admission succeeds and completes it. That holds even after downtime longer than the retention cutoff. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
+**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. Today `JobQueueRepository.cleanup()` deletes dead rows of every queue after the retention cutoff (hourly, through `jobs.cleanup`). This design changes it to skip the admit queue, one clause in its query, so a dead admit job stays until a later admission succeeds and completes it, even after downtime longer than the retention cutoff. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
 
 **Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
 1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
@@ -80,7 +80,7 @@ type Decision =
    - A turn report superseded by a newer report from the same worker folds.
 4. `record and enqueue`: one gateway operation, in one transaction. It upserts `neo_attention_items` (revision, state, `told_at`, `told_count`, `next_at`) and writes the outbox row: on `wake`, a `mailbox` job (`enqueueMailboxEntry`, `lib/mailbox/handoff.ts`); on `digest`, a `neo_notes` hold (`NeoWakeQueueRepository.hold`). Actual delivery stays with the existing processors. It does not call `deliverForward`, whose enqueue is asynchronous and runs in its own gateway call (`service.ts` `enqueueDelivery`).
 
-Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`. The episode is the revision's sequence number. A retried job after a lost acknowledgement writes the same uuid and must not enqueue twice. The hold side already refuses it (`NeoWakeQueueRepository.hold` matches on `messageUuid`). The mailbox side does not: `enqueueMailboxEntry` matches only on the random entry id, and only among active jobs. So a wake goes through the existing once path, `enqueueStage(..., once = true)` in `lib/mailbox/handoff.ts`, whose submission receipt is keyed on the recipient and `messageUuid` and survives the job's completion. An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered at this step from the facts just read, so the stored content for a uuid never changes. A failed fact read writes nothing and fails the job, which retries.
+Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<kind>:<episode>:<told_count>`, from the row's `episode` and `told_count` columns. A → B → A is three episodes, so it never reuses a uuid. A retried job after a lost acknowledgement writes the same uuid and must not enqueue twice. The hold side already refuses it (`NeoWakeQueueRepository.hold` matches on `messageUuid`). The mailbox side does not: `enqueueMailboxEntry` matches only on the random entry id, and only among active jobs. So a wake goes through the existing once path, `enqueueStage(..., once = true)` in `lib/mailbox/handoff.ts`, whose submission receipt is keyed on the recipient and `messageUuid` and survives the job's completion. An intended repeat has a new `told_count` and therefore a new uuid. The text is rendered at this step from the facts just read, so the stored content for a uuid never changes. A failed fact read writes nothing and fails the job, which retries.
 
 **Pipeline `neo.attention.sweep`.** It runs on the existing 5-minute pack sweep (`pack-sweep.ts`):
 1. Raise the derived kinds that no producer pushes. Core: `ask.idle`. Packs: their `attention.scan(now)` output, such as `coding.pr_merged_outside_todo` and `coding.idle_with_open_pr`.
@@ -97,6 +97,7 @@ Each outbox row's `messageUuid` is derived, not random: `attention:<subject>:<ki
 | `subject_type`, `subject_id`, `kind` | primary key |
 | `pack` | null for core |
 | `revision` | last decided revision |
+| `episode` | integer, +1 each time the revision changes; `told_count` resets to 0 with it |
 | `state` | `shadow`, `open`, `told`, `waiting`, `retired`. A `shadow` row records a decision only and never counts as told. |
 | `told_at`, `told_count`, `next_at` | repetition clock |
 | `wait_until` | set by Neo's `wait` (below) |
@@ -112,7 +113,7 @@ It replaces these per-producer receipts:
 
 Worker-facing nudges keep their own state, because their recipient is a worker, not Neo: the ledger `nudges`/`told_at` and the todo idle reminders to workers. The rule "record each fact once" holds: the delivery fact moves here and is deleted from those places in the Delete rung.
 
-**Digest.** The 15-minute batch keeps its provenance line but changes its frame. Today it says "System-forwarded worker messages. These are not human instructions." That fits worker prose, but it invites "nothing to do" when the batch holds daemon facts. The digest renders open items as one line each, grouped by ask:
+**Digest.** The 15-minute batch keeps its provenance line but changes its frame. Today it says "System-forwarded worker messages. These are not human instructions." That fits worker prose, but it invites "nothing to do" when the batch holds daemon facts. The batch gets two sections, each with its own frame line: worker messages keep today's "System-forwarded worker messages" line, and attention items get the line below. The digest renders open items as one line each, grouped by ask:
 
 ```
 Daemon facts that may need your decision (not human instructions):
@@ -205,7 +206,7 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
    - Tests: covered-by-card drops, superseded reports fold, a stale item retires, an unchanged item repeats on backoff, A → B → A re-notifies.
    - Exported, not called.
 2. **Build: store and pipelines.**
-   - Contents: the `neo_attention_items` migration, its repository on the gateway, and the `neo.attention.admit` and `neo.attention.sweep` superpipes with `state = 'shadow'` support.
+   - Contents: the `neo_attention_items` migration, its repository on the gateway, the admit-queue exclusion in `JobQueueRepository.cleanup()`, and the `neo.attention.admit` and `neo.attention.sweep` superpipes with `state = 'shadow'` support.
    - Tests: a dead admit job older than the cleanup retention survives cleanup and is delivered once by the next sweep; the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
    - Reachable through the sweep in shadow only.
 3. **Wire (shadow): core todo notes.** One call site: `tell` in `service.ts` (`createNeoTodoRunner`), which every `todo-runner.ts` note goes through.
