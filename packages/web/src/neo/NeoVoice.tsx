@@ -21,6 +21,7 @@ import {
   recordingFromEntry,
   queuePendingVoiceSend,
   refreshPendingVoiceAudio,
+  finalizeUnmountedRecording,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
 import { VoiceWaveform } from '../components/voice/VoiceWaveform.tsx';
@@ -124,7 +125,9 @@ export function NeoVoice({
     return () => {
       mounted.current = false;
       dropLiveStream();
-      void latest.current.cancel();
+      if (!pending.current && (latest.current.isRecording || latest.current.durationLimitHit))
+        void finalizeUnmountedRecording();
+      else void latest.current.cancel();
     };
   }, []);
 
