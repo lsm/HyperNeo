@@ -13,6 +13,8 @@ import type { Session } from '@hyperneo/shared';
 const run = resolve(process.argv.at(-1)!);
 const cancel = process.argv.includes('--cancel');
 const override = process.argv.includes('--override');
+const role = process.argv.includes('--neo') ? 'neo' : process.argv.includes('--front') ? 'front' : null;
+const ownFallback = { provider: 'anthropic', model: 'opus', thinkingLevel: 'think8k' as const };
 let resultAnnounced = false;
 let allowInterrupt = () => {};
 const interruptGate = new Promise<void>((done) => {
@@ -191,12 +193,40 @@ try {
       ],
     },
     fallbackModels: [{ provider: 'anthropic', model: 'sonnet', thinkingLevel: 'think24k' }],
+    ...(role
+      ? {
+          neo: {
+            preferences: { provider: 'anthropic', model: 'haiku', thinkingLevel: 'off', fallbacks: [ownFallback] },
+            front: { model: { provider: 'anthropic', model: 'haiku', thinkingLevel: 'off', fallbacks: [ownFallback] } },
+          },
+        }
+      : {}),
   });
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
-    workspacePath: join(run, 'workspace'),
-    title: 'Synthetic fallback wait',
-    config: { provider: 'anthropic', model: 'haiku' },
-  });
+  let roleSessionId: string | undefined;
+  if (role) {
+    const { NeoRepository } = await import('../../../packages/daemon/src/storage/repositories/neo-repository.ts');
+    const { frontSessionId } = await import('../../../packages/daemon/src/lib/neo/front-mode.ts');
+    const db = app.db.getDatabase();
+    const root = `neo:${crypto.randomUUID()}`;
+    db.prepare("INSERT INTO neo_session_bindings (session_id, kind) VALUES (?, 'neo')").run(root);
+    const conversation = new NeoRepository(db).conversationId()!;
+    roleSessionId = role === 'neo' ? root : frontSessionId(conversation);
+    await app.sessionManager.createSession({
+      sessionId: roleSessionId,
+      workspacePath: join(run, 'workspace'),
+      title: `Synthetic ${role} fallback`,
+      config: { provider: 'anthropic', model: 'haiku' },
+    });
+    evidence.role = role;
+    evidence.roleSessionKind = role === 'neo' ? 'neo: prefixed root' : 'front id derived from the conversation';
+  }
+  const { sessionId } = roleSessionId
+    ? { sessionId: roleSessionId }
+    : await hub.request<{ sessionId: string }>('session.create', {
+        workspacePath: join(run, 'workspace'),
+        title: 'Synthetic fallback wait',
+        config: { provider: 'anthropic', model: 'haiku' },
+      });
   const read = async () =>
     (await hub.request<{ session: Session }>('session.get', { sessionId })).session;
   await hub.request('message.send', { sessionId, content: 'Retain this input through fallback.' });
@@ -246,8 +276,11 @@ try {
   } else {
     assert(oldClosed && oldInterrupted);
     assert.equal(starts.length, 2);
-    assert(starts[1].model.includes('sonnet'));
-    assert.equal((evidence.session as Session).config.thinkingLevel, override ? 'think16k' : 'think24k');
+    assert(starts[1].model.includes(role ? 'opus' : 'sonnet'));
+    assert.equal(
+      (evidence.session as Session).config.thinkingLevel,
+      role ? ownFallback.thinkingLevel : override ? 'think16k' : 'think24k'
+    );
     assert.equal(consumed.length, 2);
     const content = (value: unknown) =>
       (value as { message: { content: unknown } }).message.content;
@@ -262,7 +295,7 @@ try {
   globalThis.fetch = originalFetch;
   evidence.resourcesStopped = true;
   writeFileSync(
-    join(run, 'evidence/fallback-query-wait.json'),
+    join(run, `evidence/fallback-query-wait${role ? `-${role}` : ''}.json`),
     JSON.stringify(evidence, null, 2).replaceAll(run, '<synthetic-run>')
   );
 }
