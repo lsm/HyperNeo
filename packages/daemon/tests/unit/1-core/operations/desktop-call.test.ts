@@ -4,7 +4,10 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDesktopCallOperation } from '../../../../src/lib/desktop/call-operation.ts';
+import {
+  createDesktopCallOperation,
+  decideDesktopCall,
+} from '../../../../src/lib/desktop/call-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
@@ -21,6 +24,8 @@ let requests: Record<string, unknown>[];
 let reason: string | null;
 let dispatched: boolean;
 let workspace: string | null;
+let worktree: string | undefined;
+let mismatchedReply: boolean;
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
@@ -30,6 +35,8 @@ const input = { tool: 'click', args: { pid: 123 } };
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'desktop-call-'));
   workspace = root;
+  worktree = undefined;
+  mismatchedReply = false;
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
   db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
@@ -53,7 +60,7 @@ beforeEach(async () => {
         JSON.stringify({
           ok: true,
           result: {
-            call_id: request.callId,
+            call_id: mismatchedReply ? 'wrong-call' : request.callId,
             bundle_id: 'org.example.app',
             class: 'pointer',
             decision: reason ? 'refused' : 'allowed',
@@ -76,7 +83,22 @@ function registry() {
   return createOperationRegistry([
     createDesktopCallOperation(db, {
       dataDir: root,
-      getSession: (id) => (id === 'worker-a' ? { workspacePath: workspace } : null),
+      getSession: (id) =>
+        id === 'worker-a'
+          ? {
+              workspacePath: workspace,
+              ...(worktree
+                ? {
+                    worktree: {
+                      isWorktree: true,
+                      worktreePath: worktree,
+                      mainRepoPath: root,
+                      branch: 'fixture',
+                    },
+                  }
+                : {}),
+            }
+          : null,
     }),
   ]);
 }
@@ -196,4 +218,33 @@ test('host refusal and a sent driver error each produce one truthful audit row',
     expect.objectContaining({ reason: 'driver call timed out', dispatched: true }),
   ]);
   expect(audit().every((row) => !row.params_summary.includes('123'))).toBe(true);
+});
+
+test('the pure decision refuses missing bindings and unlisted tools', () => {
+  const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', active: 1 };
+  const facts = { todo, worker: 'worker-a', workDir: root, toolAllowed: true };
+  expect(decideDesktopCall(facts)).toEqual({
+    value: { todo: 'todo', worker: 'worker-a', workDir: root },
+  });
+  expect(decideDesktopCall({ ...facts, todo: null })).toHaveProperty(
+    'reason.reason',
+    'desktop_not_enabled'
+  );
+  expect(decideDesktopCall({ ...facts, toolAllowed: false })).toHaveProperty(
+    'reason.reason',
+    'tool_not_allowed'
+  );
+});
+
+test('a session worktree is the dispatch working directory', async () => {
+  worktree = join(root, 'worktree');
+  expect(await call()).toMatchObject({ kind: 'completed', value: { dispatched: true } });
+  expect(requests[0].workDir).toBe(worktree);
+});
+
+test('an uncorrelated host reply never invents an audit outcome', async () => {
+  mismatchedReply = true;
+  expect(await call()).toMatchObject({ kind: 'failed', code: 'execution_failed' });
+  expect(requests).toHaveLength(1);
+  expect(audit()).toHaveLength(0);
 });
