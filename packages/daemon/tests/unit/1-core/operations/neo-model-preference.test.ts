@@ -411,7 +411,11 @@ describe('neo.preferences.set', () => {
 
   test('front model input rejects unrelated settings', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
-    for (const extra of [{ enabled: true }, { fallbacks: [{ ...input, enabled: true }] }]) {
+    for (const extra of [
+      { enabled: true },
+      { fallbacks: [{ ...input, enabled: true }] },
+      { fallbacks: [{ ...input, autoCompactPercent: 60 }] },
+    ]) {
       expect(await invoke('neo.front.model.set', { ...input, ...extra })).toMatchObject({
         kind: 'failed',
         code: 'invalid_input',
