@@ -53,7 +53,6 @@ test('core checks stay installed with only life-admin enabled and read actual ou
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
     },
     1
   );
@@ -184,7 +183,6 @@ test.each(
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       1
     );
@@ -286,7 +284,6 @@ test('a queued confirmation starts its successor exactly once when the answer ar
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       todoId: 'first',
     },
     1

@@ -561,7 +561,6 @@ describe('neo.ask.open and neo.ask.settle', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );

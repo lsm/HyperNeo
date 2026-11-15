@@ -67,7 +67,7 @@ try {
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'composer-fixture', sessionId: root, projectId: null, originMessageId: null, title: 'Composer attention fixture', request: 'Synthetic UI verification', createdAt: Date.now() });
   store.focusAsk('composer-fixture', { adapter: 'hyperneo', id: worker, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: `/session/${worker}` }, Date.now());
-  store.askQuestion('composer-source', 'composer-fixture', { kind: 'reply', text: 'Review synthetic worker context', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'hyperneo', id: worker, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: `/session/${worker}` } }, Date.now());
+  store.askQuestion('composer-source', 'composer-fixture', { kind: 'reply', text: 'Review synthetic worker context', options: null, multiple: false, noLabel: null, yesLabel: null, sourceSession: { adapter: 'hyperneo', id: worker, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: `/session/${worker}` } }, Date.now());
   const child = Bun.spawn([process.execPath, '.claude/skills/verify/composer-attention.mjs', String(front.port), run, process.argv[2] ?? '', process.argv[3] ?? '', pairing.code, process.argv[4] ?? 'after'], { stdout: 'inherit', stderr: 'inherit' });
   assert.equal(await child.exited, 0);
   assert.equal(stops, 4, 'both themes and widths must reach the synthetic Stop RPC peer');

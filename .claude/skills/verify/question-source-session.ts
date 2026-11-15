@@ -34,7 +34,7 @@ if (phase === 'seed') {
     const legacy = new NeoAskTodoRepository(db);
     for (const [id, title] of [['ordinary-ask', 'Ask a general question']])
       legacy.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title, request: 'Synthetic question source verification', createdAt: Date.now() });
-    new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
+    new NeoAskTodoRepository(db).askQuestion('linkless-source', 'source-ask', { text: 'Terminal worker recommendation', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, sourceSession: { adapter: 'claude-code', id: 'linkless-worker', name: 'Terminal worker', label: 'Claude Code · Terminal worker', provider: 'Claude', link: null } }, Date.now());
     new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
   } finally { db.close(); }
 } else {

@@ -206,7 +206,6 @@ try {
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       Date.now()
     );

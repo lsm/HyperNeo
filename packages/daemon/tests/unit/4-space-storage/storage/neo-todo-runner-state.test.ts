@@ -104,7 +104,6 @@ describe('Data-only atomic runner state commands', () => {
         kind: 'reply',
         text: 'Ready?',
         todoId: 'gone',
-        startTodos: null,
         options: null,
         multiple: false,
         yesLabel: null,

@@ -244,7 +244,6 @@ describe('queued todos start themselves', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todoId: null,
       },
       3

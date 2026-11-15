@@ -131,11 +131,6 @@ function setup() {
 const complete = (runner: ReturnType<typeof createNeoTodoRunner>, todo: NeoTodo) =>
   runner.recompute(todo, {}, Date.now(), { state: 'done', evidence: 'Completed.' });
 
-const card = (store: NeoAskTodoRepository, todo: NeoTodo) =>
-  store
-    .listQuestions(store.getTodo(todo.id)!.askId)
-    .find((q) => q.state === 'open' && q.startTodos?.includes(todo.id));
-
 const asked = (store: NeoAskTodoRepository, todo: NeoTodo) =>
   store
     .listQuestions(store.getTodo(todo.id)!.askId)
@@ -185,7 +180,6 @@ describe('cancelled prerequisites', () => {
         expect(await runner.start(candidate!.id)).toMatchObject({ ok: false });
         expect(store.getTodo(b.id)?.startedAt).toBeNull();
         expect(sent).toHaveLength(0);
-        expect(card(store, b)).toBeUndefined();
         if (mode === 'replacement') {
           expect(asked(store, b)).toBeUndefined();
           expect(store.getTodo(b.id)).toMatchObject({ state: 'todo', dependsOn: [replacement.id] });
@@ -265,11 +259,6 @@ describe('cancelled prerequisites', () => {
           state: 'failed',
           reason: 'Synthetic check failed.',
         });
-        expect(
-          store
-            .listQuestions(dependent.askId)
-            .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
-        ).toHaveLength(0);
         expect(sent).toHaveLength(before);
         return;
       }
@@ -278,17 +267,11 @@ describe('cancelled prerequisites', () => {
           .listQuestions(dependent.askId)
           .find((q) => q.state === 'open' && q.cause === 'hold');
         expect(hold).toMatchObject({ todos: [dependent.id] });
-        expect(
-          store
-            .listQuestions(dependent.askId)
-            .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
-        ).toHaveLength(0);
         store.answerQuestion(hold!, 'Start', 'button', Date.now());
       }
       await runner.refresh(() => {});
       await runner.refresh(() => {});
       expect(sent).toHaveLength(before);
-      expect(card(store, dependent)).toBeUndefined();
       const notes = told.filter((item) => item.todo === dependent.id);
       if (mode === 'legacy-close') {
         expect(store.getTodo(dependent.id)?.state).toBe('todo');
@@ -337,11 +320,6 @@ describe('cancelled prerequisites', () => {
         expect(store.getTodo(c.id)?.state).toBe('doing');
       }
       await runner.refresh(() => {});
-      expect(
-        store
-          .listQuestions(dependent.askId)
-          .filter((q) => q.state === 'open' && q.startTodos?.includes(dependent.id))
-      ).toHaveLength(0);
     } finally {
       db.close();
     }
@@ -421,13 +399,11 @@ describe('cancelled prerequisites', () => {
       );
       await invoke('neo.todo.remove', { todoId: a.id, reason: 'Cancelled by the human.' });
       await runner.refresh(() => {});
-      expect(card(store, d)).toBeUndefined();
       expect(told.map((item) => item.todo)).not.toContain(d.id);
       expect(sent).toHaveLength(0);
       decide(store, d, answer === 'yes' ? 'Continue' : 'Remove these');
       await runner.refresh(() => {});
       await runner.refresh(() => {});
-      expect(card(store, d)).toBeUndefined();
       const after = store.getTodo(d.id)!;
       if (answer === 'no') expect(after.state).toBe('removed');
       else expect(after).toMatchObject({ state: 'blocked', blockedBy: 'check', dependsOn: [] });
@@ -650,7 +626,6 @@ describe('cancelled prerequisites', () => {
         dependsOn: [a.id, b.id],
       });
       expect(sent).toHaveLength(before);
-      expect(card(store, d)).toBeUndefined();
       expect(asked(store, d)).toBeDefined();
     } finally {
       db.close();

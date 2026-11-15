@@ -271,7 +271,6 @@ describe('Writer-backed todo operation activation', () => {
       multiple: false,
       yesLabel: null,
       noLabel: null,
-      startTodos: null,
     };
     expect(
       store.askQuestion('shared', 'ask', { ...card, text: 'Which release?' }, 2).todos
@@ -306,7 +305,6 @@ describe('Writer-backed todo operation activation', () => {
         multiple: false,
         yesLabel: null,
         noLabel: null,
-        startTodos: null,
       },
       2
     );

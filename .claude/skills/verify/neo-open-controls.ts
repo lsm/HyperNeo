@@ -41,7 +41,7 @@ try{
   const askId=`open-${source.id}`,session={...source,label:source.name};
   store.openAsk({id:askId,title:`Review ${source.name}`,sessionId:root,projectId:null,originMessageId:null,request:'Synthetic open control check',createdAt:now});
   store.focusAsk(askId,session,now);
-  store.askQuestion(`question-${source.id}`,askId,{kind:'yesno',text:`Review the ${source.name} decision?`,options:null,multiple:false,noLabel:'Wait',yesLabel:'Continue',startTodos:null,sourceSession:session},now);
+  store.askQuestion(`question-${source.id}`,askId,{kind:'yesno',text:`Review the ${source.name} decision?`,options:null,multiple:false,noLabel:'Wait',yesLabel:'Continue',sourceSession:session},now);
   const todo=store.addTodo(`todo-${source.id}`,askId,{title:`Follow ${source.name}`,doneWhen:'Observed result',check:null,instruction:null,named:null},now);
   links.bind(todo.id,{adapter:source.adapter,id:source.id},now);
   links.recordRef(todo.id,{adapter:source.adapter,id:source.id},now,source.link);
@@ -49,7 +49,7 @@ try{
  const retained={...sessions[3],label:'Local worker'};
  store.openAsk({id:'retired-focus',title:'Retired focused discussion',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic retained navigation',createdAt:now+1});
  store.focusAsk('retired-focus',retained,now+1);
- const retired=store.askQuestion('retired-focus-question','retired-focus',{kind:'reply',text:'Prepared focused context',options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,sourceSession:retained},now+1);
+ const retired=store.askQuestion('retired-focus-question','retired-focus',{kind:'reply',text:'Prepared focused context',options:null,multiple:false,noLabel:null,yesLabel:null,sourceSession:retained},now+1);
  store.retireQuestion(retired,'Discuss directly',null,now+2);
  const entry=await hub.request<{ok:boolean;entry:{questions:{sourceSession?:unknown}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId:'open-codex-worker'}});assert(entry.ok && entry.entry.questions[0].sourceSession);
  writeFileSync(join(run,'workspace/report.md'),'# Synthetic report\nPreview body\n');

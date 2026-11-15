@@ -124,7 +124,6 @@ function setup(
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       Date.now()
     );

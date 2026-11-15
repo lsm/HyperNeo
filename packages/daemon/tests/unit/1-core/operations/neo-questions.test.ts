@@ -89,7 +89,6 @@ function setup(
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         ...(todoId ? { todoId } : {}),
       },
       1
@@ -514,8 +513,8 @@ describe("Neo's start question", () => {
   test('an old answered start row reads as the multiple choice it was', async () => {
     const { db, store, call } = setup();
     db.prepare(
-      `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, start_todos, todos, state, answer, answered_by, answered_at, created_at)
-       VALUES ('old', 'ask', 'Start these 2?', 'start', NULL, 0, '["t1","t2"]', '["t1","t2"]', 'answered', '["t1"]', 'button', 2, 2)`
+      `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, todos, state, answer, answered_by, answered_at, created_at)
+       VALUES ('old', 'ask', 'Start these 2?', 'start', NULL, 0, '["t1","t2"]', 'answered', '["t1"]', 'button', 2, 2)`
     ).run();
     expect(store.getQuestion('old')).toMatchObject({
       kind: 'choice',
@@ -576,7 +575,6 @@ describe('neoQuestionAnsweredNote', () => {
         multiple: true,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todos: [],
         state: 'answered',
         answer: ['List', 'Table'],

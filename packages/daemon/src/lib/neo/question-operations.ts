@@ -217,7 +217,6 @@ export function createNeoWorkerQuestionWriter(
                 multiple: false,
                 noLabel: null,
                 yesLabel: null,
-                startTodos: null,
                 todoId: todo.id,
                 sourceSession: source,
                 document: input.report,
@@ -398,7 +397,6 @@ export const NeoQuestionSchema = z.object({
   multiple: z.boolean(),
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
-  startTodos: z.array(z.string()).nullable(),
   todos: z.array(z.string()),
   confirm: Confirmation.nullable().optional(),
   state: z.enum(['open', 'answered', 'retired']),
@@ -572,7 +570,6 @@ export function planNeoQuestion(
     multiple: input.kind === 'choice' && input.multiple,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
     confirm,
   };
   return { value: { ask, draft, ...records } };

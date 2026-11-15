@@ -216,7 +216,6 @@ describe('card reply notices', () => {
             multiple: false,
             noLabel: null,
             yesLabel: null,
-            startTodos: null,
           },
           1
         )

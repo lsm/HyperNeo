@@ -330,7 +330,6 @@ describe('projectNeoAskEntries', () => {
           multiple: false,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
           todos,
           cause: 'removed_prerequisite',
         },
@@ -688,7 +687,6 @@ describe('neoWorkCounts', () => {
             multiple: false,
             noLabel: null,
             yesLabel: null,
-            startTodos: null,
             todoId: cardTodo,
           },
           2

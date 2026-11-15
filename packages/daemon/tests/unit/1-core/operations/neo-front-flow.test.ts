@@ -538,7 +538,6 @@ test('Front gets the complete quoted question with its options and references', 
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       document: '/fixture/native-review.md',
     },
     Date.now()

@@ -300,7 +300,6 @@ describe('ordered ask progression from facts', () => {
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       Date.now()
     );

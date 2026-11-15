@@ -107,7 +107,6 @@ describe('Runtime runner commits before external effects', () => {
         kind: 'reply',
         text: 'Ready?',
         todoId: 'gone',
-        startTodos: null,
         options: null,
         multiple: false,
         yesLabel: null,

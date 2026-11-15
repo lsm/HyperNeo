@@ -116,7 +116,6 @@ export function neoDaemonCardDraft(
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
     todos: covered.map((todo) => todo.id),
     cause,
   };
