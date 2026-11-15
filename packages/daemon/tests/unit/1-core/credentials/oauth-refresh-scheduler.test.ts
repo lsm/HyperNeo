@@ -1,9 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
-import type {
-  Provider,
-  TokenRefreshOutcome,
-  TokenRefreshResult,
-} from '@hyperneo/shared/provider';
+import type { Provider, TokenRefreshOutcome, TokenRefreshResult } from '@hyperneo/shared/provider';
 import { Logger } from '../../../../src/lib/logger';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
 import { Database } from '../../../../src/storage/sqlite-compat';

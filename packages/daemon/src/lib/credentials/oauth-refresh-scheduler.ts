@@ -1,4 +1,10 @@
-import type { Provider, ProviderCredentials, TokenRefreshOutcome } from '@hyperneo/shared/provider';
+import type {
+  Provider,
+  ProviderCredentials,
+  TokenRefreshOutcome,
+  TokenRefreshResult,
+} from '@hyperneo/shared/provider';
+import { Logger } from '../logger.js';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
 import { clearProviderFailure, getProviderFailure } from '../providers/provider-failure-store.js';
 import type { ProviderRecoveryOutcome } from '../model-service.js';
@@ -25,6 +31,13 @@ export function refreshDelayMs(attempt: number): number {
   return Math.min(REFRESH_DELAY_FIRST_MS * 2 ** doublings, REFRESH_DELAY_MAX_MS);
 }
 
+export function backgroundRefreshAllowed(clock: ProviderRefreshClock, now: number): boolean {
+  if (clock.lastOutcome === 'definitive') return false;
+  return clock.lastOutcome !== 'transient' || now >= clock.nextRefreshAt;
+}
+
+const logger = new Logger('OAuthRefreshScheduler');
+
 const idleClock = (): ProviderRefreshClock => ({
   nextRefreshAt: 0,
   attempt: 0,
@@ -39,6 +52,7 @@ export interface OAuthRefreshSchedulerOptions {
   now?: () => number;
   onProviderChanged?: (providerId: string) => void;
   recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
+  setNeedsLogin?: (providerId: string, at: number) => void;
 }
 
 export class OAuthRefreshScheduler {
@@ -54,6 +68,7 @@ export class OAuthRefreshScheduler {
   private readonly recoverDormantProvider?: (
     providerId: string
   ) => Promise<ProviderRecoveryOutcome>;
+  private readonly setNeedsLogin?: (providerId: string, at: number) => void;
 
   constructor(
     private readonly credentialManager: ProviderCredentialManager,
@@ -66,6 +81,7 @@ export class OAuthRefreshScheduler {
     this.now = options.now ?? Date.now;
     this.onProviderChanged = options.onProviderChanged;
     this.recoverDormantProvider = options.recoverDormantProvider;
+    this.setNeedsLogin = options.setNeedsLogin;
   }
 
   start(): void {
@@ -145,14 +161,15 @@ export class OAuthRefreshScheduler {
     if ('reason' in due && !force) return 'skipped';
 
     const clock = this.clock(provider.id);
-    if (!force && clock.attempt >= this.maxRetries) return 'skipped';
+    if (!force && !backgroundRefreshAllowed(clock, this.now())) return 'skipped';
 
-    let outcome: TokenRefreshOutcome;
+    let result: TokenRefreshResult;
     try {
-      outcome = await provider.refreshToken();
+      result = await provider.refreshToken();
     } catch {
-      outcome = 'transient';
+      result = 'transient';
     }
+    const outcome: TokenRefreshOutcome = typeof result === 'string' ? result : result.outcome;
 
     if (outcome === 'refreshed') {
       if ('value' in due && due.value === 'credential_failure') clearProviderFailure(provider.id);
@@ -177,7 +194,15 @@ export class OAuthRefreshScheduler {
       attempt,
       lastOutcome: outcome,
     });
-    if (attempt >= this.maxRetries) {
+    const oauthError = typeof result === 'string' ? 'none' : result.oauthError;
+    logger.warn(
+      `OAuth refresh failed for ${provider.id}: outcome=${outcome} oauthError=${oauthError} attempt=${attempt}`
+    );
+    if (outcome === 'definitive') {
+      this.setNeedsLogin?.(provider.id, this.now());
+      this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
+      this.onProviderChanged?.(provider.id);
+    } else if (attempt >= this.maxRetries) {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
       this.onProviderChanged?.(provider.id);
     }

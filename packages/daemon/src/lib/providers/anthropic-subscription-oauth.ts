@@ -78,6 +78,18 @@ export function buildClaudeSubscriptionAuthorizeUrl(params: {
 interface TokenRequestResult {
   status: number;
   token: ClaudeSubscriptionTokenResponse | null;
+  oauthError?: string;
+}
+
+const OAUTH_ERROR_CODE = /^[a-z0-9_.-]{1,64}$/i;
+
+async function oauthErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const { error } = (await response.json()) as { error?: unknown };
+    return typeof error === 'string' && OAUTH_ERROR_CODE.test(error) ? error : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function requestClaudeSubscriptionTokens(
@@ -91,8 +103,8 @@ async function requestClaudeSubscriptionTokens(
     signal: AbortSignal.timeout(CLAUDE_SUBSCRIPTION_OAUTH_CONFIG.requestTimeoutMs),
   });
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    return { status: response.status, token: null };
+    const oauthError = await oauthErrorCode(response);
+    return { status: response.status, token: null, ...(oauthError ? { oauthError } : {}) };
   }
   const parsed = (await response.json()) as ClaudeSubscriptionTokenResponse;
   if (typeof parsed.access_token !== 'string' || !parsed.access_token) {
@@ -134,7 +146,7 @@ export async function exchangeClaudeSubscriptionCode(params: {
 
 export type ClaudeSubscriptionRefreshResult =
   | { ok: true; token: ClaudeSubscriptionTokenResponse }
-  | { ok: false; definitive: boolean };
+  | { ok: false; definitive: boolean; oauthError?: string };
 
 export type ClaudeSubscriptionCallback = { code: string; state: string } | { error: string } | null;
 
@@ -204,7 +216,7 @@ export async function refreshClaudeSubscriptionToken(params: {
   if (result.token) {
     return { ok: true, token: result.token };
   }
-  const { status } = result;
+  const { status, oauthError } = result;
   const definitive = status >= 400 && status < 500 && status !== 408 && status !== 429;
-  return { ok: false, definitive };
+  return { ok: false, definitive, ...(oauthError ? { oauthError } : {}) };
 }
