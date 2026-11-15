@@ -1494,7 +1494,10 @@ export class SDKMessageHandler {
       terminalReason,
       rateLimitInfo: this.lastRateLimitInfo ?? undefined,
     });
-    if (!assessment.isLimit) return null;
+    if (!assessment.isLimit)
+      return apiErrorStatus === 529 || apiErrorStatus === 503
+        ? { errorText, hint: { hold: 'overloaded' }, userMessageUuid }
+        : null;
     return {
       errorText,
       hint: {
