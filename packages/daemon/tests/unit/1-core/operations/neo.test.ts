@@ -444,7 +444,6 @@ describe('Neo MVP', () => {
       'neo.todo.remove',
       'neo.todo.continue',
       'neo.todo.proceed',
-      'neo.todo.retry',
       'neo.todo.done',
       'neo.ask.search',
       'neo.ask.read',

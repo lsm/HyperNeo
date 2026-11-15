@@ -91,6 +91,8 @@ jobs:
         run: cargo build --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml
       - name: Start a release-host driver and tolerate endpoint failures
         run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture WorkerDrivers.test_release_host_starts_a_driver_only_it_can_reach WorkerDrivers.test_bind_failure_allows_desktop_setup_to_continue WorkerDrivers.test_missing_startup_paths_allow_desktop_setup_to_continue
+      - name: Test daemon child lifetime
+        run: cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml reaped_sidecar_is_not_authorized
       - name: Build isolated embedded-host fixture
         run: cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml --bin desktop-driver-fixture -- --cfg test
       - name: Check macOS Tauri wiring with an inert sidecar
@@ -100,7 +102,7 @@ jobs:
           printf '#!/bin/sh\nexit 0\n' > "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
           chmod +x "packages/desktop/src-tauri/binaries/hyperneo-$sidecar_target"
           CARGO_TARGET_DIR="$PWD/packages/desktop/tests/driver-host/target" \
-            cargo check --locked --manifest-path packages/desktop/src-tauri/Cargo.toml
+            cargo check --release --locked --manifest-path packages/desktop/src-tauri/Cargo.toml
       - name: Exercise worker drivers with a fake binary
         run: python3 packages/desktop/tests/worker-drivers.py packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture
 

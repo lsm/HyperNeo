@@ -21,6 +21,7 @@ import {
   recordingFromEntry,
   queuePendingVoiceSend,
   refreshPendingVoiceAudio,
+  finalizeUnmountedRecording,
   type VoiceSendOutcome,
 } from '../lib/voice/voice-audio-outbox.ts';
 import { VoiceWaveform } from '../components/voice/VoiceWaveform.tsx';
@@ -83,6 +84,8 @@ export function NeoVoice({
   const recorder = useVoiceRecorder(sessionId, { autoAdopt: false });
   const latest = useRef(recorder);
   latest.current = recorder;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
   const liveStream = useRef<VoiceLiveStream | null>(null);
   const interim = useRef(onInterim);
   const recordingDraft = useRef<VoiceSendSnapshot | null>(null);
@@ -124,7 +127,9 @@ export function NeoVoice({
     return () => {
       mounted.current = false;
       dropLiveStream();
-      void latest.current.cancel();
+      if (!pending.current)
+        void finalizeUnmountedRecording(sessionIdRef.current, latest.current.ownerId);
+      else void latest.current.cancel();
     };
   }, []);
 

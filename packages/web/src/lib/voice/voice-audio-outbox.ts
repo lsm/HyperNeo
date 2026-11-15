@@ -1,4 +1,4 @@
-import { type MessageHub, MessageHubResponseError } from '@hyperneo/shared';
+import { generateUUID, type MessageHub, MessageHubResponseError } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
@@ -14,7 +14,7 @@ import {
   type VoiceRecordEntry,
 } from './voice-audio-store.ts';
 import { type VoiceRecording, voiceRecorderStore } from './voice-recorder-store.ts';
-import { runVoiceSubmit } from './voice-submit-pipeline.ts';
+import { runVoiceSubmit, VOICE_SUBMIT_SILENCE_PEAK_LEVEL } from './voice-submit-pipeline.ts';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
@@ -263,6 +263,35 @@ function hasInteractiveVoiceActivity(): boolean {
 
 export async function refreshPendingVoiceAudio(): Promise<void> {
   pendingVoiceAudioRecords.value = await listVoiceRecords();
+}
+
+export async function finalizeUnmountedRecording(
+  sessionId: string,
+  ownerId: string | null
+): Promise<void> {
+  if (voiceRecorderStore.recordingSessionId.value !== sessionId) return;
+  const owner = voiceRecorderStore.recordingOwnerId.value;
+  if (owner !== null && owner !== ownerId) return;
+  try {
+    if (!voiceRecorderStore.isRecording.value && !voiceRecorderStore.durationLimitHit.value) {
+      await voiceRecorderStore.cancel();
+      return;
+    }
+    const recording = await voiceRecorderStore.stop();
+    if (recording.peakLevel >= VOICE_SUBMIT_SILENCE_PEAK_LEVEL) {
+      await putVoiceRecord({
+        id: generateUUID(),
+        sessionId,
+        audioBase64: recording.audioBase64,
+        mimeType: recording.mimeType,
+        hitDurationLimit: recording.hitDurationLimit,
+        peakLevel: recording.peakLevel,
+        createdAt: Date.now(),
+        intent: 'draft',
+      });
+      await flushPendingVoiceAudio();
+    }
+  } catch {}
 }
 
 let flushInProgress = false;

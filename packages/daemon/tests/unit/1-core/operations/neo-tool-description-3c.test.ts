@@ -96,17 +96,12 @@ const moved = [
   {
     file: 'todo-operations.ts',
     name: 'neo.todo.continue',
-    text: "Send a started todo's session its next step. Coding work requires worker remotes matching the todo repository; mismatched or unknown remotes are refused. The todo goes back to doing until the session reports again, and a card it was waiting on closes with it. An unstarted todo or settled ask returns a record without dispatching or approving a start.",
+    text: "Send a started todo's session its next step. Coding work requires worker remotes matching the todo repository; mismatched or unknown remotes are refused. The todo goes back to doing until the session reports again, and a card it was waiting on closes with it. An unstarted todo or settled ask returns a record without dispatching or approving a start. A failed todo gets a new attempt in place, keeping its todoId: its worker gets message, or its original instruction without one; with no worker its recorded target starts again. Do not remove and replace it. Only a failed todo may omit message.",
   },
   {
     file: 'todo-operations.ts',
     name: 'neo.todo.proceed',
     text: 'Continue an unstarted todo whose prerequisite was cancelled. It drops the cancelled prerequisite, or waits for its replacement, and keeps its other prerequisites. A step the human has not approved is refused: it stays on its Start card. Nothing else clears this wait, so a cancelled prerequisite never starts the next step by itself.',
-  },
-  {
-    file: 'todo-operations.ts',
-    name: 'neo.todo.retry',
-    text: 'Retry a failed todo in place with a new attempt, keeping its todoId. A nonretryable todo or settled ask returns a record without dispatching. If it has a worker, send the original instruction to that worker; otherwise start its recorded target again. Do not remove and replace it. Choose the delivery channel or adapter for reaching the same worker session yourself; never ask the human to choose it. Ask the human before changing which worker or target does the work.',
   },
 ];
 let db: Awaited<ReturnType<typeof createTestDb>>;

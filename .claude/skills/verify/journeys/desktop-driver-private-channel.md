@@ -38,3 +38,26 @@ means `desktop-driver-channel.json` shows a started driver, a record with only
 `pid` and `startedAt`, `desktop/control.sock` as the only socket, nonzero exits
 for a same-user substitute parent and for `serve`, `mcp` and `--version`, and no
 driver process after Stop. It grants no macOS permissions and sends no input.
+
+
+## Host peer lifetime and dispatch recovery
+
+The fixture suite also exercises the host control socket with an attached fake
+daemon. Its runtime advert uses the test process birth time so long suites stay
+inside the daemon lifetime window. Run the retained-child contract before
+building the embedded fixture:
+
+```bash
+cargo test --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml reaped_sidecar_is_not_authorized
+```
+
+The fake driver receives all input. A controlled target-birth observation changes
+while fake startup is paused, and dispatch must refuse it before sending. Bad
+replies and timeouts must retire the channel, preserve dispatched=true after a
+complete write, and allow the next call to start a fresh slot. The fixture uses a
+short call deadline for the timeout case. A 20 KB request must receive a normal
+reply, and an over-limit frame must receive request_too_large. Dispatch logs must
+be visible and exclude argument text. No real GUI input is sent.
+
+Compile the macOS release host with the inert-sidecar setup in the Desktop
+runtime paths CI job to check retained-child wiring and the release log filter.

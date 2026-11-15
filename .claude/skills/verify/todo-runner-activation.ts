@@ -132,7 +132,7 @@ try {
   app.sessionManager.setOperationRegistryProvider(()=>scripted);
   NeoAskTodoRepository.prototype.recompute=()=>{throw new Error('Runtime used main-thread recompute');};
   NeoAskTodoRepository.prototype.claimStart=()=>{throw new Error('Runtime used main-thread claim');};
-  const receipt=await hub.request<{ok:boolean;todo:NeoTodo}>('operation.invoke',{name:'neo.todo.retry',input:{todoId:'rpc'}});
+  const receipt=await hub.request<{ok:boolean;todo:NeoTodo}>('operation.invoke',{name:'neo.todo.continue',input:{todoId:'rpc'}});
   assert.equal(receipt.ok,true); assert.equal(receipt.todo.state,'doing'); assert.equal(publicDispatches,1);
   result.publicRetryUsesWriter=true;
   ask('capacity'); seed('capacity','capacity');

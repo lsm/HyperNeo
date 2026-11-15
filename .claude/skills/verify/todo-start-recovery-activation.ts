@@ -83,7 +83,7 @@ try {
   assert(notes[0].includes('Start was interrupted')); result.commitBeforeReply=true; result.postCommitNotice=true;
   result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
   const prior=effects.length; await refresh(); await refresh(); assert.equal(effects.length,prior); result.repeatedRecoveryQuiet=true;
-  const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.retry',input:{todoId:'recover'}});
+  const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.continue',input:{todoId:'recover'}});
   assert(!retry.ok && retry.reason.startsWith('start_uncertain:')); result.retryWarnsOfUncertainStart=true;
   seed('late'); const stale=await read('unrecordedStarts'); assert(stale.includes('late'));
   sessions.recordRef('late',{adapter:'hyperneo',id:'bound-worker'},4);

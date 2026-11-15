@@ -40,7 +40,7 @@ import {
   neoTodoDependencyRefusal,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
-import { isNeoTodoStartable } from './todo-runner.ts';
+import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
@@ -76,7 +76,7 @@ export interface NeoTodoControls {
   advance(): Promise<unknown>;
   recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
-  retry(todoId: string): Ran;
+  retry(todoId: string, message?: string): Ran;
   stop(todo: NeoTodo): Promise<string | null>;
 }
 
@@ -555,7 +555,7 @@ export function planNeoTodoRemove(
   };
 }
 
-const Continue = z.object({ todoId: Text, message: Text });
+const Continue = z.object({ todoId: Text, message: Text.optional() });
 const Proceed = z.object({ todoId: Text });
 
 export function planNeoTodoProceed(
@@ -568,7 +568,6 @@ export function planNeoTodoProceed(
   if (todo.instruction && todo.approvedAt === null) return fail(NEO_TODO_NOT_APPROVED);
   return { value: { todo, patch: neoTodoProceedPatch(todo, family, now) } };
 }
-const Retry = z.object({ todoId: Text });
 const Done = z.object({ todoId: Text, reason: Text.optional() });
 
 export function planNeoTodoDone(
@@ -811,6 +810,14 @@ export function createNeoTodoOperations(
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
     .pipe(
+      (todo: NeoTodo, input: z.infer<typeof Continue>): Gate<NeoTodo> =>
+        input.message || neoTodoFailed(todo)
+          ? { value: todo }
+          : fail('message_required: say what its session should do next.'),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       async (todo: NeoTodo): Promise<Gate<NeoTodo>> => {
         const ref = todo.startedAt === null ? null : sessions.readRef(todo.id);
         if (!ref) return { value: todo };
@@ -831,7 +838,10 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(
-      (todo: NeoTodo, input: z.infer<typeof Continue>) => controls.proceed(todo.id, input.message),
+      (todo: NeoTodo, input: z.infer<typeof Continue>) =>
+        neoTodoFailed(todo)
+          ? controls.retry(todo.id, input.message)
+          : controls.proceed(todo.id, input.message!),
       ['outcome', 'input'],
       'outcome'
     )
@@ -885,13 +895,6 @@ export function createNeoTodoOperations(
     .pipe(write, 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Proceed>,
-    caller: OperationCaller
-  ) => Promise<TodoReceipt | Rejection>;
-
-  const retry = owned(superpipe({})('neo.todo.retry') as PipelineAPI)
-    .pipe((todo: NeoTodo) => controls.retry(todo.id), 'outcome', 'outcome')
-    .endAsync('outcome') as (
-    input: z.infer<typeof Retry>,
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
@@ -956,14 +959,6 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await proceedPastCancelled(input, caller)),
-    }),
-    defineOperation({
-      name: 'neo.todo.retry',
-      description: neoToolDescription('neo.todo.retry'),
-      inputSchema: Retry,
-      resultSchema: TodoResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await retry(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.done',

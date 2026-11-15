@@ -10,8 +10,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 #[derive(Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Identity {
-    seconds: u64,
-    microseconds: u64,
+    pub(super) seconds: u64,
+    pub(super) microseconds: u64,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -123,7 +123,7 @@ impl Drop for Starting {
     }
 }
 
-fn identity(pid: u32) -> Result<Identity> {
+pub(super) fn identity(pid: u32) -> Result<Identity> {
     if pid <= 1 || pid > i32::MAX as u32 {
         return Err("Invalid driver PID".into());
     }
