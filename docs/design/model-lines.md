@@ -1,6 +1,6 @@
 # Model lines: a pack that ranks models for work and moves a held todo
 
-Checked against dev 7742b21f62.
+Checked against dev b315021b06.
 
 ## Summary
 
@@ -13,11 +13,11 @@ This design adds one pack, `models`, with nothing domain-specific in it. It does
 
 Other packs name their kinds of work and pass only the candidates they consider eligible. Packs never import each other.
 
-## What exists (dev 7742b21f62)
+## What exists (dev b315021b06)
 
 - A todo's line is fixed at creation (`neo_todo_sessions.target`). Nothing re-reads it after a hold or a failure.
 - Usage is already readable by Neo through the transport-neutral `settings.provider.usage` operation, which calls `provider.getUsage()`. Anthropic, the Codex bridge and Kimi implement it.
-- A session's hold already records its reason and `retryAt` in its processing state (`rate_limit_cooldown`). `docs/design/model-holds.md` adds typed reasons (`login | limit | overloaded | network`). That part is a dependency, not yet built.
+- A session's hold already records its reason and `retryAt` in its processing state (`rate_limit_cooldown`). The typed reason already exists (`RateLimitHoldReason = 'network' | 'login' | 'limit' | 'overloaded'`, `packages/shared/src/state-types.ts`), with `heldPrompt`; `network` and `login` holds write it. The remaining dependency from `docs/design/model-holds.md` is that the usage-limit and overload holds write `limit` and `overloaded`.
 - Coding ranks its own candidates (`stage-preferences.ts`). It applies reviewer eligibility and provenance rules (`codingReviewerPolicy`, `stage-facts.ts`), breaks ties by cross-harness preference, and owns session reuse (`session-strategy.ts`). It declares nine `write|review|verify` × `harness|model|effort` preferences.
 - `redispatchTodo` (`todo-runner.ts`) refuses to start a new worker when stopping the old one fails. `rescueTodo` only handles stalled todos and does not stop the old worker or carry state over.
 - Routing wishes today live in a free-text standing rule, for example: "spread writing across lines A, B and C; move work off A when its limit runs out; app work goes to B first; D reviews anywhere and writes only in org/tools; E never writes code; on a temporary error, wait in place."
@@ -89,7 +89,7 @@ Tests give the expected output for: a configured line with no usage reader (rank
 
 A move is not a new mechanism. The daemon already moves a stalled todo to a fresh worker with `neo.todo.redispatch` (`todo-runner.ts`): stop the old worker, mark it unusable, reopen the todo as `todo`, and start it through the normal start path (`neo.todo.start`). That start path already has the start receipt, the capacity and busy-worker holds, and the uncertain-start handling (`recordStartInterrupted`, `start_uncertain`, `work.find`). A held todo moves through the same pipeline. The only difference is which line the restart picks.
 
-**Picking the line.** The start path asks the todo's pack for its target (`pack.workerTarget`), and a `start` target chosen there replaces the stored one. Coding's `workerTarget` calls `chooseLine`, so a reopened todo is ranked again. The held line is skipped by its own hold, so the restart lands on the best usable line without anyone naming it. When Neo names a line, it is passed as the first candidate.
+**Picking the line.** The start path asks the todo's pack for its target through the existing `NeoPack.workerTarget` hook (`pack-contract.ts`, added in HyperNeo #10694; called in `chooseTarget`, `todo-runner.ts`), and a `start` target it returns replaces the stored one when the claim is dispatched. No new hook is needed. Coding's `workerTarget` calls `chooseLine`, so a reopened todo is ranked again. The held line is skipped by its own hold, so the restart lands on the best usable line without anyone naming it. When Neo names a line, it is passed as the first candidate.
 
 **The operation.** `neo.todo.retarget {todoId, fromRef, line?}` lets Neo ask for a move. `fromRef` is the worker Neo wants to move off. If the todo's current worker is no longer `fromRef`, the move already happened, and the call returns the todo as it is. That makes a repeated call harmless with no request store. It then runs `neo.todo.redispatch`.
 
