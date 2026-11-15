@@ -43218,7 +43218,7 @@
               "minItems": 1,
               "type": "array"
             },
-            "maxItems": 6,
+            "maxItems": 5,
             "minItems": 2,
             "type": "array"
           },

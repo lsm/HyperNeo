@@ -17,7 +17,7 @@ const Ask = z
     askId: z.string().min(1),
     requestId: z.string().min(1),
     values: Values.optional(),
-    alternatives: z.array(Values).min(2).max(6).optional(),
+    alternatives: z.array(Values).min(2).max(5).optional(),
   })
   .strict()
   .refine((input) => !input.values !== !input.alternatives, 'values_or_alternatives');
