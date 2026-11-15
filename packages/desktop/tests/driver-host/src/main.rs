@@ -15,9 +15,8 @@ static LOGGER: FixtureLogger = FixtureLogger;
 
 fn main() {
     std::thread::spawn(|| {
-        let served = std::panic::catch_unwind(|| {
-            tokio::runtime::Runtime::new().unwrap().block_on(serve())
-        });
+        let served =
+            std::panic::catch_unwind(|| tokio::runtime::Runtime::new().unwrap().block_on(serve()));
         std::process::exit(if served.is_ok() { 0 } else { 101 });
     });
     core_foundation::runloop::CFRunLoop::run_current();
@@ -25,7 +24,7 @@ fn main() {
 
 async fn serve() {
     log::set_logger(&LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::Warn);
+    log::set_max_level(log::LevelFilter::Info);
     let args: Vec<_> = std::env::args().collect();
     let mode = args.get(4).map(String::as_str);
     let base = if mode == Some("missing-data") {
@@ -42,14 +41,19 @@ async fn serve() {
     if mode == Some("accept-error") {
         desktop_drivers::inject_accept_failure();
     }
-    let sidecar: std::sync::Arc<std::sync::Mutex<Option<u32>>> = std::sync::Arc::new(
-        std::sync::Mutex::new(
-            std::env::var("FIXTURE_SIDECAR_PID")
-                .ok()
-                .and_then(|value| value.parse().ok()),
-        ),
-    );
-    let control = desktop_drivers::Control::setup(base, binary, args[3].clone(), sidecar).await;
+    let child = std::env::var("FIXTURE_SIDECAR_CONNECTOR")
+        .ok()
+        .map(|script| {
+            std::process::Command::new(std::env::var("FIXTURE_PYTHON").unwrap())
+                .args(["-I", &script])
+                .arg(std::path::Path::new(&args[1]).join("desktop/control.sock"))
+                .arg(std::env::var("FIXTURE_SIDECAR_REPLY").unwrap())
+                .spawn()
+                .unwrap()
+        });
+    let sidecar = std::sync::Arc::new(std::sync::Mutex::new(child));
+    let control =
+        desktop_drivers::Control::setup(base, binary, args[3].clone(), sidecar.clone()).await;
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");
@@ -57,4 +61,8 @@ async fn serve() {
     if let Some(control) = control {
         control.shutdown().await;
     }
+    if let Some(mut child) = sidecar.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    };
 }

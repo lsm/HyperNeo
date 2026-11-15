@@ -167,9 +167,11 @@ class WorkerDrivers(unittest.TestCase):
                 os.kill(pid, signal.SIGKILL)
 
     def daemon(self, started_at=None):
+        birth = subprocess.check_output(['/bin/ps', '-p', str(os.getpid()), '-o', 'lstart='], text=True).strip()
+        birth_ms = int(time.mktime(time.strptime(birth, '%a %b %d %H:%M:%S %Y')) * 1000) + 1000
         (self.root / 'runtime.json').write_text(json.dumps(
             {'pid': os.getpid(), 'host': '127.0.0.1', 'port': 9283, 'url': 'http://127.0.0.1:9283',
-             'version': 'test', 'startedAt': started_at if started_at is not None else int(time.time() * 1000)}))
+             'version': 'test', 'startedAt': started_at if started_at is not None else birth_ms}))
 
     def call(self, action, worker='worker-a', **params):
         with socket.socket(socket.AF_UNIX) as client:
@@ -236,15 +238,13 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(self.process.wait(timeout=10), 0)
         self.process.stdout.close()
         self.process.stderr.close()
-        connector = subprocess.Popen(
-            [sys.executable, '-I', '-c', self.CONNECTOR,
-             str(self.root / 'desktop/control.sock'), str(out)])
-        self.addCleanup(connector.kill)
-        self.addCleanup(connector.wait)
+        script = self.root / 'connector.py'
+        script.write_text(self.CONNECTOR)
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
             env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test',
-                 'FIXTURE_SIDECAR_PID': str(connector.pid)},
+                 'FIXTURE_SIDECAR_CONNECTOR': str(script), 'FIXTURE_PYTHON': sys.executable,
+                 'FIXTURE_SIDECAR_REPLY': str(out)},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertTrue(select.select([self.process.stdout], [], [], 15)[0])
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')

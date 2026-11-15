@@ -1,3 +1,6 @@
+#[path = "desktop_daemon_peer.rs"]
+mod peer;
+pub(crate) use peer::wait_unreaped;
 #[path = "desktop_driver_channel.rs"]
 mod channel;
 #[path = "desktop_grants.rs"]
@@ -50,7 +53,7 @@ struct Drivers {
     verification_path: String,
     records: PathBuf,
     descriptor: PathBuf,
-    sidecar: Arc<StdMutex<Option<u32>>>,
+    sidecar: peer::ChildSlot,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -82,7 +85,7 @@ impl Control {
         base: Option<PathBuf>,
         binary: std::io::Result<PathBuf>,
         verification_path: String,
-        sidecar: Arc<StdMutex<Option<u32>>>,
+        sidecar: peer::ChildSlot,
     ) -> Option<Self> {
         let (Some(base), Ok(binary)) = (base, binary) else {
             log::warn!("Desktop control unavailable: startup paths unavailable");
@@ -100,7 +103,7 @@ impl Control {
         base: PathBuf,
         binary: PathBuf,
         verification_path: String,
-        sidecar: Arc<StdMutex<Option<u32>>>,
+        sidecar: peer::ChildSlot,
     ) -> Result<Option<Self>> {
         let directory = base.join("desktop");
         std::fs::DirBuilder::new()
@@ -190,15 +193,21 @@ impl Control {
                     let mut line = String::new();
                     let read = timeout(
                         Duration::from_secs(3),
-                        BufReader::new(input.take(16384)).read_line(&mut line),
+                        BufReader::new(input.take(1 << 20)).read_line(&mut line),
                     )
                     .await;
-                    if !matches!(read, Ok(Ok(_))) || !line.ends_with('\n') {
+                    if !matches!(read, Ok(Ok(_))) {
                         return;
                     }
-                    let result = match serde_json::from_str(&line) {
-                        Ok(request) => state.request(request).await,
-                        Err(error) => Err(error.into()),
+                    let result = if !line.ends_with('\n') && line.len() == 1 << 20 {
+                        Err("request_too_large".into())
+                    } else if !line.ends_with('\n') {
+                        return;
+                    } else {
+                        match serde_json::from_str(&line) {
+                            Ok(request) => state.request(request).await,
+                            Err(error) => Err(error.into()),
+                        }
                     };
                     let response = match result {
                         Ok(result) => json!({"ok": true, "result": result}),
@@ -269,7 +278,13 @@ fn peer_pid(stream: &tokio::net::UnixStream) -> Option<u32> {
 
 impl Drivers {
     fn authorized(&self, peer: u32) -> bool {
-        if self.sidecar.lock().unwrap().is_some_and(|pid| pid == peer) {
+        if self
+            .sidecar
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|child| child.id() == peer)
+        {
             return true;
         }
         self.daemon(peer)
@@ -395,6 +410,7 @@ impl Drivers {
             };
         let mut bundle = Value::Null;
         let mut class = Value::Null;
+        let mut observed = Value::Null;
         if request.action == "dispatch"
             && record::ensure_enabled(&self.records.join("workers").join(&request.worker)).is_err()
         {
@@ -404,14 +420,17 @@ impl Drivers {
             let tool = request.tool.as_deref().unwrap_or_default();
             let arguments = request.arguments.clone().unwrap_or(Value::Null);
             let resolved = target::resolve(tool, &arguments, request.instance.as_ref());
-            bundle = resolved["value"]["bundle_id"].clone();
+            observed = resolved["value"].clone();
+            bundle = observed["bundle_id"].clone();
             class = resolved["value"]["class"].clone();
             let reason = if let Some(reason) = resolved["reason"].as_str() {
                 json!(reason)
             } else if bundle == "io.hyperneo.app" {
                 json!("app_not_grantable")
             } else {
-                let requirement = resolved["value"]["requirement"].as_str().unwrap_or_default();
+                let requirement = resolved["value"]["requirement"]
+                    .as_str()
+                    .unwrap_or_default();
                 let class_name = class.as_str().unwrap_or_default();
                 match grants::check(bundle.as_str().unwrap_or_default(), requirement, class_name) {
                     Ok(()) => Value::Null,
@@ -437,7 +456,10 @@ impl Drivers {
                     },
                     false,
                 );
-                log::info!("Desktop dispatch {worker} refused: {reply}", worker = request.worker);
+                log::info!(
+                    "Desktop dispatch {worker} refused: {reply}",
+                    worker = request.worker
+                );
                 return Ok(reply);
             }
         }
@@ -476,21 +498,49 @@ impl Drivers {
                         self.start_driver(&directory, &mut worker, request.work_dir.as_deref())
                             .await?;
                     }
+                    let current = target::resolve(
+                        request.tool.as_deref().unwrap_or_default(),
+                        request.arguments.as_ref().unwrap_or(&Value::Null),
+                        observed.get("instance"),
+                    );
+                    if current["value"] != observed {
+                        let reply =
+                            finish(bundle, class, "refused", json!("target_mismatch"), false);
+                        log::info!(
+                            "Desktop dispatch {worker}: {reply}",
+                            worker = request.worker
+                        );
+                        return Ok(Some(reply));
+                    }
+                    #[cfg(not(test))]
+                    let limit = Duration::from_secs(30);
+                    #[cfg(test)]
+                    let limit = Duration::from_millis(100);
+                    let active = worker.as_mut().unwrap();
                     let call = timeout(
-                        Duration::from_secs(30),
-                        worker.as_mut().unwrap().channel.call(
+                        limit,
+                        active.channel.call(
                             request.tool.as_deref().unwrap_or_default(),
                             request.arguments.clone(),
                         ),
                     )
                     .await;
-                    let (reason, sent) = match call {
-                        Ok(Ok(_)) => (Value::Null, true),
-                        Ok(Err(error)) => (json!(error.to_string()), false),
-                        Err(_) => (json!("driver call timed out"), false),
+                    let sent = active.channel.sent;
+                    let mut reason = match call {
+                        Ok(Ok(_)) => Value::Null,
+                        Ok(Err(error)) => json!(error.to_string()),
+                        Err(_) => json!("driver call timed out"),
                     };
+                    if !reason.is_null() {
+                        if let Err(error) = active.channel.close().await {
+                            reason = json!(format!("stop_unconfirmed: {error}"));
+                        }
+                    }
                     let reply = finish(bundle, class, "allowed", reason, sent);
-                    log::info!("Desktop dispatch {worker}: {reply}", worker = request.worker);
+                    log::info!(
+                        "Desktop dispatch {worker}: {reply}",
+                        worker = request.worker
+                    );
                     return Ok(Some(reply));
                 }
                 "stop" => {
@@ -636,7 +686,7 @@ mod peer_tests {
     use super::*;
     #[test]
     fn reaped_sidecar_is_not_authorized() {
-        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
         let pid = child.id();
         let directory = tempfile::tempdir().unwrap();
         let drivers = Drivers {
@@ -645,8 +695,11 @@ mod peer_tests {
             verification_path: String::new(),
             records: directory.path().into(),
             descriptor: directory.path().join("missing-runtime.json"),
-            sidecar: Arc::new(StdMutex::new(Some(pid))),
+            sidecar: Arc::new(StdMutex::new(Some(child))),
         };
+        assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
+        assert!(drivers.authorized(pid));
+        let mut child = drivers.sidecar.lock().unwrap().take().unwrap();
         child.wait().unwrap();
         assert!(!drivers.authorized(pid));
     }
