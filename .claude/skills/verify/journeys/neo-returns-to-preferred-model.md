@@ -16,6 +16,9 @@ Observable results, each asserted:
 - a sweep after the reset moves it back to Haiku and clears the record;
 - the next turn answers on Haiku.
 
-Retain `return-to-preferred-neo.json` and `return-to-preferred-front.json`.
-The record lives in the running session, so a daemon restart before the reset
-leaves the session on its fallback until the preference is saved again.
+Repeat each role with `--restart` as well: after the fallback the helper stops
+the daemon and boots a new one on the same database. The session must still be
+on Sonnet with Haiku's reset time stored in its metadata, and the sweep after
+the reset must move it back to Haiku. Without the stored record this fails.
+
+Retain the four `return-to-preferred-*.json` files.
