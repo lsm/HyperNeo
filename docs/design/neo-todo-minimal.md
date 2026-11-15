@@ -50,8 +50,11 @@ A todo has four stored states:
 **Waiting on the human is not stored. A todo waits on the human exactly when an open card
 covers it.** The web, the counts and the runner all read that one fact.
 
-A card has one relation to todos: `todos`, the list it covers. A card holds exactly the
+Only `todos`, the list a card covers, decides waiting. A card holds exactly the
 todos it lists; one with an empty list is a question about the ask and holds nothing. A
+card may also name the one todo it is about (`todo_id`). That todo's passing check retires
+the card, its worker reuses the card, and it is not marked done while the card is open.
+Naming a todo never holds it. A
 todo covered by more than one open card moves when the last one closes. The daemon never
 opens a second card for the same todo and cause: a new reason replaces its earlier card
 (`replaced_by`). A todo that becomes `done` or `removed` leaves its cards' lists, and a
@@ -235,7 +238,7 @@ come in a later slice; Neo's operations cover the same actions first.
 | Kind | Removed |
 |---|---|
 | States | `blocked`, `failed`, `closed_unverified` |
-| Columns | `blocked_by`, `blocked_reason`, `next_action`, `approved_at`, `approval_question_id`, `added_after_start` on `neo_todos`; `todo_id`, `start_todos` on `neo_questions` (one `todos` list instead); `needs_you_since` on `neo_todo_sessions` |
+| Columns | `blocked_by`, `blocked_reason`, `next_action`, `approved_at`, `approval_question_id`, `added_after_start` on `neo_todos`; `start_todos` on `neo_questions` (one `todos` list instead; `todo_id` stays as the card's subject); `needs_you_since` on `neo_todo_sessions` |
 | Card kind | `start` |
 | Behaviour | positional order as a dependency, per-step approval, evidence required to mark done, the three-reminder ladders, notes told once from in-memory sets |
 | Operations | `neo.todo.hold`, `.proceed`, `.retry`, `.close`, `.bind`; `neo.question.relay`, `.relayAnswer`, `.resolve` |
@@ -307,7 +310,7 @@ Each slice is its own issue under one epic and is measured before it is cut.
 
 | # | Slice | Accepted when |
 |---|---|---|
-| 1 | A card covers a list of todos | Every reader of `todo_id` and `start_todos` reads `todos`; an approved todo under an open ask-level question is still held after the switch |
+| 1 | A card covers a list of todos | Every waiting decision reads `todos`, not `todo_id` or `start_todos`; an approved todo under an open ask-level question is still held after the switch |
 | 2 | Waiting is read from cards | The web sections, the counts and the runner agree on every live todo. A migrated todo with a failed check and an unrelated open question on it is still held, by its check card, after that question is answered |
 | 3 | Done without a gate | Neo marks an unstarted todo with an unmet check done and its dependents start |
 | 4 | Explicit dependencies and remove with dependents | A removed prerequisite ends in continued dependents, removed dependents, or one card; a migrated unstarted todo behind a cancelled prerequisite, stored or implicit, does not start without that decision; a migrated `doing` todo that had started, behind a removed prerequisite with no replacement, gets no cancelled-edge card |
