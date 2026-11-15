@@ -2195,6 +2195,25 @@ test('a legacy input without a catch-up range keeps a reply that omitted replyTo
   expect(said).toContain('Legacy answer.');
 });
 
+test('replacing a pending Neo row leaves exactly one delivery job for it', async () => {
+  const { id } = await deliveredConvoInput();
+  const listening = vi.spyOn(service.speech, 'isListening').mockReturnValue(true);
+  await convoPublish({ requestId: 'first', replyTo: [id], fullText: 'Done.', work_on: false });
+  listening.mockRestore();
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+  await convoPublish({ requestId: 'second', replyTo: [id], fullText: 'Later.', work_on: false });
+  const jobs = db
+    .getDatabase()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'message_delivery'
+        AND json_extract(payload, '$.sessionId') = ? AND json_extract(payload, '$.messageUuid') = ?
+        AND status IN ('pending', 'processing')`
+    )
+    .get(root, id) as { n: number };
+  expect(jobs.n).toBe(1);
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
 test('an unknown replyTo is refused but never blocks the current input', async () => {
   const { id } = await deliveredConvoInput();
   expect(
