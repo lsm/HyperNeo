@@ -4,7 +4,7 @@ Checked against dev 75ab28d622.
 
 ## Summary
 
-An ask is an epic: one goal, split into todos that may run in parallel. A card is a question to the human. Today a card hangs on the ask: one open card per ask, so a second question about a different todo is refused, or arrives only after the first is answered. A human step (a todo only the human can do: it has a check but no instruction and no worker) gets its first card only after 24 hours, and that card asks "waited 24 hours, keep waiting?" instead of asking the human to do the step. The clients get only a count of asks that wait on the human, not the questions themselves.
+An ask is an epic: one goal, split into todos that may run in parallel. A card is a question to the human. Today a card hangs on the ask: one open card per ask, so a second question about a different todo is refused, or arrives only after the first is answered. A human step (a todo only the human can do: it has a check but no instruction and no worker) gets its first card only after 24 hours, and that card asks "waited 24 hours, keep waiting?" instead of asking the human to do the step. The clients get each ask's open cards inside its ask entry, but no single list across asks, no way to put a card aside, and a count of asks rather than questions.
 
 This design makes the inbox a small core subsystem:
 - A card is a question about one or more todos (or the whole ask). An ask can hold any number of cards; each card stops only the todos it is about.
@@ -55,12 +55,16 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
 `neoHumanQueue({questions, asks, todos, delivering, now})` is pure. `delivering` is the set of todos whose answered card is still being delivered (`question-answer-delivery.ts`). Each todo and each card lands in exactly one state bucket, first match wins:
 1. **waiting on you**: an open card without a hold (one item per card, with the titles of its todos, or "the whole ask");
 2. **held**: an open card with a hold;
-3. **in progress**: every other unfinished todo (`todo`, `doing`, `blocked`, `failed`) that no card covers. Each item says whose step it is, first match: `delivering` when the todo is in `delivering`; `running` or `queued` from the existing `neoTodoPlace` (`lib/neo/todo-state.ts`); otherwise `neo` (rule 4: Neo unblocks it or asks again);
-4. **recent results**: a todo `done` or `removed` in the last 7 days, shown once even if it had an answered card.
+3. **in progress**: every other todo in `todo`, `doing`, `blocked` or `failed` that no card covers. Each item says whose step it is, first match, the same order as the attention design's owner table:
+   1. `delivering` when the todo is in `delivering`;
+   2. `neo` when it is blocked on `question` or `needs-human` (rule 4), whatever `startedAt` is and even with a start target;
+   3. `running` or `queued` from the existing `neoTodoPlace` (`lib/neo/todo-state.ts`);
+   4. otherwise `neo`;
+4. **recent results**: a todo that ended in the last 7 days, by `finishedAt`, shown once even if it had an answered card: `done`; `closed_unverified` after it started (closed, check not passed); `removed`, or `closed_unverified` before it started (both count as cancelled, as in `neoTodoCancelledDependencies`).
 
-A todo covered by a card appears only under its card. Nothing unfinished can fall outside bucket 3. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); a whole-ask card; an answered card still being delivered with its blocked todo (in progress, `delivering`) next to an uncovered blocked check todo (in progress, `neo`); a failed todo with no card (in progress, `neo`).
+A todo covered by a card appears only under its card. Every todo state lands in bucket 3 or 4, so nothing falls outside. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); a whole-ask card; an answered card still being delivered with its blocked todo (in progress, `delivering`) next to an uncovered blocked check todo (in progress, `neo`); a failed todo with no card (in progress, `neo`); an uncovered todo blocked on `question` with a start target, once with `startedAt` empty and once set (in progress, `neo` both times); `closed_unverified` with and without `startedAt` (results).
 
-It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` stays and equals the waiting-on-you count. Web, phone and iPad render the same data.
+It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` keeps its meaning, a number of asks: the asks with at least one waiting-on-you item. `neoWorkCounts` stops counting held cards, so a held card no longer raises it. Web, phone and iPad render the same data.
 
 ## Clients
 
