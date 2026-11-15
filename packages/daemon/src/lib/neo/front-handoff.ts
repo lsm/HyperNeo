@@ -13,27 +13,42 @@ export async function handOffToNeo(
   ask: NeoConversationAsk,
   messageId: string
 ) {
-  const messageIds = [messageId];
-  const asks = [ask];
-  const block = catchUpBlock(
-    await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, messageId)
-  );
-  return service.db.gateway.call(
-    neoFrontInputWrites,
-    'reserve',
-    conversationId,
-    messageIds,
-    asks.map((ask) => ({
-      sessionId: ask.askOrigin.sessionId,
-      message: neoIntakeMessage(
-        { ...ask, sessionId: ask.askOrigin.sessionId },
-        ask.askOrigin.sessionId,
-        readNeoReply(ask.replyTo, service.todos),
-        null,
-        undefined,
-        ask.previewContext ?? null,
-        block
-      ),
-    }))
-  );
+  const origin = ask.askOrigin.sessionId;
+  const hold =
+    service.db.getSession(origin)?.config.queryMode === 'manual'
+      ? ('manual' as const)
+      : ('immediate' as const);
+  for (let attempt = 0; ; attempt++) {
+    const through = await service.db.gateway.call(
+      neoFrontInputReads,
+      'frontSaidThrough',
+      conversationId
+    );
+    const block = catchUpBlock(
+      await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, messageId)
+    );
+    const reserved = await service.db.gateway.call(
+      neoFrontInputWrites,
+      'reserve',
+      conversationId,
+      [messageId],
+      [
+        {
+          sessionId: origin,
+          hold,
+          message: neoIntakeMessage(
+            { ...ask, sessionId: origin },
+            origin,
+            readNeoReply(ask.replyTo, service.todos),
+            null,
+            undefined,
+            ask.previewContext ?? null,
+            block
+          ),
+        },
+      ],
+      through
+    );
+    if (reserved !== 'stale' || attempt >= 4) return reserved;
+  }
 }

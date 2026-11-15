@@ -99,6 +99,17 @@ export class NeoFrontInputRepository {
     ).map((row) => row.id);
   }
 
+  frontSaidThrough(conversationId: string): number {
+    return (
+      (
+        this.db
+          .prepare(`SELECT MAX(sequence) AS through FROM neo_publications
+          WHERE conversation_id = ? AND json_extract(payload_json, '$.publishedBy') = 'front'`)
+          .get(conversationId) as { through: number | null }
+      ).through ?? 0
+    );
+  }
+
   frontSaid(conversationId: string, messageId: string) {
     const input = this.db
       .prepare(`SELECT catch_up_through AS through FROM neo_front_inputs
@@ -271,11 +282,14 @@ export class NeoFrontInputRepository {
   reserve(
     conversationId: string,
     messageIds: readonly string[],
-    prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message'>[]
-  ): 'reserved' | 'ineligible' {
+    prompts: readonly Pick<PersistPromptArgs, 'sessionId' | 'message' | 'hold'>[],
+    saidThrough?: number
+  ): 'reserved' | 'ineligible' | 'stale' {
     return this.db.transaction(() => {
       const rows = messageIds.map((id) => this.get(conversationId, id));
       if (rows.some((row) => !row?.eligible)) return 'ineligible';
+      if (saidThrough !== undefined && this.frontSaidThrough(conversationId) > saidThrough)
+        return 'stale';
       const sdk = new SDKMessageRepository(this.db);
       const jobQueue = new JobQueueRepository(this.db);
       for (const id of messageIds)
@@ -305,7 +319,7 @@ export class NeoFrontInputRepository {
           db: this.db,
           sdkMessageRepo: sdk,
           jobQueue,
-          hold: status === 'deferred' ? 'manual' : 'immediate',
+          hold: status === 'deferred' ? 'manual' : (prompt.hold ?? 'immediate'),
           delivery: { origin: 'chat' },
         });
       }
@@ -332,5 +346,5 @@ export const neoFrontInputReads = defineRepositoryOp(
   'neo.front.outcomes',
   'read',
   NeoFrontInputRepository,
-  ['get', 'terminal', 'frontSaid', 'currentInputs']
+  ['get', 'terminal', 'frontSaid', 'frontSaidThrough', 'currentInputs']
 );
