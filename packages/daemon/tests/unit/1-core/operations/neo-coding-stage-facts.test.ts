@@ -114,6 +114,23 @@ describe('coding stage facts', () => {
       db.close();
     }
   });
+  test('dropping a repository clears its stage facts on an enterprise host', () => {
+    const { db, ledger } = setup();
+    const host = process.env.GH_HOST;
+    process.env.GH_HOST = 'ghe.company.test';
+    const enterprise = 'https://ghe.company.test/synthetic/stages/pull/7';
+    try {
+      ledger.replace('synthetic/stages', [row('head-a')], 1);
+      expect(ledger.recordStage({ ...fact, url: enterprise })).toBe(true);
+      ledger.dropRepo('synthetic/stages');
+      expect(ledger.stageFacts.read(enterprise)).toEqual([]);
+      expect(ledger.recordStage({ ...fact, url: enterprise })).toBe(false);
+    } finally {
+      if (host === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = host;
+      db.close();
+    }
+  });
 });
 
 describe('coding provenance policy', () => {
@@ -265,7 +282,6 @@ describe('provenance preference answers', () => {
             multiple: false,
             noLabel: 'Keep current settings',
             yesLabel: 'Apply these settings',
-            startTodos: null,
           },
           1
         );

@@ -52,8 +52,8 @@ export function planSessionCommand(
       words.join(' ').trim()
       ? {
           value: {
-            name: 'neo.question.relayAnswer',
-            input: { questionId: target, where, when, words: words.join(' ') },
+            name: 'neo.question.answer',
+            input: { questionId: target, where, when, answer: words.join(' ') },
           },
         }
       : {

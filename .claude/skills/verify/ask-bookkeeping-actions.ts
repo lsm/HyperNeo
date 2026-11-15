@@ -51,7 +51,7 @@ for (const phase of ['initial', 'reopen']) {
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
 ),
-      ...createNeoQuestionOperations(store, unexpected, unexpected),
+      ...createNeoQuestionOperations(store, unexpected),
       ...createNeoTodoOperations(store, sessions, controls, () => packs, () => null),
       createNeoAskReadOperation(store, () => [], admit, project),
       createNeoDoneTodosOperation(store, sessions, () => [], admit, project),

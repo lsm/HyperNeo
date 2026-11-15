@@ -1727,6 +1727,32 @@ describe('QueryRunner', () => {
       expect(runner.lastConsumedUserMessage).toBeNull();
     });
 
+    it('feeds the limit retry its own held prompt while that retry is still in flight', async () => {
+      async function* generator() {
+        yield {
+          message: { uuid: 'held-uuid', message: { content: 'held prompt' } },
+          onSent: () => {},
+        };
+      }
+      const requeueYieldedSpy = mock(() => true);
+      runner = createRunner({
+        messageQueue: {
+          ...mockMessageQueue,
+          messageGenerator: generator,
+          requeueYielded: requeueYieldedSpy,
+        } as unknown as MessageQueue,
+        isLimitRecoveryPending: () => true,
+      });
+      runner.retryPromptIdentity.retry('held-uuid');
+
+      const yielded: unknown[] = [];
+      for await (const item of runner.createMessageGeneratorWrapper(1)) yielded.push(item);
+
+      expect(yielded).toHaveLength(1);
+      expect(requeueYieldedSpy).not.toHaveBeenCalled();
+      expect(runner.lastConsumedUserMessage?.uuid).toBe('held-uuid');
+    });
+
     it('marks the prompt consumed through the pre-yield callback only after the gate passes', async () => {
       async function* generator() {
         yield {

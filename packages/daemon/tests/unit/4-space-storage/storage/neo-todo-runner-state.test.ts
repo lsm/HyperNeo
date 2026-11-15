@@ -89,14 +89,21 @@ describe('Data-only atomic runner state commands', () => {
     cards: store.listQuestions('ask'),
     target: sessions.get('first'),
   });
-  const startCard = () =>
-    store.askQuestion(
+  const startCard = () => {
+    store.addTodo(
+      'gone',
+      'ask',
+      { title: 'gone', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    db.prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+    return store.askQuestion(
       'start',
       'ask',
       {
-        kind: 'start',
-        text: 'Start?',
-        startTodos: ['first'],
+        kind: 'reply',
+        text: 'Ready?',
+        todoId: 'gone',
         options: null,
         multiple: false,
         yesLabel: null,
@@ -104,6 +111,7 @@ describe('Data-only atomic runner state commands', () => {
       },
       2
     );
+  };
 
   test('completion returns full committed work and a successor candidate without dispatch', async () => {
     const report = 'Stored report 🦊\n'.repeat(20000);

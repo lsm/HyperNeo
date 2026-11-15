@@ -1164,13 +1164,11 @@ describe('classifyQueryRetryHold', () => {
     expect(classifyQueryRetryHold(signal({ isRateLimit: true }), env())).toBe('limit');
   });
 
-  test('a provider that stays overloaded past its retries is an overloaded hold', () => {
-    expect(
-      classifyQueryRetryHold(signal({ isRetryableProviderError: true }), env({ attempt: 3 }))
-    ).toBe('overloaded');
-    expect(
-      classifyQueryRetryHold(signal({ isRetryableProviderError: true }), env({ attempt: 1 }))
-    ).toBe('none');
+  test('every overloaded attempt is an overloaded hold, so none is charged', () => {
+    for (const attempt of [0, 1, 3])
+      expect(
+        classifyQueryRetryHold(signal({ isRetryableProviderError: true }), env({ attempt }))
+      ).toBe('overloaded');
   });
 
   test('everything else is no hold', () => {
@@ -1187,6 +1185,17 @@ describe('classifyQueryRetryHold', () => {
         })
       )
     ).toBe('none');
+  });
+});
+
+describe('classifyQueryRetryRoute overload exhaustion', () => {
+  test('an overloaded provider past its retries hands the turn to the watchdog', () => {
+    expect(
+      classifyQueryRetryRoute({
+        errorSignal: signal({ rawText: '529 overloaded', isRetryableProviderError: true }),
+        env: env({ attempt: 3, hasRateLimitHandoff: true }),
+      })
+    ).toEqual({ action: 'rate_limit_handoff', hint: { hold: 'overloaded' } });
   });
 });
 

@@ -50,7 +50,7 @@ const reports = (id: string) => entries().filter((entry) => {
 });
 const question = (askId: string, todoId: string) => service.todos.askQuestion(crypto.randomUUID(), askId,
   { text: 'Choose the next action', kind: 'reply', options: null, multiple: false,
-    noLabel: null, yesLabel: null, startTodos: null, todoId }, Date.now());
+    noLabel: null, yesLabel: null, todoId }, Date.now());
 const workerCard = async (todoId: string, ref: { adapter: string; id: string }) => {
   const result = await service.storeWorkerQuestion(ref, { todoId, kind: 'blocked', title: 'Approval required',
     options: ['Continue', 'Stop'], language: 'en', report: 'Approval required' });
@@ -64,7 +64,7 @@ try {
   await app.db.updateGlobalSettings({ language: 'en' });
   await seedSession(root);
   new NeoRepository(app.db.getDatabase()).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  for (const scenario of ['covered', 'closed', 'changed', 'new-card', 'meaningful', 'send-only', 'environment-reblocked', 'todo-match-only', 'start-card']) {
+  for (const scenario of ['covered', 'closed', 'changed', 'new-card', 'meaningful', 'send-only', 'environment-reblocked', 'todo-match-only']) {
     const id = `report-${scenario}`, at = Date.now(), ref = { adapter: 'hyperneo', id };
     await seedSession(id);
     service.todos.openAsk({ id, sessionId: root, title: id, request: 'Observe notices',
@@ -82,11 +82,8 @@ try {
     await app.db.saveUserMessage(id, { type: 'user', uuid: inputId, session_id: id,
       parent_tool_use_id: null, message: { role: 'user', content: 'Synthetic work' } } as SDKMessage, 'consumed');
     const card = scenario === 'send-only' ? null
-      : ['environment-reblocked', 'todo-match-only', 'start-card'].includes(scenario) ? question(id, id)
+      : ['environment-reblocked', 'todo-match-only'].includes(scenario) ? question(id, id)
       : await workerCard(id, ref);
-    if (scenario === 'start-card') {
-      app.db.getDatabase().prepare("UPDATE neo_questions SET kind='start',start_todos=? WHERE id=?").run(JSON.stringify([id]), card!.id);
-    }
     const result = async (text: string) => {
       await new Promise((done) => setTimeout(done, 5));
       await app.db.saveSDKMessage(id, { type: 'result', subtype: 'success', uuid: crypto.randomUUID(),
@@ -116,20 +113,18 @@ try {
   const hour = 3600000;
   let clock = realNow();
   Date.now = () => clock;
-  for (const scenario of ['todo-match-only', 'closed', 'changed', 'unrelated', 'failed', 'environment-start']) {
+  for (const scenario of ['todo-match-only', 'closed', 'changed', 'unrelated', 'failed', 'environment']) {
     const id = `reminder-${scenario}`;
     service.todos.openAsk({ id, sessionId: root, title: id, request: 'Observe reminder',
       projectId: null, originMessageId: null, createdAt: clock });
     service.todos.addTodo(id, id, { title: id, instruction: null, doneWhen: 'Observed', check: null, named: null }, clock);
-    service.todos.commitState(id, { state: 'blocked', blockedBy: scenario === 'environment-start' ? 'environment' : 'stalled', blockedReason: 'No progress' }, clock, { state: 'no_opinion' });
+    service.todos.commitState(id, { state: 'blocked', blockedBy: scenario === 'environment' ? 'environment' : 'stalled', blockedReason: 'No progress' }, clock, { state: 'no_opinion' });
     if (scenario === 'unrelated') {
       service.todos.addTodo(`${id}-other`, id, { title: 'Other work', instruction: null,
         doneWhen: 'Observed', check: null, named: null }, clock);
       service.todos.commitState(`${id}-other`, { state: 'doing' }, clock, { state: 'no_opinion' });
     }
     const card = question(id, scenario === 'unrelated' ? `${id}-other` : id);
-    if (scenario === 'environment-start') app.db.getDatabase().prepare(
-      "UPDATE neo_questions SET kind='start',start_todos=? WHERE id=?").run(JSON.stringify([id]), card.id);
     const reminders = () => entries().filter((entry) => entry.message.message.content.includes(`(${id})`));
     clock += 2 * hour;
     await service.refreshDriverWork();

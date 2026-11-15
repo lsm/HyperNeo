@@ -18,7 +18,7 @@ behind the one-time migration marker; ordinary startup must not synthesize route
 `evidence/manual-restart.json` retains both RPC reads. Retire this fixture-only
 manual card and send a new validated worker report before continuing below.
 
-Rebind that todo to a second synthetic worker through `neo.todo.bind`, then
+Rebind that todo to a second synthetic worker through the todo session store, then
 report its blocker through the validated writer. The open card ID must stay
 the same while answerDelivery points to the replacement worker. Record that
 read in `evidence/rebind.json`; the answer admission below targets that worker.

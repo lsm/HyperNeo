@@ -136,14 +136,21 @@ describe('Atomic todo mutation commits', () => {
     expect(changes).toEqual([]);
   });
 
-  test('a passed current check completes and prunes the start card atomically', async () => {
+  test('a passed current check completes and prunes its card atomically', async () => {
+    store.addTodo(
+      'gone',
+      'ask',
+      { title: 'gone', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    db.prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
     store.askQuestion(
       'start',
       'ask',
       {
-        kind: 'start',
-        text: 'Start?',
-        startTodos: ['first'],
+        kind: 'reply',
+        text: 'Ready?',
+        todoId: 'gone',
         options: null,
         multiple: false,
         yesLabel: null,

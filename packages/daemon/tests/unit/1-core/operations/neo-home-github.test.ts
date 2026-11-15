@@ -48,11 +48,7 @@ const call = async (input: unknown, caller = owner, name = 'neo.home.github') =>
         },
         home
       ),
-      ...createNeoQuestionOperations(
-        todos,
-        async () => {},
-        async () => ({ ok: true })
-      ),
+      ...createNeoQuestionOperations(todos, async () => {}),
     ]),
     name,
     input,
@@ -314,7 +310,6 @@ describe('Neo private GitHub home proposal', () => {
           multiple: false,
           noLabel: 'No',
           yesLabel: 'Yes',
-          startTodos: null,
         },
         Date.now()
       );

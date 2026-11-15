@@ -122,7 +122,6 @@ test('no MCP snapshot field is shortened except the marked question preview', as
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       document: 'Document '.repeat(1000),
       replyTo: [],
       confirm: null,

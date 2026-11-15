@@ -28,7 +28,7 @@ try{
  const store=new NeoAskTodoRepository(db),askId='all-items',now=Date.now();
  store.openAsk({id:askId,title:'Synthetic All items',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic history only',createdAt:now});
  const full='## A settled decision\n\n'+('Synthetic context with **important choices**. ').repeat(60)+'\n\n| Choice | Outcome |\n| --- | --- |\n| Keep | Ready |\n\n[Safe source](https://example.test/decision)\n\n**Final detail 9098**';
- const draft={kind:'reply' as const,text:full,options:null,multiple:false,noLabel:null,yesLabel:null,startTodos:null,document:'Literal original versions'};
+ const draft={kind:'reply' as const,text:full,options:null,multiple:false,noLabel:null,yesLabel:null,document:'Literal original versions'};
  const answered=store.askQuestion('answered-long',askId,draft,now);store.answerQuestion(answered,'Keep the decision','chat',now+1);
  const retired=store.askQuestion('retired-long',askId,{...draft,text:full.replace('A settled decision','A retired decision')},now+2);store.retireQuestion(retired,'No longer needed',null,now+3);
  const short=store.askQuestion('answered-short',askId,{...draft,text:'**Brief question**',document:undefined},now+4);store.answerQuestion(short,'Brief answer','chat',now+5);
@@ -41,7 +41,6 @@ try{
  const links=new NeoTodoSessionRepository(db);links.bind('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now);links.recordRef('all-todo-25',{adapter:'hyperneo',id:'all-worker'},now,'/session/all-worker');
  const removed=store.addTodo('all-removed',askId,{title:'Removed All step',doneWhen:'Synthetic removal',check:null,instruction:null,named:null},now);
  store.updateTodo(removed,{state:'removed',reason:'Synthetic retired work'},now);
- store.askQuestion('start-removed',askId,{...draft,text:'Synthetic removed selection',kind:'start',startTodos:[removed.id],document:undefined},now+7);
  db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('## Final outcome\n\nOutcome sentinel',askId);
  const entry=await hub.request<{ok:boolean;entry:{questions:{id:string;text:string}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});assert(entry.ok && entry.entry.questions.some(q=>q.id==='answered-long' && q.text===full));
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));

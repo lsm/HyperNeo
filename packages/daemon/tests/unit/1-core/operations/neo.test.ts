@@ -251,6 +251,35 @@ describe('Neo MVP', () => {
     ).toMatchObject({ value: { projects: [{ context: '' }] } });
   });
 
+  test('neo.todo.read returns the producesFollowUp marker through result validation', async () => {
+    const root = await service.open();
+    const ask = service.todos.openAsk({
+      id: 'ask-follow-up',
+      title: 'Cache plan',
+      request: 'Plan the cache layer',
+      sessionId: root,
+      projectId: null,
+      originMessageId: null,
+      createdAt: 1,
+    });
+    service.todos.addTodo(
+      'todo-follow-up',
+      ask.id,
+      {
+        title: 'Write the plan',
+        doneWhen: 'Written',
+        check: null,
+        instruction: null,
+        named: null,
+        producesFollowUp: true,
+      },
+      1
+    );
+    expect(
+      await invoke('neo.todo.read', { todoId: 'todo-follow-up' }, holderInput(root))
+    ).toMatchObject({ value: { ok: true, todo: { producesFollowUp: true } } });
+  });
+
   test('a project snapshot lists the folders the project owns on every machine', async () => {
     service.repo.saveProject(project, 0);
     for (const alias of ['folder:laptop\u0000/w/app', 'folder:imac\u0000/x/app', 'git:root'])
@@ -388,7 +417,6 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
-      'neo.question.relayAnswer',
       'neo.peer.accept',
       'neo.peer.invite',
       'neo.peer.list',
@@ -409,12 +437,10 @@ describe('Neo MVP', () => {
       'pack.preferences.get',
       'pack.preferences.list',
       'neo.todo.add',
-      'neo.todo.bind',
       'neo.todo.edit',
       'neo.todo.hold',
       'neo.todo.remove',
       'neo.todo.continue',
-      'neo.todo.proceed',
       'neo.todo.done',
       'neo.ask.search',
       'neo.ask.read',
@@ -426,7 +452,6 @@ describe('Neo MVP', () => {
       'neo.ask.settle',
       'neo.question.ask',
       'neo.question.retire',
-      'neo.question.relay',
       'neo.question.get',
       'neo.open',
       'neo.rule.save',

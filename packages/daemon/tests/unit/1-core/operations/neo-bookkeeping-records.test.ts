@@ -88,14 +88,7 @@ function setup() {
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
     ),
-    ...createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => {
-        calls.push('start');
-        return { ok: true };
-      }
-    ),
+    ...createNeoQuestionOperations(store, async () => {}),
   ]);
   const audits: unknown[] = [];
   const handler = createOperationMcpHandler(
@@ -140,11 +133,10 @@ describe('todo and ask bookkeeping records through MCP', () => {
   });
 
   test.each(['neo.todo.continue'])(
-    '%s on unstarted work records without dispatch or start-card approval',
+    '%s on unstarted work records without dispatch',
     async (name) => {
       const h = setup();
       try {
-        h.store.joinStartQuestion(h.todo, 2);
         const before = h.store.getTodo(h.todo.id),
           questions = h.store.listQuestions(h.ask.id);
         expect(await h.call(name, { todoId: h.todo.id, message: 'Continue' })).toMatchObject({
@@ -179,37 +171,34 @@ describe('todo and ask bookkeeping records through MCP', () => {
       h.db.close();
     }
   });
-  test.each([
-    'neo.todo.add',
-    'neo.todo.edit',
-    'neo.todo.continue',
-    'neo.todo.remove',
-    'neo.todo.bind',
-  ])('%s on a settled ask records without mutation', async (name) => {
-    const h = setup();
-    try {
-      h.store.settleAsk(h.ask, 'dropped', 'Human dropped it', 2);
-      const before = h.store.listTodos(h.ask.id);
-      expect(
-        await h.call(name, {
-          after: [],
-          check: pendingTodoCheck,
-          askId: h.ask.id,
-          todoId: h.todo.id,
-          title: 'Extra',
-          doneWhen: 'Checked',
-          message: 'Continue',
-          reason: 'Recorded',
-          ref: { adapter: 'hyperneo', id: 'worker' },
-        })
-      ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
-      expect(h.store.listTodos(h.ask.id)).toEqual(before);
-      expect(h.store.getAsk(h.ask.id)?.status).toBe('dropped');
-      expect(h.calls).toEqual([]);
-    } finally {
-      h.db.close();
+  test.each(['neo.todo.add', 'neo.todo.edit', 'neo.todo.continue', 'neo.todo.remove'])(
+    '%s on a settled ask records without mutation',
+    async (name) => {
+      const h = setup();
+      try {
+        h.store.settleAsk(h.ask, 'dropped', 'Human dropped it', 2);
+        const before = h.store.listTodos(h.ask.id);
+        expect(
+          await h.call(name, {
+            after: [],
+            check: pendingTodoCheck,
+            askId: h.ask.id,
+            todoId: h.todo.id,
+            title: 'Extra',
+            doneWhen: 'Checked',
+            message: 'Continue',
+            reason: 'Recorded',
+            ref: { adapter: 'hyperneo', id: 'worker' },
+          })
+        ).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
+        expect(h.store.listTodos(h.ask.id)).toEqual(before);
+        expect(h.store.getAsk(h.ask.id)?.status).toBe('dropped');
+        expect(h.calls).toEqual([]);
+      } finally {
+        h.db.close();
+      }
     }
-  });
+  );
   test.each(['unknown', 'todo'])(
     'invalid replacement %s is recorded while removal succeeds',
     async (replacedBy) => {

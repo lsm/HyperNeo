@@ -1,5 +1,6 @@
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { codingTodoPrReads } from './todo-prs.ts';
+import { codingLedgerReads } from './pr-ledger.ts';
 import { requireCodingLinkedIssue } from './linked-issue.ts';
 import { homedir } from 'node:os';
 import { z } from 'zod';
@@ -188,6 +189,7 @@ const project = ([
   return {
     ok: true,
     head: pr.headRefOid,
+    body: pr.body,
     closingIssuesReferences: pr.closingIssuesReferences,
     state: pr.state,
     draft: pr.isDraft,
@@ -257,8 +259,9 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .pipe(
     async (facts: ReturnType<typeof project>, db: Database, url: string) => {
       const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
+      const stageFacts = await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', url);
       return facts.ok
-        ? { ...facts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
+        ? { ...facts, stageFacts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
         : facts;
     },
     ['observed', 'db', 'url'],

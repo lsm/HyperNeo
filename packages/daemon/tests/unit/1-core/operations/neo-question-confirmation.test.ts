@@ -21,13 +21,7 @@ const text = `Replace the old mandate with New mandate.\nPath: ${confirm.path}\n
 let db: Database;
 let store: NeoAskTodoRepository;
 const call = async (name: string, input: unknown, caller = owner) => {
-  const registry = createOperationRegistry(
-    createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => ({ ok: true })
-    )
-  );
+  const registry = createOperationRegistry(createNeoQuestionOperations(store, async () => {}));
   const outcome = await invokeOperation(registry, name, input, caller);
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
   return outcome.value as {
@@ -147,7 +141,6 @@ describe('Neo question confirmation binding', () => {
     { kind: 'reply' },
     { kind: 'choice', options: ['Replace', 'Keep'] },
     { kind: 'choice', multiple: true },
-    { kind: 'start' },
   ])('refuses confirmation binding on %o', async (card) => {
     expect(await ask(card)).toMatchObject({
       ok: false,

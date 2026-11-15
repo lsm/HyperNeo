@@ -22,7 +22,7 @@ try{
  await app.db.createSession({id:root,title:'Synthetic quote',workspacePath:join(run,'workspace'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  const db=app.db.getDatabase();await waitForSdkBodyCopy(db);new NeoRepository(db).reserveBinding({sessionId:root,projectId:null,kind:'neo'});
  const store=new NeoAskTodoRepository(db);store.openAsk({id:'synthetic-ask',projectId:null,sessionId:root,originMessageId:null,title:'Synthetic work card',request:'Synthetic',createdAt:1});
- const q={kind:'choice' as const,options:['Keep','Change'],multiple:false,noLabel:null,yesLabel:null,startTodos:null};
+ const q={kind:'choice' as const,options:['Keep','Change'],multiple:false,noLabel:null,yesLabel:null};
  store.askQuestion('old-card','synthetic-ask',{...q,text:'Earlier choice'},1);store.askQuestion('new-card','synthetic-ask',{...q,text:'Replacement choice'},2);db.prepare("UPDATE neo_questions SET state='retired',replaced_by='new-card' WHERE id='old-card'").run();
  const ledger=new NeoConversationAskRepository(db),legacyId=crypto.randomUUID();ledger.append({conversationId,requestId:legacyId,askOrigin:{sessionId:root,messageId:legacyId},content:'Legacy saved reply',replyTo:{kind:'question',id:'old-card'}});
  const hub=new MessageHub({defaultSessionId:'global'});transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,autoReconnect:false});hub.registerTransport(transport);await transport.initialize();

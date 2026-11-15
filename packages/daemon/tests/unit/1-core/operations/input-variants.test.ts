@@ -127,11 +127,7 @@ describe('operation input variants through the MCP door', () => {
     const db = new Database(':memory:');
     try {
       const operations = [
-        ...createNeoQuestionOperations(
-          new NeoAskTodoRepository(db),
-          async () => {},
-          async () => ({ ok: true })
-        ),
+        ...createNeoQuestionOperations(new NeoAskTodoRepository(db), async () => {}),
       ];
       for (const fixture of fixtures) {
         const operation =
@@ -157,11 +153,7 @@ describe('operation input variants through the MCP door', () => {
   test('question lookup aliases do not spread to sibling operations or other text fields', async () => {
     const db = new Database(':memory:');
     try {
-      const operations = createNeoQuestionOperations(
-        new NeoAskTodoRepository(db),
-        async () => {},
-        async () => ({ ok: true })
-      );
+      const operations = createNeoQuestionOperations(new NeoAskTodoRepository(db), async () => {});
       for (const name of ['neo.question.retire', 'neo.question.answer']) {
         const operation = operations.find((op) => op.name === name)!;
         const canonical = name.endsWith('retire')

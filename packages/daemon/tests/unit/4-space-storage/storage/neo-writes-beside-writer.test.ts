@@ -77,7 +77,6 @@ describe('NeoAskTodoRepository while the writer lane holds a write', () => {
             multiple: false,
             noLabel: null,
             yesLabel: null,
-            startTodos: null,
           },
           20
         )

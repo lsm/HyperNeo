@@ -135,7 +135,6 @@ export const en = {
   'todo.showDetails': 'Show details: {title}',
   'todo.hideDetails': 'Hide details: {title}',
   'todo.openTitle': 'Open {title}',
-  'todo.startTitle': 'Start {title}',
   'todo.actions': 'Step actions: {title}',
   'todo.markDone': 'Mark done',
   'todo.hold': 'Hold',
@@ -156,10 +155,7 @@ export const en = {
   'question.readAll': 'Read all',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',
-  'question.start': 'Start',
-  'question.notNow': 'Not now',
   'question.none': 'None',
-  'question.started': 'Start {todos}',
   'question.retired': '{question} — no longer needed',
   'status.separator': '; ',
   'todo.replaced': 'Replaced by "{title}"',
@@ -316,8 +312,6 @@ export const en = {
   'composer.send': 'Send message',
   'composer.stopDraftTitle': 'Stop and add it to your draft, to send with {context}',
   'composer.stopSendTitle': 'Stop recording and send it now',
-  'question.startOne': 'Start "{title}"?',
-  'question.startMany': 'Start these {count}?',
   'question.removedOneOne':
     '{removed} was removed. Continue {steps} without it, or remove this step too?',
   'question.removedOneMany':

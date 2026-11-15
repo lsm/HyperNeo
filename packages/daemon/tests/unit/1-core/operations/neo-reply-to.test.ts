@@ -5,6 +5,7 @@ import { runMigration502 } from '../../../../src/storage/schema/m502-neo-questio
 import { runMigration507 } from '../../../../src/storage/schema/m507-neo-question-option-labels.ts';
 import { runMigration508 } from '../../../../src/storage/schema/m508-neo-removed-prerequisites.ts';
 import { runMigration510 } from '../../../../src/storage/schema/m510-neo-card-actions-applied.ts';
+import { runMigration512 } from '../../../../src/storage/schema/m512-neo-todo-produces-follow-up.ts';
 import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoConversationAskRepository } from '../../../../src/storage/repositories/neo-conversation-ask-repository.ts';
 import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
@@ -87,6 +88,7 @@ describe('neo.message.send replyTo', () => {
     runMigration507(mailbox.db);
     runMigration508(mailbox.db);
     runMigration510(mailbox.db);
+    runMigration512(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);
@@ -124,7 +126,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );
@@ -228,7 +229,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       2
     );
@@ -324,28 +324,6 @@ describe('neo.message.send replyTo', () => {
     expect(ledger(requestId).replyTo).toEqual(replyTo);
   });
 
-  test('a reply to a start question is a remark: it stays open and starts nothing', async () => {
-    store.askQuestion(
-      'q2',
-      'ask',
-      {
-        text: 'Start "Todo rows"?',
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: ['t1'],
-      },
-      1
-    );
-    const id = crypto.randomUUID();
-    await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
-    expect(prompt(id).reference).toBe('Start "Todo rows"?');
-    expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
-    expect(store.getTodo('t1')?.state).toBe('todo');
-  });
-
   test('a retry records an answer the first send missed, and a reply without words answers nothing', async () => {
     const id = crypto.randomUUID();
     await send(id, '在做', { kind: 'question', id: 'q1' });
@@ -372,7 +350,6 @@ describe('neo.message.send replyTo', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todos: ['next'],
         cause: 'removed_prerequisite',
       },
@@ -395,7 +372,6 @@ describe('neo.message.send replyTo', () => {
           multiple,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
         },
         1
       );

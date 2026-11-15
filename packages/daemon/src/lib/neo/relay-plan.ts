@@ -18,19 +18,26 @@ export function planNeoRelayAnswer(
   settings: NeoSettings | undefined,
   question: NeoRelayQuestion | null,
   input: NeoRelayInput
-) {
+):
+  | { reason: string }
+  | {
+      answer: string | string[];
+      provenance: {
+        words: string;
+        via: string;
+        viaName: string;
+        where: string;
+        when: string;
+        at: number;
+      };
+    } {
   const relay = settings?.relaySenders?.find(({ sender }) => sender === input.sender);
   if (!relay) return { reason: 'sender_not_allowed: this sender may not relay human answers.' };
   if (!question || question.state !== 'open')
     return { reason: 'question_not_open: relay needs an open card.' };
   if (!input.where.trim() || !input.when.trim() || !input.words.trim())
     return { reason: 'relay_incomplete: where, when and words are required.' };
-  if (
-    question.kind === 'start' ||
-    question.confirm ||
-    question.ruleProposal ||
-    question.preferenceProposal
-  )
+  if (question.confirm || question.ruleProposal || question.preferenceProposal)
     return { reason: 'direct_human_required: this card needs the human’s own action.' };
   const words = input.words.trim();
   return {

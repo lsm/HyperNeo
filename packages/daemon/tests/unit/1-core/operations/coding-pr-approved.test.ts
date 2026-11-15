@@ -31,7 +31,6 @@ function fixture() {
   const operation = createNeoQuestionOperations(
     store,
     async () => {},
-    async () => ({ ok: true }),
     undefined,
     undefined,
     undefined,

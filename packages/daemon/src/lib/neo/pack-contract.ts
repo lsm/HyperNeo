@@ -1,6 +1,7 @@
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoAsk, NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
-import type { NeoDriverTarget, NeoTodoTarget } from './driver-work.ts';
+import type { NeoDriverTarget, NeoTodoAddTarget, NeoTodoTarget } from './driver-work.ts';
+import type { OperationOutcome } from '../operations/invoke.ts';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -35,7 +36,7 @@ export interface NeoTodoFactJudge<Facts = unknown> {
 
 export type NeoTodoRepositoryDraft = Pick<NeoTodo, 'check' | 'named'> & {
   id?: string;
-  target?: NeoDriverTarget | NeoTodoTarget | null;
+  target?: NeoDriverTarget | NeoTodoAddTarget | null;
 };
 export type NeoTodoPolicyScope = {
   workerRemotes?: readonly string[];
@@ -76,6 +77,7 @@ export function neoTodoRepository(
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
 
 type WorkerStartExclusions = { value: readonly WorkRef[] } | { reason: string };
+export type NeoWorkerTargetDecision = { value: NeoTodoTarget } | { reason: string };
 
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;
@@ -123,6 +125,12 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   workerRules?: string;
   workerContext?(): string | null;
   workerStartExclusions?(todo: NeoTodo): WorkerStartExclusions | Promise<WorkerStartExclusions>;
+  workerTarget?(
+    todo: NeoTodo,
+    target: NeoTodoTarget,
+    status: (ref: WorkRef) => Promise<OperationOutcome>
+  ): Promise<NeoWorkerTargetDecision>;
+  workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
   workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
   workerBrief?(
     instruction: string,

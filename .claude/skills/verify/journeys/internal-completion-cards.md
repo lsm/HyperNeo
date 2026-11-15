@@ -19,7 +19,7 @@ writing the internal evidence file must still let the real completion check pass
 
 For browser proof build the current web bundle, then add
 `--browser /absolute/fresh/control-directory` after the helper path. Open the
-loopback URL in its browser.json. On the start card, Prepare the summary must
+loopback URL in its browser.json. On the card, Prepare the summary must
 have neither a completion label nor a result.md file card. Publish the report
 keeps its completion sentence and report.md file card. Open that report card and
 observe Travel report and A report for the human in the viewer.

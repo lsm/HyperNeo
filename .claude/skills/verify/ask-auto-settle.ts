@@ -88,7 +88,6 @@ try {
           multiple: false,
           yesLabel: null,
           noLabel: null,
-          startTodos: null,
           confirm: null,
           document: null,
           replyTo: [],

@@ -36,6 +36,9 @@ import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
+import { decideCodingSessionTarget } from './session-target.ts';
+import { codingSessionAssignmentWrites } from './session-assignments-worker.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -155,6 +158,17 @@ export function createCodingPack(deps: {
         default: true,
         ask: 'Require author model and harness provenance and a different reviewer model? Until answered, this is on without saving a preference.',
       },
+      crossModelReview: {
+        label: { en: 'Cross-model review', 'zh-Hans': '跨模型审查' },
+        valueLabels: {
+          true: { en: 'Require a review by a different model', 'zh-Hans': '要求不同模型审查' },
+          false: { en: 'No cross-model review gate', 'zh-Hans': '不要求跨模型审查' },
+        },
+        scope: 'repo',
+        type: { kind: 'boolean' },
+        default: false,
+        ask: 'Hold bot-approved green PRs until a model different from the Agent line has passed a Review on the head?',
+      },
       allowNoChecksMerge: {
         label: { en: 'Allow merging without checks', 'zh-Hans': '允许无检查合并' },
         valueLabels: {
@@ -214,6 +228,12 @@ export function createCodingPack(deps: {
       sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
+    workerTarget: (todo, target, status) =>
+      decideCodingSessionTarget(deps.database(), todo, target, status),
+    workerTargetRefused: (todo) =>
+      gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
+        todoId: todo.id,
+      }),
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
     review: runCodingReview,
     todos: {

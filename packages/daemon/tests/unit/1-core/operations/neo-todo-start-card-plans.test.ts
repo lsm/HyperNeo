@@ -3,7 +3,6 @@ import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-as
 import {
   neoTodosAwaitingNeoDecision,
   planNeoQuestionPrune,
-  planNeoStartRelease,
 } from '../../../../src/lib/neo/todo-start-gate.ts';
 
 const step = (id: string, change: Partial<NeoTodo> = {}) =>
@@ -25,38 +24,12 @@ const card = (change: Partial<NeoQuestion> = {}) =>
   ({
     id: 'card',
     askId: 'ask',
-    kind: 'start',
+    kind: 'reply',
     state: 'open',
     text: 'Start?',
     todos: ['first', 'second'],
     ...change,
   }) as NeoQuestion;
-
-describe('planNeoStartRelease', () => {
-  test('a declined step counts as cancelled for the next step on the card', () => {
-    const gone = step('gone', { state: 'removed', blockedBy: null });
-    const first = step('first', { dependsOn: ['gone'] });
-    const second = step('second', { dependsOn: ['first'] });
-    const writes = planNeoStartRelease(card(), [gone, first, second], [], ['second'], undefined, 7);
-    expect(writes.map(({ todo, patch }) => [todo.id, patch.state, patch.dependsOn])).toEqual([
-      ['first', 'removed', undefined],
-      ['second', 'todo', []],
-    ]);
-  });
-
-  test('a step still listed on another open card is left alone', () => {
-    const other = card({ id: 'other', todos: ['first'] });
-    const writes = planNeoStartRelease(
-      card(),
-      [step('first'), step('second')],
-      [other],
-      ['first', 'second'],
-      undefined,
-      7
-    );
-    expect(writes.map(({ todo }) => todo.id)).toEqual(['second']);
-  });
-});
 
 describe('planNeoQuestionPrune', () => {
   test('retires a question whose todo is finished', () => {
@@ -76,14 +49,6 @@ describe('planNeoQuestionPrune', () => {
       expect(planNeoQuestionPrune(question, [step('first', change)])).toEqual({
         reason: 'unchanged',
       });
-  });
-
-  test('retires a card with nothing left and frees its approved steps', () => {
-    const first = step('first', { approvedAt: 1 });
-    const plan = planNeoQuestionPrune(card({ todos: ['first'] }), [first]);
-    expect(plan).toMatchObject({
-      value: { kept: [], text: 'Start?', state: 'retired', released: [first] },
-    });
   });
 
   test('leaves an unchanged card alone', () => {

@@ -152,6 +152,13 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_feature_sessions (
+    repo TEXT NOT NULL,
+    feature_key TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    reserved_at INTEGER NOT NULL,
+    PRIMARY KEY (repo, feature_key)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_pr_unowned (
     key TEXT PRIMARY KEY,
     listed_at INTEGER NOT NULL

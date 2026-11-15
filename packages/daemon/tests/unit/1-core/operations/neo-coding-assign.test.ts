@@ -16,6 +16,7 @@ import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/tod
 import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
 import { createCodingAssignmentOperation } from '../../../../src/lib/neo/packs/coding/assign-operation.ts';
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
+import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, type OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
@@ -535,5 +536,61 @@ describe('coding actor assignments', () => {
     release();
     expect((await first).ok).toBe(true);
     expect(f.starts).toHaveLength(1);
+  });
+});
+
+describe('neo.coding.assign with cross-model review', () => {
+  test('a configured bot still starts the different-model reviewer, whose result is accepted', async () => {
+    const f = fixture();
+    f.set('reviewBot', 'fixture-bot');
+    f.set('crossModelReview', true);
+    const review = await f.assign({ candidates: [reviewer] });
+    expect(review).toMatchObject({
+      ok: true,
+      assignment: { actor: { kind: 'agent', model: reviewer.model }, ref: { id: 'fresh-1' } },
+    });
+    expect(f.starts).toHaveLength(1);
+    const assigned = review.assignment!;
+    const results = createOperationRegistry([createCodingResultOperation(f.assignments, f.ledger)]);
+    expect(
+      await invokeOperation(
+        results,
+        'neo.coding.result',
+        {
+          todoId: 'todo',
+          ref: assigned.ref,
+          fact: {
+            url,
+            head,
+            stage: 'review',
+            actor: assigned.actor,
+            verdict: 'pass',
+            acceptanceContract: 'artifact:contract',
+            evidence: ['artifact:review'],
+          },
+        },
+        { source: 'internal', role: 'neo' }
+      )
+    ).toEqual({ kind: 'completed', value: { ok: true } });
+  });
+  test('with provenance off, a PR without an Agent line still gets a Review', async () => {
+    const f = fixture();
+    f.set('provenance', false);
+    f.set('crossModelReview', true);
+    f.pr.body = '';
+    f.publish();
+    expect((await f.assign({ candidates: [author] })).ok).toBe(true);
+  });
+  test('turning provenance off still refuses a same-model reviewer', async () => {
+    const f = fixture();
+    f.set('provenance', false);
+    f.set('crossModelReview', true);
+    f.pr.body = 'Agent: gpt-6-sol (effort: high) via codex-desktop';
+    f.publish();
+    expect(await f.assign({ candidates: [author] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('same_model'),
+    });
+    expect(f.starts).toHaveLength(0);
   });
 });

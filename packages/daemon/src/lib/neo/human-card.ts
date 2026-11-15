@@ -24,7 +24,6 @@ export function applyOrKeepCard(text: string, apply: string, keep: string): NeoQ
     multiple: false,
     noLabel: null,
     yesLabel: null,
-    startTodos: null,
   };
 }
 
@@ -64,7 +63,6 @@ const onlyCard = (open: readonly NeoQuestion[], replaced: NeoQuestion | null) =>
   const other = open.find(
     (question) =>
       question.state === 'open' &&
-      question.kind !== 'start' &&
       (question.todoId || question.retireWhen) &&
       question.id !== replaced?.id &&
       !isNeoTodoStalledCard(question.text)

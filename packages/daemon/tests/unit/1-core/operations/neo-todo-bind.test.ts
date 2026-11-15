@@ -83,54 +83,64 @@ function setup() {
 }
 
 describe('bind an already running worker without dispatch', () => {
-  test.each(['neo.ask.open', 'neo.todo.add', 'neo.todo.edit'])(
-    '%s refuses a bind target and points to neo.todo.bind or a send target',
+  test.each(['neo.ask.open', 'neo.todo.add'])(
+    '%s refuses a bind target with an instruction',
     async (name) => {
-      const { db, sessions, calls, invoke } = setup();
+      const { db, calls, invoke } = setup();
       try {
-        const target = { verb: 'bind', ref };
+        const draft = {
+          after: [],
+          check: pendingTodoCheck,
+          title: 'Running work',
+          instruction: 'Do the task',
+          target: { verb: 'bind', ref },
+        };
         const input =
           name === 'neo.ask.open'
-            ? {
-                title: 'Synthetic work',
-                request: 'Give the worker a task',
-                todos: [
-                  {
-                    after: [],
-                    check: pendingTodoCheck,
-                    title: 'Running work',
-                    instruction: 'Do the task',
-                    target,
-                  },
-                ],
-              }
-            : name === 'neo.todo.add'
-              ? { after: [], askId: 'ask', title: 'Running work', check: pendingTodoCheck, target }
-              : { todoId: 'todo', instruction: 'Do the task', target };
+            ? { title: 'Synthetic work', request: 'Track work', todos: [draft] }
+            : { ...draft, askId: 'ask' };
         await expect(invoke(name, input)).rejects.toThrow(
-          'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
+          'A bind target attaches work that is already running; leave instruction out.'
         );
         expect(db.prepare('SELECT COUNT(*) AS n FROM neo_todo_sessions').get()).toEqual({ n: 0 });
-        expect(sessions.readRef('todo')).toBeNull();
         expect(calls).toEqual([]);
       } finally {
         db.close();
       }
     }
   );
-  test('explicit bind refreshes identity for an unbound todo without dispatch', async () => {
+
+  test('neo.todo.edit refuses a bind target', async () => {
+    const { db, invoke } = setup();
+    try {
+      await expect(
+        invoke('neo.todo.edit', { todoId: 'todo', target: { verb: 'bind', ref } })
+      ).rejects.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('add with a bind target records the todo as doing on that worker without dispatch', async () => {
     const { db, sessions, calls, invoke } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Observed worker',
         request: 'Track work',
-        todos: [{ after: [], title: 'Worker task', check: pendingTodoCheck }],
+        todos: [{ after: [], title: 'Merge', check: pendingTodoCheck }],
       });
-      const todoId = opened.todos[0].id;
-      const result = await invoke('neo.todo.bind', { todoId, ref });
-      expect(result.ok).toBe(true);
+      const added = await invoke('neo.todo.add', {
+        after: [],
+        askId: opened.todos[0].askId,
+        title: 'Worker task',
+        check: pendingTodoCheck,
+        target: { verb: 'bind', ref },
+      });
+      expect(added.ok).toBe(true);
+      expect(added.todo).toMatchObject({ state: 'doing', instruction: null });
+      expect(added.todo.startedAt).not.toBeNull();
       expect(calls).toEqual(['work.status']);
-      expect(sessions.readCard(todoId)).toMatchObject({
+      expect(sessions.readCard(added.todo.id)).toMatchObject({
         ref,
         model: 'claude-opus-5-5',
         effort: 'medium',
@@ -140,72 +150,24 @@ describe('bind an already running worker without dispatch', () => {
     }
   });
 
-  test('a failed backfill can be rebound in place, clearing failure and stale delivery without sending', async () => {
-    const { db, store, sessions, calls, invoke, runner } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Synthetic work',
-        request: 'Track work',
-        todos: [
-          {
-            after: [],
-            check: pendingTodoCheck,
-            title: 'Failed backfill',
-            doneWhen: 'Result verified',
-          },
-        ],
-      });
-      const todo = store.updateTodo(
-        opened.todos[0],
-        { approvedAt: 1, instruction: 'Original task already running' },
-        1
-      );
-      store.updateTodo(
-        todo,
-        { state: 'failed', reason: 'Delivery was not confirmed', finishedAt: 2 },
-        2
-      );
-      sessions.create(todo.id, { verb: 'send', ref });
-      sessions.recordRef(todo.id, ref, 1);
-      sessions.recordSent(todo.id, { inputBefore: 1, opening: 'Old instruction' });
-      const rebound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
-      expect(rebound.ok).toBe(true);
-      expect(rebound.todo).toMatchObject({
-        id: todo.id,
-        state: 'doing',
-        reason: null,
-        finishedAt: null,
-      });
-      expect(sessions.readRef(todo.id)).toEqual(ref);
-      expect(sessions.readSent(todo.id)).toBeNull();
-      expect(calls).toEqual([]);
-      await runner.refresh((message) => {
-        throw new Error(message);
-      });
-      expect(store.getTodo(todo.id)?.state).toBe('doing');
-      expect(calls.filter((name) => name !== 'work.status')).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('a held todo cannot be bound to a worker', async () => {
+  test('a bind target waits for nothing unfinished: it is refused and adds no todo', async () => {
     const { db, store, calls, invoke } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
-        title: 'Synthetic work',
+        title: 'Observed worker',
         request: 'Track work',
-        todos: [
-          { after: [], check: pendingTodoCheck, title: 'Held step', doneWhen: 'Result verified' },
-        ],
+        todos: [{ after: [], title: 'First step', check: pendingTodoCheck }],
       });
-      const todo = opened.todos[0];
-      await invoke('neo.todo.hold', { todoId: todo.id, reason: 'The human said wait.' });
-      const bound = await invoke('neo.todo.bind', { todoId: todo.id, ref });
-      expect(bound).toMatchObject({ ok: false, reason: expect.stringContaining('todo_held') });
-      expect(store.todoCards(store.getTodo(todo.id)!)).toMatchObject([
-        { state: 'open', cause: 'hold' },
-      ]);
+      const [first] = opened.todos;
+      const refused = await invoke('neo.todo.add', {
+        after: [first.id],
+        askId: first.askId,
+        title: 'Worker task',
+        check: pendingTodoCheck,
+        target: { verb: 'bind', ref },
+      });
+      expect(refused).toMatchObject({ ok: false, reason: expect.stringContaining('not_ready') });
+      expect(store.listTodos(first.askId).map((todo) => todo.title)).toEqual(['First step']);
       expect(calls).toEqual([]);
     } finally {
       db.close();

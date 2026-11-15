@@ -1,4 +1,5 @@
 import { createNeoRelayOperations } from './relay-answer.ts';
+import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
@@ -862,7 +863,6 @@ export function createNeoOperations(
           ask.sessionId,
           'event'
         ),
-      (todoId) => service.todoRunner.start(todoId),
       (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id),
       createArtifactRefReader(() => service.db.getDatabase()),
       (ref) => service.readQuestionSource(ref),
@@ -895,7 +895,16 @@ export function createNeoOperations(
         input.todoId
           ? service.relayWorkerQuestion({ ...input, todoId: input.todoId }, caller.sessionId)
           : service.relaySessionQuestion(input, caller.sessionId, Date.now()),
-      () => service.db.getGlobalSettings().language
+      () => service.db.getGlobalSettings().language,
+      async (input) => {
+        const written = await gatewayFor(service.db.getDatabase()).call(
+          neoAskInputWrites,
+          'relayAnswer',
+          { ...input, at: Date.now() }
+        );
+        if ('value' in written) service.notifyChanged();
+        return written;
+      }
     ),
     defineOperation({
       name: 'neo.open',

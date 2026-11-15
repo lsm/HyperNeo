@@ -224,7 +224,9 @@ import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
-import { resolveFallbackChain } from './fallback-recovery.ts';
+import { sessionFallbackChain } from './fallback-recovery.ts';
+import { frontSessionId } from '../neo/front-mode.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
@@ -712,6 +714,13 @@ export class AgentSession
     this.sessionConfigHandler = new SessionConfigHandler(this);
 
     this.rateLimitWatchdog = new RateLimitWatchdog(session.id, this.stateManager, {
+      initialModelLimits: this.session.metadata.modelLimits,
+      persistModelLimits: (limits) => {
+        this.session.metadata.modelLimits = Object.keys(limits).length ? limits : undefined;
+        return this.db
+          .updateSession(this.session.id, { metadata: this.session.metadata })
+          .catch((error) => this.logger.error('Failed to persist model limits:', error));
+      },
       getCurrentModel: () => ({
         provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
         model: this.session.config.model ?? 'sonnet',
@@ -721,12 +730,14 @@ export class AgentSession
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
         const info = await getModelInfo(rawModel, 'global', provider).catch(() => null);
-        return resolveFallbackChain(
-          provider,
-          info?.id ?? rawModel,
-          gs.modelFallbackMap,
-          gs.fallbackModels,
-          info?.alias
+        const conversationId = new NeoRepository(this.db.getDatabase()).readConversationId();
+        return sessionFallbackChain(
+          {
+            sessionId: this.session.id,
+            frontSessionId: conversationId ? frontSessionId(conversationId) : null,
+          },
+          gs,
+          { provider, model: info?.id ?? rawModel, alias: info?.alias }
         );
       },
       isEntryAvailable: async (entry) => {
@@ -1776,6 +1787,10 @@ export class AgentSession
     return this.rateLimitWatchdog.getState();
   }
 
+  forgetModelLimits(): Promise<void> {
+    return this.rateLimitWatchdog.forgetModelLimits();
+  }
+
   async handleQuestionResponse(
     toolUseId: string,
     responses: QuestionDraftResponse[]
@@ -1803,11 +1818,13 @@ export class AgentSession
     nonInterrupting = false,
     commit?: RuntimeSettingsCommit
   ): Promise<ModelSwitchResult> {
-    if (commit)
-      return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit);
-    return nonInterrupting
-      ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
-      : this.modelSwitchHandler.switchModel(newModel, newProvider);
+    const result = await (commit
+      ? this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit)
+      : nonInterrupting
+        ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
+        : this.modelSwitchHandler.switchModel(newModel, newProvider));
+    if (result.success) await this.rateLimitWatchdog.forgetModelLimits();
+    return result;
   }
 
   private providerWaitAnnounced = false;
@@ -1829,9 +1846,14 @@ export class AgentSession
 
   requestModelSwitch(
     model: string,
-    provider: string
+    provider: string,
+    stillWanted?: () => boolean
   ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
-    return this.queueModelSwitch(() => this.runModelSwitchRequest(model, provider));
+    return this.queueModelSwitch(async () =>
+      stillWanted && !stillWanted()
+        ? { success: false, model: this.session.config.model, error: 'The switch was superseded' }
+        : this.runModelSwitchRequest(model, provider)
+    );
   }
 
   private async runModelSwitchRequest(

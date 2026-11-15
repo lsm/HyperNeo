@@ -57,7 +57,6 @@ function setup() {
   const questionOps = createNeoQuestionOperations(
     store,
     async () => {},
-    async () => ({ ok: true }),
     undefined,
     undefined,
     undefined,

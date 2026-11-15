@@ -2228,6 +2228,33 @@ describe('AgentSession', () => {
       expect(result).toEqual(mockResult);
     });
 
+    it('handleModelSwitch drops every limit record once a chosen model is applied', async () => {
+      const limits = {
+        'anthropic/haiku': { until: 1, fallback: 'anthropic/sonnet' },
+        'anthropic/sonnet': { until: 1, fallback: 'anthropic/opus' },
+      };
+      const updateSession = mock(async () => {});
+      const limited = new AgentSession(
+        { ...mockSession, metadata: { ...mockSession.metadata, modelLimits: limits } },
+        { ...mockDb, updateSession } as unknown as Database,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      const switchModel = mock(async (model: string) => ({ success: false, model }));
+      // biome-ignore lint: test mock access
+      (limited as unknown as Record<string, unknown>).modelSwitchHandler = { switchModel };
+      await limited.handleModelSwitch('sonnet', 'anthropic');
+      expect(limited.getRateLimitWatchdogState().modelLimits).toEqual(limits);
+      switchModel.mockImplementation(async (model: string) => ({ success: true, model }));
+      await limited.handleModelSwitch('sonnet', 'anthropic');
+      expect(limited.getRateLimitWatchdogState().modelLimits).toEqual({});
+      expect(limited.getSessionData().metadata.modelLimits).toBeUndefined();
+      expect(updateSession).toHaveBeenCalledWith(mockSession.id, {
+        metadata: expect.not.objectContaining({ modelLimits: expect.anything() }),
+      });
+    });
+
     describe('requestModelSwitch', () => {
       let switchModel: ReturnType<typeof mock>;
       beforeEach(() => {
@@ -2249,6 +2276,27 @@ describe('AgentSession', () => {
         });
         expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('skips a guarded switch when a switch queued ahead of it made the guard false', async () => {
+        await agentSession.stateManager.setIdle();
+        let release = () => {};
+        const held = new Promise<void>((done) => {
+          release = done;
+        });
+        let humanApplied = false;
+        switchModel.mockImplementationOnce(async (model: string) => {
+          await held;
+          humanApplied = true;
+          return { success: true, model };
+        });
+        const human = agentSession.requestModelSwitch('sonnet', 'anthropic');
+        const sweep = agentSession.requestModelSwitch('opus', 'anthropic', () => !humanApplied);
+        release();
+        await human;
+        expect(await sweep).toMatchObject({ success: false });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('sonnet', 'anthropic');
       });
 
       it('holds a switch during a turn and applies it when the turn ends', async () => {

@@ -220,7 +220,10 @@ describe('non-interrupting model switch admission', () => {
 
   test('AgentSession forwards the opt-in mode and preserves the default', async () => {
     const switchModel = vi.fn(async () => ({ success: true, model: 'new-model' }));
-    const session = { modelSwitchHandler: { switchModel } } as unknown as AgentSession;
+    const session = {
+      modelSwitchHandler: { switchModel },
+      rateLimitWatchdog: { forgetModelLimits: async () => {} },
+    } as unknown as AgentSession;
     await AgentSession.prototype.handleModelSwitch.call(session, 'new-model', 'anthropic', true);
     await AgentSession.prototype.handleModelSwitch.call(session, 'new-model', 'anthropic');
     expect(switchModel.mock.calls).toEqual([

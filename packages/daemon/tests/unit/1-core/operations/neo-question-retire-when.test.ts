@@ -45,11 +45,9 @@ test('20707c94: an unlinked stale facts card retires and releases the todo it bl
     );
     store.updateTodo(worker, { state: 'done' }, 2);
     writeFileSync(check.params.path, 'Bot APPROVED 16:08Z, five seconds before the card.');
-    const operation = createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => ({ ok: true })
-    ).find((op) => op.name === 'neo.question.ask')!;
+    const operation = createNeoQuestionOperations(store, async () => {}).find(
+      (op) => op.name === 'neo.question.ask'
+    )!;
     const receipt = (await operation.execute(
       operation.inputSchema.parse({
         askId: 'ask',
@@ -143,7 +141,6 @@ function fixture(path = ':memory:') {
   const operation = createNeoQuestionOperations(
     store,
     async () => {},
-    async () => ({ ok: true }),
     undefined,
     undefined,
     undefined,
@@ -200,15 +197,17 @@ function fixture(path = ':memory:') {
   };
 }
 
-test('the schema explains that unlinked cards need retireWhen, including start rewording', async () => {
+test('the schema explains that unlinked cards need retireWhen', async () => {
   const f = fixture();
   try {
-    for (const kind of ['reply', 'start']) {
-      const parsed = f.operation.inputSchema.safeParse({ askId: 'ask', kind, text: 'Need input' });
-      expect(parsed.success).toBe(false);
-      if (!parsed.success)
-        expect(parsed.error.message).toContain('retireWhen is required without a linked todo');
-    }
+    const parsed = f.operation.inputSchema.safeParse({
+      askId: 'ask',
+      kind: 'reply',
+      text: 'Need input',
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.message).toContain('retireWhen is required without a linked todo');
     const stale = await f.ask({ todoId: 'gone' });
     expect(stale).toMatchObject({
       ok: false,
@@ -322,7 +321,6 @@ test('two simultaneous sweeps retire and notify once, while another open card ke
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       1
     );

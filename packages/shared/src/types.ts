@@ -341,6 +341,11 @@ export interface PendingModelSwitch {
   requestedAt: number;
 }
 
+export interface ModelLimit {
+  until: number;
+  fallback: string;
+}
+
 export interface SessionMetadata {
   queryFailureEpisode?: {
     id: string;
@@ -368,6 +373,7 @@ export interface SessionMetadata {
   titleSetBy?: 'user' | 'auto';
   workspaceInitialized?: boolean;
   lastContextInfo?: ContextInfo | null;
+  modelLimits?: Record<string, ModelLimit>;
   inputDraft?: string | null;
   inputDraftVoicePending?: string | null;
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;

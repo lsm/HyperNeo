@@ -757,6 +757,15 @@ async function frontEditor() {
   return ui;
 }
 
+test('stacks the fast reply and Neo model settings in one column at every width', async () => {
+  await frontEditor();
+  const front = screen.getByRole('region', { name: 'Fast reply model' });
+  const neo = screen.getByRole('region', { name: 'Neo models' });
+  const column = front.parentElement!;
+  expect(neo.parentElement).toBe(column);
+  expect(column.className).not.toMatch(/grid-cols-(?!1\b)/);
+});
+
 test('chooses a separate provider/model through the targeted front operation', async () => {
   await frontEditor();
   const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
@@ -789,6 +798,23 @@ test.each(['refused', 'failed'])(
     expect(globalSettings.value?.neo?.front?.enabled).toBe(false);
   }
 );
+
+test('adds a fast reply fallback through the targeted front operation', async () => {
+  await frontEditor();
+  const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
+  fireEvent.click(convo.getByRole('button', { name: 'Add fast reply fallback' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'glm-5' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.front.model.set',
+      input: expect.objectContaining({
+        model: primary.model,
+        provider: primary.provider,
+        fallbacks: [{ ...glm, thinkingLevel: 'off' }],
+      }),
+    })
+  );
+});
 
 test('the Front compact percentage saves through the targeted front operation', async () => {
   await frontEditor();

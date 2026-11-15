@@ -369,7 +369,6 @@ describe('human-approved standing rules', () => {
           multiple: false,
           noLabel: KEEP,
           yesLabel: APPLY,
-          startTodos: null,
         },
         1
       );
@@ -466,7 +465,6 @@ describe('human-approved standing rules', () => {
         multiple: false,
         noLabel: 'No',
         yesLabel: 'Yes',
-        startTodos: null,
       },
       1
     );
