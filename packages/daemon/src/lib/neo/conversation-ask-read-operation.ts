@@ -90,7 +90,11 @@ const ImageRefSchema = z
 export const NeoConversationAskPageSchema = z.object({
   conversationId: z.uuid(),
   requestId: z.uuid(),
-  askOrigin: z.object({ sessionId: z.string(), messageId: z.uuid() }),
+  askOrigin: z.object({
+    sessionId: z.string(),
+    messageId: z.uuid(),
+    messageDbId: z.string().nullable().optional(),
+  }),
   content: z.array(z.union([ImageRefSchema, z.record(z.string(), z.unknown())])),
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   createdAt: z.iso.datetime(),

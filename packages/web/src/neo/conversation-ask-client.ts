@@ -124,6 +124,9 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     typeof origin.messageId !== 'string' ||
     !uuid.test(origin.messageId) ||
     row.requestId !== origin.messageId ||
+    (origin.messageDbId !== undefined &&
+      origin.messageDbId !== null &&
+      typeof origin.messageDbId !== 'string') ||
     !counter(row.sequence) ||
     row.sequence < 1 ||
     row.sequence <= page.after ||
@@ -142,7 +145,13 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
   return {
     conversationId: page.conversationId,
     requestId: row.requestId,
-    askOrigin: { sessionId: origin.sessionId, messageId: origin.messageId },
+    askOrigin: {
+      sessionId: origin.sessionId,
+      messageId: origin.messageId,
+      ...(origin.messageDbId !== undefined
+        ? { messageDbId: origin.messageDbId as string | null }
+        : {}),
+    },
     sequence: row.sequence,
     createdAt: row.createdAt,
     content,

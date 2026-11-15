@@ -25,6 +25,15 @@ all six statuses plus legacy-null status, exact active ownership and a foreign
 reply that must not answer. Only the legacy-null status field is adjusted after
 a production write. An entire tool result and every logical SDK body are hashed
 before/after; complete human content, identities and status order must match.
+Each asks.read item's askOrigin.messageDbId must equal the same message's
+sdk_messages id, or null when no such row exists (the durable-only intake);
+the id arrives inside the one batched status statement, one index probe per
+ref (verified by EXPLAIN QUERY PLAN, which must show a single correlated
+subquery), and a natural asks.read page stays under250ms. The statement
+matcher is whitespace-insensitive; verify mode asserts the matcher actually
+fired (memory-mode calls>0, instrumented worker probeMatched>0, file-backed
+main prepares=0) so the zero-main-call proof cannot go vacuous. Both sockets
+authenticate with the daemon-issued local device credential.
 
 Repeat with `VERIFY_STATUS_IPC=1` for the real native Bun worker behind the
 Node-hosted test IPC seam. A proof-only fixture startup buffer waits for its

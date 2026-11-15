@@ -1,6 +1,6 @@
 import type { ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
 
-import type { NeoInputOrigin } from './neo-message.ts';
+import type { NeoMessageOrigin } from './neo-message.ts';
 import type { NeoQuestionSource } from './neo-ask.ts';
 
 export const NEO_SHORT_TEXT_LIMIT = 4000;
@@ -32,8 +32,8 @@ export interface NeoPublicationRevision {
   readonly session?: string;
   readonly sessionSource?: NeoQuestionSource | null;
   readonly createdAt: string;
-  readonly producerInput?: NeoInputOrigin;
-  readonly askOrigin?: NeoInputOrigin;
+  readonly producerInput?: NeoMessageOrigin;
+  readonly askOrigin?: NeoMessageOrigin;
   readonly awaiting?: string;
 }
 
@@ -42,8 +42,8 @@ export interface NeoPublicationInput {
   readonly cardReply?: NeoCardReply;
   readonly conversationId: string;
   readonly publicationId: string;
-  readonly askOrigin?: NeoInputOrigin;
-  readonly producerInput?: NeoInputOrigin;
+  readonly askOrigin?: NeoMessageOrigin;
+  readonly producerInput?: NeoMessageOrigin;
   readonly shortText?: string;
   readonly verbatim?: true;
   readonly fullText: string;
@@ -56,8 +56,8 @@ export interface NeoPublicationInput {
   readonly awaiting?: string;
   readonly editedAt?: string;
   readonly editedBy?: string;
-  readonly answerInput?: NeoInputOrigin;
-  readonly answerOrigin?: NeoInputOrigin;
+  readonly answerInput?: NeoMessageOrigin;
+  readonly answerOrigin?: NeoMessageOrigin;
   readonly languageMismatch?: string;
   readonly requestedLanguage?: string;
   readonly revisionId?: string;

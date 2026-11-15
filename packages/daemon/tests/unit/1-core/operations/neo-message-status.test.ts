@@ -128,6 +128,35 @@ test('a durable intake without consumption evidence is received and a failed sen
   ]);
 });
 
+test('a failed ask read exposes messageDbId matching its sdk_messages row', async () => {
+  const bare = crypto.randomUUID();
+  expect(
+    service.asks.append({
+      conversationId,
+      requestId: bare,
+      askOrigin: { sessionId, messageId: bare },
+      content: 'Saved historical input.',
+    }).accepted
+  ).toBe(true);
+  const failed = await input();
+  delivered(failed, 'failed');
+  const items = await reads();
+  expect(items[0]).toMatchObject({
+    requestId: bare,
+    messageStatus: 'received',
+    askOrigin: { sessionId, messageId: bare },
+  });
+  expect(items[1]).toMatchObject({
+    requestId: failed,
+    messageStatus: 'failed',
+    delivery: { state: 'failed' },
+    askOrigin: { sessionId, messageId: failed },
+  });
+  const origins = items.map((item) => item.askOrigin.messageDbId);
+  expect(origins[0]).toBeNull();
+  expect(origins[1]).toBe(db.getSDKMessageRepo().findMessageIdByUuid(sessionId, failed));
+});
+
 test('only the exact consumed active input is working, never the oldest unanswered input', async () => {
   const ids = [await input(), await input(), await input()];
   for (const id of ids.slice(0, 2)) delivered(id, 'consumed');
@@ -253,7 +282,7 @@ test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
     });
     const facts = mock(async () => {
       await gate;
-      return [{ sendStatus: 'consumed', processing: null, answered: true }];
+      return [{ sendStatus: 'consumed', processing: null, answered: true, messageDbId: null }];
     });
     Object.assign(db, { getNeoMessageStatusFactsAsync: facts });
     let completed = false;

@@ -9,7 +9,12 @@ import { parseProcessingState } from '../session/space-session-reads.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
-export type Fact = { sendStatus: string | null; processing: string | null; answered: boolean };
+export type Fact = {
+  sendStatus: string | null;
+  processing: string | null;
+  answered: boolean;
+  messageDbId: string | null;
+};
 export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
 export function readMessageFacts(db: Database, items: readonly NeoMessageStatusRef[]): Fact[] {
@@ -31,12 +36,15 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
     messageId: item.askOrigin.messageId,
   }));
   const rows = db
-    .prepare(`SELECT (SELECT COALESCE(send_status, 'consumed') FROM sdk_messages
+    .prepare(`SELECT CASE WHEN m.seq IS NULL THEN NULL
+      ELSE COALESCE(m.send_status, 'consumed') END AS sendStatus, m.id AS messageDbId,
+      s.processing_state AS processing FROM json_each(?) ref
+      LEFT JOIN sessions s ON s.id = json_extract(ref.value, '$.sessionId')
+      LEFT JOIN sdk_messages m ON m.seq = (SELECT seq FROM sdk_messages
       INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
-      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS sendStatus,
-      s.processing_state AS processing FROM json_each(?) ref LEFT JOIN sessions s
-      ON s.id = json_extract(ref.value, '$.sessionId') ORDER BY CAST(ref.key AS INTEGER)`)
+      AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1)
+      ORDER BY CAST(ref.key AS INTEGER)`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
   return rows.map((row, i) => ({
     ...row,
@@ -68,6 +76,7 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
     const messageStatus = describeMessageStatus(item, facts[index]);
     return {
       ...item,
+      askOrigin: { ...item.askOrigin, messageDbId: facts[index].messageDbId },
       messageStatus,
       ...(messageStatus === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
     };
