@@ -418,6 +418,30 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.front?.model?.model).toBe('front-exact');
   });
 
+  test('front selection saves its own fallback list in order', async () => {
+    const fallback = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' as const };
+    const input = {
+      model: flash.id,
+      provider: flash.provider,
+      thinkingLevel: 'off' as const,
+      fallbacks: [fallback],
+    };
+    expect(await invoke('neo.front.model.set', input)).toMatchObject({
+      value: { ok: true, preferences: { model: flash.id, fallbacks: [fallback] } },
+    });
+    expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([fallback]);
+  });
+
+  test('a front save without fallbacks keeps the saved list, and [] clears it', async () => {
+    const fallback = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' as const };
+    const base = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await invoke('neo.front.model.set', { ...base, fallbacks: [fallback] });
+    await invoke('neo.front.model.set', { ...base, autoCompactPercent: 70 });
+    expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([fallback]);
+    await invoke('neo.front.model.set', { ...base, fallbacks: [] });
+    expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([]);
+  });
+
   test('front model selection requires the human even for the root Neo', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
     expect(
@@ -430,9 +454,13 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.front?.model).toBeUndefined();
   });
 
-  test('front model input rejects unrelated settings and fallback chains', async () => {
+  test('front model input rejects unrelated settings', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
-    for (const extra of [{ enabled: true }, { fallbacks: [input] }]) {
+    for (const extra of [
+      { enabled: true },
+      { fallbacks: [{ ...input, enabled: true }] },
+      { fallbacks: [{ ...input, autoCompactPercent: 60 }] },
+    ]) {
       expect(await invoke('neo.front.model.set', { ...input, ...extra })).toMatchObject({
         kind: 'failed',
         code: 'invalid_input',

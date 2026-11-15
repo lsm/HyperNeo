@@ -12,8 +12,9 @@ ephemeral port) and calls the operations through the MCP door as Neo. `work.send
 and `work.status` are counted stubs, so the proof shows what reaches the worker
 door, not delivery to a live worker.
 
-With a prerequisite running or reopened, `neo.todo.bind`, `neo.todo.continue` and
-`neo.todo.continue` on a failed step (its retry) each return `not_ready`, send
-nothing and leave the step as it was. Once the prerequisite is done, the same
-calls succeed; the retry queues its follow-up for the worker.
+With a prerequisite running or reopened, `neo.todo.add` with a bind target,
+`neo.todo.continue` and `neo.todo.continue` on a failed step (its retry) each
+return `not_ready`, send nothing and leave the steps as they were (the refused add
+records no todo). Once the prerequisite is done, the same calls succeed; the bound
+todo is doing and the retry queues its follow-up for the worker.
 `evidence/todo-prerequisite-gate.json` holds one row per call.

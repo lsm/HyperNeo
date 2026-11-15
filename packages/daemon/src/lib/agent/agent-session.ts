@@ -224,7 +224,9 @@ import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
-import { resolveFallbackChain } from './fallback-recovery.ts';
+import { sessionFallbackChain } from './fallback-recovery.ts';
+import { frontSessionId } from '../neo/front-mode.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
@@ -728,12 +730,14 @@ export class AgentSession
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
         const info = await getModelInfo(rawModel, 'global', provider).catch(() => null);
-        return resolveFallbackChain(
-          provider,
-          info?.id ?? rawModel,
-          gs.modelFallbackMap,
-          gs.fallbackModels,
-          info?.alias
+        const conversationId = new NeoRepository(this.db.getDatabase()).readConversationId();
+        return sessionFallbackChain(
+          {
+            sessionId: this.session.id,
+            frontSessionId: conversationId ? frontSessionId(conversationId) : null,
+          },
+          gs,
+          { provider, model: info?.id ?? rawModel, alias: info?.alias }
         );
       },
       isEntryAvailable: async (entry) => {

@@ -161,8 +161,8 @@ test('relay requires place, time and a words separator', () => {
     )
   ).toEqual({
     value: {
-      name: 'neo.question.relayAnswer',
-      input: { questionId: 'q', where: 'here', when: 'Monday', words: '  exact words  ' },
+      name: 'neo.question.answer',
+      input: { questionId: 'q', where: 'here', when: 'Monday', answer: '  exact words  ' },
     },
   });
   for (const args of [

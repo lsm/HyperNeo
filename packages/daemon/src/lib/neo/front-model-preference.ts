@@ -9,10 +9,15 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { ModelPreference, requireNeoPreferenceModel } from './model-preference.ts';
 import type { NeoService } from './service.ts';
 
-const Input = ModelPreference.extend({
+const InputEntry = ModelPreference.extend({
   autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
 }).strict();
-const Saved = ModelPreference.extend({ autoCompactPercent: z.number().int().optional() }).strict();
+const FallbackEntry = ModelPreference.strict();
+const Input = InputEntry.extend({ fallbacks: z.array(FallbackEntry).max(10).optional() }).strict();
+const SavedEntry = ModelPreference.extend({
+  autoCompactPercent: z.number().int().optional(),
+}).strict();
+const Saved = SavedEntry.extend({ fallbacks: z.array(FallbackEntry).optional() }).strict();
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({ ok: z.literal(true), preferences: Saved }),

@@ -24,9 +24,9 @@ Codex/Copilot clients are unverified. Unit adapter tests cover the other first-i
 boundaries and HyperNeo effort without request.effort.
 
 The same helper also enters the real daemon's production MCP operation registry:
-neo.ask.open and neo.todo.add create todos, then explicit neo.todo.bind must
-immediately store observed identity. Binding to a second synthetic Claude worker must re-read that
-worker's Sonnet/high identity. This exercises production todoControls wiring,
+neo.ask.open and neo.todo.add create todos with a bind target, which must
+immediately store observed identity. A bind target naming a second synthetic Claude worker must
+read that worker's Sonnet/high identity. This exercises production todoControls wiring,
 not just a runner supplied by a test harness. Failed/malformed status responses
 preserve the last observed pair; a successful status with absent fields still
 records explicit unknown (unit regression coverage).

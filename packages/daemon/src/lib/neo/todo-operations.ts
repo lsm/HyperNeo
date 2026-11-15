@@ -11,14 +11,14 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
-import { type Place, type WorkRef, WorkRefSchema } from '../drivers/types.ts';
+import { type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
-import { neoTodoOnHold, planNeoHoldCard } from './daemon-cards.ts';
+import { planNeoHoldCard } from './daemon-cards.ts';
 import { openHumanCard } from './human-card.ts';
-import { NeoTodoTargetSchema } from './driver-work.ts';
+import { NeoTodoAddTargetSchema, NeoTodoTargetSchema } from './driver-work.ts';
 import { neoUserFolder } from './folder.ts';
 import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import {
@@ -34,17 +34,16 @@ import {
   sameNeoTodoCheck,
 } from './todo-completion.ts';
 import {
-  NEO_TODO_CANCELLED_DEPENDENCY,
+  NEO_TODO_PREREQUISITE_UNFINISHED,
   neoTodoAfterRefusal,
-  neoTodoCancelledDependencies,
   neoTodoDependencyRefusal,
+  neoTodoFinished,
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
 import {
   NEO_TODO_NOT_APPROVED,
   neoTodoCancellationPending,
-  neoTodoPrerequisiteRefusal,
   neoTodoProceedPatch,
 } from './todo-start-gate.ts';
 
@@ -91,7 +90,7 @@ const TodoDraft = z.object({
   title: Text,
   check: TodoCheck,
   instruction: Text.nullable().default(null),
-  target: NeoTodoTargetSchema.optional(),
+  target: NeoTodoAddTargetSchema.optional(),
   named: z
     .record(z.string(), z.unknown())
     .refine((named) => !('desktopControl' in named), {
@@ -101,6 +100,12 @@ const TodoDraft = z.object({
     .nullable()
     .default(null),
   priority: TodoPriority.default('normal'),
+  producesFollowUp: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id]."
+    ),
   after: z
     .array(z.union([Text, z.number().int().min(0)]))
     .max(20)
@@ -113,11 +118,13 @@ function refineNeoTodoDraft(
   input: Pick<z.infer<typeof TodoDraft>, 'instruction' | 'target'>,
   context: z.RefinementCtx
 ): void {
-  if (!input.instruction !== !input.target)
-    context.addIssue({
-      code: 'custom',
-      message: 'A todo with an instruction needs a target, and a target needs an instruction.',
-    });
+  const message =
+    input.target?.verb === 'bind'
+      ? input.instruction &&
+        'A bind target attaches work that is already running; leave instruction out.'
+      : !input.instruction !== !input.target &&
+        'A todo with an instruction needs a target, and a target needs an instruction.';
+  if (message) context.addIssue({ code: 'custom', message });
 }
 
 export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
@@ -208,6 +215,31 @@ export function neoTodoPlaceRefusal(
   );
 }
 
+export const neoTodoBindRefusal = (
+  target: ResolvedNeoTodoDraft['target'],
+  family: readonly NeoTodo[],
+  dependsOn: readonly string[]
+) =>
+  target?.verb === 'bind' &&
+  !dependsOn.every((id) => neoTodoFinished(family.find((todo) => todo.id === id)))
+    ? NEO_TODO_PREREQUISITE_UNFINISHED
+    : null;
+
+export function recordNeoTodoTarget(
+  todos: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  todo: NeoTodo,
+  target: NonNullable<ResolvedNeoTodoDraft['target']>,
+  now: number
+): NeoTodo {
+  if (target.verb !== 'bind') {
+    sessions.create(todo.id, target);
+    return todo;
+  }
+  sessions.bind(todo.id, target.ref, now);
+  return todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
+}
+
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -260,79 +292,16 @@ export async function recordNeoTodo(
   );
   if (typeof dependsOn === 'string')
     return { ok: false, reason: neoTodoDependencyRefusal(dependsOn) };
+  const unfinished = neoTodoBindRefusal(draft.target, todos.listFamilyTodos(ask.id), dependsOn);
+  if (unfinished) return { ok: false, reason: unfinished };
   const now = Date.now();
-  const added = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt: now }, now, repo);
-
-  if (draft.target) sessions.create(added.id, draft.target);
+  const inserted = todos.addTodo(id, ask.id, { ...draft, dependsOn, approvedAt: now }, now, repo);
+  const added = draft.target
+    ? recordNeoTodoTarget(todos, sessions, inserted, draft.target, now)
+    : inserted;
   if (added.instruction) await controls.advance();
   return { ok: true, todo: todos.getTodo(added.id) ?? added, ...records };
 }
-
-const bindNeoTodo = (superpipe({})('neo.todo.bind-worker') as PipelineAPI)
-  .input(['todos', 'sessions', 'todo', 'ref'])
-  .pipe(
-    (todos: NeoAskTodoRepository, todo: NeoTodo): Gate<NeoTodo> =>
-      ['done', 'removed'].includes(todo.state)
-        ? fail(`todo_settled: cannot bind a ${todo.state} todo.`)
-        : todo.blockedBy === 'held' || neoTodoOnHold(todo, todos.todoCards(todo))
-          ? fail('todo_held: the human is holding this todo; release it first.')
-          : todo.instruction && todo.approvedAt === null
-            ? fail(NEO_TODO_NOT_APPROVED)
-            : todo.startedAt === null &&
-                neoTodoCancelledDependencies(todos.listFamilyTodos(todo.askId), todo.id).length
-              ? fail(NEO_TODO_CANCELLED_DEPENDENCY)
-              : { value: todo },
-    ['todos', 'todo'],
-    'result:bound'
-  )
-  .pipe(
-    (todos: NeoAskTodoRepository, bound: NeoTodo): Gate<NeoTodo> => {
-      const waiting = neoTodoPrerequisiteRefusal(bound, todos.listFamilyTodos(bound.askId));
-      return waiting ? fail(waiting) : { value: bound };
-    },
-    ['todos', 'bound'],
-    'result:bound'
-  )
-  .pipe(
-    (
-      todos: NeoAskTodoRepository,
-      sessions: NeoTodoSessionRepository,
-      todo: NeoTodo,
-      ref: WorkRef
-    ) => {
-      const now = Date.now();
-      sessions.bind(todo.id, ref, now);
-      return {
-        ok: true as const,
-        todo: todos.updateTodo(
-          todo,
-          {
-            state: 'doing',
-            startedAt: todo.startedAt ?? now,
-            approvedAt: todo.approvedAt ?? now,
-            finishedAt: null,
-            reason: null,
-            report: null,
-            evidence: null,
-            blockedBy: null,
-            blockedReason: null,
-            nextAction: null,
-          },
-          now
-        ),
-      };
-    },
-    ['todos', 'sessions', 'bound', 'ref'],
-    'bound'
-  )
-  .end('bound') as (
-  todos: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
-  todo: NeoTodo,
-  ref: WorkRef
-) => { ok: true; todo: NeoTodo } | Rejection;
-
-const Bind = z.object({ todoId: Text, ref: WorkRefSchema });
 
 const Edit = z.object({
   todoId: Text,
@@ -408,6 +377,7 @@ export const NeoTodoSchema = z.object({
   addedAfterStart: z.boolean(),
   approvedAt: z.number().nullable(),
   approvalQuestionId: z.string().nullable(),
+  producesFollowUp: z.literal(true).optional(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
   artifacts: z.array(ArtifactRefSchema).readonly().optional(),
@@ -732,44 +702,6 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const bind = owned(superpipe({})('neo.todo.bind') as PipelineAPI)
-    .pipe(
-      async (todo: NeoTodo, input: z.infer<typeof Bind>) => {
-        const resolved = await controls.resolveTarget(input.ref);
-        if ('reason' in resolved) return resolved.reason;
-        const latest = todos.getTodo(todo.id);
-        const current = requireNeoOpenTodo(latest, latest ? todos.getAsk(latest.askId) : null);
-        if ('reason' in current) return current.reason;
-        const refused = neoTodoPlaceRefusal(
-          { ...current.value, target: { verb: 'send', ref: resolved.value } },
-          packs(),
-          {
-            ask: todos.getAsk(current.value.askId),
-            todo: current.value,
-            workerRemotes: resolved.workerRemotes,
-          }
-        );
-        if (refused) return { ok: false as const, reason: refused };
-        const previous = sessions.readRef(todo.id);
-        const result = bindNeoTodo(todos, sessions, current.value, resolved.value);
-        const ref = resolved.value;
-        if (
-          result.ok &&
-          (previous?.id !== ref.id ||
-            previous.adapter !== ref.adapter ||
-            previous.daemon !== ref.daemon)
-        )
-          await controls.refreshIdentity?.(todo.id);
-        return result;
-      },
-      ['outcome', 'input'],
-      'outcome'
-    )
-    .endAsync('outcome') as (
-    input: z.infer<typeof Bind>,
-    caller: OperationCaller
-  ) => Promise<TodoReceipt | Rejection>;
-
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
@@ -899,14 +831,6 @@ export function createNeoTodoOperations(
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await add(input, caller)),
-    }),
-    defineOperation({
-      name: 'neo.todo.bind',
-      description: neoToolDescription('neo.todo.bind'),
-      inputSchema: Bind,
-      resultSchema: TodoResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await bind(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.edit',

@@ -72,8 +72,7 @@ try {
   const again = await createNeoWorkerQuestionWriter(reopenedStore, new NeoTodoSessionRepository(app.db.getDatabase()), () => 'zh-Hans', async () => source)(ref, report);
   assert(again.ok, JSON.stringify(again));
   const replacementRef = { adapter: 'hyperneo', id: 'synthetic-worker-b' };
-  const rebound = await rpc('neo.todo.bind', { todoId: todo.id, ref: replacementRef });
-  assert.equal(rebound.ok, true, JSON.stringify(rebound));
+  new NeoTodoSessionRepository(app.db.getDatabase()).bind(todo.id, replacementRef, Date.now());
   const reportedAgain = await createNeoWorkerQuestionWriter(reopenedStore, new NeoTodoSessionRepository(app.db.getDatabase()), () => 'zh-Hans', async () => ({ ...source, ...replacementRef }))(replacementRef, report);
   assert(reportedAgain.ok, JSON.stringify(reportedAgain));
   assert.equal(reportedAgain.question.id, again.question.id);

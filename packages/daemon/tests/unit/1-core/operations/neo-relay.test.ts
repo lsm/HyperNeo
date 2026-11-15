@@ -1,9 +1,11 @@
+import { readCodingTodoWorker } from '../../../../src/lib/neo/packs/coding/worker-read.ts';
+import { codingProjectIdentity } from '../../../../src/lib/neo/packs/coding/project-cleanup.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { globalSettingsWrites } from '../../../../src/storage/repositories/global-settings-writes.ts';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
-import { createNeoRelayOperations } from '../../../../src/lib/neo/relay-answer.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { planNeoRelayAnswer } from '../../../../src/lib/neo/relay-plan.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
@@ -25,17 +27,28 @@ const input = {
   when: 'Monday evening',
   words: '  Keep these words.\nExactly.  ',
 };
+const answer = (
+  patch: Partial<typeof input> = {},
+  { words, ...rest } = { ...input, ...patch }
+) => ({ ...rest, answer: words });
 const configured = [{ sender, name: 'Synthetic relay' }];
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: ReturnType<typeof createNeoService>;
 let notes: string[];
 const door = () => {
-  const call = planSessionDoorCall({ sender, name: 'neo.question.relayAnswer', input });
+  const call = planSessionDoorCall({ sender, name: 'neo.question.answer', input: answer() });
   if ('reason' in call) throw new Error(call.reason);
   return call.value.caller;
 };
 const invoke = (name: string, value: unknown, caller = door()) =>
-  invokeOperation(createOperationRegistry(createNeoRelayOperations(service)), name, value, caller);
+  invokeOperation(
+    createOperationRegistry(
+      createNeoOperations(service, codingProjectIdentity, readCodingTodoWorker)
+    ),
+    name,
+    value,
+    caller
+  );
 function card(patch: Partial<NeoQuestion> = {}) {
   return service.todos.askQuestion(
     'card',
@@ -85,7 +98,7 @@ const configure = () => invoke('neo.relaySenders.set', { relaySenders: configure
 
 test('an unlisted sender is refused without changes', async () => {
   card();
-  expect(await invoke('neo.question.relayAnswer', input)).toMatchObject({
+  expect(await invoke('neo.question.answer', answer())).toMatchObject({
     value: { ok: false, reason: expect.stringContaining('sender_not_allowed') },
   });
   expect(service.todos.getQuestion('card')?.state).toBe('open');
@@ -94,7 +107,7 @@ test('an unlisted sender is refused without changes', async () => {
 test('an allowed relay uses the chat answer write and persists exact words and provenance', async () => {
   card();
   await configure();
-  expect(await invoke('neo.question.relayAnswer', input)).toMatchObject({ value: { ok: true } });
+  expect(await invoke('neo.question.answer', answer())).toMatchObject({ value: { ok: true } });
   const question = service.todos.getQuestion('card');
   expect(question).toMatchObject({
     state: 'answered',
@@ -117,14 +130,14 @@ test('an allowed relay uses the chat answer write and persists exact words and p
     .content;
   expect(note).toStartWith('Relayed by Synthetic relay, Monday evening, a local discussion:');
   expect(note).toContain(input.words);
-  expect(await invoke('neo.question.relayAnswer', input)).toMatchObject({ value: { ok: false } });
+  expect(await invoke('neo.question.answer', answer())).toMatchObject({ value: { ok: false } });
   expect(service.todos.getQuestion('card')).toEqual(question);
 });
 test('a choice-letter relay maps the semantic answer and retains the exact words', async () => {
   card({ kind: 'choice', options: ['Alpha', 'Beta'] });
   await configure();
   const words = '  pick B  ';
-  expect(await invoke('neo.question.relayAnswer', { ...input, words })).toMatchObject({
+  expect(await invoke('neo.question.answer', answer({ words }))).toMatchObject({
     value: { ok: true },
   });
   const question = service.todos.getQuestion('card');
@@ -192,10 +205,7 @@ test.each(['rule', 'home', 'start', 'preference'])(
       .all();
     await configure();
     expect(
-      await invoke('neo.question.relayAnswer', {
-        ...input,
-        words: kind === 'start' ? 'held' : 'yes',
-      })
+      await invoke('neo.question.answer', answer({ words: kind === 'start' ? 'held' : 'yes' }))
     ).toMatchObject({
       value: { ok: false },
     });
@@ -223,7 +233,7 @@ test.each(['where', 'when', 'words'])('missing %s refuses relay', async (field) 
   });
   expect(plan).toHaveProperty('reason');
   await configure();
-  expect(await invoke('neo.question.relayAnswer', { ...input, [field]: '' })).toMatchObject({
+  expect(await invoke('neo.question.answer', answer({ [field]: '' }))).toMatchObject({
     value: { ok: false },
   });
   expect(service.todos.getQuestion('card')?.state).toBe('open');
@@ -245,14 +255,12 @@ test('only a local RPC user can set relay senders', async () => {
   });
   expect(db.getGlobalSettings().neo?.relaySenders).toEqual(configured);
 });
-test('MCP and RPC cannot relay, and ordinary session messages remain task input', async () => {
+test('Neo over MCP cannot relay, and ordinary session messages remain task input', async () => {
   card();
   await configure();
-  for (const caller of [human, { source: 'mcp', sessionId: sender, role: 'neo' } as const]) {
-    expect(await invoke('neo.question.relayAnswer', input, caller)).toMatchObject({
-      value: { ok: false },
-    });
-  }
+  expect(
+    await invoke('neo.question.answer', answer(), { source: 'mcp', sessionId: sender, role: 'neo' })
+  ).toMatchObject({ kind: 'failed', code: 'forbidden' });
   const stamped = await stampSessionMessage(
     {
       sessionId: 'neo:relay-test',
@@ -285,8 +293,8 @@ test('concurrent relays commit one answer and one durable notification', async (
   card();
   await configure();
   const results = await Promise.all([
-    invoke('neo.question.relayAnswer', input),
-    invoke('neo.question.relayAnswer', { ...input, words: 'Other words' }),
+    invoke('neo.question.answer', answer()),
+    invoke('neo.question.answer', answer({ words: 'Other words' })),
   ]);
   expect(
     results.filter((r) => r.kind === 'completed' && (r.value as { ok: boolean }).ok)
@@ -301,7 +309,7 @@ test('a failed notification enqueue rolls back the answer and provenance', async
   db.getDatabase().exec(
     "CREATE TRIGGER fail_relay_queue BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'synthetic_queue_failure'); END"
   );
-  expect(await invoke('neo.question.relayAnswer', input)).toMatchObject({ kind: 'failed' });
+  expect(await invoke('neo.question.answer', answer())).toMatchObject({ kind: 'failed' });
   expect(service.todos.getQuestion('card')).toMatchObject({ state: 'open', answer: null });
   expect(service.todos.getQuestion('card')?.answerProvenance).toBeUndefined();
 });
