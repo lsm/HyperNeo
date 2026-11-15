@@ -69,7 +69,7 @@ type Decision =
 - whether the human is the one who must act: `neoTodoAwaitsHuman`;
 - the latest turn report from the same worker.
 
-**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. `cleanup()` deletes dead rows only after its retention cutoff, which is far longer than the sweep interval. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
+**Raising is durable.** A producer raises an event by enqueueing one `neo.attention.admit` job on the existing job queue, in the same write that records its own state change. The job processor runs admission. When a fact read fails, the job fails and is retried with the queue's existing exponential backoff (`JobQueueRepository.fail`); a job that runs out of retries is marked `dead`, and the 5-minute sweep re-enqueues dead admit jobs. `cleanup()` deletes old dead rows of every queue, so it skips the admit queue: a dead admit job stays until a later admission succeeds and completes it. That holds even after downtime longer than the retention cutoff. So a first admission that fails is never lost, even across a restart, and the sweep does not need to rediscover producer-only kinds.
 
 **Pipeline `neo.attention.admit`.** It is one superpipe, with the effects at its edges:
 1. `read`: look up the kind and call `kind.read(subject, event)`, plus `Known`.
@@ -206,7 +206,7 @@ These are slices in the `AGENTS.md` rungs, each one about 100–250 production l
    - Exported, not called.
 2. **Build: store and pipelines.**
    - Contents: the `neo_attention_items` migration, its repository on the gateway, and the `neo.attention.admit` and `neo.attention.sweep` superpipes with `state = 'shadow'` support.
-   - Tests: the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
+   - Tests: a dead admit job older than the cleanup retention survives cleanup and is delivered once by the next sweep; the item row and its outbox row commit together or not at all; a retried job writes no second outbox row; a repeat writes a new one; the first read fails before any row exists, the daemon restarts, and the notice is delivered once.
    - Reachable through the sweep in shadow only.
 3. **Wire (shadow): core todo notes.** One call site: `tell` in `service.ts` (`createNeoTodoRunner`), which every `todo-runner.ts` note goes through.
    - `todo.follow_up_missing` lands before this rung, in core, without the pipeline. Its parts: a `producesFollowUp` flag on `neo_todos` that Neo sets on `neo.todo.add`; a pure check over the ask's todos; a refusal of `done` in `neo.ask.settle` and in auto-settle, rechecked at commit as HyperNeo #10665 already does; and a wake from the existing 5-minute pack sweep.
