@@ -1976,7 +1976,8 @@ export class QueryRunner {
             handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
               errorMessage,
               this._lastConsumedUserMessage,
-              retrySignal.rateLimitHint ?? undefined,
+              retrySignal.rateLimitHint ??
+                (decision.route.hint.hold ? decision.route.hint : undefined),
               queryGeneration
             ));
           } catch (handoffError) {

@@ -34,6 +34,7 @@ export interface LimitRetryHint {
   resetAtMs?: number | null;
   kind?: LimitErrorKind | null;
   billingTerminal?: boolean | null;
+  hold?: 'overloaded';
 }
 
 const GLM_LIMIT_CODE_BRACKETS = ['[1305]', '[1308]', '[1313]'];

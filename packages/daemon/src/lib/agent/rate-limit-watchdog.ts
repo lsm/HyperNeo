@@ -208,6 +208,10 @@ export class RateLimitWatchdog {
     return this.persistedCooldownArm;
   }
 
+  private holdReason(): { reason?: 'overloaded' } {
+    return this.lastHint?.hold ? { reason: this.lastHint.hold } : {};
+  }
+
   private querySuperseded(queryGeneration?: number): boolean {
     return (
       queryGeneration !== undefined &&
@@ -274,7 +278,7 @@ export class RateLimitWatchdog {
       this.chain = chain;
     }
 
-    if (this.chain.length > 0) {
+    if (this.chain.length > 0 && this.lastHint?.hold !== 'overloaded') {
       const availability = new Map<FallbackModelEntry, boolean>();
       const canonicalKey = new Map<FallbackModelEntry, string>();
       await Promise.all(
@@ -511,7 +515,9 @@ export class RateLimitWatchdog {
       this.logger.info('Cooldown scheduling aborted: the originating query was superseded.');
       return false;
     }
-    const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
+    const kind =
+      this.lastHint?.kind ??
+      (this.lastHint?.hold ? 'rate_limit' : classifyLimitKind(errorMessage, decision));
     this.limitKind = kind;
 
     const retryAt = decision.retryAtMs;
@@ -528,6 +534,7 @@ export class RateLimitWatchdog {
         retryAt,
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
+        ...this.holdReason(),
       },
       queryGeneration
     );
@@ -671,6 +678,7 @@ export class RateLimitWatchdog {
             messageId: this.lastUserMessage?.uuid,
             exhaustedCycles: this.exhaustedRetryCycles,
             manualRetry: true,
+            ...this.holdReason(),
           },
           queryGeneration
         )
@@ -690,6 +698,7 @@ export class RateLimitWatchdog {
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
           messageId: this.lastUserMessage?.uuid,
           exhaustedCycles: this.exhaustedRetryCycles,
+          ...this.holdReason(),
         },
         queryGeneration
       );

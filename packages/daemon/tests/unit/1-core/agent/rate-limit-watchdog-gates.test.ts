@@ -53,6 +53,20 @@ describe('rate-limit-watchdog-gates', () => {
       expect(trip.decision.retryAtMs).toBe(reset + RESET_BUFFER_MS);
     });
 
+    it('an overloaded hold retries five minutes ahead without charging, however often it repeats', () => {
+      const trip = asCooldownTrip(
+        decideRateLimitTrip({
+          hint: { hold: 'overloaded' },
+          errorMessage: '529 overloaded',
+          retryCount: 3,
+          maxAutoRetries: 3,
+          now: NOW,
+        })
+      );
+      expect(trip.charge).toBe(false);
+      expect(trip.decision.retryAtMs).toBe(NOW + 5 * 60 * 1000);
+    });
+
     it('a stale hinted reset falls back to the ladder and charges the budget', () => {
       const trip = asCooldownTrip(
         decideRateLimitTrip({
