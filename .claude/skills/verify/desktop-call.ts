@@ -16,7 +16,14 @@ mkdirSync(join(run, 'data/desktop'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
 const { getConfig } = await import('../../../packages/daemon/src/config.ts');
-const app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }) }, disableWorktrees: true, disableGoalProcessing: true, verbose: false });
+const app = await createDaemonApp({
+  config: {
+    ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }),
+    disableWorktrees: true,
+    disableGoalProcessing: true,
+  },
+  verbose: false,
+});
 assert(![8399, 8499].includes(app.server.port));
 const requests: Record<string, unknown>[] = [];
 const host = createServer(socket => {
@@ -30,6 +37,7 @@ const host = createServer(socket => {
   });
 });
 try {
+  await app.jobProcessor.stop();
   host.listen(join(run, 'data/desktop/control.sock'));
   await once(host, 'listening');
   const worker = await app.sessionManager.createSession({ workspacePath: run, title: 'Synthetic desktop worker' });

@@ -3,7 +3,8 @@
 Run this journey on a build host with the pinned Bun from SKILL.md. It starts an
 isolated daemon on a random port with its own HOME and database, then calls the
 real session's hyperneo-operations MCP server against a fake desktop host. It
-uses no model provider and sends no real GUI input.
+uses no model provider and sends no real GUI input. Worktrees are disabled in
+the daemon config, and the job processor is stopped before fixture seeding.
 
 ```bash
 RUN=$(mktemp -d /tmp/hyperneo-desktop-call.XXXXXX)
