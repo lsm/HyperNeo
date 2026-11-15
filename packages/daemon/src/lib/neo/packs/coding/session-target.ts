@@ -35,7 +35,11 @@ async function sessionState(session: Pooled, status: Status) {
     : live.data.busy || LIVE_BUSY.has(live.data.status)
       ? 'busy'
       : 'available';
-  return { ref: session.ref, name: session.name, state: session.held ? ('busy' as const) : state };
+  return {
+    ref: session.ref,
+    name: session.name,
+    state: session.held && state !== 'unknown' ? ('busy' as const) : state,
+  };
 }
 
 const prUrl = (todo: NeoTodo) => {
@@ -78,8 +82,10 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     'plan'
   )
   .pipe(
-    async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo) => {
-      const binds = (plan.verb === 'send' && plan.bind) || (plan.verb === 'start' && !facts?.owner);
+    async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
+      const binds =
+        (plan.verb === 'send' && plan.bind) ||
+        (plan.verb === 'start' && !facts?.owner && target.verb === 'start');
       if (!facts || facts.strategy !== 'long_lived' || !binds) return true;
       const owner = await gatewayFor(db).call(codingSessionAssignmentWrites, 'reserveFeature', {
         repo: facts.repo,
@@ -89,7 +95,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       });
       return owner.todoId === todo.id;
     },
-    ['db', 'facts', 'plan', 'todo'],
+    ['db', 'facts', 'plan', 'todo', 'target'],
     'reserved'
   )
   .pipe(
