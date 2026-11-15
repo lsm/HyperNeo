@@ -85,6 +85,19 @@ describe('voiceRecorderStore', () => {
     }
   });
 
+  it('finishes the clip for its owner when the mic track ends mid-recording', async () => {
+    const track = { stop: vi.fn(), onended: null };
+    navigator.mediaDevices.getUserMedia.mockResolvedValueOnce({ getTracks: () => [track] });
+    await voiceRecorderStore.start('owner-a', 's1');
+    track.onended?.();
+    expect(voiceRecorderStore.isRecording.value).toBe(false);
+    expect(voiceRecorderStore.durationLimitHit.value).toBe(true);
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-a');
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64).toBeTruthy();
+    expect(recording.hitDurationLimit).toBe(false);
+  });
+
   it('reports secure-context support from the environment', () => {
     expect(isVoiceRecordingSupported()).toBe(true);
   });
