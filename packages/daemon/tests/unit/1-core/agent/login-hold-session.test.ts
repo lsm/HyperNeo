@@ -324,6 +324,22 @@ describe('login hold', () => {
     expect(h.resume).toHaveBeenCalledTimes(0);
   });
 
+  it('a rejection from before a credential write does not mark the provider for sign-in', async () => {
+    const h = await harness();
+    h.setOutcome('skipped');
+    const prompt = { uuid: 'human-login', content: 'do the thing' };
+    const epochBeforeWrite = h.agent.loginCredentialEpoch();
+
+    h.setNeedsLogin('anthropic', null);
+    for (const listener of h.writes) listener('anthropic');
+    await new Promise((done) => setTimeout(done, 0));
+    expect(h.agent.loginCredentialEpoch()).toBeGreaterThan(epochBeforeWrite);
+
+    expect(await h.agent.onLoginRejected(prompt, epochBeforeWrite)).toBe('retry');
+    expect(h.agent.getProcessingState().status).not.toBe('rate_limit_cooldown');
+    await h.agent.cleanup();
+  });
+
   it('a second rejection of the same prompt after a refresh asks for sign-in', async () => {
     const h = await harness();
     h.setOutcome('refreshed');
