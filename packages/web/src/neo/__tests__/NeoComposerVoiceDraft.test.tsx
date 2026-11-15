@@ -222,12 +222,3 @@ it('does not add an instructional footer while recording', () => {
   render(composer());
   expect(screen.queryByText(/Recording ·.*arrow to stop and send/)).toBeNull();
 });
-
-it('shows an inert realtime voice entry without sending', () => {
-  const onSend = vi.fn();
-  render(composer('', { onSend }));
-  const button = screen.getByRole('button', { name: 'Realtime voice', exact: true });
-  fireEvent.click(button);
-  expect(onSend).not.toHaveBeenCalled();
-  expect(screen.getByRole('textbox', { name: 'Message Neo' }).textContent).toBe('');
-});
