@@ -4,7 +4,7 @@ import type { NeoPackPreferenceDeclaration } from '../../pack-contract.ts';
 import { listPackPreferences } from '../../preference-operations.ts';
 
 const STRATEGIES = ['long_lived', 'per_task', 'per_pr'] as const;
-type Strategy = (typeof STRATEGIES)[number];
+export type CodingSessionStrategy = (typeof STRATEGIES)[number];
 
 export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Session strategy', 'zh-Hans': '会话策略' },
@@ -20,7 +20,7 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
 };
 
 /** @public */
-export function codingSessionStrategy(db: Database, repo: string): Strategy {
+export function codingSessionStrategy(db: Database, repo: string): CodingSessionStrategy {
   const saved = listPackPreferences(db, 'coding').filter((row) => row.key === 'sessionStrategy');
   const value = (
     saved.find(
@@ -51,7 +51,7 @@ function workTypeName(workType: string, pool: readonly Session[]): string {
 
 /** @public */
 export function planCodingSessionDispatch(input: {
-  strategy: Strategy;
+  strategy: CodingSessionStrategy;
   workType: string;
   assigned?: Session;
   pool: readonly Session[];
