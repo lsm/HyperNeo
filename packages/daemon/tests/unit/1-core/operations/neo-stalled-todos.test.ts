@@ -349,9 +349,9 @@ test('environment blockers remind Neo with the reason while needs-human cards st
 
 test.each([
   'covered',
-  'start-covered',
-  'environment-start',
-  'other-start',
+  'listed-covered',
+  'environment-listed',
+  'other-listed',
   'ask-wide',
   'unrelated',
   'closed',
@@ -360,7 +360,7 @@ test.each([
   'new-owner',
 ] as const)('todo-linked cards preserve actionable reminder delivery: %s', async (scenario) => {
   add('covered');
-  if (scenario === 'environment-start')
+  if (scenario === 'environment-listed')
     service.todos.updateTodo(
       service.todos.getTodo('covered')!,
       { blockedBy: 'environment', blockedReason: 'Synthetic network failure' },
@@ -371,16 +371,17 @@ test.each([
     'ask',
     {
       text: 'Choose the next action',
-      kind: scenario.includes('start') ? 'start' : 'reply',
+      kind: 'reply',
       options: null,
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: scenario.includes('start')
-        ? [scenario === 'other-start' ? 'busy' : 'covered']
-        : null,
+      startTodos: null,
+      ...(scenario.includes('listed')
+        ? { todos: [scenario === 'other-listed' ? 'busy' : 'covered'] }
+        : {}),
       todoId:
-        scenario === 'ask-wide' || scenario.includes('start')
+        scenario === 'ask-wide' || scenario.includes('listed')
           ? null
           : scenario === 'unrelated'
             ? 'busy'

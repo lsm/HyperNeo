@@ -238,8 +238,7 @@ try {
     assert.equal(starts(), 1);
     await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
     const unapproved = seedUnapproved(one.askId);
-    app!.db.getDatabase().prepare("UPDATE neo_todos SET state = 'blocked', blocked_by = 'question', approved_at = NULL WHERE id = ?").run(unapproved.id);
-    store.askQuestion(crypto.randomUUID(), one.askId, { text: 'Start "unapproved"?', kind: 'start', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: [unapproved.id] }, Date.now());
+    app!.db.getDatabase().prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(unapproved.id);
     const unrelated = reply(one.askId);
     assert.equal((await rpc('neo.question.answer', { questionId: unrelated, answer: 'The next one' })).ok, true);
     await refresh();
@@ -247,7 +246,7 @@ try {
     evidence.afterUnrelatedCard = afterUnrelated;
     assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
     assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
-    assert.deepEqual(open(afterUnrelated).map((q: { kind: string }) => q.kind), ['start']);
+    assert.deepEqual(open(afterUnrelated), []);
     assert.equal(starts(), 1);
     await complete('chain-1');
     await dispatched(2, 'the second step');
@@ -259,7 +258,7 @@ try {
     evidence.chainFinished = finished;
     assert.equal(state(finished, three.id), 'doing');
     assert.equal(starts(), 3);
-    assert.deepEqual(open(finished).map((q: { kind: string }) => q.kind), ['start']);
+    assert.deepEqual(open(finished), []);
     assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
     assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
     evidence.verified = true;

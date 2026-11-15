@@ -4,9 +4,9 @@
     It refuses 8399 and a busy port, starts a real isolated daemon in test mode
     with an empty environment and its own HOME/DB, and registers a synthetic
     Claude Code peer on a private Unix socket. No provider, mock-model port or
-    GUI is needed. The script seeds only this run's ask/todos/start questions,
-    then answers the start questions through real RPC so the todo runner sends
-    its instructions through the native Claude inbox transport.
+    GUI is needed. The script seeds only this run's ask, approved todos and one
+    choice card holding each, then answers the cards through real RPC so the
+    todo runner sends its instructions through the native Claude inbox transport.
 
     End state: `$RUN/observed.json` records the worker's actual incoming frames.
     The first instruction includes `hyperneo send <the actual root Neo id> --kind <kind>

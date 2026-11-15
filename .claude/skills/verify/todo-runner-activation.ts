@@ -47,7 +47,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
     return {kind:'completed',value:{ok:true,value:{delivered:true,ref:(input.ref ?? {adapter:'hyperneo',id:'synthetic-worker'})}}};
   }
 });
-const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'start',text:'Start?',startTodos:[todoId],options:null,multiple:false,yesLabel:null,noLabel:null},2);
+const startCard=(id:string,todoId:string,askId='ask')=>store.askQuestion(id,askId,{kind:'reply',text:'Ready?',todoId,startTodos:null,options:null,multiple:false,yesLabel:null,noLabel:null},2);
 const seed=(id:string,askId='ask')=>{
   store.addTodo(id,askId,{ approvedAt: 1, dependsOn: [],title:id,doneWhen:'Observed',check:null,instruction:'Continue work',named:null},1);
   sessions.create(id,{verb:'send',ref:{adapter:'hyperneo',id:'old-worker'}});
@@ -99,7 +99,8 @@ try {
   result.fullReport={bytes:Buffer.byteLength(text),sha256:createHash('sha256').update(text).digest('hex')};
   ask('quiet'); seed('stable','quiet');
   prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
-  startCard('stale','stable','quiet');
+  seed('gone','quiet'); prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+  startCard('stale','gone','quiet');
   const prior=effects.length;
   await runner.recompute(store.getTodo('stable')!);
   assert.deepEqual(effects.slice(prior),[{name:'changed'}]);

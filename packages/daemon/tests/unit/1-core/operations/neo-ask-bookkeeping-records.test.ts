@@ -94,14 +94,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
     ),
-    ...createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => {
-        calls.push('start');
-        return { ok: true };
-      }
-    ),
+    ...createNeoQuestionOperations(store, async () => {}),
   ]);
   const audits: unknown[] = [];
   const handler = createOperationMcpHandler(

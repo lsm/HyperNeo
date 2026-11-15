@@ -863,7 +863,6 @@ export function createNeoOperations(
           ask.sessionId,
           'event'
         ),
-      (todoId) => service.todoRunner.start(todoId),
       (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id),
       createArtifactRefReader(() => service.db.getDatabase()),
       (ref) => service.readQuestionSource(ref),

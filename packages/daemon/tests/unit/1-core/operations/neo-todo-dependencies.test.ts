@@ -231,48 +231,6 @@ describe('todo dependencies', () => {
     }
   });
 
-  test('a card records its identity on check-only steps it approves', async () => {
-    const { db, store, invoke, step } = setup();
-    try {
-      const opened = await invoke('neo.ask.open', {
-        title: 'Card approval',
-        request: 'Do the work and check it.',
-        todos: [
-          {
-            ...step('Work'),
-            instruction: 'Do work.',
-            target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } },
-          },
-          step('Check'),
-        ],
-      });
-      const [work, check] = opened.todos;
-      for (const todo of [work, check]) store.updateTodo(todo, { approvedAt: null }, 1);
-      const question = store.askQuestion(
-        'start-card',
-        work.askId,
-        {
-          text: 'Start the work?',
-          kind: 'start',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: [work.id],
-        },
-        2
-      );
-      expect(store.getTodo(check.id)?.approvalQuestionId).toBeNull();
-      store.answerQuestion(question, [work.id], 'button', 42);
-      expect(store.getTodo(check.id)).toMatchObject({
-        approvedAt: 42,
-        approvalQuestionId: question.id,
-      });
-    } finally {
-      db.close();
-    }
-  });
-
   test('a repeated plan approves a recorded step that still waits, without starting it', async () => {
     const { db, store, invoke, step } = setup();
     try {

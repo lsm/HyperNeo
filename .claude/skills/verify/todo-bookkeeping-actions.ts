@@ -41,7 +41,6 @@ for (const phase of ['initial', 'reopen']) {
     if (phase === 'initial') {
       const ask = store.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: null, title: 'Synthetic ask', request: 'Record bookkeeping', createdAt: 1 });
       const todo = store.addTodo('waiting', ask.id, { title: 'Waiting work', doneWhen: 'Observed result', instruction: 'Work', check: null, named: null }, 1);
-      store.joinStartQuestion(todo, 2);
       const before = store.getTodo(todo.id), cards = store.listQuestions(ask.id);
       await call('neo.todo.continue', { todoId: todo.id, message: 'Follow up' }, 'not_started');
       assert.deepEqual(store.getTodo(todo.id), before); assert.deepEqual(store.listQuestions(ask.id), cards);
@@ -58,4 +57,4 @@ for (const phase of ['initial', 'reopen']) {
     evidence.push({ phase, audits, todos: store.listTodos('ask'), questions: store.listQuestions('ask') });
   } finally { await gatewayFor(db).close(); db.close(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
-console.log('PASS: tool-visible no-op/removal records, untouched start card, and five accepted audit records survive DB reopen.');
+console.log('PASS: tool-visible no-op/removal records, untouched cards, and five accepted audit records survive DB reopen.');

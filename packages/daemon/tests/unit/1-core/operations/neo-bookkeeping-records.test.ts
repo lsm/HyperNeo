@@ -88,14 +88,7 @@ function setup() {
       undefined,
       { gateway: gatewayFor(db), changed: () => {} }
     ),
-    ...createNeoQuestionOperations(
-      store,
-      async () => {},
-      async () => {
-        calls.push('start');
-        return { ok: true };
-      }
-    ),
+    ...createNeoQuestionOperations(store, async () => {}),
   ]);
   const audits: unknown[] = [];
   const handler = createOperationMcpHandler(
@@ -140,11 +133,10 @@ describe('todo and ask bookkeeping records through MCP', () => {
   });
 
   test.each(['neo.todo.continue'])(
-    '%s on unstarted work records without dispatch or start-card approval',
+    '%s on unstarted work records without dispatch',
     async (name) => {
       const h = setup();
       try {
-        h.store.joinStartQuestion(h.todo, 2);
         const before = h.store.getTodo(h.todo.id),
           questions = h.store.listQuestions(h.ask.id);
         expect(await h.call(name, { todoId: h.todo.id, message: 'Continue' })).toMatchObject({

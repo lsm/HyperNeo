@@ -48,11 +48,7 @@ const call = async (input: unknown, caller = owner, name = 'neo.home.github') =>
         },
         home
       ),
-      ...createNeoQuestionOperations(
-        todos,
-        async () => {},
-        async () => ({ ok: true })
-      ),
+      ...createNeoQuestionOperations(todos, async () => {}),
     ]),
     name,
     input,

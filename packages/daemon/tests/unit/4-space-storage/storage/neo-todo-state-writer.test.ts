@@ -53,13 +53,14 @@ function fixture(state: NeoTodo['state'] = 'doing', humanBlocked = false, askClo
     'stale-start',
     'ask',
     {
-      text: 'Start first?',
-      kind: 'start',
+      text: 'Ready for first?',
+      kind: 'reply',
+      todoId: 'first',
       options: null,
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: ['first'],
+      startTodos: null,
     },
     3
   );

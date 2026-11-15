@@ -60,11 +60,9 @@ async function fixture(path = ':memory:') {
   };
   const result = await write(source, report);
   if (!result.ok) throw new Error(result.reason);
-  const get = createNeoQuestionOperations(
-    store,
-    async () => {},
-    async () => ({ ok: true })
-  ).find((op) => op.name === 'neo.question.get')!;
+  const get = createNeoQuestionOperations(store, async () => {}).find(
+    (op) => op.name === 'neo.question.get'
+  )!;
   const read = (questionId = result.question.id) => get.execute({ questionId }, { source: 'rpc' });
   return { db, store, source, write, report, question: result.question, read };
 }
@@ -216,7 +214,6 @@ test('startup does not turn a later manual replacement into a worker report', as
     const ask = createNeoQuestionOperations(
       f.store,
       async () => {},
-      async () => ({ ok: true }),
       undefined,
       undefined,
       async () => f.source

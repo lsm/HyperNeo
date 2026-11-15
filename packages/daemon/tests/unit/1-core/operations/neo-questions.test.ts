@@ -25,8 +25,8 @@ type Receipt = { ok: true; question: NeoQuestion } | { ok: false; reason: string
 
 function setup(
   artifact?: ArtifactRefReader,
-  readSource?: Parameters<typeof createNeoQuestionOperations>[5],
-  receivedHumanInput?: Parameters<typeof createNeoQuestionOperations>[3]
+  readSource?: Parameters<typeof createNeoQuestionOperations>[4],
+  receivedHumanInput?: Parameters<typeof createNeoQuestionOperations>[2]
 ) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -45,19 +45,11 @@ function setup(
   const fix = store.addTodo('t1', 'ask', { ...draft, title: 'List steps' }, 1);
   const rows = store.addTodo('t2', 'ask', { ...draft, title: 'Todo rows' }, 1);
   const told: string[] = [];
-  const started: string[] = [];
-  const refused = new Set<string>();
   const ops = Object.fromEntries(
     createNeoQuestionOperations(
       store,
       async (_ask, _question, note) => {
         told.push(note);
-      },
-      async (todoId) => {
-        started.push(todoId);
-        return refused.has(todoId)
-          ? { ok: false, reason: 'already_started: this todo is removed.' }
-          : { ok: true };
       },
       receivedHumanInput,
       artifact,
@@ -102,22 +94,7 @@ function setup(
       },
       1
     );
-  const daemonStart = (startTodos: string[], text = 'Start these?') =>
-    store.askQuestion(
-      crypto.randomUUID(),
-      'ask',
-      {
-        text,
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos,
-      },
-      1
-    );
-  return { db, store, call, asked, daemonStart, seeded, told, started, refused, fix, rows };
+  return { db, store, ops, call, asked, seeded, told, fix, rows };
 }
 
 describe('neo.question operations', () => {
@@ -218,7 +195,7 @@ describe('neo.question operations', () => {
     }
   });
 
-  test.each(['reply', 'choice', 'start'] as const)(
+  test.each(['reply', 'choice'] as const)(
     'refuses a %s question if its ask settles during source lookup',
     async (kind) => {
       let entered!: () => void;
@@ -234,7 +211,6 @@ describe('neo.question operations', () => {
         return source;
       });
       try {
-        f.daemonStart(['t1']);
         const pending = f.call('neo.question.ask', {
           askId: 'ask',
           kind,
@@ -277,88 +253,6 @@ describe('neo.question operations', () => {
       reason: expect.stringContaining('source_session_unavailable'),
     });
     expect(store.listQuestions('ask')).toEqual([original]);
-  });
-
-  test('retains the source when rewording the existing start question', async () => {
-    const { asked, daemonStart } = setup();
-    const initial = daemonStart(['t1']);
-    const question = await asked({
-      kind: 'start',
-      text: 'Start after the worker review?',
-      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
-    });
-    expect(question).toMatchObject({
-      id: initial.id,
-      sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
-      startTodos: ['t1'],
-    });
-    const general = await asked({
-      kind: 'start',
-      text: 'A combined start question without one source',
-    });
-    expect(general.id).toBe(initial.id);
-    expect(general).not.toHaveProperty('sourceSession');
-  });
-
-  test('an instructed todo added to an ask leaves its open start question alone', async () => {
-    const { db, store, asked, daemonStart } = setup();
-    try {
-      daemonStart(['t1']);
-      const question = await asked({ kind: 'start', text: 'Start the reviewed work?' });
-      const result = await addNeoTodo(
-        store,
-        new NeoTodoSessionRepository(db),
-        { advance: async () => {}, resolveTarget: async (ref) => ({ value: ref }) },
-        store.getAsk('ask')!,
-        NeoTodoDraftSchema.parse({
-          after: [],
-          check: pendingTodoCheck,
-          title: 'Additional work',
-          instruction: 'Do the additional work',
-          target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
-        }),
-        createTodoCheckPacks(db)
-      );
-      if (!result.ok) throw new Error(result.reason);
-      expect(result.todo).toMatchObject({ state: 'todo', blockedBy: null });
-      expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1']);
-    } finally {
-      db.close();
-    }
-  });
-
-  test('retains the captured source when an instructed todo joins the start question', async () => {
-    const { db, store, asked, call, daemonStart } = setup();
-    try {
-      daemonStart(['t1']);
-      const question = await asked({
-        kind: 'start',
-        text: 'Start after the worker review?',
-        sourceSession: { adapter: 'codex-desktop', id: 'source-worker' },
-      });
-      const draft = NeoTodoDraftSchema.parse({
-        after: [],
-        check: pendingTodoCheck,
-        title: 'Additional work',
-        doneWhen: 'Merged',
-        instruction: 'Do the additional work',
-        target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
-      });
-      const todo = store.addTodo('recorded', 'ask', { ...draft, doneWhen: 'Observed result' }, 1);
-      store.joinStartQuestion(todo, 2);
-      const joinedId = todo.id;
-      expect(await call('neo.question.get', { questionId: question.id }, human)).toMatchObject({
-        ok: true,
-        question: {
-          id: question.id,
-          state: 'open',
-          sourceSession: question.sourceSession,
-        },
-      });
-      expect(store.getQuestion(question.id)?.startTodos).toEqual(['t1', joinedId]);
-    } finally {
-      db.close();
-    }
   });
 
   test('keeps the explicitly focused session on the ask after card retirement', async () => {
@@ -452,7 +346,7 @@ describe('neo.question operations', () => {
       kind: 'markdown' as const,
       byteLength: 42,
     };
-    const { store, asked, call, daemonStart } = setup((id, caller) =>
+    const { store, asked, call } = setup((id, caller) =>
       id === artifact.artifactId && caller.sessionId === owner.sessionId ? artifact : null
     );
     for (const changed of [
@@ -497,110 +391,6 @@ describe('neo.question operations', () => {
         { ...owner, sessionId: 'other' }
       )
     ).toMatchObject({ ok: false });
-    const start = daemonStart(['t1']);
-    const reworded = await asked({
-      kind: 'start',
-      text: 'Review before starting?',
-      artifacts: [artifact],
-    });
-    expect(reworded).toMatchObject({ id: start.id, artifacts: [artifact] });
-    expect(await asked({ kind: 'start', text: 'Start these?' })).toMatchObject({
-      artifacts: [artifact],
-    });
-    expect(
-      await asked({ kind: 'start', text: 'Start without attachment?', artifacts: [] })
-    ).toMatchObject({ artifacts: [] });
-  });
-
-  test('a start question starts the ticked todos', async () => {
-    const { store, call, daemonStart, told, started, fix, rows } = setup();
-    store.updateTodo(rows, { state: 'doing', startedAt: 2 }, 2);
-    const start = daemonStart([fix.id], 'Start this?');
-    expect(start).toMatchObject({ kind: 'start', startTodos: ['t1'], state: 'open' });
-    const answered = await call(
-      'neo.question.answer',
-      { questionId: start.id, answer: [fix.id] },
-      human
-    );
-    expect(answered.ok && answered.question).toMatchObject({
-      state: 'answered',
-      answer: ['t1'],
-      answeredBy: 'button',
-    });
-    expect(told).toEqual(['The human answered "Start this?": start List steps.']);
-    expect(started).toEqual(['t1']);
-    expect(await call('neo.question.answer', { questionId: start.id, answer: [] }, human)).toEqual({
-      ok: false,
-      reason: 'question_closed: this question is answered.',
-    });
-  });
-
-  test('a start question holds its todos until answered; unticked or withdrawn ones stay held', async () => {
-    const { store, call, daemonStart, started, fix, rows } = setup();
-    const held = {
-      state: 'blocked',
-      blockedBy: 'question',
-      blockedReason: 'Waiting for the human to start it.',
-    } as const;
-    store.updateTodo(fix, held, 2);
-    store.updateTodo(rows, held, 2);
-    const start = daemonStart([fix.id, rows.id], 'Start these?');
-    await call('neo.question.answer', { questionId: start.id, answer: [fix.id] }, human);
-    expect(started).toEqual([fix.id]);
-    expect(store.getTodo(rows.id)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'held',
-      blockedReason: 'Not ticked in the start answer.',
-    });
-    store.updateTodo(store.getTodo(rows.id)!, held, 3);
-    const chat = daemonStart([rows.id], 'Start this?');
-    store.answerQuestion(chat, 'later', 'chat', 4);
-    expect(store.getTodo(rows.id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
-    store.updateTodo(store.getTodo(rows.id)!, held, 5);
-    const moot = daemonStart([rows.id], 'Start this?');
-    store.retireQuestion(moot, 'not needed', null, 6);
-    expect(store.getTodo(rows.id)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'held',
-      blockedReason: 'Start question withdrawn.',
-    });
-  });
-
-  test('a ticked todo whose prerequisite is not done waits for the queue instead of starting', async () => {
-    const { store, call, daemonStart, started, told, fix, rows } = setup();
-    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [fix.id] }, 2);
-    const start = daemonStart([fix.id, rows.id], 'Start these?');
-    await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
-    expect(started).toEqual([fix.id]);
-    expect(store.getTodo(rows.id)?.state).toBe('todo');
-    expect(told.at(-1)).toContain('Waiting for earlier steps: Todo rows.');
-  });
-
-  test('ticking only a step whose prerequisite was left unticked names the held prerequisite', async () => {
-    const { store, call, daemonStart, started, told, fix, rows } = setup();
-    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [fix.id] }, 2);
-    for (const todo of [fix, rows])
-      store.updateTodo(
-        store.getTodo(todo.id)!,
-        { state: 'blocked', blockedBy: 'question', blockedReason: 'Waiting for the human.' },
-        2
-      );
-    const start = daemonStart([fix.id, rows.id], 'Start these?');
-    await call('neo.question.answer', { questionId: start.id, answer: [rows.id] }, human);
-    expect(started).toEqual([]);
-    expect(store.getTodo(fix.id)?.blockedBy).toBe('held');
-    expect(told.at(-1)).toContain(`waits for held steps: ${fix.title}`);
-  });
-
-  test('tells Neo which ticked todos did not start', async () => {
-    const { store, call, daemonStart, told, refused, fix, rows } = setup();
-    store.updateTodo(store.getTodo(rows.id)!, { dependsOn: [] }, 2);
-    refused.add(rows.id);
-    const start = daemonStart([fix.id, rows.id], 'Start these?');
-    await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
-    expect(told).toEqual([
-      'The human answered "Start these?": start List steps, Todo rows.\nThese did not start: Todo rows: already_started: this todo is removed.',
-    ]);
   });
 
   test('confirm, choice and reply questions take only their own answers', async () => {
@@ -721,26 +511,33 @@ describe('neo.question operations', () => {
 });
 
 describe("Neo's start question", () => {
-  test("rewords the daemon's start question instead of opening a second one", async () => {
-    const { store, asked, daemonStart, fix, rows } = setup();
-    const start = daemonStart([fix.id, rows.id], 'Start these 2?');
-    const reworded = await asked({ kind: 'start', text: 'Start building the design?' });
-    expect(reworded).toMatchObject({
-      id: start.id,
-      text: 'Start building the design?',
-      startTodos: [fix.id, rows.id],
-      state: 'open',
+  test('an old answered start row reads as the multiple choice it was', async () => {
+    const { db, store, call } = setup();
+    db.prepare(
+      `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, start_todos, todos, state, answer, answered_by, answered_at, created_at)
+       VALUES ('old', 'ask', 'Start these 2?', 'start', NULL, 0, '["t1","t2"]', '["t1","t2"]', 'answered', '["t1"]', 'button', 2, 2)`
+    ).run();
+    expect(store.getQuestion('old')).toMatchObject({
+      kind: 'choice',
+      multiple: true,
+      options: ['t1', 't2'],
+      answer: ['t1'],
     });
-    expect(store.listQuestions('ask')).toHaveLength(1);
+    expect(await call('neo.question.get', { questionId: 'old' })).toMatchObject({
+      question: { id: 'old', kind: 'choice' },
+    });
   });
 
-  test('is refused when no start question is open, and opens none', async () => {
-    const { store, call } = setup();
-    expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
-      ok: false,
-      reason:
-        'no_start_question: no old start question is open on this ask. New todos start by themselves; when the human must say yes first, ask with a choice card (one option to confirm) before adding the work.',
-    });
+  test('start is no longer a card kind Neo can ask', () => {
+    const { store, ops } = setup();
+    expect(
+      ops['neo.question.ask'].inputSchema.safeParse({
+        askId: 'ask',
+        kind: 'start',
+        text: 'Go?',
+        retireWhen: pendingTodoCheck,
+      }).success
+    ).toBe(false);
     expect(store.listQuestions('ask')).toEqual([]);
   });
 });
@@ -759,75 +556,6 @@ describe('NeoAskTodoRepository.retireQuestions', () => {
   });
 });
 
-describe('NeoAskTodoRepository start question pruning', () => {
-  const startQuestion = (
-    store: NeoAskTodoRepository,
-    startTodos: string[],
-    text = 'Start these 2?'
-  ) =>
-    store.askQuestion(
-      'q-start',
-      'ask',
-      {
-        text,
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos,
-      },
-      1
-    );
-
-  test("pruning drops Neo's wording for the daemon's, and keeps it while the list holds", () => {
-    const { store, fix, rows } = setup();
-    startQuestion(
-      store,
-      [fix.id, rows.id],
-      'fullstack 3 merges #7709, then fullstack 2 builds G1?'
-    );
-    store.updateTodo(rows, { state: 'blocked', blockedBy: 'question' }, 2);
-    expect(store.getQuestion('q-start')?.text).toBe(
-      'fullstack 3 merges #7709, then fullstack 2 builds G1?'
-    );
-    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 3 }, 3);
-    expect(store.getQuestion('q-start')).toMatchObject({
-      startTodos: ['t2'],
-      text: 'Start "Todo rows"?',
-    });
-  });
-
-  test('a todo a check closes leaves the open start question', () => {
-    const { store, fix, rows } = setup();
-    startQuestion(store, [fix.id, rows.id]);
-    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
-    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
-  });
-
-  test('a todo started elsewhere leaves its unstarted peer on the start card', () => {
-    const { store, fix, rows } = setup();
-    startQuestion(store, [fix.id, rows.id]);
-    store.claimStart(fix, 2);
-    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: [rows.id] });
-  });
-
-  test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
-    const { store, fix, rows } = setup();
-    startQuestion(store, [fix.id, rows.id]);
-    store.updateTodo(rows, { state: 'blocked', blockedBy: 'question' }, 2);
-    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t1', 't2']);
-    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
-    store.updateTodo(rows, { state: 'removed', reason: 'Replaced' }, 3);
-    expect(store.getQuestion('q-start')).toMatchObject({
-      state: 'retired',
-      retiredReason: 'nothing left to start',
-      startTodos: [],
-    });
-    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
-  });
-});
-
 describe('planNeoQuestionAnswer', () => {
   test('refuses a missing question', () => {
     expect(planNeoQuestionAnswer(null, 'yes')).toEqual({
@@ -837,57 +565,27 @@ describe('planNeoQuestionAnswer', () => {
 });
 
 describe('neoQuestionAnsweredNote', () => {
-  test('names the start todos by title', () => {
-    expect(
-      neoQuestionAnsweredNote(
-        {
-          id: 'q',
-          askId: 'a',
-          text: 'Start?',
-          kind: 'start',
-          options: null,
-          multiple: false,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: ['t'],
-          todos: ['t'],
-          state: 'answered',
-          answer: [],
-          answeredBy: 'button',
-          answeredAt: 1,
-          retiredReason: null,
-          replacedBy: null,
-          createdAt: 1,
-        },
-        []
-      )
-    ).toBe('The human answered "Start?": start none.');
-  });
-
   test('names a picked option by its letter', () => {
     expect(
-      neoQuestionAnsweredNote(
-        {
-          id: 'q',
-          askId: 'a',
-          text: 'Which layout?',
-          kind: 'choice',
-          options: ['List', 'Cards', 'Table'],
-          multiple: true,
-          noLabel: null,
-          yesLabel: null,
-          startTodos: null,
-          todos: [],
-          state: 'answered',
-          answer: ['List', 'Table'],
-          answeredBy: 'button',
-          answeredAt: 1,
-          retiredReason: null,
-          replacedBy: null,
-          createdAt: 1,
-        },
-        []
-      )
+      neoQuestionAnsweredNote({
+        id: 'q',
+        askId: 'a',
+        text: 'Which layout?',
+        kind: 'choice',
+        options: ['List', 'Cards', 'Table'],
+        multiple: true,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+        todos: [],
+        state: 'answered',
+        answer: ['List', 'Table'],
+        answeredBy: 'button',
+        answeredAt: 1,
+        retiredReason: null,
+        replacedBy: null,
+        createdAt: 1,
+      })
     ).toBe('The human answered "Which layout?": A (List), C (Table).');
   });
 });
@@ -972,29 +670,6 @@ describe('neo.question.retire and replaces', () => {
       retiredReason: 'replaced by the new question',
       replacedBy: next.id,
     });
-  });
-
-  test('never retires or replaces the start question that carries the go-ahead', async () => {
-    const { store, call, daemonStart, fix } = setup();
-    const start = daemonStart([fix.id], 'Start this?');
-    const refusal = {
-      ok: false,
-      reason:
-        "start_question: the daemon's start question carries the human's go-ahead; only the human answers it.",
-    } as const;
-    expect(await call('neo.question.retire', { questionId: start.id, reason: 'moot' })).toEqual(
-      refusal
-    );
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'reply',
-        text: 'Swap?',
-        replaces: start.id,
-      })
-    ).toEqual(refusal);
-    expect(store.getQuestion(start.id)?.state).toBe('open');
-    expect(store.listQuestions('ask')).toHaveLength(1);
   });
 
   test("never replaces another ask's question or a missing one, and asks nothing then", async () => {

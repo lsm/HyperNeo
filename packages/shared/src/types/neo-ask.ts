@@ -78,7 +78,7 @@ export interface NeoTodo extends ArtifactProjection {
   producesFollowUp?: true;
 }
 
-export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';
+export type NeoQuestionKind = 'yesno' | 'choice' | 'reply';
 
 export type NeoQuestionState = 'open' | 'answered' | 'retired';
 

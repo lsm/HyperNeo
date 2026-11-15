@@ -14,7 +14,6 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoPack } from './pack-contract.ts';
-import { neoStartQuestionLine } from './start-question.ts';
 import { neoRemovedPrerequisiteCodes } from './todo-removal.ts';
 import { neoDaemonCardCodes, neoTodoHeldBy } from './daemon-cards.ts';
 import {
@@ -259,13 +258,7 @@ export function projectNeoAskEntries(
             ...neoRemovedPrerequisiteCodes(question, allTodos),
             ...neoDaemonCardCodes(question, allTodos),
           };
-        if (question.kind !== 'start' || !question.todos.length) return question;
-        const line = neoStartQuestionLine(
-          question.todos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
-        );
-        return line.status === question.text
-          ? { ...question, textCodes: line.statusCodes }
-          : question;
+        return question;
       }),
     };
   });
