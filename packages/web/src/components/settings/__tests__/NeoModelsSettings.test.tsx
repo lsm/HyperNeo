@@ -757,6 +757,15 @@ async function frontEditor() {
   return ui;
 }
 
+test('stacks the fast reply and Neo model settings in one column at every width', async () => {
+  await frontEditor();
+  const front = screen.getByRole('region', { name: 'Fast reply model' });
+  const neo = screen.getByRole('region', { name: 'Neo models' });
+  const column = front.parentElement!;
+  expect(neo.parentElement).toBe(column);
+  expect(column.className).not.toMatch(/grid-cols-(?!1\b)/);
+});
+
 test('chooses a separate provider/model through the targeted front operation', async () => {
   await frontEditor();
   const convo = within(screen.getByRole('region', { name: 'Fast reply model' }));
