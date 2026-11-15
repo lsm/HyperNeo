@@ -1,4 +1,5 @@
 import {
+  NEO_FRONT_ACK_CHAR_LIMIT,
   NEO_FRONT_REPLY_CHAR_LIMIT,
   NEO_REPLY_CHAR_LIMIT,
   NEO_REPLY_LINE_LIMIT,
@@ -14,6 +15,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   deliverable_with_details:
     'A deliverable carries no details. Resend it with deliverable: true, the whole copyable content in text, and no details.',
   deliverable_card_reply: `A card reply answers the question itself, within ${REPLY_LIMIT}, so it cannot carry a deliverable. Answer here, then send the copyable text as its own publication with deliverable: true and no details.`,
+  front_ack_too_long: `With work_on: true the reply only says what you will do: at most ${NEO_FRONT_ACK_CHAR_LIMIT} characters, with no answer or explanation. Send it again shorter.`,
   front_reply_too_long: `Shorten the reply to one or two short sentences: at most ${NEO_FRONT_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIMIT} lines.`,
   spoken_required: 'The human is listening. Retry this reply with a brief spoken field.',
   unknown_reply_target: 'Use the original human message IDs recorded in this conversation.',

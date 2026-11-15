@@ -8,7 +8,11 @@ import type { NeoService } from './service.ts';
 import { handOffToNeo } from './front-handoff.ts';
 import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
-import { NEO_FRONT_REPLY_CHAR_LIMIT } from '@hyperneo/shared/types/neo-publication';
+import {
+  NEO_FRONT_ACK_CHAR_LIMIT,
+  NEO_FRONT_REPLY_CHAR_LIMIT,
+  neoCharCount,
+} from '@hyperneo/shared/types/neo-publication';
 
 const FRONT_REPLY_MAX_CHARS = NEO_FRONT_REPLY_CHAR_LIMIT;
 
@@ -28,24 +32,34 @@ const frontReceipt = <T extends { accepted: boolean; reason?: string }>(receipt:
 export function createFrontTools(service: NeoService, conversationId: string) {
   const sessionId = frontSessionId(conversationId);
   const lookups = (['projects', 'asks', 'cards', 'todos'] as const).map((kind) =>
-    tool(`${kind}_read`, `Read current ${kind} for this conversation.`, Read, async (input) => {
-      const value = await service.db.gateway.run(neoFrontReads, {
-        conversationId,
-        kind,
-        input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
-      });
-      if (kind === 'todos' && value !== null && !('items' in value)) {
-        const packFacts = service.packs().flatMap(
-          (pack) =>
-            pack
-              .snapshotRows?.([], Date.now(), [input.id ?? ''])
-              .filter((row) => row.todoId === input.id)
-              .map((row) => ({ pack: pack.id, ...row })) ?? []
-        );
-        return result({ ...value, packFacts });
+    tool(
+      `${kind}_read`,
+      `Read current ${kind} for this conversation. With no id or text it lists the newest open ${kind}. text searches them by words. id reads one in full and must be an id from a list or search result.`,
+      Read,
+      async (input) => {
+        const value = await service.db.gateway.run(neoFrontReads, {
+          conversationId,
+          kind,
+          input: input.id ? { id: input.id } : input.text ? { text: input.text } : {},
+        });
+        if (input.id && value === null)
+          return result({
+            found: false,
+            reason: `No ${kind} has id ${input.id}. Call ${kind}_read with no id or text to list them.`,
+          });
+        if (kind === 'todos' && value !== null && !('items' in value)) {
+          const packFacts = service.packs().flatMap(
+            (pack) =>
+              pack
+                .snapshotRows?.([], Date.now(), [input.id ?? ''])
+                .filter((row) => row.todoId === input.id)
+                .map((row) => ({ pack: pack.id, ...row })) ?? []
+          );
+          return result({ ...value, packFacts });
+        }
+        return result(value);
       }
-      return result(value);
-    })
+    )
   );
   const replyFields = {
     requestId: NeoPublicationDraft.shape.requestId,
@@ -114,6 +128,8 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           work_on: z.boolean(),
         },
         async ({ text, work_on: workOn, ...given }) => {
+          if (workOn && neoCharCount(text) > NEO_FRONT_ACK_CHAR_LIMIT)
+            return result(explainNeoRefusal({ accepted: false, reason: 'front_ack_too_long' }));
           const body = { text };
           const named = given.replyTo ?? [];
           const recorded = await service.db.gateway.call(
