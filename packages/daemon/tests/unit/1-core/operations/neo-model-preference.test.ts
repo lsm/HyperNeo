@@ -387,6 +387,16 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([fallback]);
   });
 
+  test('a front save without fallbacks keeps the saved list, and [] clears it', async () => {
+    const fallback = { model: opus.id, provider: opus.provider, thinkingLevel: 'off' as const };
+    const base = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' as const };
+    await invoke('neo.front.model.set', { ...base, fallbacks: [fallback] });
+    await invoke('neo.front.model.set', { ...base, autoCompactPercent: 70 });
+    expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([fallback]);
+    await invoke('neo.front.model.set', { ...base, fallbacks: [] });
+    expect(db.getGlobalSettings().neo?.front?.model?.fallbacks).toEqual([]);
+  });
+
   test('front model selection requires the human even for the root Neo', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
     expect(
