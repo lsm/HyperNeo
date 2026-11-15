@@ -189,15 +189,15 @@ class VoiceRecorderStore {
       this.chunks = chunks;
       this.sampleRate = context.sampleRate;
       this.maxDurationTimer = setTimeout(hitLimit, MAX_RECORDING_MS);
-      for (const track of stream.getTracks()) {
-        track.onended = () => {
-          if (this.stoppedByLimit) return;
-          this.trackEnded = true;
-          hitLimit();
-        };
-      }
+      const onTrackEnded = () => {
+        if (this.stoppedByLimit) return;
+        this.trackEnded = true;
+        hitLimit();
+      };
+      for (const track of stream.getTracks()) track.onended = onTrackEnded;
       this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
+      if (stream.getTracks().some((track) => track.readyState === 'ended')) onTrackEnded();
     } catch (error) {
       if (this.startGeneration !== generation) return;
       await this.teardown();
@@ -305,7 +305,10 @@ class VoiceRecorderStore {
           }
           this.source?.disconnect();
           this.node?.disconnect();
-          this.stream?.getTracks().forEach((track) => track.stop());
+          this.stream?.getTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+          });
           await this.context?.close();
         } catch {}
         this.source = null;
