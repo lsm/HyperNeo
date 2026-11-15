@@ -18,5 +18,17 @@ operation:
 - a feature whose recorded session `work.status` cannot find waits instead of
   starting another.
 
-Todo dispatch does not call the hook yet, so this journey does not claim that
-any worker was reused or started.
+It then starts two ready coding todos through the todo runner, each stored with
+a `backend` start target:
+
+- the feature's ready slice is sent to the backend session, and its stored
+  target becomes that send;
+- the unreachable feature's slice stays a todo with its start target and a
+  `session_unknown` wait reason, and nothing is dispatched.
+
+Last, it checks reservations that never got a session:
+
+- a feature whose owner failed without a session no longer makes the next
+  slice wait;
+- the pack's `workerTargetRefused` hook drops an unstarted todo's unbound
+  reservation, and leaves a started todo's reservation in place.

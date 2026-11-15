@@ -15,6 +15,7 @@ import {
   neoCancelledPrerequisiteKey,
   neoCancelledPrerequisiteNote,
   neoTodoPrerequisiteRefusal,
+  neoTodoStartRefusal,
 } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
@@ -40,6 +41,7 @@ import {
   driverWorkCaller,
   messageOpening,
   type NeoDriverTarget,
+  type NeoTodoTarget,
   neoCardSent,
   readDriverActivity,
   readDriverIdentity,
@@ -79,6 +81,7 @@ type Startable = {
 };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
+const TARGET_WAIT = 'Waiting for a session: ';
 
 export interface NeoTodoRunnerDeps {
   write: RunDbOp;
@@ -671,30 +674,89 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { reason: { ok: true as const, todo: store.getTodo(todoId) ?? todo } };
   };
 
+  const chooseTarget = async (
+    todoId: string,
+    hold: string | null
+  ): Promise<Gate<NeoTodoTarget | null>> => {
+    const todo = store.getTodo(todoId);
+    const ask = todo && store.getAsk(todo.askId);
+    const target = sessions.get(todoId);
+    const pack = deps.packs().find((candidate) => candidate.id === todo?.check?.pack);
+    if (
+      !todo?.instruction ||
+      ask?.status !== 'open' ||
+      !pack?.workerTarget ||
+      todo.state !== 'todo' ||
+      todo.startedAt !== null ||
+      (target?.verb !== 'start' && target?.verb !== 'send') ||
+      neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
+    )
+      return { value: null };
+    const decision = await pack.workerTarget(todo, target, (ref) =>
+      deps.invoke(caller(ask), 'work.status', { ref })
+    );
+    if ('reason' in decision) {
+      const reason = `${TARGET_WAIT}${decision.reason}`;
+      if (todo.reason === reason) return record(todo, reason);
+      const waiting = store.updateTodo(todo, { reason }, Date.now());
+      deps.changed();
+      await deps.tell(ask, waiting, reason, `neo-todo-target:${todo.id}:${decision.reason}`);
+      return record(waiting, reason);
+    }
+    if (todo.reason?.startsWith(TARGET_WAIT)) {
+      store.updateTodo(todo, { reason: null }, Date.now());
+      deps.changed();
+    }
+    const chosen = decision.value;
+    if (
+      chosen.verb === 'send' &&
+      (target.verb !== 'send' || neoWorkerKey(target.ref) !== neoWorkerKey(chosen.ref))
+    )
+      await sessions.write('queueOn', todoId, chosen.ref, '');
+    return { value: chosen.verb === 'start' ? chosen : null };
+  };
+
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
+    .pipe(async (todoId: string) => (await trackerHolds())[todoId] ?? null, 'todoId', 'hold')
+    .pipe(chooseTarget, ['todoId', 'hold'], 'chosen')
+    .pipe((chosen: Gate<NeoTodoTarget | null>) => chosen, 'chosen', 'result:outcome')
     .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
-      async (todoId: string) =>
-        deps.write(neoTodoRunnerWrites, {
-          method: 'claim',
-          args: [todoId, Date.now(), (await trackerHolds())[todoId] ?? null],
-        }),
-      'todoId',
+      (todoId: string, hold: string | null) =>
+        deps.write(neoTodoRunnerWrites, { method: 'claim', args: [todoId, Date.now(), hold] }),
+      ['todoId', 'hold'],
       'receipt'
     )
     .pipe(
-      (
-        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>
-      ): Gate<Startable> => {
+      async (
+        receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>,
+        chosen: { value: NeoTodoTarget | null },
+        todoId: string
+      ): Promise<Gate<Startable>> => {
         if (receipt.changed) deps.changed();
+        const refused = !receipt.ok && chosen.value?.verb === 'start' && store.getTodo(todoId);
+        if (refused)
+          await deps
+            .packs()
+            .find((pack) => pack.id === refused.check?.pack)
+            ?.workerTargetRefused?.(refused);
         return !receipt.ok
           ? fail(receipt.reason)
           : receipt.ask && receipt.target
-            ? { value: { todo: receipt.todo, ask: receipt.ask, target: receipt.target } }
+            ? {
+                value: {
+                  todo: receipt.todo,
+                  ask: receipt.ask,
+                  target:
+                    receipt.target.verb === 'start' && chosen.value?.verb === 'start'
+                      ? chosen.value
+                      : receipt.target,
+                },
+              }
             : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      'receipt',
+      ['receipt', 'chosen', 'todoId'],
       'result:outcome'
     )
     .pipe(dispatch, 'outcome', 'outcome')
