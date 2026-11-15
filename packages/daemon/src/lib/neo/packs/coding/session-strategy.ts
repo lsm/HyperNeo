@@ -1,7 +1,7 @@
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import type { NeoPackPreferenceDeclaration } from '../../pack-contract.ts';
-import { getNeoPackPreference } from '../../preferences.ts';
+import { listPackPreferences } from '../../preference-operations.ts';
 
 const STRATEGIES = ['long_lived', 'per_task', 'per_pr'] as const;
 type Strategy = (typeof STRATEGIES)[number];
@@ -21,16 +21,11 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
 
 /** @public */
 export function codingSessionStrategy(db: Database, repo: string): Strategy {
-  const scope = db
-    .prepare(
-      "SELECT scope_key FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = 'sessionStrategy'"
-    )
-    .get(repo) as { scope_key: string } | undefined;
-  const value = getNeoPackPreference(
-    db,
-    'coding',
-    { kind: 'repo', key: scope?.scope_key ?? repo },
-    'sessionStrategy'
+  const saved = listPackPreferences(db, 'coding').filter((row) => row.key === 'sessionStrategy');
+  const value = (
+    saved.find(
+      (row) => row.scope.kind === 'repo' && row.scope.key.toLowerCase() === repo.toLowerCase()
+    ) ?? saved.find((row) => row.scope.kind === 'global')
   )?.value;
   return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
 }
