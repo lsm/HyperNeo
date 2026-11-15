@@ -161,7 +161,7 @@ Limits users will see, from code that already exists:
 Waiting on OAP work, none of it blocking this design:
 
 - The Rust port. The Rust Codex adapter can already open, submit, stream and
-  settle a run, and its approval-request slice is in review. Runtime parity
+  settle a run, and resolve approvals and user questions. Runtime parity
   (OAP #1438) waits on the adapters lane reaching C8 (OAP #1439). HyperNeo uses
   the Go binary and switches only when Rust ships a released `oapx` with the
   same stdio hub. That is a new pin in the form, not a design change.
