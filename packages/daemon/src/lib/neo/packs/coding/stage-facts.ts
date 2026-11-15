@@ -183,6 +183,8 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
   reviewer: z.infer<typeof CodingActor>
 ) => { qualifies: boolean; preferred: boolean; reason: string };
 
+export const codingHasAuthorLine = (body: string) => !!parseAuthor(body);
+
 export const codingCrossModelReviewed = (
   body: string,
   head: string,

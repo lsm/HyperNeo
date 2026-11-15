@@ -9,6 +9,7 @@ import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
   codingCrossModelReviewed,
+  codingHasAuthorLine,
   codingReviewerPolicy,
   type CodingStageFact,
   type CodingActor,
@@ -174,8 +175,8 @@ export interface CodingMergePolicy {
   humanSignoff?: readonly string[];
 }
 
-export const codingReviewerProvenance = (policy: CodingMergePolicy) =>
-  policy.provenance !== false || policy.crossModelReview === true;
+export const codingReviewerProvenance = (policy: CodingMergePolicy, body: string) =>
+  policy.provenance !== false || (policy.crossModelReview === true && codingHasAuthorLine(body));
 
 export function codingPrState(
   pr: Node,
@@ -563,12 +564,12 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.read(url);
   }
 
-  reviewerProvenance(repo: string) {
-    return codingReviewerProvenance(this.policy(repo));
+  reviewerProvenance(repo: string, body: string) {
+    return codingReviewerProvenance(this.policy(repo), body);
   }
 
   reviewerPolicy(repo: string, body: string, reviewer: z.infer<typeof CodingActor>) {
-    return codingReviewerPolicy(this.reviewerProvenance(repo), body, reviewer);
+    return codingReviewerPolicy(this.reviewerProvenance(repo, body), body, reviewer);
   }
 
   policyContextCurrent(text: string) {

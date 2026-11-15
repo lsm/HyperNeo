@@ -153,7 +153,7 @@ export function createCodingMergeOperation(deps: Deps) {
         )
           return { accepted: false, reason: 'Resolve repository review policy before merging.' };
         const provenance = codingReviewerPolicy(
-          codingReviewerProvenance(state.policy),
+          codingReviewerProvenance(state.policy, pr.body),
           pr.body,
           review.actor ?? { kind: 'human', id: 'bot-route' }
         );
