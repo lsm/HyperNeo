@@ -503,6 +503,7 @@ export class RateLimitWatchdog {
         retryAt,
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
+        ...(this.lastHint?.hold ? { reason: this.lastHint.hold } : {}),
       },
       queryGeneration
     );

@@ -58,6 +58,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: mock(async () => ({ interrupt: () => {} })),
 }));
 
+const chargedFailures: string[] = [];
 vi.mock('../../../../src/lib/agent/query-failure-episode.ts', () => ({
   QueryFailureCapError: class extends Error {},
   QueryFailureGovernor: class {
@@ -65,7 +66,8 @@ vi.mock('../../../../src/lib/agent/query-failure-episode.ts', () => ({
     async admit() {
       return 'retry-routing-fixture';
     }
-    async failure() {
+    async failure(error: string) {
+      chargedFailures.push(error);
       return { failed: false };
     }
     async success() {}
@@ -5970,6 +5972,7 @@ describe('QueryRunner', () => {
       buildSpy.mockRejectedValue(
         new Error('529 {"type":"error","error":{"type":"overloaded_error"}}')
       );
+      chargedFailures.length = 0;
       const holds: Array<{ hint?: LimitRetryHint; at: number }> = [];
       const ctx = createContext({
         onRateLimitExhausted: mock(async (_error, _prompt, hint) => {
@@ -5982,8 +5985,7 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(4);
-      expect(mockSession.metadata.queryFailureEpisode?.failures ?? 0).toBe(0);
-      expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).not.toContain('Query stopped');
+      expect(chargedFailures).toEqual([]);
       expect(holds).toHaveLength(1);
       expect(holds[0].hint).toMatchObject({ kind: 'rate_limit', hold: 'overloaded' });
       const heldFor = (holds[0].hint?.resetAtMs ?? 0) + RESET_BUFFER_MS - holds[0].at;

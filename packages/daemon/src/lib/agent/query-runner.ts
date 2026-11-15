@@ -38,7 +38,11 @@ import { QueryFailureGovernor, QueryFailureCapError } from './query-failure-epis
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
 import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
-import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
+import {
+  assessLimitError,
+  type LimitRetryHint,
+  overloadHoldHint,
+} from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import { isNetworkUnreachableError } from './network-outage-pause.ts';
@@ -1976,7 +1980,9 @@ export class QueryRunner {
             handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
               errorMessage,
               this._lastConsumedUserMessage,
-              retrySignal.rateLimitHint ?? undefined,
+              decision.route.hint.hold === 'overloaded'
+                ? overloadHoldHint(Date.now())
+                : (retrySignal.rateLimitHint ?? undefined),
               queryGeneration
             ));
           } catch (handoffError) {

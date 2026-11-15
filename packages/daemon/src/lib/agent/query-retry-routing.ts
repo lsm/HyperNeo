@@ -245,6 +245,13 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     errorSignal.isRetryableProviderError
   )
     return { action: 'provider_backoff', nextAttempt: env.attempt + 1 };
+  if (
+    !isQueryInterrupted(errorSignal, env.lifecycle) &&
+    errorSignal.isRetryableProviderError &&
+    !errorSignal.isRateLimit &&
+    env.hasRateLimitHandoff
+  )
+    return { action: 'rate_limit_handoff', hint: { kind: 'rate_limit', hold: 'overloaded' } };
   if (errorSignal.errorName === 'AbortError') return { action: 'aborted_noop' };
   if (errorSignal.apiValidationText !== null)
     return { action: 'api_validation', text: errorSignal.apiValidationText };
@@ -273,7 +280,7 @@ export function classifyQueryRetryHold(
     return 'login';
   if (signal.isNetworkUnreachable) return 'network';
   if (signal.isRateLimit) return 'limit';
-  if (signal.isRetryableProviderError && env.attempt >= env.maxProviderRetries) return 'overloaded';
+  if (signal.isRetryableProviderError) return 'overloaded';
   return 'none';
 }
 

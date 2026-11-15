@@ -34,6 +34,17 @@ export interface LimitRetryHint {
   resetAtMs?: number | null;
   kind?: LimitErrorKind | null;
   billingTerminal?: boolean | null;
+  hold?: 'overloaded';
+}
+
+const OVERLOAD_HOLD_MS = 5 * 60_000;
+
+export function overloadHoldHint(now: number): LimitRetryHint {
+  return {
+    kind: 'rate_limit',
+    hold: 'overloaded',
+    resetAtMs: now + OVERLOAD_HOLD_MS - RESET_BUFFER_MS,
+  };
 }
 
 const GLM_LIMIT_CODE_BRACKETS = ['[1305]', '[1308]', '[1313]'];
