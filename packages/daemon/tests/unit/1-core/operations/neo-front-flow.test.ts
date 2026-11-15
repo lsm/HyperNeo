@@ -2052,6 +2052,45 @@ test('a reply accepted after a refused one updates the pending Neo row', async (
   expect(said).toContain('Later answer.');
 });
 
+test.each([
+  ['refused', true],
+  ['refused', false],
+  ['unknown target', false],
+  ['reopened', false],
+] as const)(
+  'a retry after a %s reply refreshes the forward (replyTo named: %s)',
+  async (first, named) => {
+    const { id } = await deliveredConvoInput();
+    if (first === 'reopened')
+      await db.saveUserMessage(
+        root,
+        neoIntakeMessage({ sessionId: root, requestId: id, content: 'Hello' }),
+        'failed'
+      );
+    const listening = vi.spyOn(service.speech, 'isListening').mockReturnValue(first === 'refused');
+    await convoPublish({
+      requestId: 'first',
+      replyTo: first === 'unknown target' ? [crypto.randomUUID()] : [id],
+      fullText: 'First answer.',
+      work_on: false,
+    });
+    listening.mockRestore();
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+    expect(
+      await convoPublish({
+        requestId: 'retry',
+        ...(named ? { replyTo: [id] } : {}),
+        fullText: 'Retry answer.',
+        work_on: false,
+      })
+    ).toMatchObject({ accepted: true, started: true });
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('enqueued');
+    const said = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+    expect(said).toContain('Retry answer.');
+  }
+);
+
 test('an unknown replyTo is refused but never blocks the current input', async () => {
   const { id } = await deliveredConvoInput();
   expect(
