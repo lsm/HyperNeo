@@ -24,7 +24,7 @@ the window ends when its committed receipt returns. The following worker-availab
 and session observation use existing main-thread reads outside that window. A
 failure prints the guarded SQL and call stack for diagnosis.
 
-The helper also invokes `neo.todo.retry` over the real WebSocket operation
+The helper also invokes `neo.todo.continue` over the real WebSocket operation
 door. Only the work driver operations are replaced by synthetic responses.
 The real Neo service must commit the claim before the scripted work.send sees
 it, and must not use either legacy main-thread claim/recompute method. Read-only

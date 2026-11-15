@@ -75,6 +75,7 @@ export interface NeoTodo extends ArtifactProjection {
   finishedAt: number | null;
   approvedAt: number | null;
   approvalQuestionId: string | null;
+  producesFollowUp?: true;
 }
 
 export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';

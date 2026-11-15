@@ -9,7 +9,15 @@ import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 
-type Input = { askId: string; status: 'done' | 'dropped'; outcome: string };
+type Input = { askId: string; status: 'done' | 'dropped'; outcome: string; todosVersion?: string };
+
+export const neoAskTodosVersion = (todos: readonly Pick<NeoTodo, 'id' | 'state' | 'updatedAt'>[]) =>
+  todos.map((todo) => `${todo.id}:${todo.state}:${todo.updatedAt}`).join(',');
+
+const ASK_CHANGED: Rejection = {
+  ok: false,
+  reason: 'ask_changed: its todos changed while it was settling. Read the ask and settle again.',
+};
 type Snapshot = { ask: NeoAsk; todos: NeoTodo[] };
 type Rejection = { ok: false; reason: string };
 type Receipt = {
@@ -61,6 +69,14 @@ const settle = (superpipe({})('neo.ask.commit-settlement') as PipelineAPI)
     (store: NeoAskTodoRepository, input: Input) =>
       requireNeoAskSettlement(snapshot(store, input.askId), input),
     ['store', 'input'],
+    'result:outcome'
+  )
+  .pipe(
+    (current: Snapshot, input: Input) =>
+      input.todosVersion === undefined || neoAskTodosVersion(current.todos) === input.todosVersion
+        ? { value: current }
+        : { reason: ASK_CHANGED },
+    ['outcome', 'input'],
     'result:outcome'
   )
   .pipe(
@@ -357,10 +373,13 @@ export const neoAskTurnedSettleReads = defineDbOp<Record<string, never>, string[
   },
 });
 
-export const neoAskTurnedSettleWrites = defineDbOp<{ now: number; ids: string[] }, string[]>({
+export const neoAskTurnedSettleWrites = defineDbOp<
+  { now: number; ids: string[]; versions?: Record<string, string> },
+  string[]
+>({
   name: 'neo.turnedAskSettles',
   mode: 'write',
-  run(db, { now, ids }, changes) {
+  run(db, { now, ids, versions }, changes) {
     const store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
     if (!ids.length) return [];
     const batches = wakeBatchesBySession(db);
@@ -369,6 +388,7 @@ export const neoAskTurnedSettleWrites = defineDbOp<{ now: number; ids: string[] 
     for (const id of ids) {
       const ask = store.getAsk(id);
       if (!ask) continue;
+      if (versions && neoAskTodosVersion(store.listTodos(id)) !== versions[id]) continue;
       let fact = facts.get(ask.sessionId);
       if (!fact) facts.set(ask.sessionId, (fact = sessionFacts(db, ask.sessionId, batches)));
       if (

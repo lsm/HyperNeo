@@ -50,7 +50,7 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'> &
-  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>>;
+  Partial<Pick<NeoTodo, 'priority' | 'dependsOn' | 'approvedAt'>> & { producesFollowUp?: boolean };
 
 export type NeoTodoInsert = (
   id: string,
@@ -143,7 +143,8 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, priority, depends_on AS dependsOnJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt,
-  approved_at AS approvedAt, approval_question_id AS approvalQuestionId FROM neo_todos`;
+  approved_at AS approvedAt, approval_question_id AS approvalQuestionId,
+  produces_follow_up AS producesFollowUp FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
@@ -233,8 +234,12 @@ const toQuestion = ({
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
 
-type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn'> & {
+type TodoRow = Omit<
+  NeoTodo,
+  'check' | 'named' | 'addedAfterStart' | 'artifacts' | 'dependsOn' | 'producesFollowUp'
+> & {
   checkJson: string | null;
+  producesFollowUp: number;
   dependsOnJson: string | null;
   artifactsJson: string | null;
   named: string | null;
@@ -247,9 +252,11 @@ const toTodo = ({
   dependsOnJson,
   named,
   addedAfterStart,
+  producesFollowUp,
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
   check: parsed<NeoTodoCheck>(checkJson),
@@ -736,10 +743,10 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, priority, depends_on, approved_at, created_at, updated_at)
+           added_after_start, priority, depends_on, approved_at, produces_follow_up, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?,
-           ?, ?, ?, ?)`
+           ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -754,6 +761,7 @@ export class NeoAskTodoRepository {
         draft.priority ?? 'normal',
         JSON.stringify(draft.dependsOn ?? []),
         draft.approvedAt ?? null,
+        draft.producesFollowUp ? 1 : 0,
         now,
         now
       );
@@ -1161,30 +1169,6 @@ export class NeoAskTodoRepository {
     if (!changed) return null;
     this.touchAsk(question.askId, now);
     if (settingsChanged) this.settingsChanged(settingsChanged);
-    return this.getQuestion(question.id);
-  }
-
-  resolveQuestion(
-    question: NeoQuestion,
-    answer: NeoQuestionAnswer,
-    citation: string,
-    now: number
-  ): NeoQuestion | null {
-    if (
-      !this.changeQuestion(
-        question.id,
-        {
-          state: 'retired',
-          answer: JSON.stringify(answer),
-          answered_by: null,
-          answered_at: now,
-          retired_reason: citation,
-        },
-        'open'
-      )
-    )
-      return null;
-    this.touchAsk(question.askId, now);
     return this.getQuestion(question.id);
   }
 

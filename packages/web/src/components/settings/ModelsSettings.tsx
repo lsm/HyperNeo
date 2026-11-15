@@ -539,7 +539,9 @@ function FrontModelSettings({
   loading,
 }: Pick<ModelPickerModalProps, 'groupedModels' | 'providerAuthStatuses'> & { loading: boolean }) {
   const preference = globalSettings.value?.neo?.front?.model;
+  const fallbacks: NeoModelEntry[] = preference?.fallbacks ?? [];
   const [picker, setPicker] = useState(false);
+  const [addFallback, setAddFallback] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState('');
@@ -551,12 +553,14 @@ function FrontModelSettings({
   async function save(
     model: Pick<ModelInfo, 'id' | 'provider'>,
     thinkingLevel = preference?.thinkingLevel ?? 'off',
-    autoCompactPercent = preference?.autoCompactPercent
+    autoCompactPercent = preference?.autoCompactPercent,
+    nextFallbacks = preference?.fallbacks
   ) {
     if (busy || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setPicker(false);
+    setAddFallback(false);
     setError('');
     try {
       const hub = connectionManager.getHubIfConnected();
@@ -569,6 +573,7 @@ function FrontModelSettings({
           provider: model.provider,
           thinkingLevel,
           ...(autoCompactPercent === undefined ? {} : { autoCompactPercent }),
+          ...(nextFallbacks === undefined ? {} : { fallbacks: nextFallbacks }),
         }
       );
       if (!result.ok) throw new Error(result.reason ?? 'Could not save the fast reply model.');
@@ -579,6 +584,15 @@ function FrontModelSettings({
       savingRef.current = false;
       setSaving(false);
     }
+  }
+  function saveFallbacks(next: NeoModelEntry[]) {
+    if (!preference) return;
+    void save(
+      { id: preference.model, provider: preference.provider },
+      preference.thinkingLevel,
+      preference.autoCompactPercent,
+      next
+    );
   }
   function savePercent(text: string) {
     if (!preference) return;
@@ -638,6 +652,52 @@ function FrontModelSettings({
           Choose fast reply model
         </Button>
       )}
+      {preference && (
+        <div class="space-y-3 border-t border-line pt-4">
+          {fallbacks.length > 0 && (
+            <div class="text-xs font-medium text-fg-muted">Fallback models · tried in order</div>
+          )}
+          <FallbackChainEditor
+            models={fallbacks}
+            availableModels={allModels}
+            isUpdating={busy}
+            onRemove={(index) => saveFallbacks(fallbacks.filter((_, i) => i !== index))}
+            onMove={(index, direction) => {
+              const next = [...fallbacks];
+              const other = index + (direction === 'up' ? -1 : 1);
+              [next[index], next[other]] = [next[other], next[index]];
+              saveFallbacks(next);
+            }}
+            controls={(entry, index) => (
+              <label class="flex items-center gap-2 text-xs text-fg-muted">
+                <span>Thinking</span>
+                <FallbackThinkingSelect
+                  saved={entry.thinkingLevel ?? 'off'}
+                  label={`fast reply fallback ${index + 1} thinking`}
+                  capability={loading ? null : (findSameModel(allModels, entry) ?? entry)}
+                  disabled={busy}
+                  inherits={false}
+                  onChange={(level = 'off') =>
+                    saveFallbacks(
+                      fallbacks.map((item, i) =>
+                        i === index ? { ...item, thinkingLevel: level } : item
+                      )
+                    )
+                  }
+                />
+              </label>
+            )}
+          />
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={busy || fallbacks.length >= 10}
+            onClick={() => setAddFallback(true)}
+          >
+            Add fast reply fallback
+          </Button>
+        </div>
+      )}
       {error && (
         <p role="alert" class="text-xs text-danger">
           {error}
@@ -652,6 +712,22 @@ function FrontModelSettings({
           selectionDisabled={busy}
           onClose={() => setPicker(false)}
           onSelect={save}
+        />
+      )}
+      {addFallback && preference && (
+        <ModelPickerModal
+          title="Add fast reply fallback"
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          excludeModels={[preference, ...fallbacks]}
+          selectionDisabled={busy}
+          onClose={() => setAddFallback(false)}
+          onSelect={(model) =>
+            saveFallbacks([
+              ...fallbacks,
+              { model: model.id, provider: model.provider, thinkingLevel: 'off' },
+            ])
+          }
         />
       )}
     </div>
@@ -1346,7 +1422,7 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
           </p>
         )}
         <NeoFrontSettings />
-        <div class="grid items-start gap-4 xl:grid-cols-2">
+        <div class="grid items-start gap-4">
           <section aria-label="Fast reply model">
             <FrontModelSettings
               groupedModels={groupedModels}

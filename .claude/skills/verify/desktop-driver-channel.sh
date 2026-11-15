@@ -39,6 +39,9 @@ for _ in $(seq 100); do grep -q ready "$evidence/host.log" && break; sleep 0.1; 
 python3 - "$root" "$app/cua-driver" "$evidence" <<'PY'
 import json, os, socket, subprocess, sys, time
 root, driver, evidence = sys.argv[1:]
+json.dump({'pid': os.getpid(), 'host': '127.0.0.1', 'port': 9283,
+           'url': 'http://127.0.0.1:9283', 'version': 'verify',
+           'startedAt': int(time.time() * 1000)}, open(os.path.join(root, 'runtime.json'), 'w'))
 def call(action, **params):
     with socket.socket(socket.AF_UNIX) as client:
         client.settimeout(30)

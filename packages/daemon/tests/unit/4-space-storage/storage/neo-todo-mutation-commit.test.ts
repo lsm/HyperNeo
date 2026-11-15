@@ -109,7 +109,7 @@ describe('Atomic todo mutation commits', () => {
     const before = snapshot();
     expect(
       await commit(
-        { kind: 'close', todoId: 'first', reason: 'Finished' },
+        { kind: 'edit', todoId: 'first', done: 'reported', evidence: 'Finished' },
         {
           check: previous,
           result: { done: true },
@@ -153,7 +153,7 @@ describe('Atomic todo mutation commits', () => {
     );
     expect(
       await commit(
-        { kind: 'close', todoId: 'first', reason: 'Finished' },
+        { kind: 'edit', todoId: 'first', done: 'reported', evidence: 'Finished' },
         {
           check: store.getTodo('first')!.check,
           result: { done: true },

@@ -22,7 +22,7 @@ send nothing again. The captured first worker input (`workerRuleDelivered` in
 `evidence/observed.json`) must include rule 10's 30-second PR/issue guidance,
 the full-report-to-Neo boundary, public-repo privacy rule and concise issue
 contract. This proves delivery to new worker context, not model compliance or
-rewriting existing PRs. Completing the final todo through `neo.todo.close` sends
+rewriting existing PRs. Completing the final todo through a `neo.todo.edit` completion sends
 no further work.
 
 With a non-start ask question open, the dispatched worker stays doing and its
@@ -61,7 +61,7 @@ Add `--lifecycle` to the command above to exercise todo lifecycle RPCs on the
 same isolated daemon. `neo.question.ask` must return its explicit `todoId`;
 removing that todo through `neo.todo.remove` must retire the bound card after
 recompute, while a general ask question remains open. Marking a previously
-started synthetic todo failed and invoking `neo.todo.retry` must keep its ID,
+started synthetic todo failed and invoking `neo.todo.continue` must keep its ID,
 send one new turn to its existing worker, preserve the old durable input, and
 record a distinct new attempt. Restart the daemon and check that the retired
 card and retry history survive. Evidence is in the same `observed.json` under

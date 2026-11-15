@@ -64,7 +64,6 @@ function setup() {
     undefined,
     undefined,
     undefined,
-    undefined,
     reads
   );
   const askOp = questionOps.find((op) => op.name === 'neo.question.ask')!;

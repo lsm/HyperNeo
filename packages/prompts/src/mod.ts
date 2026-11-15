@@ -206,13 +206,10 @@ import mdToolQuestionAnswer from './neo/tools/neo.question.answer.md' with { typ
 import mdToolQuestionAsk from './neo/tools/neo.question.ask.md' with { type: 'text' };
 import mdToolQuestionGet from './neo/tools/neo.question.get.md' with { type: 'text' };
 import mdToolQuestionRelay from './neo/tools/neo.question.relay.md' with { type: 'text' };
-import mdToolQuestionResolve from './neo/tools/neo.question.resolve.md' with { type: 'text' };
 import mdToolQuestionRetire from './neo/tools/neo.question.retire.md' with { type: 'text' };
 import mdToolRuleApplyAnswer from './neo/tools/neo.rule.applyAnswer.md' with { type: 'text' };
 import mdToolRuleAsk from './neo/tools/neo.rule.ask.md' with { type: 'text' };
 import mdToolTodoAdd from './neo/tools/neo.todo.add.md' with { type: 'text' };
-import mdToolTodoBind from './neo/tools/neo.todo.bind.md' with { type: 'text' };
-import mdToolTodoClose from './neo/tools/neo.todo.close.md' with { type: 'text' };
 import mdToolTodoContinue from './neo/tools/neo.todo.continue.md' with { type: 'text' };
 import mdToolTodoDone from './neo/tools/neo.todo.done.md' with { type: 'text' };
 import mdToolTodoEdit from './neo/tools/neo.todo.edit.md' with { type: 'text' };
@@ -220,7 +217,6 @@ import mdToolTodoHold from './neo/tools/neo.todo.hold.md' with { type: 'text' };
 import mdToolTodoProceed from './neo/tools/neo.todo.proceed.md' with { type: 'text' };
 import mdToolTodoRead from './neo/tools/neo.todo.read.md' with { type: 'text' };
 import mdToolTodoRemove from './neo/tools/neo.todo.remove.md' with { type: 'text' };
-import mdToolTodoRetry from './neo/tools/neo.todo.retry.md' with { type: 'text' };
 import mdToolPackPreferencesApplyAnswer from './neo/tools/pack.preferences.applyAnswer.md' with {
   type: 'text',
 };
@@ -263,9 +259,6 @@ import mdToolSpeechCatalog from './neo/tools/neo.speech.catalog.md' with { type:
 import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: 'text' };
 import mdToolSpeechPreview from './neo/tools/neo.speech.preview.md' with { type: 'text' };
 import mdToolSpeechSay from './neo/tools/neo.speech.say.md' with { type: 'text' };
-import mdToolQuestionRelayAnswer from './neo/tools/neo.question.relayAnswer.md' with {
-  type: 'text',
-};
 import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
 import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
 import { buildPromptRegistry, fillPrompt } from './loader.ts';
@@ -672,13 +665,10 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.question.ask.md': mdToolQuestionAsk,
     'neo/tools/neo.question.get.md': mdToolQuestionGet,
     'neo/tools/neo.question.relay.md': mdToolQuestionRelay,
-    'neo/tools/neo.question.resolve.md': mdToolQuestionResolve,
     'neo/tools/neo.question.retire.md': mdToolQuestionRetire,
     'neo/tools/neo.rule.applyAnswer.md': mdToolRuleApplyAnswer,
     'neo/tools/neo.rule.ask.md': mdToolRuleAsk,
     'neo/tools/neo.todo.add.md': mdToolTodoAdd,
-    'neo/tools/neo.todo.bind.md': mdToolTodoBind,
-    'neo/tools/neo.todo.close.md': mdToolTodoClose,
     'neo/tools/neo.todo.continue.md': mdToolTodoContinue,
     'neo/tools/neo.todo.done.md': mdToolTodoDone,
     'neo/tools/neo.todo.edit.md': mdToolTodoEdit,
@@ -686,7 +676,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.todo.proceed.md': mdToolTodoProceed,
     'neo/tools/neo.todo.read.md': mdToolTodoRead,
     'neo/tools/neo.todo.remove.md': mdToolTodoRemove,
-    'neo/tools/neo.todo.retry.md': mdToolTodoRetry,
     'neo/tools/pack.preferences.applyAnswer.md': mdToolPackPreferencesApplyAnswer,
     'neo/tools/pack.preferences.ask.md': mdToolPackPreferencesAsk,
     'neo/tools/pack.preferences.get.md': mdToolPackPreferencesGet,
@@ -725,7 +714,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.speech.listen.md': mdToolSpeechListen,
     'neo/tools/neo.speech.preview.md': mdToolSpeechPreview,
     'neo/tools/neo.speech.say.md': mdToolSpeechSay,
-    'neo/tools/neo.question.relayAnswer.md': mdToolQuestionRelayAnswer,
     'neo/tools/neo.relaySenders.set.md': mdToolRelaySendersSet,
     'neo/tools/neo.relaySenders.recent.md': mdToolRelaySendersRecent,
   })

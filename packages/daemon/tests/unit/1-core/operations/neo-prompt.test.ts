@@ -56,7 +56,7 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');
     expect(NEO_ROOT_TURN_END).toContain('其他');
   });
-  test('tells Neo to add parallel running work with after: [] before binding', () => {
+  test('tells Neo to bind parallel running work with after: []', () => {
     expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');
   });
   test.each([

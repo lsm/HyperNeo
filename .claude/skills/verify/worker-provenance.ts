@@ -172,21 +172,19 @@ try {
     };
     appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), effort: 'medium', message: { model: 'claude-opus-5-5', content: [] } }) + '\n');
     const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } };
-    const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ after: [], title: 'Bound worker', check }] });
+    const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ after: [], title: 'Bound worker', check, target: { verb: 'bind', ref } }] });
     const boundId = opened.todos[0].id;
-    await invokeTodo('neo.todo.bind', { todoId: boundId, ref });
     assert.equal(sessions.readCard(boundId)?.model, 'claude-opus-5-5', 'production bind of an ask-open todo must refresh observed identity');
     assert.equal(sessions.readCard(boundId)?.effort, 'medium');
-    const added = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Added binding', check });
-    await invokeTodo('neo.todo.bind', { todoId: added.todo.id, ref });
+    const added = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Added binding', check, target: { verb: 'bind', ref } });
     assert.equal(sessions.readCard(added.todo.id)?.model, 'claude-opus-5-5', 'production bind of an added todo must refresh observed identity');
     const replacementRef = { adapter: 'claude-desktop', id: `local_${rcId}` };
     const replacementTranscript = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'), `${rcId}.jsonl`);
     appendFileSync(replacementTranscript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), perTurnEffort: 'high', message: { model: 'claude-sonnet-5', content: [] } }) + '\n');
-    await invokeTodo('neo.todo.bind', { todoId: boundId, ref: replacementRef });
-    assert.equal(sessions.readCard(boundId)?.model, 'claude-sonnet-5', 'production rebind must read the replacement worker');
-    assert.equal(sessions.readCard(boundId)?.effort, 'high');
-    evidence.push({ productionBind: sessions.readCard(boundId), productionAddedBind: sessions.readCard(added.todo.id) });
+    const replaced = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Replacement binding', check, target: { verb: 'bind', ref: replacementRef } });
+    assert.equal(sessions.readCard(replaced.todo.id)?.model, 'claude-sonnet-5', 'production bind must read the named worker');
+    assert.equal(sessions.readCard(replaced.todo.id)?.effort, 'high');
+    evidence.push({ productionBind: sessions.readCard(boundId), productionAddedBind: sessions.readCard(added.todo.id), productionReplacementBind: sessions.readCard(replaced.todo.id) });
     const askId = crypto.randomUUID();
     store.openAsk({ id: askId, sessionId: caller, projectId: null, originMessageId: 'fixture', title: 'Provenance', request: 'Write code and a report', createdAt: Date.now() });
     const todo = store.addTodo(crypto.randomUUID(), askId, { title: 'File evidence coding', doneWhen: 'report exists', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } }, instruction: 'Write code and a report', named: null }, Date.now());
@@ -220,8 +218,7 @@ try {
     if (process.argv.includes('--merge-facts')) {
       for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'hyperneo-ai-test', humanSignoff: ['docs/design/**'] }))
         assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/reviewed' }, key, value }), { ok: true });
-      const codingTodo = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Coding merge facts', check: { pack: 'coding', kind: 'pr_approved', params: { url: 'https://github.com/synthetic/reviewed/pull/78' } } });
-      await invokeTodo('neo.todo.bind', { todoId: codingTodo.todo.id, ref });
+      const codingTodo = await invokeTodo('neo.todo.add', { after: [], askId: opened.todos[0].askId, title: 'Coding merge facts', check: { pack: 'coding', kind: 'pr_approved', params: { url: 'https://github.com/synthetic/reviewed/pull/78' } }, target: { verb: 'bind', ref } });
       await invokeTodo('neo.todo.continue', { todoId: codingTodo.todo.id, message: 'Continue https://github.com/synthetic/reviewed/pull/78.' });
       const inputs = readFileSync(transcript, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       const deliveredMergeFacts = inputs.findLast(entry => entry.type === 'user').message.content;

@@ -57,6 +57,16 @@ pub(super) fn class(tool: &str) -> Option<&'static str> {
 }
 
 fn started_at(pid: i32) -> Option<(u64, u64)> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("FIXTURE_TARGET_BIRTH") {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                if value["pid"] == pid {
+                    return Some((value["seconds"].as_u64()?, value["microseconds"].as_u64()?));
+                }
+            }
+        }
+    }
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as i32;
     let read = unsafe {

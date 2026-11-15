@@ -117,7 +117,7 @@ try {
     assert(existsSync(join(control, 'done')));
     assert.equal(JSON.parse(readFileSync(join(run, 'evidence/browser.json'), 'utf8')).passed, true);
   }
-  const finished = JSON.parse((await invoke({ name: 'neo.todo.close', input: { todoId: internal.id, reason: 'Observed synthetic evidence' } })).content[0].text);
+  const finished = JSON.parse((await invoke({ name: 'neo.todo.edit', input: { todoId: internal.id, done: 'met', evidence: 'Observed synthetic evidence' } })).content[0].text);
   assert.equal(finished.todo?.state, 'done', JSON.stringify(finished));
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ passed: true, card: card.entry, rawCompletionRetained: true, hiddenReadForbidden: true, reportReadable: true, completionCheckPassed: true }, null, 2));
 } finally {

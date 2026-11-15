@@ -664,7 +664,6 @@ describe('cancelled prerequisites', () => {
     'after-drop-cancelled',
     'plan-repeat',
     'plan-repeat-start',
-    'bind',
   ] as const)('only the decision clears a cancelled prerequisite: %s', async (mode) => {
     const { db, store, invoke, step, runner, sent, work } = setup();
     try {
@@ -701,13 +700,6 @@ describe('cancelled prerequisites', () => {
           todos: [...steps({}).slice(0, 3), { ...step('D', [2]), ...work }],
         });
       if (mode === 'plan-repeat-start') await invoke('neo.ask.open', { ...plan, todos: steps({}) });
-      if (mode === 'bind')
-        expect(
-          await invoke('neo.todo.bind', {
-            todoId: d.id,
-            ref: { adapter: 'hyperneo', id: 'other-worker' },
-          })
-        ).toMatchObject({ ok: false, reason: expect.stringContaining('cancelled_dependency') });
       await runner.refresh(() => {});
       await runner.refresh(() => {});
       expect(store.getTodo(d.id)).toMatchObject({
@@ -773,12 +765,12 @@ describe('unfinished prerequisites of a started step', () => {
       const continued = await invoke('neo.todo.continue', { todoId: j.id, message: 'Next.' });
       expect(continued).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
       store.updateTodo(store.getTodo(j.id)!, { state: 'failed', reason: 'Lost.' }, Date.now());
-      const retried = await invoke('neo.todo.retry', { todoId: j.id });
+      const retried = await invoke('neo.todo.continue', { todoId: j.id });
       expect(retried).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
       expect(store.getTodo(j.id)?.state).toBe('failed');
       expect(sent).toHaveLength(before);
       store.updateTodo(store.getTodo(a.id)!, { state: 'done' }, Date.now());
-      expect((await invoke('neo.todo.retry', { todoId: j.id })).ok).toBe(true);
+      expect((await invoke('neo.todo.continue', { todoId: j.id })).ok).toBe(true);
       expect(store.getTodo(j.id)?.state).toBe('doing');
       expect(sent).toHaveLength(before + 1);
     } finally {
@@ -800,22 +792,28 @@ describe('unfinished prerequisites of a started step', () => {
     }
   });
 
-  test('bind refuses while a prerequisite runs, then binds', async () => {
+  test('a bind target is refused while a prerequisite runs, then binds', async () => {
     const { db, store, invoke, runner, step, work } = setup();
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Bind waits',
         request: 'Finish X before Y.',
-        todos: [{ ...step('X', []), ...work }, step('Y', [0])],
+        todos: [{ ...step('X', []), ...work }],
       });
-      const [x, y] = opened.todos;
+      const [x] = opened.todos;
       await runner.advance();
-      const refused = await invoke('neo.todo.bind', { todoId: y.id, ref: work.target.ref });
+      const y = {
+        ...step('Y', [x.id]),
+        askId: x.askId,
+        target: { verb: 'bind', ref: work.target.ref },
+      };
+      const refused = await invoke('neo.todo.add', y);
       expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
-      expect(store.getTodo(y.id)).toMatchObject({ state: 'todo', startedAt: null });
+      expect(store.listTodos(x.askId)).toHaveLength(1);
       await complete(runner, store.getTodo(x.id)!);
-      expect((await invoke('neo.todo.bind', { todoId: y.id, ref: work.target.ref })).ok).toBe(true);
-      expect(store.getTodo(y.id)?.state).toBe('doing');
+      const bound = await invoke('neo.todo.add', y);
+      expect(bound.ok).toBe(true);
+      expect(store.getTodo(bound.todo.id)?.state).toBe('doing');
     } finally {
       db.close();
     }

@@ -10,8 +10,8 @@ import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 
 const DOOR_OPERATIONS = new Set([
   'message.send',
+  'neo.question.answer',
   'neo.question.get',
-  'neo.question.relayAnswer',
   'system.build',
   'system.restart.reserve',
   'device.pair.create',

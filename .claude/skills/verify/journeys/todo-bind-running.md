@@ -12,20 +12,18 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
   bun .claude/skills/verify/todo-bind-running.ts "$RUN"
 ```
 
-The production MCP adapter opens an ask with a todo that has no target, then
-binds it with `neo.todo.bind {todoId, ref: {adapter: "hyperneo", id:
-"synthetic-running-worker"}}`. The returned todo must have that worker and state
-doing. `neo.todo.add` with target `{verb: "bind", ref}` plus an instruction must
-be refused with the "bind is its own operation" error and add no todo. A second
-todo is added and bound the same way. The helper creates a failed synthetic
-backfill with old send evidence, then calls `neo.todo.bind` with `{todoId, ref}`.
-The same todo becomes doing, its failure and old delivery evidence clear, and its
-worker is set.
+The production MCP adapter opens an ask whose todo has target `{verb: "bind",
+ref: {adapter: "hyperneo", id: "synthetic-running-worker"}}` and no instruction.
+The returned todo must have that worker and state doing. `neo.todo.add` with a
+bind target plus an instruction must be refused with "A bind target attaches
+work that is already running; leave instruction out." and add no todo. A second
+todo is added through `neo.todo.add` with the same bind target and is doing on
+that worker.
 
 Dispatch sentries in the isolated registry count and reject work.send/work.start;
 both counters and the delivery-input table must stay empty. This observes the
 actual operations and persistence, not a simulated todo implementation. After a
-real daemon restart all three todos stay doing and retain their worker references.
+real daemon restart both todos stay doing and retain their worker references.
 Synthetic fixtures never open a model turn, and no real database is copied.
 The helper closes both daemon instances in finally and retains
 `evidence/todo-bind.json` (all MCP replies, persisted todos/refs and zero sends).

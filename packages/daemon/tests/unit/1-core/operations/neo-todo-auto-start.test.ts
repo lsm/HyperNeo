@@ -273,9 +273,6 @@ describe('todo automatic start', () => {
         ok: false,
         reason: expect.stringContaining('not_approved'),
       });
-      expect(
-        await invoke('neo.todo.bind', { todoId: b.id, ref: { adapter: 'hyperneo', id: 'other' } })
-      ).toMatchObject({ ok: false, reason: expect.stringContaining('not_approved') });
       expect(store.getTodo(b.id)?.startedAt).toBeNull();
       expect(sent).toHaveLength(0);
     } finally {

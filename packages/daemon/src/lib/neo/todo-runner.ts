@@ -210,6 +210,9 @@ export function neoTodoNeedsYouNote(
   return `Todo "${todo.title}": its session is waiting on the human (${live.waitingFor ?? 'a prompt or question'}). Ask the human once to answer it there${link ? `: ${link}` : ''}. Do not send to it until it runs again.`;
 }
 
+export const neoTodoFailed = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
+  todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+
 export function requireNeoTodoRetryable(read: {
   todo: NeoTodo | null;
   ref: WorkRef | null;
@@ -225,9 +228,7 @@ export function requireNeoTodoRetryable(read: {
     return fail(
       'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.'
     );
-  const failed =
-    todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
-  if (!failed || !target || !['start', 'send'].includes(target.verb))
+  if (!neoTodoFailed(todo) || !target || !['start', 'send'].includes(target.verb))
     return record(
       todo,
       'not_retryable: no retry was needed or no worker target is recorded; no work was dispatched.'
@@ -1632,13 +1633,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: store.getTodo(todo.id)! };
   };
 
-  const retry = async (todoId: string, automatic = false) => {
+  const retry = async (todoId: string, automatic = false, message?: string) => {
     const gate = requireNeoTodoRetryable(read(todoId));
     if ('reason' in gate) return gate.reason;
     if (automatic) sessions.recordRetry(todoId);
     else sessions.clearRetries(todoId);
     if (sessions.readRef(todoId))
-      return proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
+      return proceed(todoId, message ?? gate.value.instruction ?? 'Retry this todo.');
     store.updateTodo(gate.value, { state: 'todo', startedAt: null, finishedAt: null }, Date.now());
     return start(todoId);
   };
@@ -1694,7 +1695,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     recompute,
     proceed,
     stop,
-    retry: (todoId: string) => retry(todoId),
+    retry: (todoId: string, message?: string) => retry(todoId, false, message),
     async checkNow(
       selection: readonly string[] | { questionId: string },
       warn: (message: string, error: unknown) => void

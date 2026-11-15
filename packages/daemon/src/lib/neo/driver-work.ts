@@ -65,18 +65,20 @@ const NeoStartWorkTarget = z.object({
 
 const NeoSendWorkTarget = z.object({ verb: z.literal('send'), ref: WorkRefSchema });
 
-export const NeoTodoTargetSchema = z.discriminatedUnion(
-  'verb',
-  [NeoStartWorkTarget, NeoSendWorkTarget],
-  {
-    error: (issue) =>
-      (issue.input as { verb?: unknown } | undefined)?.verb === 'bind'
-        ? 'bind is its own operation: use neo.todo.bind {todoId, ref} for work already running; to give a worker a new task use target {verb: send, ref}.'
-        : undefined,
-  }
-);
+export const NeoTodoTargetSchema = z.discriminatedUnion('verb', [
+  NeoStartWorkTarget,
+  NeoSendWorkTarget,
+]);
 
 export type NeoTodoTarget = z.infer<typeof NeoTodoTargetSchema>;
+
+export const NeoTodoAddTargetSchema = z.discriminatedUnion('verb', [
+  NeoStartWorkTarget,
+  NeoSendWorkTarget,
+  z.object({ verb: z.literal('bind'), ref: WorkRefSchema }),
+]);
+
+export type NeoTodoAddTarget = z.infer<typeof NeoTodoAddTargetSchema>;
 
 export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
   NeoReadWorkTarget,

@@ -20,6 +20,7 @@ pub(super) struct Channel {
     generation: String,
     next: u64,
     pub(super) pid: u32,
+    pub(super) sent: bool,
 }
 
 impl Channel {
@@ -59,6 +60,7 @@ impl Channel {
             stream: Some(BufReader::new(UnixStream::from_std(host)?)),
             generation,
             next: 0,
+            sent: false,
             pid,
         };
         let initialization = serde_json::to_value(WorkerInitialization {
@@ -101,13 +103,27 @@ impl Channel {
         operation: &str,
         arguments: Option<Value>,
     ) -> Result<Value> {
+        self.send(operation, None, arguments).await
+    }
+
+    pub(super) async fn call(&mut self, name: &str, arguments: Option<Value>) -> Result<Value> {
+        self.send("call", Some(name.to_owned()), arguments).await
+    }
+
+    async fn send(
+        &mut self,
+        operation: &str,
+        name: Option<String>,
+        arguments: Option<Value>,
+    ) -> Result<Value> {
+        self.sent = false;
         let stream = self.stream.as_mut().ok_or("Driver channel closed")?;
         let request = ChannelRequest {
             protocol_version: PRIVATE_WORKER_PROTOCOL_VERSION,
             request_id: self.next,
             generation: self.generation.clone(),
             operation: operation.into(),
-            name: None,
+            name,
             arguments,
             session_handle: None,
         };
@@ -115,6 +131,7 @@ impl Channel {
         let mut line = serde_json::to_vec(&request)?;
         line.push(b'\n');
         stream.get_mut().write_all(&line).await?;
+        self.sent = true;
         let mut reply = String::new();
         (&mut *stream).take(1 << 20).read_line(&mut reply).await?;
         let response: ChannelResponse = serde_json::from_str(&reply)?;

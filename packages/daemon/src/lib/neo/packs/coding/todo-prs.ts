@@ -436,7 +436,10 @@ export function createCodingTodoPolicy(
         const name = scope.edit
           ? (place.todo ?? hinted() ?? place.ask)
           : repository(candidate, scope);
-        if (draft.check?.pack === 'coding' && draft.target?.verb === 'send') {
+        if (
+          draft.check?.pack === 'coding' &&
+          (draft.target?.verb === 'send' || draft.target?.verb === 'bind')
+        ) {
           const expected = name ?? hinted();
           const remotes = scope.workerRemotes?.map(neoGitRepo).filter(Boolean) ?? [];
           if (expected && !remotes.includes(neoGitRepo(expected)))

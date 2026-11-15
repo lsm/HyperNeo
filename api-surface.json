@@ -6603,6 +6603,112 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "args": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "tool": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "args"
+        ],
+        "type": "object"
+      },
+      "name": "desktop.call",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bundle_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "call_id": {
+                "type": "string"
+              },
+              "class": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decision": {
+                "enum": [
+                  "allowed",
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "dispatched": {
+                "type": "boolean"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "call_id",
+              "bundle_id",
+              "class",
+              "decision",
+              "reason",
+              "dispatched",
+              "ok"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "decision": {
+                "const": "refused",
+                "type": "string"
+              },
+              "dispatched": {
+                "const": false,
+                "type": "boolean"
+              },
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "decision",
+              "reason",
+              "dispatched"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
           "on": {
             "type": "boolean"
           },
@@ -20489,6 +20595,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -21578,6 +21688,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -21930,6 +22044,10 @@
                   ],
                   "type": "string"
                 },
+                "producesFollowUp": {
+                  "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+                  "type": "boolean"
+                },
                 "target": {
                   "oneOf": [
                     {
@@ -22065,6 +22183,40 @@
                         },
                         "verb": {
                           "const": "send",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verb",
+                        "ref"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "ref": {
+                          "properties": {
+                            "adapter": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "daemon": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "id": {
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "adapter",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "verb": {
+                          "const": "bind",
                           "type": "string"
                         }
                       },
@@ -22468,6 +22620,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -23001,6 +23157,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -24069,6 +24229,10 @@
                               ],
                               "type": "string"
                             },
+                            "producesFollowUp": {
+                              "const": true,
+                              "type": "boolean"
+                            },
                             "reason": {
                               "type": [
                                 "string",
@@ -24782,6 +24946,10 @@
                       ],
                       "type": "string"
                     },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
+                    },
                     "reason": {
                       "type": [
                         "string",
@@ -25314,6 +25482,10 @@
                         "urgent"
                       ],
                       "type": "string"
+                    },
+                    "producesFollowUp": {
+                      "const": true,
+                      "type": "boolean"
                     },
                     "reason": {
                       "type": [
@@ -28396,6 +28568,36 @@
             "minimum": -9007199254740991,
             "type": "integer"
           },
+          "fallbacks": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "model": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "provider": {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "thinkingLevel": {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "model",
+                "provider",
+                "thinkingLevel"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
           "model": {
             "maxLength": 200,
             "minLength": 1,
@@ -28454,6 +28656,35 @@
                     "maximum": 9007199254740991,
                     "minimum": -9007199254740991,
                     "type": "integer"
+                  },
+                  "fallbacks": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "model": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "provider": {
+                          "maxLength": 80,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "thinkingLevel": {
+                          "maxLength": 40,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "model",
+                        "provider",
+                        "thinkingLevel"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
                   },
                   "model": {
                     "maxLength": 200,
@@ -30899,6 +31130,10 @@
                               "urgent"
                             ],
                             "type": "string"
+                          },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
                           },
                           "reason": {
                             "type": [
@@ -33687,6 +33922,14 @@
           "questionId": {
             "minLength": 1,
             "type": "string"
+          },
+          "when": {
+            "description": "Session door only: when the human said the answer.",
+            "type": "string"
+          },
+          "where": {
+            "description": "Session door only: where the human said the answer.",
+            "type": "string"
           }
         },
         "required": [
@@ -35844,598 +36087,6 @@
         "type": "object"
       },
       "name": "neo.question.relay",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              },
-              "question": {
-                "additionalProperties": false,
-                "properties": {
-                  "answer": {
-                    "anyOf": [
-                      {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          }
-                        ]
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "answerProvenance": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "at": {
-                        "type": "number"
-                      },
-                      "via": {
-                        "type": "string"
-                      },
-                      "viaName": {
-                        "type": "string"
-                      },
-                      "when": {
-                        "type": "string"
-                      },
-                      "where": {
-                        "type": "string"
-                      },
-                      "words": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "words",
-                      "via",
-                      "viaName",
-                      "where",
-                      "when",
-                      "at"
-                    ],
-                    "type": "object"
-                  },
-                  "answeredAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "answeredBy": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "button",
-                          "chat"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "artifacts": {
-                    "items": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "artifactId": {
-                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                              "type": "string"
-                            },
-                            "byteLength": {
-                              "maximum": 9007199254740991,
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "daemonId": {
-                              "format": "uuid",
-                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                              "type": "string"
-                            },
-                            "kind": {
-                              "enum": [
-                                "markdown",
-                                "html",
-                                "image",
-                                "json",
-                                "log",
-                                "text",
-                                "video"
-                              ],
-                              "type": "string"
-                            },
-                            "title": {
-                              "maxLength": 200,
-                              "minLength": 1,
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "daemonId",
-                            "artifactId",
-                            "title",
-                            "kind",
-                            "byteLength"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "artifactId": {
-                              "pattern": "^[a-f0-9]{64}$",
-                              "type": "string"
-                            },
-                            "byteLength": {
-                              "maximum": 9007199254740991,
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "daemonId": {
-                              "format": "uuid",
-                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                              "type": "string"
-                            },
-                            "name": {
-                              "maxLength": 128,
-                              "minLength": 1,
-                              "pattern": "^[\\w][\\w .-]*$",
-                              "type": "string"
-                            },
-                            "sessionId": {
-                              "maxLength": 200,
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "sha256": {
-                              "pattern": "^[a-f0-9]{64}$",
-                              "type": "string"
-                            },
-                            "type": {
-                              "const": "handoff",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "artifactId",
-                            "daemonId",
-                            "sessionId",
-                            "name",
-                            "byteLength",
-                            "sha256",
-                            "type"
-                          ],
-                          "type": "object"
-                        }
-                      ]
-                    },
-                    "maxItems": 16,
-                    "readOnly": true,
-                    "type": "array"
-                  },
-                  "askId": {
-                    "type": "string"
-                  },
-                  "cause": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "confirm": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "path": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "sha256": {
-                            "maxLength": 64,
-                            "minLength": 64,
-                            "pattern": "^[a-f0-9]+$",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "path",
-                          "sha256"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "createdAt": {
-                    "type": "number"
-                  },
-                  "document": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "enum": [
-                      "yesno",
-                      "choice",
-                      "reply",
-                      "start"
-                    ],
-                    "type": "string"
-                  },
-                  "labels": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "multiple": {
-                    "type": "boolean"
-                  },
-                  "noLabel": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "options": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "replacedBy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "replyTo": {
-                    "items": {
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "retireWhen": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "kind": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "pack": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "params": {
-                        "additionalProperties": {},
-                        "default": {},
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "pack",
-                      "kind",
-                      "params"
-                    ],
-                    "type": "object"
-                  },
-                  "retiredReason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "sourceSession": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "adapter": {
-                        "type": "string"
-                      },
-                      "daemon": {
-                        "type": "string"
-                      },
-                      "id": {
-                        "type": "string"
-                      },
-                      "label": {
-                        "type": "string"
-                      },
-                      "link": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "name": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "provider": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "id",
-                      "adapter",
-                      "name",
-                      "label",
-                      "provider",
-                      "link"
-                    ],
-                    "type": "object"
-                  },
-                  "startTodos": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "state": {
-                    "enum": [
-                      "open",
-                      "answered",
-                      "retired"
-                    ],
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "todoId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "todos": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "yesLabel": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "askId",
-                  "text",
-                  "kind",
-                  "options",
-                  "multiple",
-                  "noLabel",
-                  "yesLabel",
-                  "startTodos",
-                  "todos",
-                  "state",
-                  "answer",
-                  "answeredBy",
-                  "answeredAt",
-                  "retiredReason",
-                  "replacedBy",
-                  "createdAt"
-                ],
-                "type": "object"
-              },
-              "records": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "ok",
-              "question"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "questionId": {
-            "default": "",
-            "type": "string"
-          },
-          "when": {
-            "default": "",
-            "type": "string"
-          },
-          "where": {
-            "default": "",
-            "type": "string"
-          },
-          "words": {
-            "default": "",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "neo.question.relayAnswer",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "ok"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "answer": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              }
-            ]
-          },
-          "questionId": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "source": {
-            "oneOf": [
-              {
-                "properties": {
-                  "kind": {
-                    "const": "rule",
-                    "type": "string"
-                  },
-                  "text": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "text"
-                ],
-                "type": "object"
-              },
-              {
-                "properties": {
-                  "kind": {
-                    "const": "answer",
-                    "type": "string"
-                  },
-                  "questionId": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "questionId"
-                ],
-                "type": "object"
-              }
-            ]
-          }
-        },
-        "required": [
-          "questionId",
-          "answer",
-          "source"
-        ],
-        "type": "object"
-      },
-      "name": "neo.question.resolve",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "anyOf": [
@@ -39893,6 +39544,10 @@
                             ],
                             "type": "string"
                           },
+                          "producesFollowUp": {
+                            "const": true,
+                            "type": "boolean"
+                          },
                           "reason": {
                             "type": [
                               "string",
@@ -40608,6 +40263,10 @@
             ],
             "type": "string"
           },
+          "producesFollowUp": {
+            "description": "True when this todo's result is more work: a design, plan, research or inventory. Once it finishes, its ask cannot settle done until a later todo exists (unstarted is fine). Add each follow-up with after: [this todo's id].",
+            "type": "boolean"
+          },
           "target": {
             "oneOf": [
               {
@@ -40743,6 +40402,40 @@
                   },
                   "verb": {
                     "const": "send",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "verb",
+                  "ref"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "ref": {
+                    "properties": {
+                      "adapter": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "daemon": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "id": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "adapter",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "verb": {
+                    "const": "bind",
                     "type": "string"
                   }
                 },
@@ -41001,766 +40694,9 @@
                     ],
                     "type": "string"
                   },
-                  "reason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "replacedBy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "report": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "startedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "state": {
-                    "enum": [
-                      "todo",
-                      "doing",
-                      "blocked",
-                      "done",
-                      "closed_unverified",
-                      "failed",
-                      "removed"
-                    ],
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "updatedAt": {
-                    "type": "number"
-                  },
-                  "worker": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "adapter": {
-                            "type": "string"
-                          },
-                          "daemon": {
-                            "type": "string"
-                          },
-                          "id": {
-                            "type": "string"
-                          },
-                          "label": {
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter",
-                          "name",
-                          "label"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "askId",
-                  "position",
-                  "title",
-                  "doneWhen",
-                  "check",
-                  "instruction",
-                  "named",
-                  "state",
-                  "reason",
-                  "blockedReason",
-                  "nextAction",
-                  "blockedBy",
-                  "priority",
-                  "dependsOn",
-                  "replacedBy",
-                  "addedAfterStart",
-                  "approvedAt",
-                  "approvalQuestionId",
-                  "report",
-                  "evidence",
-                  "createdAt",
-                  "updatedAt",
-                  "startedAt",
-                  "finishedAt"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "ok"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "ref": {
-            "properties": {
-              "adapter": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "daemon": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "id": {
-                "minLength": 1,
-                "type": "string"
-              }
-            },
-            "required": [
-              "adapter",
-              "id"
-            ],
-            "type": "object"
-          },
-          "todoId": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "todoId",
-          "ref"
-        ],
-        "type": "object"
-      },
-      "name": "neo.todo.bind",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              },
-              "records": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "todo": {
-                "additionalProperties": false,
-                "properties": {
-                  "addedAfterStart": {
+                  "producesFollowUp": {
+                    "const": true,
                     "type": "boolean"
-                  },
-                  "approvalQuestionId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "approvedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "artifacts": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text",
-                            "video"
-                          ],
-                          "type": "string"
-                        },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
-                    },
-                    "readOnly": true,
-                    "type": "array"
-                  },
-                  "askId": {
-                    "type": "string"
-                  },
-                  "blockedBy": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "check",
-                          "worker",
-                          "failure",
-                          "question",
-                          "needs-human",
-                          "environment",
-                          "stalled",
-                          "held"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "blockedReason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "check": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "pack": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "params": {
-                            "additionalProperties": {},
-                            "default": {},
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "pack",
-                          "kind",
-                          "params"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "createdAt": {
-                    "type": "number"
-                  },
-                  "dependsOn": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "doneWhen": {
-                    "type": "string"
-                  },
-                  "evidence": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "finishedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  },
-                  "instruction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "named": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": {},
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "nextAction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "position": {
-                    "type": "number"
-                  },
-                  "priority": {
-                    "enum": [
-                      "low",
-                      "normal",
-                      "high",
-                      "urgent"
-                    ],
-                    "type": "string"
-                  },
-                  "reason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "replacedBy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "report": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "startedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "state": {
-                    "enum": [
-                      "todo",
-                      "doing",
-                      "blocked",
-                      "done",
-                      "closed_unverified",
-                      "failed",
-                      "removed"
-                    ],
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "updatedAt": {
-                    "type": "number"
-                  },
-                  "worker": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "adapter": {
-                            "type": "string"
-                          },
-                          "daemon": {
-                            "type": "string"
-                          },
-                          "id": {
-                            "type": "string"
-                          },
-                          "label": {
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter",
-                          "name",
-                          "label"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "askId",
-                  "position",
-                  "title",
-                  "doneWhen",
-                  "check",
-                  "instruction",
-                  "named",
-                  "state",
-                  "reason",
-                  "blockedReason",
-                  "nextAction",
-                  "blockedBy",
-                  "priority",
-                  "dependsOn",
-                  "replacedBy",
-                  "addedAfterStart",
-                  "approvedAt",
-                  "approvalQuestionId",
-                  "report",
-                  "evidence",
-                  "createdAt",
-                  "updatedAt",
-                  "startedAt",
-                  "finishedAt"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "ok"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "reason": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "todoId": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "todoId",
-          "reason"
-        ],
-        "type": "object"
-      },
-      "name": "neo.todo.close",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              },
-              "records": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "todo": {
-                "additionalProperties": false,
-                "properties": {
-                  "addedAfterStart": {
-                    "type": "boolean"
-                  },
-                  "approvalQuestionId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "approvedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "artifacts": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text",
-                            "video"
-                          ],
-                          "type": "string"
-                        },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
-                    },
-                    "readOnly": true,
-                    "type": "array"
-                  },
-                  "askId": {
-                    "type": "string"
-                  },
-                  "blockedBy": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "check",
-                          "worker",
-                          "failure",
-                          "question",
-                          "needs-human",
-                          "environment",
-                          "stalled",
-                          "held"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "blockedReason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "check": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "pack": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "params": {
-                            "additionalProperties": {},
-                            "default": {},
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "pack",
-                          "kind",
-                          "params"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "createdAt": {
-                    "type": "number"
-                  },
-                  "dependsOn": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "doneWhen": {
-                    "type": "string"
-                  },
-                  "evidence": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "finishedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  },
-                  "instruction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "named": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": {},
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "nextAction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "position": {
-                    "type": "number"
-                  },
-                  "priority": {
-                    "enum": [
-                      "low",
-                      "normal",
-                      "high",
-                      "urgent"
-                    ],
-                    "type": "string"
                   },
                   "reason": {
                     "type": [
@@ -41894,8 +40830,7 @@
           }
         },
         "required": [
-          "todoId",
-          "message"
+          "todoId"
         ],
         "type": "object"
       },
@@ -42133,6 +41068,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -42504,6 +41443,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -43177,6 +42120,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -43557,6 +42504,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -43924,6 +42875,10 @@
                     ],
                     "type": "string"
                   },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
+                  },
                   "reason": {
                     "type": [
                       "string",
@@ -44284,6 +43239,10 @@
                       "urgent"
                     ],
                     "type": "string"
+                  },
+                  "producesFollowUp": {
+                    "const": true,
+                    "type": "boolean"
                   },
                   "reason": {
                     "type": [
@@ -44670,372 +43629,9 @@
                     ],
                     "type": "string"
                   },
-                  "reason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "replacedBy": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "report": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "startedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "state": {
-                    "enum": [
-                      "todo",
-                      "doing",
-                      "blocked",
-                      "done",
-                      "closed_unverified",
-                      "failed",
-                      "removed"
-                    ],
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "updatedAt": {
-                    "type": "number"
-                  },
-                  "worker": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "adapter": {
-                            "type": "string"
-                          },
-                          "daemon": {
-                            "type": "string"
-                          },
-                          "id": {
-                            "type": "string"
-                          },
-                          "label": {
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "adapter",
-                          "name",
-                          "label"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "id",
-                  "askId",
-                  "position",
-                  "title",
-                  "doneWhen",
-                  "check",
-                  "instruction",
-                  "named",
-                  "state",
-                  "reason",
-                  "blockedReason",
-                  "nextAction",
-                  "blockedBy",
-                  "priority",
-                  "dependsOn",
-                  "replacedBy",
-                  "addedAfterStart",
-                  "approvedAt",
-                  "approvalQuestionId",
-                  "report",
-                  "evidence",
-                  "createdAt",
-                  "updatedAt",
-                  "startedAt",
-                  "finishedAt"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "ok"
-            ],
-            "type": "object"
-          }
-        ]
-      }
-    },
-    {
-      "inputSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "todoId": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "todoId"
-        ],
-        "type": "object"
-      },
-      "name": "neo.todo.retry",
-      "resultSchema": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "anyOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": false,
-                "type": "boolean"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "ok",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "ok": {
-                "const": true,
-                "type": "boolean"
-              },
-              "records": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "todo": {
-                "additionalProperties": false,
-                "properties": {
-                  "addedAfterStart": {
+                  "producesFollowUp": {
+                    "const": true,
                     "type": "boolean"
-                  },
-                  "approvalQuestionId": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "approvedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "artifacts": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "artifactId": {
-                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
-                          "type": "string"
-                        },
-                        "byteLength": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
-                        "daemonId": {
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                          "type": "string"
-                        },
-                        "kind": {
-                          "enum": [
-                            "markdown",
-                            "html",
-                            "image",
-                            "json",
-                            "log",
-                            "text",
-                            "video"
-                          ],
-                          "type": "string"
-                        },
-                        "title": {
-                          "maxLength": 200,
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "daemonId",
-                        "artifactId",
-                        "title",
-                        "kind",
-                        "byteLength"
-                      ],
-                      "type": "object"
-                    },
-                    "readOnly": true,
-                    "type": "array"
-                  },
-                  "askId": {
-                    "type": "string"
-                  },
-                  "blockedBy": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "check",
-                          "worker",
-                          "failure",
-                          "question",
-                          "needs-human",
-                          "environment",
-                          "stalled",
-                          "held"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "blockedReason": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "check": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "pack": {
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "params": {
-                            "additionalProperties": {},
-                            "default": {},
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "type": "object"
-                          }
-                        },
-                        "required": [
-                          "pack",
-                          "kind",
-                          "params"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "createdAt": {
-                    "type": "number"
-                  },
-                  "dependsOn": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "doneWhen": {
-                    "type": "string"
-                  },
-                  "evidence": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "finishedAt": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  },
-                  "instruction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "named": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": {},
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "type": "object"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "nextAction": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "position": {
-                    "type": "number"
-                  },
-                  "priority": {
-                    "enum": [
-                      "low",
-                      "normal",
-                      "high",
-                      "urgent"
-                    ],
-                    "type": "string"
                   },
                   "reason": {
                     "type": [

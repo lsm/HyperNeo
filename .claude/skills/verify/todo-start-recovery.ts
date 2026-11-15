@@ -69,7 +69,7 @@ try {
   assert.equal(sessions.readStartInterrupted('recover'),true);
   assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='failed' && todo.report===report));
   assert(tables.includes('neo_todo_sessions')); assert(tables.includes('neo_questions'));
-  const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.retry',input:{todoId:'recover'}});
+  const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.continue',input:{todoId:'recover'}});
   assert(!retry.ok && retry.reason.startsWith('start_uncertain:'));
   result.commitBeforeReply=true; result.retryWarnsOfUncertainStart=true;
   result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};

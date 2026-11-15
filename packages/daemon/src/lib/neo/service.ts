@@ -15,6 +15,7 @@ import {
   neoAskSettlementWrites,
   neoAskTurnedSettleReads,
   neoAskTurnedSettleWrites,
+  neoAskTodosVersion,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import { createNeoQuestionAnswerDelivery } from './question-answer-delivery.ts';
 import { wakeFailedHyperneoSession } from './query-failure.ts';
@@ -110,6 +111,7 @@ import {
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
+import { neoTodoFollowUpRefusal, wakeNeoFollowUpGaps } from './todo-follow-up.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -1155,6 +1157,9 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    await wakeNeoFollowUpGaps(this.todos, this.wakeNeo.bind(this)).catch((error) =>
+      this.log.warn('Follow-up wake pending', error)
+    );
     const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
     for (const { question, todo } of await this.todos.read('openQuestionChecks'))
       await retire(question, todo, Date.now()).catch((error) =>
@@ -1197,10 +1202,17 @@ export class NeoService {
         this.log.warn('Ask auto-settle pending', error);
         return null;
       });
-      if (settleReady?.length)
+      const versions: Record<string, string> = {};
+      for (const id of settleReady ?? []) {
+        const todos = this.todos.listTodos(id);
+        if (!neoTodoFollowUpRefusal(todos)) versions[id] = neoAskTodosVersion(todos);
+      }
+      const settleIds = Object.keys(versions);
+      if (settleIds.length)
         await this.runDbOp(neoAskTurnedSettleWrites, {
           now: Date.now(),
-          ids: settleReady,
+          ids: settleIds,
+          versions,
         }).catch((error) => this.log.warn('Ask auto-settle pending', error));
       await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
