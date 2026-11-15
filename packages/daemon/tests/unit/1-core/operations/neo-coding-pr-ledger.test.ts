@@ -865,3 +865,41 @@ test('ledger reads repo preferences before same-pack global fallback', () => {
     db.close();
   }
 });
+
+describe('planCodingLedgerRead cross-model review', () => {
+  const policy = { mergePolicy: 'review_bot', reviewBot: 'bot', crossModelReview: true } as const;
+  const pr = node(1, {
+    body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+    reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+  });
+  const review = (model: string, head = 'h1') => ({
+    url: 'https://github.com/x/x/pull/1',
+    head,
+    stage: 'review' as const,
+    actor: { kind: 'agent' as const, id: 'reviewer', model, harness: 'Codex' },
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  });
+  const state = (crossModelReview: boolean, reviews: ReturnType<typeof review>[]) =>
+    planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => ({ ...policy, crossModelReview }),
+      (url) => (url === 'https://github.com/x/x/pull/1' ? reviews : [])
+    )?.rows[0].state;
+
+  test('an approved green PR waits for a review by a different model', () => {
+    expect(state(true, [])).toBe('waiting_cross_review');
+    expect(state(true, [review('claude-opus-5-5')])).toBe('waiting_cross_review');
+    expect(state(true, [review('gpt-6.1-sol', 'h0')])).toBe('waiting_cross_review');
+  });
+
+  test('a passing review by a different model on the head makes it green', () => {
+    expect(state(true, [review('gpt-6.1-sol')])).toBe('approved_green');
+  });
+
+  test('repositories without the preference keep the existing states', () => {
+    expect(state(false, [])).toBe('approved_green');
+  });
+});

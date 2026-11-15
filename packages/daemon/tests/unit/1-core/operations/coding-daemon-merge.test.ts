@@ -116,3 +116,34 @@ test.each(['policy', 'label'])(
     ).toBe('needs_human_signoff');
   }
 );
+
+describe('decideCodingDaemonMerge cross-model review', () => {
+  const crossPolicy = { ...policy, crossModelReview: true } as const;
+  const review = (model: string) => ({
+    url: 'https://github.com/lsm/hyperneo/pull/1',
+    head,
+    stage: 'review' as const,
+    actor: { kind: 'agent' as const, id: 'reviewer', model, harness: 'Codex' },
+    verdict: 'pass' as const,
+    acceptanceContract: 'contract',
+    evidence: ['ran it'],
+  });
+  const authored = { ...facts, body: 'Agent: claude-opus-5-5 (effort: medium) via Claude' };
+
+  test('refuses a bot-approved green PR without a review by a different model', () => {
+    expect(decideCodingDaemonMerge({ ...authored, stageFacts: [] }, crossPolicy)).toEqual({
+      kind: 'skip',
+      reason: 'cross_model_review_required',
+    });
+    expect(
+      decideCodingDaemonMerge({ ...authored, stageFacts: [review('claude-opus-5-5')] }, crossPolicy)
+        .kind
+    ).toBe('skip');
+  });
+
+  test('merges once a different model has passed the head', () => {
+    expect(
+      decideCodingDaemonMerge({ ...authored, stageFacts: [review('gpt-6.1-sol')] }, crossPolicy)
+    ).toEqual({ kind: 'merge', head });
+  });
+});
