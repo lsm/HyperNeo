@@ -35,6 +35,7 @@ import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
+import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -210,6 +211,7 @@ export function createCodingPack(deps: {
         default: [],
         ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
+      sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
