@@ -2228,6 +2228,29 @@ describe('AgentSession', () => {
       expect(result).toEqual(mockResult);
     });
 
+    it('handleModelSwitch drops every limit record once a chosen model is applied', async () => {
+      const limits = {
+        'anthropic/haiku': { until: 1, fallback: 'anthropic/sonnet' },
+        'anthropic/sonnet': { until: 1, fallback: 'anthropic/opus' },
+      };
+      const limited = new AgentSession(
+        { ...mockSession, metadata: { ...mockSession.metadata, modelLimits: limits } },
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+      const switchModel = mock(async (model: string) => ({ success: false, model }));
+      // biome-ignore lint: test mock access
+      (limited as unknown as Record<string, unknown>).modelSwitchHandler = { switchModel };
+      await limited.handleModelSwitch('sonnet', 'anthropic');
+      expect(limited.getRateLimitWatchdogState().modelLimits).toEqual(limits);
+      switchModel.mockImplementation(async (model: string) => ({ success: true, model }));
+      await limited.handleModelSwitch('sonnet', 'anthropic');
+      expect(limited.getRateLimitWatchdogState().modelLimits).toEqual({});
+      expect(limited.getSessionData().metadata.modelLimits).toBeUndefined();
+    });
+
     describe('requestModelSwitch', () => {
       let switchModel: ReturnType<typeof mock>;
       beforeEach(() => {
