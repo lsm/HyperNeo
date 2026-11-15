@@ -4,6 +4,12 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoPack, NeoWorkerTargetDecision } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
+import {
+  CodingTodoPrRepository,
+  createCodingTodoPack,
+} from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
+import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
@@ -21,10 +27,12 @@ const start: NeoTodoTarget = {
 };
 const backend = { adapter: 'hyperneo', id: 'backend' };
 
-function world() {
+function world(coding = false) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
+  prepareCodingTodoStorage(db);
+  createCodingTodoPack(new CodingTodoPrRepository(db), async () => []).schema(db);
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
@@ -50,6 +58,12 @@ function world() {
       return decide(target);
     },
   } satisfies NeoPack;
+  const real = {
+    id: 'coding',
+    describe: 'coding',
+    instructions: () => null,
+    workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
+  } satisfies NeoPack;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
@@ -61,7 +75,7 @@ function world() {
       if (name === 'work.send') return completed({ ok: true, value: { delivered: true } });
       return completed({ ok: true, value: { status: 'done', lastActivityAt: Date.now() } });
     },
-    packs: () => [pack],
+    packs: () => [coding ? real : pack],
     tell: async (_ask, todo, note, key) => {
       told.push({ id: todo.id, note, key });
     },
@@ -77,9 +91,13 @@ function world() {
     request: 'ask',
     createdAt: 1,
   });
-  const add = (check: NeoTodo['check'] = { pack: 'synthetic', kind: 'k', params: {} }) => {
+  const add = (
+    check: NeoTodo['check'] = { pack: 'synthetic', kind: 'k', params: {} },
+    id = 'todo',
+    dependsOn: string[] | null = null
+  ) => {
     const todo = store.addTodo(
-      'todo',
+      id,
       'ask',
       {
         approvedAt: 1,
@@ -88,6 +106,7 @@ function world() {
         check,
         instruction: 'Do it.',
         named: null,
+        dependsOn,
       },
       1
     );
@@ -199,5 +218,22 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     await w.runner.start(id);
     expect(w.asked).toEqual([]);
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+  });
+
+  test('a refused start does not reserve the feature for the coding hook', async () => {
+    const w = (current = world(true));
+    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+    const first = w.add(check, 'first');
+    const second = w.add(check, 'second', [first]);
+    for (const id of [first, second])
+      w.db
+        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
+        .run(id, 'synthetic/repo');
+    await w.runner.start(second);
+    expect(w.store.getTodo(second)?.state).toBe('todo');
+    await w.runner.start(first);
+    expect(w.store.getTodo(first)?.reason ?? '').not.toContain('session_unknown');
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.store.getTodo(first)?.state).toBe('doing');
   });
 });
