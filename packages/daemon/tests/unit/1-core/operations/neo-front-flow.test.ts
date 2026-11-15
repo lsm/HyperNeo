@@ -2142,6 +2142,43 @@ test('a hand-off keeps the full session manual query mode', async () => {
   expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('deferred');
 });
 
+test('settlement retries later when every reservation goes stale, never failing the input', async () => {
+  const { id, job } = await deliveredConvoInput();
+  expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
+  await db.saveSDKMessage(front, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: front,
+    result: '',
+    is_error: false,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const call = service.db.gateway.call.bind(service.db.gateway);
+  let contended = true;
+  const spy = vi.spyOn(service.db.gateway, 'call').mockImplementation((async (
+    ...args: Parameters<typeof call>
+  ) => {
+    if (contended && args[1] === 'reserve') return 'stale';
+    return call(...args);
+  }) as typeof call);
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toMatchObject({
+    delivered: false,
+    pending: true,
+  });
+  expect(new NeoFrontInputRepository(db.getDatabase()).get(conversationId, id)?.owner).not.toBe(
+    'neo'
+  );
+  expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).not.toBe('failed');
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(0);
+  contended = false;
+  expect(await settleConvoInput(service, job, conversationId, front, id)).toMatchObject({
+    delivered: true,
+    outcome: 'handed_off',
+  });
+  spy.mockRestore();
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+});
+
 test('an unknown replyTo is refused but never blocks the current input', async () => {
   const { id } = await deliveredConvoInput();
   expect(
