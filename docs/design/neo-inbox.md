@@ -15,10 +15,11 @@ This design makes the inbox a small core subsystem:
 ## What exists
 
 - Cards are rows of `neo_questions`. States are `open | answered | retired` (`NeoQuestionState`, `packages/shared/src/types/neo-ask.ts`).
-- A card names its todos twice, and every question read selects both (`QUESTION_SELECT`, `neo-ask-todo-repository.ts`). `todos` (a JSON list) is what coverage reads: `neoQuestionCoversTodo` (`lib/neo/todo-state.ts`). `todo_id` (one id) is written by Neo's own cards and read in about eight places (`human-card.ts`, `question-operations.ts`, `todo-start-gate.ts`, `todo-operations.ts`, `service.ts`). Daemon cards fill only `todos`.
+- A card names its todos twice, and every question read selects both (`QUESTION_SELECT`, `neo-ask-todo-repository.ts`). `todos` (a JSON list) is what coverage reads: `neoQuestionCoversTodo` (`lib/neo/todo-state.ts`). `todo_id` (one id) is written by Neo's own cards, worker-blocker cards (`neo-daemon-card-write.ts`) and hold cards (`planNeoHoldCard`, `daemon-cards.ts`), always together with `todos`, and read in about eight places (`human-card.ts`, `question-operations.ts`, `todo-start-gate.ts`, `todo-operations.ts`, `service.ts`).
+- A card written without `todos` or `todo_id` gets `todos` filled at write time with the ask's todos that have not started or are blocked on `question` (`neoAskQuestionHolds`, in `askQuestion`, `neo-ask-todo-repository.ts`). `neo.question.ask` has no `todos` input, so this is how every ask-level card Neo writes stops work.
 - `onlyCard` in `lib/neo/human-card.ts` refuses a new card while any card with a todo or `retireWhen` is open on the same ask (`card_open`).
 - The stall reminder sweep (`neoStallReminderWrite`, `storage/repositories/neo-stall-reminder-write.ts`) opens a `check_overdue` card for a todo in state `todo` with a check, no instruction and no session (`listCheckable`, `neo-ask-todo-repository.ts`), once it is 24 hours old and no open card covers it (`neoCheckOverdue`, `lib/neo/daemon-cards.ts`). That is a human step, and this card is its first card. The card then blocks the todo on `question`.
-- `planNeoBlockCards` in `lib/neo/block-cards.ts` already opens a card for a todo blocked on `needs-human`.
+- `planNeoBlockCards` in `lib/neo/block-cards.ts` plans a card for a todo blocked on `needs-human`, but nothing calls it yet; today such cards come from the worker-blocker path. So blocked todos with no card exist (rule 4).
 - `neoWorkCounts` in `lib/neo/ask-entries.ts` sends `needsYou`: the number of asks with an open card or a waiting todo. Cards travel inside each ask entry.
 - A reply card must ask something (`asksSomething`, `human-card.ts`). Status lines from workers are refused as cards.
 
@@ -31,8 +32,8 @@ This design makes the inbox a small core subsystem:
 | card | a question to the human about some todos, or about the whole ask | a comment that mentions the human |
 
 Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/human-queue.ts`):
-1. **Facts once.** `todos` is the only link from a card to todos. An empty list means the whole ask. `todo_id` is folded into `todos`; readers stop using it, and the column is dropped one release later (Change plan, step 1).
-2. **One live card per todo.** A new card is refused (`card_open`) when an open or held card already covers one of its todos; `replaces` changes it. Cards about the whole ask are not limited. `onlyCard` changes from "per ask" to "per todo".
+1. **Facts once.** `todos` is the only link from a card to todos, and it lists exactly the todos the card stops. `todo_id` is folded into `todos`; readers stop using it, and the column is dropped one release later (Change plan, step 1).
+2. **One live card per todo.** A new card is refused (`card_open`) when an open or held card already covers one of its todos; `replaces` changes it. `onlyCard` changes from "per ask" to "per todo". An ask-level card (written without todos) keeps the backfill, which now skips todos a live card already covers. It stops the rest, so it is never refused for overlap; when nothing is left, its list is empty and it stops nothing.
 3. **A card stops only its todos.** Other todos of the ask keep running. The start gate already holds only the todos a card lists (`todo-start-gate.ts`); the per-ask limit is the only coupling.
 4. **A blocked todo always has its card, or Neo owns it.** A todo blocked on `question` or `needs-human` is normally covered by an open or held card. When none covers it:
    - an answered card whose answer is still being delivered (`question-answer-delivery.ts`) keeps the todo with the daemon: the delivery resumes it, and nobody is woken;
@@ -62,7 +63,7 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
    4. otherwise `neo`;
 4. **recent results**: a todo that ended in the last 7 days, by `finishedAt`, shown once even if it had an answered card: `done`; `closed_unverified` after it started (closed, check not passed); `removed`, or `closed_unverified` before it started (both count as cancelled, as in `neoTodoCancelledDependencies`).
 
-A todo covered by a card appears only under its card. Every todo state lands in bucket 3 or 4, so nothing falls outside. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); a whole-ask card; an answered card still being delivered with its blocked todo (in progress, `delivering`) next to an uncovered blocked check todo (in progress, `neo`); a failed todo with no card (in progress, `neo`); an uncovered todo blocked on `question` with a start target, once with `startedAt` empty and once set (in progress, `neo` both times); `closed_unverified` with and without `startedAt` (results).
+A todo covered by a card appears only under its card. Every todo state lands in bucket 3 or 4, so nothing falls outside. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); an ask-level card with an empty list; an answered card still being delivered with its blocked todo (in progress, `delivering`) next to an uncovered blocked check todo (in progress, `neo`); a failed todo with no card (in progress, `neo`); an uncovered todo blocked on `question` with a start target, once with `startedAt` empty and once set (in progress, `neo` both times); `closed_unverified` with and without `startedAt` (results).
 
 It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` keeps its meaning, a number of asks: the asks with at least one waiting-on-you item. `neoWorkCounts` stops counting held cards, so a held card no longer raises it. Web, phone and iPad render the same data.
 
@@ -101,9 +102,9 @@ The migration number is taken when its PR lands.
 
 Each step is one PR within the repo's slice budget.
 1. **Build: fold `todo_id` into `todos`.** A migration copies each `todo_id` into `todos` when missing. Readers switch to `todos`; writers keep filling `todo_id` too for one release, so a rolled-back daemon still reads every card. The column is dropped in a later PR, at least one release after. Tests: a card with only `todo_id` covers its todo after migration; every former reader gives the same answer; a card written by the new code is read correctly by the old `QUESTION_SELECT`.
-2. **Build: one live card per todo.** `onlyCard` checks overlap of `todos` among open cards, held or not. Tests: two cards on different todos of one ask are both accepted; a second card on the same todo is refused; an ask-level card is never refused for this.
+2. **Build: one live card per todo.** `onlyCard` checks overlap of `todos` among open cards, held or not; the `askQuestion` backfill skips covered todos. Tests: two cards on different todos of one ask are both accepted; a second card on the same todo is refused; an ask-level card next to a todo card is accepted and lists only the uncovered todos; an ask-level card when every waiting todo is covered gets an empty list.
 3. **Build + wire: held cards.** The `held_at` and `held_until` columns, `neo.question.hold`, and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
-4. **Build: `neoHumanQueue`** with its tests (state × ask counts, whole-ask cards, held items). **Wire:** add it to the Neo snapshot.
+4. **Build: `neoHumanQueue`** with its tests (state × ask counts, ask-level cards, held items). **Wire:** add it to the Neo snapshot.
 5. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
 6. **Build: the human-step card** replaces the `check_overdue` card in the stall reminder sweep (rule 5). Old `check_overdue` rows stay readable. Tests: a check-only todo whose prerequisites are done gets its card at once; one that already has a card gets none; replay of a check-only todo that today waits 24 hours.
 7. **Wire: the uncovered-blocker rule** (rule 4), after HyperNeo #10684 is merged and `todo.neo_step` is live. Tests: a retired card on a todo that keeps a start target wakes Neo once; an answered card awaiting delivery wakes nobody and resumes the todo.
@@ -111,5 +112,5 @@ Each step is one PR within the repo's slice budget.
 ## Limits
 
 - Holding a card stops its todos until it reopens. "Drop this todo" is the way to stop the work for good.
-- Asks are not cards. A whole-ask question is a card with no todos.
+- Asks are not cards. An ask-level question is a card written without todos; it stops the ask's waiting todos no other card covers.
 - The inbox is a view. It adds no new record of what the human was asked.
