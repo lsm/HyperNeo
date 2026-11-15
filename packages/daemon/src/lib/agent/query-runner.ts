@@ -751,6 +751,7 @@ export class QueryRunner {
     }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const loginAttemptEpoch = this.ctx.loginCredentialEpoch?.();
 
     const attemptToken =
       this.ctx.getQueryGeneration() === queryGeneration
@@ -1871,10 +1872,7 @@ export class QueryRunner {
       }
       if (routeDecision.route.action === 'claude_auth_retry') {
         const plan = this.ctx.hasLoginRecovery?.()
-          ? await this.ctx.onLoginRejected?.(
-              this._lastConsumedUserMessage,
-              this.ctx.loginCredentialEpoch?.()
-            )
+          ? await this.ctx.onLoginRejected?.(this._lastConsumedUserMessage, loginAttemptEpoch)
           : 'retry';
         if (plan === 'retry')
           return await this.runRetryTeardown(queryGeneration, attemptToken, {
