@@ -161,4 +161,31 @@ describe('NeoVoice unmount with the real recorder hook', () => {
     expect(rec.cancel).not.toHaveBeenCalled();
     expect(records.map.size).toBe(0);
   });
+
+  it('uses the current session when a recording starts after a session switch', async () => {
+    const props = {
+      connected: true,
+      draftText: 'typed first',
+      onTranscript: vi.fn(),
+      onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
+      onError: vi.fn(),
+      onPhase: vi.fn(),
+      onSendHandle: vi.fn(),
+    };
+    const view = render(<NeoVoice sessionId="neo:first" {...props} />);
+    view.rerender(<NeoVoice sessionId="neo:second" {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(rec.isRecording).toBe(true));
+    expect(rec.sessionId).toBe('neo:second');
+
+    view.unmount();
+
+    await waitFor(() =>
+      expect(hubRequest).toHaveBeenCalledWith(
+        'session.appendVoiceDraft',
+        expect.objectContaining({ sessionId: 'neo:second', text: 'hello world' })
+      )
+    );
+    expect(rec.stop).toHaveBeenCalledOnce();
+  });
 });
