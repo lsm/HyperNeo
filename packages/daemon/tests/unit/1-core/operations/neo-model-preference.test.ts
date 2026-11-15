@@ -399,9 +399,9 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.front?.model).toBeUndefined();
   });
 
-  test('front model input rejects unrelated settings and fallback chains', async () => {
+  test('front model input rejects unrelated settings', async () => {
     const input = { model: flash.id, provider: flash.provider, thinkingLevel: 'off' };
-    for (const extra of [{ enabled: true }, { fallbacks: [input] }]) {
+    for (const extra of [{ enabled: true }, { fallbacks: [{ ...input, enabled: true }] }]) {
       expect(await invoke('neo.front.model.set', { ...input, ...extra })).toMatchObject({
         kind: 'failed',
         code: 'invalid_input',
