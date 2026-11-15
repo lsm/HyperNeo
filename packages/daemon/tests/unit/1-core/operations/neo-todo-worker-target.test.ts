@@ -49,6 +49,7 @@ function world(coding = false) {
   let decide: (target: NeoTodoTarget) => NeoWorkerTargetDecision = (target) => ({
     value: target,
   });
+  const failing = { refuse: null as string | null, start: false };
   const pack = {
     id: 'synthetic',
     describe: 'synthetic',
@@ -63,6 +64,7 @@ function world(coding = false) {
     describe: 'coding',
     instructions: () => null,
     workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
+    workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
   } satisfies NeoPack;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -70,6 +72,8 @@ function world(coding = false) {
     sessions,
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
+      if (name === 'work.start' && failing.start)
+        return completed({ ok: false, reason: 'start_failed', detail: 'driver down' });
       if (name === 'work.start')
         return completed({ ok: true, value: { ref: { adapter: 'hyperneo', id: 'fresh' } } });
       if (name === 'work.send') return completed({ ok: true, value: { delivered: true } });
@@ -123,6 +127,7 @@ function world(coding = false) {
     asked,
     runner,
     add,
+    failing,
     decideWith: (fn: typeof decide) => {
       decide = fn;
     },
@@ -235,5 +240,35 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.store.getTodo(first)?.reason ?? '').not.toContain('session_unknown');
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
     expect(w.store.getTodo(first)?.state).toBe('doing');
+  });
+
+  test.each([
+    ['a start refusal', (w: ReturnType<typeof world>) => (w.failing.refuse = 'no free worker')],
+    ['a driver start failure', (w: ReturnType<typeof world>) => (w.failing.start = true)],
+  ])('%s without a session releases the coding feature for the next todo', async (_, fail) => {
+    const w = (current = world(true));
+    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+    const first = w.add(check, 'first');
+    const second = w.add(check, 'second');
+    for (const id of [first, second])
+      w.db
+        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
+        .run(id, 'synthetic/repo');
+    fail(w);
+    await w.runner.start(first);
+    expect(w.sessions.readRef(first)).toBeFalsy();
+    expect(w.store.getTodo(first)?.state).not.toBe('doing');
+    w.failing.refuse = null;
+    w.failing.start = false;
+    const before = w.dispatched().length;
+    await w.runner.start(second);
+    expect(w.store.getTodo(second)?.reason ?? '').not.toContain('session_unknown');
+    expect(
+      w
+        .dispatched()
+        .slice(before)
+        .map((call) => call.name)
+    ).toEqual(['work.start']);
+    expect(w.store.getTodo(second)?.state).toBe('doing');
   });
 });
