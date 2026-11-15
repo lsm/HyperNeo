@@ -12,8 +12,10 @@ import {
 } from '../../lib/neo/todo-dependencies.ts';
 import {
   type NeoTodoDraftSchema,
+  neoTodoBindRefusal,
   neoTodoPlaceRefusal,
   planNeoTodoDraft,
+  recordNeoTodoTarget,
 } from '../../lib/neo/todo-operations.ts';
 import { todoEvidenceFile } from '../../lib/work-locations.ts';
 import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
@@ -100,8 +102,11 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       const refused = neoTodoAfterRefusal(family, null, plan.draft.after);
       if (refused) return { reason: { ok: false, reason: refused } };
       const dependsOn = planNeoTodoDependencies(family, input.todoId, plan.draft.after.map(String));
-      return typeof dependsOn === 'string'
-        ? { reason: { ok: false, reason: neoTodoDependencyRefusal(dependsOn) } }
+      if (typeof dependsOn === 'string')
+        return { reason: { ok: false, reason: neoTodoDependencyRefusal(dependsOn) } };
+      const unfinished = neoTodoBindRefusal(plan.draft.target, family, dependsOn);
+      return unfinished
+        ? { reason: { ok: false, reason: unfinished } }
         : { value: { ...plan, dependsOn } };
     },
     ['store', 'input', 'outcome'],
@@ -116,14 +121,17 @@ const add = (superpipe({})('neo.todo.commit-add') as PipelineAPI)
       changes: ChangeRecorder
     ): Receipt => {
       const { draft } = plan;
-      const todo = store.addTodo(
+      const inserted = store.addTodo(
         input.todoId,
         plan.ask.id,
         { ...draft, dependsOn: plan.dependsOn, approvedAt: input.now },
         input.now,
         plan.repo
       );
-      if (draft.target) new NeoTodoSessionRepository(db).create(todo.id, draft.target);
+      const sessions = new NeoTodoSessionRepository(db);
+      const todo = draft.target
+        ? recordNeoTodoTarget(store, sessions, inserted, draft.target, input.now)
+        : inserted;
       if (draft.target) changes.notifyChange('neo_todo_sessions');
       return {
         ok: true,
