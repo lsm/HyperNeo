@@ -34,7 +34,8 @@ with channel.makefile('rwb') as stream:
         request = json.loads(line)
         log.write(request['operation'] + '\\n')
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
-            'driver_version': '0.44.0', 'contract_version': '0.8.0'}}
+            'driver_version': '0.44.0', 'contract_version': '0.8.0'},
+            'name': request.get('name'), 'arguments': request.get('arguments')}
         stream.write((json.dumps({'protocol_version': 1, 'request_id': request['request_id'],
             'generation': generation, 'ok': request['generation'] == generation,
             'completion': 'completed', 'result': result}) + '\\n').encode())
@@ -138,13 +139,59 @@ class WorkerDrivers(unittest.TestCase):
         self.path = str(self.bin) + ':/usr/bin:/bin:/usr/sbin:/sbin'
         self.process = subprocess.Popen(
             [str(RUNNER), str(self.root), str(self.binary), self.path],
-            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me'},
+            env={'HOME': str(self.root), 'PATH': self.path, 'NODE_ENV': 'test', 'FIXTURE_PARENT_ONLY': 'scrub-me',
+                 'FIXTURE_DISPATCH_TARGET': 'allow'},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.write_daemon_advert()
         self.addCleanup(self.cleanup)
         ready = select.select([self.process.stdout], [], [], 15)[0]
         self.assertTrue(ready, 'fixture app did not start')
         self.assertEqual(self.process.stdout.readline().strip(), 'ready')
         self.pids = []
+
+    def write_daemon_advert(self, **changes):
+        started = subprocess.check_output(
+            ['/bin/ps', '-p', str(os.getpid()), '-o', 'lstart='], text=True).strip()
+        advert = {'pid': os.getpid(), 'startedAt': int(time.mktime(
+            time.strptime(started, '%a %b %d %H:%M:%S %Y')) * 1000) + 1000}
+        advert.update(changes)
+        (self.root / 'runtime.json').write_text(json.dumps(advert))
+
+    def test_control_refuses_a_same_user_substitute_peer(self):
+        code = """import json,socket,sys
+with socket.socket(socket.AF_UNIX) as client:
+    client.connect(sys.argv[1])
+    client.sendall(b'{"action":"status","worker":"worker-a"}\\n')
+    print(client.makefile('rb').readline().decode().strip())
+"""
+        response = json.loads(subprocess.check_output(
+            [sys.executable, '-c', code, str(self.root / 'desktop/control.sock')], text=True))
+        self.assertEqual(response, {'ok': False, 'error': 'not_daemon'})
+
+    def test_control_rechecks_the_daemon_lifetime_on_every_connection(self):
+        self.assertTrue(self.call('status')['ok'])
+        self.write_daemon_advert(startedAt=1)
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+        self.write_daemon_advert()
+        self.assertTrue(self.call('status')['ok'])
+        (self.root / 'runtime.json').unlink()
+        self.assertEqual(self.call('status'), {'ok': False, 'error': 'not_daemon'})
+
+    def test_dispatch_starts_one_private_slot_and_sends_the_tool(self):
+        response = self.call('dispatch', work_dir=str(self.work), tool='click',
+                             args={'pid': 123, 'x': 5, 'y': 7})
+        self.assertTrue(response['ok'], response)
+        self.assertTrue(response['result']['dispatched'], response)
+        self.assertEqual(response['result']['decision'], 'allow')
+        self.assertEqual(response['result']['app'], 'com.example.fixture')
+        self.assertEqual(response['result']['result']['name'], 'click')
+        pid = self.call('status')['result']['pid']
+        self.pids.append(pid)
+        self.assertEqual(self.call('dispatch', work_dir=str(self.work), tool='click',
+                                   args={'pid': 123})['result']['result']['pid'], pid)
+        self.assertEqual(len(list(self.work.glob('d-*'))), 1)
+        self.call('stop')
+        self.assertFalse(alive(pid))
 
     def cleanup(self):
         if self.process.poll() is None:
