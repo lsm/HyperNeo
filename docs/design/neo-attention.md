@@ -147,10 +147,10 @@ Each item carries its attention id. One new core operation, `neo.attention.wait 
 | `ask.idle` (open ask, nothing running) | digest only if a Neo-decidable step exists: a startable todo needs a decision, or no todo remains | ask, todos, cards | 24 h (today 4 h) | a todo starts or the ask settles |
 | `card.check_overdue` on a todo already waiting on another human card | drop and retire that daemon card | covering cards | — | — |
 | Session error on a todo worker | wake | worker, todo | via `todo.stalled` | worker running |
-| Driver / GitHub health stalled | digest | health incident | 24 h | recovered (a `recovered` retires the `stalled` item, and both drop if they land in one digest window) |
+| Driver health stalled (core); GitHub health stalled (`coding.github_health`) | digest | health incident | 24 h | recovered (a `recovered` retires the `stalled` item, and both drop if they land in one digest window) |
 | `coding.merge_held` (sign-off) | wake once per PR head | fresh merge facts, handoff coverage | none | merged/closed, head changes, hold resolves |
 | `coding.merge_failing` | wake after 2 failed attempts on one head | `pack_coding_daemon_merge_failures` | 4 h | merged or head changes |
-| `coding.pr_merged_outside_todo` (new) | digest, to the candidate asks | ledger row; asks with a todo PR in that repo; owner's *active* todo | none | — (one-shot fact) |
+| `coding.pr_merged_outside_todo` (new) | digest, to the candidate asks | ledger row; asks with a todo PR in that repo; owner's *active* todo | none | retires as soon as it is told |
 | `coding.idle_with_open_pr` (new) | digest | todo live status, PR ledger state and `state_since` | 4 h | worker running, PR state changes, merged |
 | `todo.follow_up_missing` (new, core; subject: the ask) | wake. Raised when a todo flagged `producesFollowUp` (set by Neo on `neo.todo.add`) is done and no non-removed todo follows it in its ask. The ask may not settle `done` while the item is open (`dropped` stays allowed). | that ask's todos by position and their `producesFollowUp` flag | 1 h, 4 h, 24 h | a non-removed todo exists after the flagged todo; ask settled or dropped |
 | `coding.pr_unowned`, `coding.pr_sweep` escalation | wake | ledger | existing | owner assigned / PR closed |
@@ -165,6 +165,7 @@ The owner-history link alone can put a merge on the wrong ask (the owner's last 
 
 ## Repetition and death
 
+- A kind with no `repeat` retires as soon as it is told, so the sweep stops re-reading one-shot facts.
 - An item repeats only if `stillTrue`, the revision is unchanged, it is not `waiting`, and `next_at` has passed. The backoff comes from the kind (1 h / 4 h / 24 h). It stops after the last step and stays visible in the work snapshot as "unhandled since …".
 - Neo's own action is never tracked directly. Anything Neo does changes the facts: a todo edit, a card, a send, a settle. That makes the condition false (retire) or the revision new (decide again). This keeps "record each fact once": the facts that already exist decide.
 - A new revision is a new episode: A → B → A notifies again, as in the earlier root design.
@@ -172,7 +173,7 @@ The owner-history link alone can put a merge on the wrong ask (the owner's last 
 
 ## Where it sits: core, with a pack hook
 
-`lib/neo/attention/` is core. It knows asks, todos, questions, workers and cards only, as `AGENTS.md` requires. Core kinds: `turn.report`, `todo.*`, `ask.*`, `card.*`, `session.*`, `health.*`.
+`lib/neo/attention/` is core. It knows asks, todos, questions, workers and cards only, as `AGENTS.md` requires. Core kinds: `turn.report`, `todo.*`, `ask.*`, `card.*`, `session.*`, `health.driver`. GitHub health is coding-pack state, so its kind is `coding.github_health`.
 
 Packs extend it through one optional hook in `pack-contract.ts`:
 
