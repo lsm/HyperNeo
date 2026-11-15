@@ -22,7 +22,7 @@ writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const sdk = await import(
   '../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'
 );
-const resetAt = Date.now() + 4000;
+let resetAt = 0;
 const starts: string[] = [];
 const releases: (() => void)[] = [];
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
@@ -54,6 +54,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
           const input = await feed.next();
           if (input.done) break;
           starts.push(model);
+          if (model.includes('haiku') && !resetAt) resetAt = Date.now() + 4000;
           const limited = model.includes('haiku') && Date.now() < resetAt;
           const sdkSessionId = crypto.randomUUID();
           mkdirSync(getSDKProjectDir(join(run, 'workspace')), { recursive: true });
