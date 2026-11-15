@@ -688,7 +688,7 @@ test('Front delivery remains pending only until the accepted input deadline', as
     expect(db.getJobQueueRepo().getJob(job.id)?.runAt).toBe(deadline);
     clock.mockReturnValue(deadline);
     const expired = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
-    expect(await handler(expired)).toMatchObject({ delivered: true, outcome: 'failed' });
+    expect(await handler(expired)).toMatchObject({ delivered: true, outcome: 'handed_off' });
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
     await handler(expired);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
@@ -789,7 +789,7 @@ test('a Front turn with no reply leaves the input failed and retryable after Neo
 });
 
 test.each(['user_message_uuid', 'user_message_uuids'] as const)(
-  'an overlapping terminal settles only the inputs named by %s, leaving the current one failed for retry',
+  'an overlapping terminal settles only the inputs named by %s and hands each to Neo',
   async (attribution) => {
     const previous = await accept();
     const current = await accept();
@@ -823,9 +823,11 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
     } as import('@hyperneo/shared/sdk').SDKMessage);
     expect(await handler(current.job)).toMatchObject({ delivered: false, pending: true });
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
-    expect(await handler(previous.job)).toMatchObject({ delivered: true, outcome: 'failed' });
+    expect(await handler(previous.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
-    expect(db.getSDKMessageRepo().getUserSendStatus(front, previous.id)).toBe('failed');
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [previous.id])).toHaveLength(
+      1
+    );
     await db.saveSDKMessage(front, {
       type: 'result',
       subtype: 'success',
@@ -838,11 +840,11 @@ test.each(['user_message_uuid', 'user_message_uuids'] as const)(
         ? { user_message_uuid: current.id }
         : { user_message_uuids: [current.id] }),
     } as import('@hyperneo/shared/sdk').SDKMessage);
-    expect(await handler(current.job)).toMatchObject({ delivered: true, outcome: 'failed' });
+    expect(await handler(current.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
     expect(
       service.publications.list(conversationId)!.filter((row) => row.replyTo?.includes(current.id))
     ).toEqual([]);
-    expect(db.getSDKMessageRepo().getUserSendStatus(front, current.id)).toBe('failed');
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [current.id])).toHaveLength(1);
   }
 );
 
@@ -885,7 +887,7 @@ test('the disabled-mode fallback preserves a manual Neo input hold', async () =>
   expect(rows).toEqual([{ send_status: 'deferred' }]);
 });
 
-test('a shared terminal leaves the unclaimed input failed after Neo answered its batch peer', async () => {
+test('a shared terminal hands the unclaimed input to Neo after Neo answered its batch peer', async () => {
   const first = await accept();
   db.getDatabase()
     .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
@@ -930,7 +932,7 @@ test('a shared terminal leaves the unclaimed input failed after Neo answered its
       links: [],
     })
   ).toMatchObject({ accepted: true });
-  expect(await handler(second.job)).toMatchObject({ delivered: true, outcome: 'failed' });
+  expect(await handler(second.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   const replies = service.publications.list(conversationId)!;
   expect(replies.filter((reply) => reply.replyTo?.includes(second.id))).toEqual([]);
   expect(replies.filter((reply) => reply.replyTo?.includes(first.id))).toHaveLength(1);
@@ -1269,7 +1271,7 @@ test('Front publication refuses an input it was never given and a stale dual-mod
   expect(service.publications.list(conversationId)).toHaveLength(0);
 });
 
-test('a persistent tool-selection conflict marks the input failed after the deadline', async () => {
+test('a persistent tool-selection conflict hands the input to Neo after the deadline', async () => {
   const { id } = await accept();
   const job = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
   const existing = createTestSession(front);
@@ -1316,7 +1318,7 @@ test('a persistent tool-selection conflict marks the input failed after the dead
     expect(service.publications.list(conversationId)).toHaveLength(0);
     clock.mockReturnValue(deadline);
     const expired = db.getJobQueueRepo().dequeue('neo.front', 1)[0];
-    expect(await handler(expired)).toMatchObject({ delivered: true, outcome: 'failed' });
+    expect(await handler(expired)).toMatchObject({ delivered: true, outcome: 'handed_off' });
     expect(selection).toHaveBeenCalledTimes(3);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
     expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(front, [id])).toHaveLength(0);
@@ -1329,15 +1331,16 @@ test('a persistent tool-selection conflict marks the input failed after the dead
 });
 
 test.each(['creation', 'delivery'])(
-  'a Front %s failure leaves the input failed for retry without delegating to a silent Back',
+  'a Front %s failure hands the input to Neo instead of leaving it undelivered',
   async (phase) => {
     const { id, job } = await accept();
     if (phase === 'creation')
       vi.spyOn(service.sessions, 'createSession').mockRejectedValue(new Error('Front unavailable'));
     else vi.spyOn(service, 'deliverFront').mockRejectedValue(new Error('Front unavailable'));
     const handler = createNeoFrontHandler(service);
-    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'failed' });
-    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+    expect(await handler(job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+    expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).not.toBe('failed');
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
     await handler(job);
     expect(service.publications.list(conversationId) ?? []).toEqual([]);
@@ -1696,7 +1699,7 @@ test('a handed-off input settles as handed off with no extra message', async () 
   expect(service.publications.list(conversationId)).toHaveLength(count);
 });
 
-test('a hand-off that lands before settlement is left out of the failed set', async () => {
+test('a hand-off that lands before settlement is not handed off twice', async () => {
   const first = await accept();
   db.getDatabase()
     .prepare('UPDATE job_queue SET created_at = created_at - 1000 WHERE id = ?')
@@ -1738,8 +1741,8 @@ test('a hand-off that lands before settlement is left out of the failed set', as
     }
     return (call as (...rest: unknown[]) => unknown)(...args);
   }) as never);
-  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'failed' });
-  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'failed' });
+  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
+  expect(await handler(first.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   expect(await handler(second.job)).toMatchObject({ delivered: true, outcome: 'handed_off' });
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
 });
@@ -1794,7 +1797,7 @@ test('settlement of a stranded input never scans publications', async () => {
   const list = vi.spyOn(service.publications, 'list');
   expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
     delivered: true,
-    outcome: 'failed',
+    outcome: 'handed_off',
   });
   expect(list).not.toHaveBeenCalled();
   expect(raced).toBe(true);
@@ -1839,7 +1842,7 @@ test('a reply landing mid-settlement adds no second publication', async () => {
   }) as never);
   expect(await settleConvoInput(service, job, conversationId, front, id)).toEqual({
     delivered: true,
-    outcome: 'failed',
+    outcome: 'handed_off',
   });
   expect(raced).toBe(true);
   expect(service.publications.list(conversationId)!.map((reply) => reply.fullText)).toEqual([
@@ -1928,8 +1931,26 @@ test('a reused request ID for a different input is refused, not handed off', asy
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [second.id])).toHaveLength(0);
 });
 
-test('a reply without replyTo keeps work_on and cannot promise work it never starts', async () => {
-  await deliveredConvoInput();
+test.each([false, true])(
+  'a reply without replyTo hands the current input to the full session in the same call (work_on %s)',
+  async (workOn) => {
+    const { id } = await deliveredConvoInput();
+    const receipt = await convoPublish({
+      requestId: `no-target-${workOn}`,
+      fullText: 'All quiet.',
+      work_on: workOn,
+    });
+    expect(receipt).toMatchObject({ accepted: true, started: true });
+    expect(receipt.publication.replyTo ?? []).toEqual([]);
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
+    const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+    expect(delivered).toContain('<already-said>');
+    expect(delivered).toContain('All quiet.');
+    expect(delivered).toContain(`work_on=\\"${workOn}\\"`);
+  }
+);
+
+test('a reply without replyTo and with no current input cannot promise work it never starts', async () => {
   expect(
     await convoPublish({ requestId: 'no-target-work', fullText: "I'll check.", work_on: true })
   ).toMatchObject({ accepted: false, reason: 'work_on_needs_reply_to' });
@@ -1942,28 +1963,26 @@ test('a reply without replyTo keeps work_on and cannot promise work it never sta
   expect(receipt.publication.workOn).toBe(false);
 });
 
-test('a reply without replyTo still hands its input to the full session when the turn ends', async () => {
+test('an input whose full Neo session is gone is the only one left undelivered', async () => {
   const { id, job } = await deliveredConvoInput();
-  expect(
-    await convoPublish({ requestId: 'no-target', fullText: 'All quiet.', work_on: false })
-  ).toMatchObject({ accepted: true });
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
   await db.saveSDKMessage(front, {
     type: 'result',
     subtype: 'success',
     uuid: crypto.randomUUID(),
     session_id: front,
-    result: 'No response requested.',
+    result: '',
     is_error: false,
   } as import('@hyperneo/shared/sdk').SDKMessage);
+  const getSession = db.getSession.bind(db);
+  vi.spyOn(db, 'getSession').mockImplementation((sessionId: string) =>
+    sessionId === root ? null : getSession(sessionId)
+  );
   expect(await createNeoFrontHandler(service)(job)).toMatchObject({
     delivered: true,
-    outcome: 'handed_off',
+    outcome: 'failed',
   });
-  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).not.toBe('failed');
-  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
-  expect(delivered).toContain('<already-said>');
-  expect(delivered).toContain('All quiet.');
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBeNull();
 });
 
 test('a reply with two replyTo IDs hands both inputs off', async () => {
@@ -2062,7 +2081,7 @@ test('a refused duplicate reply does not claim the refused text was delivered', 
   expect(delivered, delivered).not.toContain('An answer the human never saw.');
 });
 
-test('two settled inputs each end failed for retry and nothing is published', async () => {
+test('two settled inputs are each handed to Neo once and nothing is published', async () => {
   const first = await deliveredConvoInput();
   const second = await deliveredConvoInput();
   db.getDatabase()
@@ -2077,12 +2096,13 @@ test('two settled inputs each end failed for retry and nothing is published', as
   await settleConvoInput(service, first.job, conversationId, front, first.id, 'delivery');
   await settleConvoInput(service, second.job, conversationId, front, second.id, 'delivery');
 
+  await settleConvoInput(service, first.job, conversationId, front, first.id, 'delivery');
   expect(service.publications.list(conversationId) ?? []).toEqual([]);
   for (const { id } of [first, second])
-    expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
+    expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
-test('a front-owned input whose turn ended without a hand-off ends failed for retry', async () => {
+test('a front-owned input whose turn ended without a hand-off goes to Neo with the reply', async () => {
   const { id, job } = await deliveredConvoInput();
   const published = await service.publish(
     { requestId: 'reply', replyTo: [id], text: 'The answer.' },
@@ -2098,11 +2118,12 @@ test('a front-owned input whose turn ended without a hand-off ends failed for re
 
   const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
 
-  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
-  expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('failed');
+  expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
+  const delivered = JSON.stringify(db.getSDKMessageRepo().getDeliveryContent(root, id) ?? '');
+  expect(delivered).toContain('The answer.');
 });
 
-test('the terminal read keeps a front-owned input so settlement can fail it', async () => {
+test('the terminal read keeps a front-owned input so settlement can hand it off', async () => {
   const { id } = await deliveredConvoInput();
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
   await db.saveSDKMessage(front, {
@@ -2123,7 +2144,7 @@ test('the terminal read keeps a front-owned input so settlement can fail it', as
   expect(inputs.terminal(conversationId, front, id)?.messageIds).toEqual([id]);
 });
 
-test('settlement fails an input the front replied to but nobody handed on', async () => {
+test('settlement hands on an input the front replied to but nobody handed on', async () => {
   const { id, job } = await deliveredConvoInput();
   await service.publish(
     { requestId: 'reply', replyTo: [id], text: 'The answer.' },
@@ -2138,11 +2159,12 @@ test('settlement fails an input the front replied to but nobody handed on', asyn
 
   const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
 
-  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
-  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe('failed');
+  expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
+  expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).not.toBe('failed');
+  expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(root, [id])).toHaveLength(1);
 });
 
-test('a hand-off landing after the open set is read leaves the input unfailed', async () => {
+test('a hand-off landing after the open set is read is not handed off twice', async () => {
   const { id, job } = await deliveredConvoInput();
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
   await db.saveSDKMessage(front, {
@@ -2161,7 +2183,7 @@ test('a hand-off landing after the open set is read leaves the input unfailed', 
   const call = service.db.gateway.call.bind(service.db.gateway);
   let raced = false;
   vi.spyOn(service.db.gateway, 'call').mockImplementation((async (...args: unknown[]) => {
-    if (!raced && args[1] === 'failSettled') {
+    if (!raced && args[1] === 'frontSaid') {
       raced = true;
       expect(new NeoFrontInputRepository(db.getDatabase()).reserve(conversationId, [id], [])).toBe(
         'reserved'
@@ -2177,7 +2199,7 @@ test('a hand-off landing after the open set is read leaves the input unfailed', 
   expect(db.getSDKMessageRepo().getUserSendStatus(front, id)).toBe('consumed');
 });
 
-test('a hand-off after settlement fails is refused instead of adding a second row', async () => {
+test('a hand-off after settlement adds no second row', async () => {
   const { id, job } = await deliveredConvoInput();
   expect(db.getSDKMessageRepo().markDeliveryConsumedByUuid(front, id)).not.toBeNull();
   await db.saveSDKMessage(front, {
@@ -2195,7 +2217,7 @@ test('a hand-off after settlement fails is refused instead of adding a second ro
     .run(conversationId, id);
 
   const settled = await settleConvoInput(service, job, conversationId, front, id, 'delivery');
-  expect(settled).toEqual({ delivered: true, outcome: 'failed' });
+  expect(settled).toEqual({ delivered: true, outcome: 'handed_off' });
 
   const reserved = new NeoFrontInputRepository(db.getDatabase()).reserve(
     conversationId,
@@ -2208,14 +2230,15 @@ test('a hand-off after settlement fails is refused instead of adding a second ro
     ]
   );
 
-  expect(reserved).toBe('undeliverable');
+  expect(reserved).toBe('reserved');
   const rows = db
     .getDatabase()
     .prepare(
       "SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'"
     )
-    .all(root, id);
-  expect(rows).toEqual([{ send_status: 'failed' }]);
+    .all(root, id) as { send_status: string }[];
+  expect(rows).toHaveLength(1);
+  expect(rows[0].send_status).not.toBe('failed');
 });
 
 test('settlement leaves an input Neo already consumed as handed off', async () => {

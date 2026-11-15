@@ -7,6 +7,7 @@ import { frontSessionId } from './front-mode.ts';
 import type { NeoService } from './service.ts';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import { handOffToNeo } from './front-handoff.ts';
+import { neoFrontInputReads } from '../../storage/repositories/neo-front-input-worker.ts';
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
 
 const FRONT_REPLY_MAX_CHARS = 150;
@@ -113,9 +114,17 @@ export function createFrontTools(service: NeoService, conversationId: string) {
           text: z.string().trim().min(1).max(FRONT_REPLY_MAX_CHARS),
           work_on: z.boolean(),
         },
-        async ({ text, work_on: workOn, ...input }) => {
+        async ({ text, work_on: workOn, ...given }) => {
           const body = { text };
-          const targets = input.replyTo ?? [];
+          const targets = given.replyTo?.length
+            ? given.replyTo
+            : await service.db.gateway.call(
+                neoFrontInputReads,
+                'currentInputs',
+                conversationId,
+                sessionId
+              );
+          const input = { ...given, replyTo: given.replyTo ?? [] };
           if (!targets.length)
             return result(
               workOn
@@ -137,7 +146,7 @@ export function createFrontTools(service: NeoService, conversationId: string) {
             ? service.publications.get(conversationId, publicationIdFor(sessionId, input.requestId))
             : null;
           const sameTargets = (ids: readonly string[] = []) =>
-            [...ids].sort().join() === [...targets].sort().join();
+            [...ids].sort().join() === [...input.replyTo].sort().join();
           if (second && !(existing && sameTargets(existing.replyTo)))
             return result({ accepted: false, reason: 'publication_conflict' });
           const handed = await handOff(

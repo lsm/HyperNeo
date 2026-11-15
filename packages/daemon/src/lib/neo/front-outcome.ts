@@ -4,7 +4,6 @@ import {
   neoFrontInputReads,
   neoFrontInputWrites,
 } from '../../storage/repositories/neo-front-input-worker.ts';
-import { neoIntakeMessage, readNeoReply } from './intake.ts';
 import { handOffToNeo } from './front-handoff.ts';
 import type { NeoService } from './service.ts';
 
@@ -65,35 +64,23 @@ export async function settleConvoInput(
     if (input?.owner === 'neo') continue;
     open.push(id);
   }
-  const markFailed = async (id: string) => {
-    const failedAsk = id === messageId ? ask : service.asks.find(conversationId, id);
-    if (!failedAsk) return 'settled' as const;
-    const origin = failedAsk.askOrigin.sessionId;
-    return service.db.gateway.call(
+  const markFailed = (id: string, origin: string) =>
+    service.db.gateway.call(
       neoFrontInputWrites,
       'failSettled',
       conversationId,
       sessionId,
       id,
-      {
-        sessionId: origin,
-        message: neoIntakeMessage(
-          { ...failedAsk, sessionId: origin },
-          origin,
-          readNeoReply(failedAsk.replyTo, service.todos),
-          null,
-          undefined,
-          failedAsk.previewContext ?? null
-        ),
-      }
+      origin
     );
-  };
   const handOff = async (id: string) => {
     const openAsk = id === messageId ? ask : service.asks.find(conversationId, id);
     if (!openAsk) return 'settled' as const;
+    const origin = openAsk.askOrigin.sessionId;
+    if (!service.db.getSession(origin)) return markFailed(id, origin);
     const said = await service.db.gateway.call(neoFrontInputReads, 'frontSaid', conversationId, id);
     const reserved = await handOffToNeo(service, conversationId, [openAsk], [id], said);
-    return reserved === 'reserved' ? ('handed_off' as const) : markFailed(id);
+    return reserved === 'reserved' ? ('handed_off' as const) : markFailed(id, origin);
   };
   let self = 'failed';
   for (const id of open) {
