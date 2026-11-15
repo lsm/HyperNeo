@@ -59,7 +59,6 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.project.section',
   'neo.projects.reorganize',
   'neo.publication.read',
-  'neo.question.resolve',
   'neo.relaySenders.recent',
   'neo.rule.applyAnswer',
   'neo.rule.ask',

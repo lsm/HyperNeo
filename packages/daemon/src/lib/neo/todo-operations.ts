@@ -30,7 +30,6 @@ import {
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
-  requireNeoTodoCloseStarted,
   requireNeoTodoMayFinish,
   sameNeoTodoCheck,
 } from './todo-completion.ts';
@@ -563,19 +562,6 @@ export function planNeoTodoProceed(
   return { value: { todo, patch: neoTodoProceedPatch(todo, family, now) } };
 }
 const Retry = z.object({ todoId: Text });
-const Close = z.object({ todoId: Text, reason: Text });
-
-export function planNeoTodoClose(
-  todo: NeoTodo,
-  input: z.infer<typeof Close>,
-  now = Date.now()
-): Gate<TodoPlan> {
-  if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
-  return {
-    value: { todo, patch: { state: 'done', evidence: input.reason, finishedAt: now } },
-  };
-}
-
 const Done = z.object({ todoId: Text, reason: Text.optional() });
 
 export function planNeoTodoDone(
@@ -902,19 +888,6 @@ export function createNeoTodoOperations(
     caller: OperationCaller
   ) => Promise<TodoReceipt | Rejection>;
 
-  const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
-    .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
-    .pipe(completion, 'outcome', 'completion')
-    .pipe(requireNeoTodoCloseStarted, ['outcome', 'completion'], 'result:outcome')
-    .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(cards, 'outcome', 'questions')
-    .pipe(requireNeoTodoCardsAnswered, ['outcome', 'questions'], 'result:outcome')
-    .pipe(stopAndWrite, 'outcome', 'outcome')
-    .endAsync('outcome') as (
-    input: z.infer<typeof Close>,
-    caller: OperationCaller
-  ) => Promise<TodoReceipt | Rejection>;
-
   const definitions = [
     defineOperation({
       name: 'neo.todo.add',
@@ -994,14 +967,6 @@ export function createNeoTodoOperations(
       execute: async () => {
         throw new Error('neo.todo.done runs through the todo writer');
       },
-    }),
-    defineOperation({
-      name: 'neo.todo.close',
-      description: neoToolDescription('neo.todo.close'),
-      inputSchema: Close,
-      resultSchema: TodoResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => present(await close(input, caller)),
     }),
   ];
   return wireNeoTodoAdd(definitions, todos, sessions, controls, packs, project, inputs);

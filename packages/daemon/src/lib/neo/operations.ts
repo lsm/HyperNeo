@@ -889,7 +889,6 @@ export function createNeoOperations(
       },
       (id) => service.notifyPublicationsChanged(id),
       (questionId) => service.deliverQuestionAnswers(questionId),
-      () => neoStandingRules(service.db.getGlobalSettings().neo),
       inputReads,
       () => service.installedPacks(),
       (input, caller) =>

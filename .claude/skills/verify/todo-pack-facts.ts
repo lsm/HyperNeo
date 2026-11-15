@@ -57,7 +57,7 @@ try {
   ws!.onmessage=e=>{const r=JSON.parse(String(e.data));if(r.id!==id&&r.requestId!==id)return;clearTimeout(timeout);times.push({name,ms:performance.now()-at});if(r.error)fail(new Error(JSON.stringify(r.error)));else done(r.data)};
   ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
  });
- evidence.refused=await rpc('neo.todo.close',{todoId:todo.id,reason:'Synthetic claim'});
+ evidence.refused=await rpc('neo.todo.edit',{todoId: todo.id,done: 'reported', evidence:'Synthetic claim'});
  assert.equal((evidence.refused as {ok:boolean}).ok,false);
  assert.equal(store.getTodo(todo.id)?.state,'todo');
  let reads=0, upstream:'OPEN'|'MERGED'='MERGED';
@@ -72,7 +72,7 @@ try {
  assert.deepEqual(pack.judge!(before!,facts),judged);assert.equal(reads,afterRead);
  evidence.factBoundary={judged,readerCalls:reads,pureReplayReaderCalls:reads-afterRead,todoUnchanged:true};
  fixture('MERGED');
- evidence.closed=await rpc('neo.todo.close',{todoId:todo.id,reason:'Observed merge'});
+ evidence.closed=await rpc('neo.todo.edit',{todoId: todo.id,done: 'reported', evidence:'Observed merge'});
  assert.equal((evidence.closed as {ok:boolean}).ok,true);
  const final=store.getTodo(todo.id)!;
  assert.equal(final.state,'done');assert.equal(final.evidence,'Observed merge');assert.equal(final.report,report);

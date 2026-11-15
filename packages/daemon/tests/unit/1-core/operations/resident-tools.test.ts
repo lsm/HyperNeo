@@ -13,7 +13,7 @@ const families = {
   neo_work: ['work', ['send', 'find', 'status', 'rename', 'adapters', 'read']],
   neo_todo: [
     'neo.todo',
-    ['add', 'continue', 'edit', 'remove', 'hold', 'done', 'close', 'bind', 'retry', 'proceed'],
+    ['add', 'continue', 'edit', 'remove', 'hold', 'done', 'bind', 'retry', 'proceed'],
   ],
   neo_publish: ['neo.publication', ['publish']],
   neo_ask: ['neo.ask', ['read', 'settle', 'open', 'topic', 'search', 'outcome']],
@@ -85,7 +85,7 @@ describe('resident family tools', () => {
       }
       expect(neoReadTools().allowedTools).toContain(`mcp__hyperneo-operations__${name}`);
     }
-    expect(calls).toHaveLength(29);
+    expect(calls).toHaveLength(28);
   });
 
   test('single-action tools reject an action before dispatch', async () => {

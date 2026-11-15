@@ -18,7 +18,7 @@ wrapper saves evidence and deletes disposable daemon data.
 The question alias fixture comes from failed operation tool results in the
 seven-day guard review.
 All identifiers, repository names and model values are synthetic replacements.
-The work.send text/message and neo.todo.close todo_id/todoId fixtures are
+The work.send text/message and neo.todo.done todo_id/todoId fixtures are
 reconstructed from refused operation names and invalid_input reasons, the current
 schemas and Neo-supplied known aliases. The refusal ledger does not store inputs.
 They must also match their canonical replies; a declared text field must retain

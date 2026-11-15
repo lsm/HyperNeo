@@ -170,10 +170,10 @@ try {
     assert.equal(store.getTodo(silentTodo.id)?.report, null);
     await refresh();
     assert.equal(received().length, 1);
-    evidence.unmetClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Worker says complete' });
+    evidence.unmetClose = await rpc('neo.todo.edit', { todoId: 'explicit', done: 'reported', evidence: 'Worker says complete' });
     assert.equal((evidence.unmetClose as any).ok, false);
     assert.equal(starts(), 0);
-    evidence.humanClose = await rpc('neo.todo.close', { todoId: 'human', reason: 'Human confirms the synthetic result' });
+    evidence.humanClose = await rpc('neo.todo.edit', { todoId: 'human', done: 'reported', evidence: 'Human confirms the synthetic result' });
     assert.equal((evidence.humanClose as any).todo.state, 'done');
     assert.equal(store.getTodo('human')?.report, `Agent: ${report}`);
     await refresh();
@@ -195,7 +195,7 @@ try {
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.replyReport, `Agent: ${report}`);
     assert.equal(starts(), 0);
     writeFileSync(join(run, 'pr.json'), JSON.stringify({ url: pr, state: 'MERGED', mergedAt: new Date().toISOString(), headRefOid: 'a'.repeat(40), reviews: [], statusCheckRollup: [] }));
-    evidence.factClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Synthetic pack fact now met' });
+    evidence.factClose = await rpc('neo.todo.edit', { todoId: 'explicit', done: 'reported', evidence: 'Synthetic pack fact now met' });
     assert.equal((evidence.factClose as any).ok, true);
     await refresh();
     await refresh();

@@ -39,7 +39,6 @@ function fixture() {
     undefined,
     undefined,
     undefined,
-    undefined,
     packs
   ).find((operation) => operation.name === 'neo.question.ask')!;
   return { db, store, repository, pack, operation };

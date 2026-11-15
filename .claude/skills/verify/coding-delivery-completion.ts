@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
@@ -42,7 +43,7 @@ try {
       await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
       const db = app.db.getDatabase(), todos = new CodingTodoPrRepository(db), ledger = new CodingPrLedgerRepository(db);
       const store = new NeoAskTodoRepository(db);
-      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+      ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
       const rpc = (name: string, input: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
         const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout: ' + name)), 15000);
@@ -69,16 +70,16 @@ try {
           { reference: fact.acceptanceContract, write, qa: ref, bot: 'review-bot' }, { kind: 'bot', head, login: 'review-bot', approved: true }, ledger.stageFacts.read(url), async () => head);
         assert(prepared.accepted); evidence.push({ phase, prepared });
         fixture('MERGED');
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Merge only' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Merge only' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, verdict: 'fail' } }), { accepted: true });
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Failed smoke' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Failed smoke' })).ok, true);
         assert.equal(store.getTodo('todo')?.state, 'done');
       } else {
         assert.equal(store.getTodo('todo')?.state, 'done');
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Restart preserves the passed check' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Restart preserves the passed check' })).ok, true);
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke: { ...smoke, ref: write, actor: { ...actor, id: write.id } } }), { accepted: false, reason: 'stage_assignment_mismatch' });
         assert.deepEqual(await rpc('neo.coding.smoke', { todoId: 'todo', url, head, smoke }), { accepted: true });
-        assert.equal((await rpc('neo.todo.close', { todoId: 'todo', reason: 'Observed deployed smoke' })).ok, true);
+        assert.equal((await rpc('neo.todo.edit', { todoId: 'todo', done: 'reported', evidence: 'Observed deployed smoke' })).ok, true);
         assert.equal(store.getTodo('todo')?.state, 'done');
       }
       evidence.push({ phase, todo: store.getTodo('todo'), delivery: todos.deliveryFacts.read('todo', url, head) });

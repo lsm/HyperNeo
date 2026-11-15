@@ -28,7 +28,7 @@ revalidates the ref beside its interruption write; #8712 moves that whole write
 boundary together.
 
 In that same reply window, the helper completes another candidate through the
-real `neo.todo.close` RPC. Recovery must preserve its done card and completion
+real `neo.todo.edit` completion RPC. Recovery must preserve its done card and completion
 evidence. Run `reproduce-state-race` on the ref-recheck-only head to capture
 the false failure after a successful close. Unit cases also cover blocked,
 failed and removed decisions arriving during the read. Both state and ref

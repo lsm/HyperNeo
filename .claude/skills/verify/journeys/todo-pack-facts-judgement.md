@@ -20,7 +20,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 ```
 
 The helper owns the real daemon, synthetic DB/home and GitHub refusal/PR stub.
-An actual `neo.todo.close` RPC first refuses an open PR. The coding pack's fact
+An actual `neo.todo.edit` completion RPC first refuses an open PR. The coding pack's fact
 read leaves the stored todo unchanged. Change the synthetic upstream after that
 read: repeated pure judgement must still return the captured merge with zero
 additional reader calls. The real RPC later accepts a stubbed merged PR; the

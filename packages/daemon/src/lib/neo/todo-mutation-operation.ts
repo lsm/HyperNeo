@@ -14,7 +14,7 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { todoEvidenceFile } from '../work-locations.ts';
 import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
-import { readNeoTodoCompletion, requireNeoTodoCloseStarted } from './todo-completion.ts';
+import { readNeoTodoCompletion } from './todo-completion.ts';
 import type { NeoTodoControls } from './todo-operations.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 
@@ -37,7 +37,6 @@ interface Dependencies {
 const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
   ['neo.todo.hold', 'edit'],
-  ['neo.todo.close', 'close'],
   ['neo.todo.done', 'done'],
   ['neo.todo.remove', 'remove'],
 ]);
@@ -145,12 +144,6 @@ export function wireNeoTodoMutations(
           : null,
       ['outcome', 'input'],
       'completion'
-    )
-    .pipe(
-      (plan: Plan, input: Input, completion: NeoTodoCheckResult | null) =>
-        input.kind === 'close' ? requireNeoTodoCloseStarted(plan, completion) : { value: plan },
-      ['outcome', 'input', 'completion'],
-      'result:outcome'
     )
     .pipe(
       async (plan: Plan, input: Input) => {

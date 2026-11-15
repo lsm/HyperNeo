@@ -22,7 +22,7 @@ import type {
   NeoQuestionDraft,
   NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { requireLocalUser, isLocalUser } from '../operations/caller.ts';
+import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
@@ -352,12 +352,6 @@ const Relay = z
   });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
-const Resolve = Answer.extend({
-  source: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('rule'), text: z.string().min(1) }),
-    z.object({ kind: z.literal('answer'), questionId: Text }),
-  ]),
-});
 
 const Get = z.object({
   questionId: z
@@ -678,7 +672,6 @@ export function createNeoQuestionOperations(
   ) => NeoCardReplyContext | null = () => null,
   publicationChanged: (conversationId: string) => void = () => {},
   deliverAnswers: (questionId: string) => Promise<void> = async () => {},
-  standingRules: () => readonly string[] = () => [],
   inputs: NeoInputReads = noNeoInputReads,
   policies: () => readonly NeoTodoPolicy[] = questionPolicies,
   relay: (
@@ -922,97 +915,6 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => QuestionReceipt | Rejection;
 
-  const resolve = (superpipe({})('neo.question.resolve') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (
-        input: z.infer<typeof Resolve>,
-        caller: OperationCaller
-      ): Gate<{ question: NeoQuestion; ask: NeoAsk }> => {
-        let reason = 'question_closed: this question is no longer open.';
-        const question = store.writeCardReply(null, crypto.randomUUID(), () => {
-          const current = store.getQuestion(input.questionId);
-          const ask = current && store.getAsk(current.askId);
-          if (!current || !ask) {
-            reason = 'not_found: no such question.';
-            return null;
-          }
-          if (
-            !isLocalUser(caller) &&
-            (caller.role !== 'neo' || caller.sessionId !== ask.sessionId)
-          ) {
-            reason = 'not_owner: only this ask’s Neo or the user may resolve its worker card.';
-            return null;
-          }
-          const open = requireNeoOpenAsk(ask);
-          if ('reason' in open) {
-            reason = open.reason.reason;
-            return null;
-          }
-          if (
-            !['choice', 'reply'].includes(current.kind) ||
-            current.confirm ||
-            !store.questionAnswers.list(current.id).length
-          ) {
-            reason =
-              'worker_question_required: resolve only routed worker decisions, never approval cards.';
-            return null;
-          }
-          const plan = planNeoQuestionAnswer(current, input.answer);
-          if ('reason' in plan) {
-            reason = plan.reason.reason;
-            return null;
-          }
-          let citation: string;
-          if (input.source.kind === 'rule') {
-            if (!standingRules().includes(input.source.text)) {
-              reason = 'rule_not_found: cite a currently saved standing rule.';
-              return null;
-            }
-            citation = `Resolved by Neo from saved rule: ${input.source.text}`;
-          } else {
-            const prior = store.getQuestion(input.source.questionId);
-            if (
-              !prior ||
-              prior.state !== 'answered' ||
-              !['button', 'chat'].includes(prior.answeredBy ?? '') ||
-              prior.answer === null ||
-              store.getAsk(prior.askId)?.sessionId !== ask.sessionId
-            ) {
-              reason = 'human_answer_required: cite an earlier human answer owned by this Neo.';
-              return null;
-            }
-            const title = prior.text.length > 200 ? `${prior.text.slice(0, 200)}…` : prior.text;
-            citation = `Resolved by Neo from human answer "${title}" (${prior.id})`;
-          }
-          return store.resolveQuestion(current, plan.value.answer, citation, Date.now());
-        });
-        const ask = question && store.getAsk(question.askId);
-        return question && ask ? { value: { question, ask } } : fail(reason);
-      },
-      ['input', 'caller'],
-      'result:outcome'
-    )
-    .pipe(
-      async ({
-        question,
-        ask,
-      }: {
-        question: NeoQuestion;
-        ask: NeoAsk;
-      }): Promise<QuestionReceipt> => {
-        await told(ask, question, neoQuestionAnsweredNote(question, []));
-        await deliverAnswers(question.id);
-        return { ok: true, question };
-      },
-      'outcome',
-      'outcome'
-    )
-    .endAsync('outcome') as (
-    input: z.infer<typeof Resolve>,
-    caller: OperationCaller
-  ) => Promise<QuestionReceipt | Rejection>;
-
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocalUser, 'caller', 'result:outcome')
@@ -1111,14 +1013,6 @@ export function createNeoQuestionOperations(
   ) => Promise<QuestionReceipt | Rejection>;
 
   return [
-    defineOperation({
-      name: 'neo.question.resolve',
-      description: neoToolDescription('neo.question.resolve'),
-      inputSchema: Resolve,
-      resultSchema: QuestionResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: (input, caller) => resolve(input, caller),
-    }),
     defineOperation({
       name: 'neo.question.ask',
       description: neoToolDescription('neo.question.ask'),

@@ -67,12 +67,12 @@ try {
   const previous=store.getTodo('peer')!.check;
   store.updateTodo(store.getTodo('peer')!,{check:{pack:'core',kind:'evidence',params:{path:join(run,'not-created')}}},3);
   record=true; const prior=events;
-  const stale=await commit({kind:'close',todoId:'peer',reason:'Finished'},{check:previous,result:{done:true}});
+  const stale=await commit({kind:'edit',todoId:'peer',done:'reported',evidence:'Finished'},{check:previous,result:{done:true}});
   assert(!stale.ok && stale.reason.startsWith('todo_changed:')); assert.equal(events,prior);
   record=false; result.staleCheckRefused=true;
   store.askQuestion('reply','ask',{kind:'reply',todoId:'peer',text:'Answer first',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const withCard=await visible(); record=true;
-  const blocked=await commit({kind:'close',todoId:'peer',reason:'Finished'});
+  const blocked=await commit({kind:'edit',todoId:'peer',done:'reported',evidence:'Finished'});
   assert(!blocked.ok && blocked.reason.startsWith('card_unanswered:')); assert.equal(events,prior);
   record=false; assert.deepEqual(await visible(),withCard); result.unansweredCardRefused=true;
   db.exec("CREATE TRIGGER refuse_ask_touch BEFORE UPDATE ON neo_asks BEGIN SELECT RAISE(ABORT, 'synthetic rollback'); END");

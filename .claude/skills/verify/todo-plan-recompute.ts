@@ -325,9 +325,9 @@ try {
     add('race-close', 'race', 7);
     fixture[url(7)].pause = true;
     writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
-    const closing = rpc('neo.todo.close', {
+    const closing = rpc('neo.todo.edit', {
       todoId: 'race-close',
-      reason: 'Merged during report update',
+      done: 'reported', evidence: 'Merged during report update',
     });
     const deadline = Date.now() + 15000;
     while (!existsSync(join(run, 'read-started'))) {
@@ -343,9 +343,9 @@ try {
     fixture[url(2)].state = 'MERGED';
     fixture[url(2)].mergedAt = new Date().toISOString();
     writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
-    evidence.finalReceipt = await rpc('neo.todo.close', {
+    evidence.finalReceipt = await rpc('neo.todo.edit', {
       todoId: 'next',
-      reason: 'Synthetic final merge',
+      done: 'reported', evidence: 'Synthetic final merge',
     });
     assert.equal((evidence.finalReceipt as any).ok, true);
     assert.equal(starts(), 1);

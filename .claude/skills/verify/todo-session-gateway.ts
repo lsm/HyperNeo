@@ -62,7 +62,7 @@ try {
       const result = await call(op, method, ...args);
       if (op.name === 'neo.todoSessionReads' && method === 'unrecordedStarts') {
         sessions.recordRef('gateway-late', { adapter: 'hyperneo', id: worker }, 1);
-        report.closeReceipt = await rpc('operation.invoke', { name: 'neo.todo.close', input: { todoId: 'gateway-edited', reason: 'Human completed the synthetic step' } });
+        report.closeReceipt = await rpc('operation.invoke', { name: 'neo.todo.edit', input: { todoId: 'gateway-edited', done: 'reported', evidence: 'Human completed the synthetic step' } });
         assert.equal((report.closeReceipt as { ok: boolean }).ok, true);
         assert.equal((report.closeReceipt as { todo: { state: string } }).todo.state, 'done');
       }

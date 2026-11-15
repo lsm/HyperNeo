@@ -79,7 +79,7 @@ try {
   assert.equal(misplaced.ok, false);
   assert.match(misplaced.reason, /evidence_in_user_folder/);
   store.updateTodo(store.getTodo(internal.id)!, { startedAt: Date.now() }, Date.now());
-  const waiting = JSON.parse((await invoke({ name: 'neo.todo.close', input: { todoId: internal.id, reason: 'Waiting for the synthetic file' } })).content[0].text);
+  const waiting = JSON.parse((await invoke({ name: 'neo.todo.edit', input: { todoId: internal.id, done: 'reported', evidence: 'Waiting for the synthetic file' } })).content[0].text);
   assert.equal(waiting.todo?.state, 'blocked');
   mkdirSync(dirname(hidden), { recursive: true });
   writeFileSync(hidden, 'Internal completion proof');
