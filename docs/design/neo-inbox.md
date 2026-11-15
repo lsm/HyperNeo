@@ -73,7 +73,7 @@ One rule everywhere:
 
 Each step is one PR within the repo's slice budget.
 1. **Build: fold `todo_id` into `todos`.** A migration copies each `todo_id` into `todos` when missing. Readers switch to `todos`; writers keep filling `todo_id` too for one release, so a rolled-back daemon still reads every card. The column is dropped in a later PR, at least one release after. Tests: a card with only `todo_id` covers its todo after migration; every former reader gives the same answer; a card written by the new code is read correctly by the old `QUESTION_SELECT`.
-2. **Build: one live card per todo.** `onlyCard` checks overlap of `todos` among `open` and `held` cards. Tests: two cards on different todos of one ask are both accepted; a second card on the same todo is refused; an ask-level card is never refused for this.
+2. **Build: one live card per todo.** `onlyCard` checks overlap of `todos` among open cards, held or not. Tests: two cards on different todos of one ask are both accepted; a second card on the same todo is refused; an ask-level card is never refused for this.
 3. **Build + wire: held cards.** The `held_at` and `held_until` columns, `neo.question.hold`, and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
 4. **Build: `neoInbox`** with its tests (state × ask counts, whole-ask cards, held items). **Wire:** add it to the Neo snapshot.
 5. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
