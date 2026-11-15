@@ -23,28 +23,17 @@ export async function handOffToNeo(
     'reserve',
     conversationId,
     messageIds,
-    asks.map((ask) => {
-      const message = neoIntakeMessage(
+    asks.map((ask) => ({
+      sessionId: ask.askOrigin.sessionId,
+      message: neoIntakeMessage(
         { ...ask, sessionId: ask.askOrigin.sessionId },
         ask.askOrigin.sessionId,
         readNeoReply(ask.replyTo, service.todos),
         null,
         undefined,
-        ask.previewContext ?? null
-      );
-      const content = message.message.content as Exclude<typeof message.message.content, string>;
-      return {
-        sessionId: ask.askOrigin.sessionId,
-        message: block
-          ? {
-              ...message,
-              message: {
-                ...message.message,
-                content: [...content, { type: 'text' as const, text: block }],
-              },
-            }
-          : message,
-      };
-    })
+        ask.previewContext ?? null,
+        block
+      ),
+    }))
   );
 }

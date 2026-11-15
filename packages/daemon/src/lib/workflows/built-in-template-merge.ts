@@ -3,11 +3,8 @@ import type {
   EventInterest,
   SpaceWorkflow,
   WorkflowNode,
-  WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { patchLegacyStableSlotPrompt } from './built-in-legacy-slot-prompts.ts';
-import { patchKnownBuiltInPromptDrift } from './built-in-prompt-drift.ts';
 
 const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
@@ -81,7 +78,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
       toolGuards: DeclarativeToolGuard[] | undefined;
       resetContextPerTurn: boolean | undefined;
       eventInterests: EventInterest[] | undefined;
-      customPrompt?: WorkflowNodeAgentOverride;
     }
   >();
   for (const node of templateNodes) {
@@ -90,7 +86,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
         toolGuards: agent.toolGuards,
         resetContextPerTurn: agent.resetContextPerTurn,
         eventInterests: agent.eventInterests,
-        customPrompt: agent.customPrompt,
       });
     }
   }
@@ -118,20 +113,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
         if (templateAgent === undefined) return agent;
-        const existingCustomPrompt = patchKnownBuiltInPromptDrift(
-          agent.customPrompt,
-          templateAgent.customPrompt
-        );
-        const legacyPromptValue = patchLegacyStableSlotPrompt(
-          existingCustomPrompt?.value,
-          templateAgent.customPrompt?.value,
-          node.name,
-          agent.name
-        );
-        const finalPrompt =
-          legacyPromptValue !== undefined && legacyPromptValue !== existingCustomPrompt?.value
-            ? { value: legacyPromptValue }
-            : existingCustomPrompt;
         let resolvedToolGuards: DeclarativeToolGuard[] | undefined;
         if (templateAgent.toolGuards !== undefined) {
           resolvedToolGuards = templateAgent.toolGuards;
@@ -161,9 +142,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
           ...(eventInterestsMatchesTemplate ? {} : { eventInterests: templateEventInterests }),
-          ...(finalPrompt?.value === agent.customPrompt?.value
-            ? {}
-            : { customPrompt: finalPrompt }),
         };
       }),
     };

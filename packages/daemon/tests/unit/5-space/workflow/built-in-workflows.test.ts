@@ -1,19 +1,9 @@
-import historicalQaSlotPrompts from './fixtures/pre-operation-qa-slot-prompts.json';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import {
-  RETIRED_INLINE_OPERATION_PROMPT_PAIRS,
-  RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE,
-} from '../../../../src/lib/workflows/built-in-retired-operation-prompts.ts';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  CALL_ACTION_PREFERENCE_GUIDANCE,
-  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES,
-  CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE,
-  FULLSTACK_CODING_NOCHANGE_GUIDANCE,
-} from '@hyperneo/prompts';
+import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import type {
   HandoffTransition,
   SpaceLongHorizonAgent,
@@ -32,25 +22,6 @@ import {
   validateExportedWorkflow,
 } from '../../../../../space/src/export-format.ts';
 import { isWorkflowTerminalNode } from '../../../../../space/src/runtime/task-agent-manager.ts';
-import { LEGACY_CODING_SLOT_PROMPTS } from '../../../../src/lib/workflows/built-in-legacy-slot-prompts.ts';
-import {
-  RETIRED_MERGER_RAW_MERGE_GUARD,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
-} from '../../../../src/lib/workflows/built-in-retired-post-approval.ts';
-import {
-  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
-  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
-} from '../../../../src/lib/workflows/built-in-retired-prompts-coder-only.ts';
-import {
-  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
-  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
-} from '../../../../src/lib/workflows/built-in-retired-prompts-coder-owned-merge.ts';
-import {
-  RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
-  RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
-} from '../../../../src/lib/workflows/built-in-retired-prompts-research.ts';
 import {
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
@@ -70,10 +41,9 @@ import {
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
+  resolveBuiltInWorkflowTemplate,
   RESEARCH_PROMPT,
   RESEARCH_REVIEW_PROMPT,
   RESEARCH_WORKFLOW,
@@ -243,17 +213,6 @@ describe('stable coding workflow templates', () => {
           h.validator.id === 'pr_ready'
       )
     ).toBe(true);
-  });
-
-  test('legacy template identities map to canonical stable templates', () => {
-    expect(LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.legacyName)).toEqual([
-      'Coding Workflow',
-      'Coding with QA Workflow',
-    ]);
-    expect(LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.name)).toEqual([
-      STABLE_CODING_WORKFLOW.name,
-      CODING_WITH_QA_WORKFLOW.name,
-    ]);
   });
 
   test('stable coder prompt does not hard-code a specific approval authority', () => {
@@ -1070,6 +1029,33 @@ describe('getBuiltInWorkflows()', () => {
     expect(getBuiltInWorkflows()).toHaveLength(5);
   });
 
+  test('legacy template identities map to canonical stable templates', () => {
+    const legacyNames: string[] = LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.legacyName);
+    const canonicalNames: string[] = LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.name);
+    expect(legacyNames).toEqual(['Coding Workflow', 'Coding with QA Workflow']);
+    expect(canonicalNames).toEqual([STABLE_CODING_WORKFLOW.name, CODING_WITH_QA_WORKFLOW.name]);
+  });
+
+  test('resolves a stored legacy template name to its canonical template', () => {
+    expect(resolveBuiltInWorkflowTemplate('Coding Workflow')?.name).toBe('Coding');
+    expect(resolveBuiltInWorkflowTemplate('Coding with QA Workflow')?.name).toBe('Coding with QA');
+    expect(resolveBuiltInWorkflowTemplate('Coding')).toBe(
+      getBuiltInWorkflows().find((w) => w.name === 'Coding')
+    );
+    expect(resolveBuiltInWorkflowTemplate('no-such-template')).toBeUndefined();
+  });
+
+  test('identifies merge-required workflows by stored template name', () => {
+    expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge('Coder-Only Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
+  });
+
   test('includes CODING_WORKFLOW', () => {
     const names = getBuiltInWorkflows().map((w) => w.name);
     expect(names).toContain(CODING_WORKFLOW.name);
@@ -1098,17 +1084,6 @@ describe('getBuiltInWorkflows()', () => {
   test('includes CODER_ONLY_WORKFLOW', () => {
     const names = getBuiltInWorkflows().map((w) => w.name);
     expect(names).toContain(CODER_ONLY_WORKFLOW.name);
-  });
-
-  test('identifies merge-required workflows by durable template identity', () => {
-    expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
-    expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
-    expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
-    expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
-    expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
-    expect(builtInWorkflowRequiresPrMerge('Coder-Only Workflow')).toBe(true);
-    expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
-    expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
   });
 
   test('no template references leader as agent', () => {
@@ -1814,389 +1789,13 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
-  test('re-stamp upgrades pre-review-modes coder prompts to the policy-aware template', () => {
+  test('re-stamp leaves a prompt that matches an older built-in generation exactly', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-    const coderOnly = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
-    const coderOnlyNode = coderOnly.nodes[0]!;
-
-    const staleCoding = manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((n) =>
-        n.id !== codingNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: { value: RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
-      nodes: coderOnly.nodes.map((n) =>
-        n.id !== coderOnlyNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? { ...a, customPrompt: { value: RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT } }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    expect(staleCoding).toBeTruthy();
-    expect(staleCoderOnly).toBeTruthy();
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-pre-review-modes-a',
-      coding.id
-    );
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-pre-review-modes-b',
-      coderOnly.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
-
-    const afterCoding = manager.getWorkflow(coding.id)!;
-    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain('Review policy');
-    expect(afterCoding.templateHash).toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
-    );
-
-    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
-      'the internal fallback applies'
-    );
-    expect(afterCoderOnly.templateHash).toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODER_ONLY_WORKFLOW.name)!)
-    );
-  });
-
-  test('re-stamp upgrades strict-base-revalidation coder prompts to the base-advance-policy template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-    const coderOnly = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
-    const coderOnlyNode = coderOnly.nodes[0]!;
-    const research = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    const researchNode = research.nodes.find((n) => n.name === 'Research')!;
-
-    const staleCoding = manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((n) =>
-        n.id !== codingNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: {
-                        value: RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
-                      },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
-      nodes: coderOnly.nodes.map((n) =>
-        n.id !== coderOnlyNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: {
-                        value: RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
-                      },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    const staleResearch = manager.updateWorkflow(research.id, {
-      nodes: research.nodes.map((n) =>
-        n.id !== researchNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: { value: RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    expect(staleCoding).toBeTruthy();
-    expect(staleCoderOnly).toBeTruthy();
-    expect(staleResearch).toBeTruthy();
-    for (const workflow of [coding, coderOnly, research]) {
-      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-        'stale-strict-base-revalidation',
-        workflow.id
-      );
-    }
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
-    expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
-
-    const afterCoding = manager.getWorkflow(coding.id)!;
-    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain(
-      'merged anyway per policy decided 2026-08-24'
-    );
-
-    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
-      'A base-OID excursion alone'
-    );
-
-    const afterResearch = manager.getWorkflow(research.id)!;
-    const afterResearchNode = afterResearch.nodes.find((n) => n.name === 'Research')!;
-    expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
-    expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
-      RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT
-    );
-  });
-
-  test('re-stamp upgrades polling coder prompts to the event-driven template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-    const coderOnly = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
-    const coderOnlyNode = coderOnly.nodes[0]!;
-    const research = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    const researchNode = research.nodes.find((n) => n.name === 'Research')!;
-
-    const staleCoding = manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((n) =>
-        n.id !== codingNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: {
-                        value: RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
-                      },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
-      nodes: coderOnly.nodes.map((n) =>
-        n.id !== coderOnlyNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: {
-                        value: RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
-                      },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    const staleResearch = manager.updateWorkflow(research.id, {
-      nodes: research.nodes.map((n) =>
-        n.id !== researchNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0
-                  ? {
-                      ...a,
-                      customPrompt: { value: RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT },
-                    }
-                  : a
-              ),
-            }
-      ),
-    })!;
-    expect(staleCoding).toBeTruthy();
-    expect(staleCoderOnly).toBeTruthy();
-    expect(staleResearch).toBeTruthy();
-    for (const workflow of [coding, coderOnly, research]) {
-      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-        'stale-polling-prompts',
-        workflow.id
-      );
-    }
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
-    expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
-
-    const afterCoding = manager.getWorkflow(coding.id)!;
-    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
-    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain(
-      'Wait for delivered PR events'
-    );
-
-    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
-    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
-      'Wait for delivered PR events'
-    );
-
-    const afterResearch = manager.getWorkflow(research.id)!;
-    const afterResearchNode = afterResearch.nodes.find((n) => n.name === 'Research')!;
-    expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
-    expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
-      RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT
-    );
-  });
-
-  test('re-stamp upgrades [bot]-suffix bot-filter prompts to the __typename template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const cases = [
-      { workflowName: CODING_WORKFLOW.name, current: CODER_OWNED_MERGE_PROMPT },
-      { workflowName: CODER_ONLY_WORKFLOW.name, current: CODER_ONLY_PROMPT },
-      { workflowName: RESEARCH_WORKFLOW.name, current: RESEARCH_PROMPT },
-    ];
-    const staleNodes: Array<{ workflowId: string; nodeId: string; current: string }> = [];
-    for (const { workflowName, current } of cases) {
-      const workflow = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflowName)!;
-      const node = workflow.nodes.find((n) =>
-        n.agents.some((a) => a.customPrompt?.value === current)
-      )!;
-      const stale = current.replace(
-        EXTERNAL_REVIEW_BOTS_GUIDANCE,
-        EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
-      );
-      expect(stale).not.toBe(current);
-      expect(stale).toContain('a login ending in `[bot]`');
-      const updated = manager.updateWorkflow(workflow.id, {
-        nodes: workflow.nodes.map((n) =>
-          n.id !== node.id
-            ? n
-            : {
-                ...n,
-                agents: n.agents.map((a) =>
-                  a.customPrompt?.value === current ? { ...a, customPrompt: { value: stale } } : a
-                ),
-              }
-        ),
-      })!;
-      expect(updated).toBeTruthy();
-      staleNodes.push({ workflowId: workflow.id, nodeId: node.id, current });
-      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-        'stale-bot-suffix-filter',
-        workflow.id
-      );
-    }
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    for (const { workflowName } of cases) {
-      expect(result.restamped).toContain(workflowName);
-    }
-    for (const { workflowId, nodeId, current } of staleNodes) {
-      const after = manager.getWorkflow(workflowId)!;
-      const afterNode = after.nodes.find((n) => n.id === nodeId)!;
-      const prompt = afterNode.agents[0]!.customPrompt?.value;
-      expect(prompt).toBe(current);
-      expect(prompt).toContain('filter GraphQL results on `__typename == "Bot"`');
-      expect(prompt).not.toContain('a login ending in `[bot]` or one of the known bot logins');
-    }
-  });
-
-  test('active-run re-stamp upgrades [bot]-suffix bot-filter prompts via the drift variants', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const coderOnly = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
-    const coderOnlyNode = coderOnly.nodes[0]!;
-    const stale = CODER_ONLY_PROMPT.replace(
-      EXTERNAL_REVIEW_BOTS_GUIDANCE,
-      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
-    );
-    const updated = manager.updateWorkflow(coderOnly.id, {
-      nodes: coderOnly.nodes.map((n) =>
-        n.id !== coderOnlyNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0 ? { ...a, customPrompt: { value: stale } } : a
-              ),
-            }
-      ),
-    })!;
-    expect(updated).toBeTruthy();
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-bot-suffix-filter',
-      coderOnly.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, () => true);
-    expect(result.restamped).not.toContain(CODER_ONLY_WORKFLOW.name);
-
-    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
-    const prompt = afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value;
-    expect(prompt).toBe(CODER_ONLY_PROMPT);
-    expect(prompt).toContain('filter GraphQL results on `__typename == "Bot"`');
-  });
-
-  test('re-stamp restores the imperative subscribe instruction to the stable coder prompt', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
-
-    const templatePrompt = codingNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).toContain('event.external.subscribe');
-    const retiredPrompt = templatePrompt
-      .replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '')
-      .replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, '');
-    expect(retiredPrompt).not.toContain('event.external.subscribe');
-    expect(retiredPrompt).not.toContain('call_action');
+    const outdatedPrompt =
+      'Old Coding instructions that exactly match a retired generation. ' +
+      'Write code-pr-gate with field pr_url so Review can activate.';
 
     manager.updateWorkflow(coding.id, {
       nodes: coding.nodes.map((n) =>
@@ -2205,59 +1804,42 @@ describe('seedBuiltInWorkflows()', () => {
           : {
               ...n,
               agents: n.agents.map((a, i) =>
-                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
+                i === 0 ? { ...a, customPrompt: { value: outdatedPrompt } } : a
               ),
             }
       ),
     });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-pre-subscribe-hash',
+      'customized-stale-prompt-hash',
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.getWorkflow(coding.id)!;
     const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
-    expect(afterCodingNode.agents[0].customPrompt?.value).toBe(templatePrompt);
-    expect(afterCodingNode.agents[0].customPrompt?.value).toContain('event.external.subscribe');
+    expect(afterCodingNode.agents[0].customPrompt?.value).toBe(outdatedPrompt);
   });
 
-  test('re-stamp restores the zero-findings verdict gate to the stable reviewer prompt', () => {
+  test('re-stamp keeps a retired Post-Approval node instead of stripping it', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
+    const retiredNode: WorkflowNode = {
+      id: 'retired-post-approval',
+      name: 'Post-Approval',
+      agents: [{ agentId: 'agent-merger-uuid', name: 'merger' }],
+    };
 
-    const templatePrompt = reviewNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).toContain('Verdict gate');
-    const retiredPrompt = templatePrompt.replace(REVIEWER_ZERO_FINDINGS_GATE, '');
-    expect(retiredPrompt).not.toContain('Verdict gate');
-
-    manager.updateWorkflow(coding.id, {
-      nodes: coding.nodes.map((n) =>
-        n.id !== reviewNode.id
-          ? n
-          : {
-              ...n,
-              agents: n.agents.map((a, i) =>
-                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
-              ),
-            }
-      ),
-    });
+    manager.updateWorkflow(coding.id, { nodes: [...coding.nodes, retiredNode] });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-pre-verdict-gate-hash',
+      'stale-post-approval-hash',
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.getWorkflow(coding.id)!;
-    const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
-    expect(afterReviewNode.agents[0].customPrompt?.value).toBe(templatePrompt);
-    expect(afterReviewNode.agents[0].customPrompt?.value).toContain('Verdict gate');
+    expect(after.nodes.some((n) => n.id === 'retired-post-approval')).toBe(true);
   });
 
   test('every stable reviewer slot carries the zero-findings verdict gate', () => {
@@ -2752,134 +2334,6 @@ describe('seedBuiltInWorkflows()', () => {
     ).run(legacyName, legacyHandle, legacyName, workflowId);
   }
 
-  test('migrates legacy "Coding Workflow" identity to stable "Coding" and strips the Post-Approval node', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const seededCoding = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
-    const codingId = seededCoding.id;
-    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
-    repo.updateWorkflow(codingId, {
-      nodes: [
-        ...seededCoding.nodes.map((n) =>
-          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
-        ),
-        {
-          id: 'retired-pa',
-          name: 'Post-Approval',
-          agents: [
-            {
-              agentId: MERGER_ID,
-              name: 'merger',
-              customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
-              toolGuards: [RETIRED_MERGER_RAW_MERGE_GUARD],
-            },
-          ],
-          postApproval: {
-            targetAgent: 'merger',
-            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-          },
-        },
-      ],
-      channels: [
-        ...(seededCoding.channels ?? []),
-        { id: 'pa-c', from: 'Post-Approval', to: 'Coding' },
-        { id: 'c-pa', from: 'Coding', to: 'Post-Approval' },
-      ],
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-pre-upgrade-hash',
-      codingId
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager);
-
-    const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
-    expect(migrated).toBeDefined();
-    expect(migrated.name).toBe('Coding');
-    expect(migrated.handle).toBe('coding');
-    expect(migrated.templateName).toBe('Coding');
-    expect(migrated.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
-    expect(migrated.nodes.flatMap((n) => n.agents).some((a) => a.name === 'merger')).toBe(false);
-    const migratedCodingNode = migrated.nodes.find((n) => n.name === 'Coding')!;
-    expect(migratedCodingNode.postApproval?.targetAgent).toBe('coder');
-    expect(migratedCodingNode.postApproval?.instructions).toBe(CODER_OWNED_MERGE_INSTRUCTIONS);
-    expect(migrated.templateHash).toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === 'Coding')!)
-    );
-
-    expect(result.errors).toEqual([]);
-    const second = seedBuiltInWorkflows(SPACE_ID, manager);
-    expect(second.skipped).toBe(true);
-    expect(second.seeded).toEqual([]);
-    expect(second.errors).toEqual([]);
-  });
-
-  test('defers the retired-node strip while an active workflow run references the row', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager);
-    const seededCoding = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
-    const codingId = seededCoding.id;
-    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
-    repo.updateWorkflow(codingId, {
-      nodes: [
-        ...seededCoding.nodes.map((n) =>
-          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
-        ),
-        {
-          id: 'retired-pa-active',
-          name: 'Post-Approval',
-          agents: [
-            {
-              agentId: MERGER_ID,
-              name: 'merger',
-              customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
-              toolGuards: [RETIRED_MERGER_RAW_MERGE_GUARD],
-            },
-          ],
-          postApproval: {
-            targetAgent: 'merger',
-            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
-          },
-        },
-      ],
-      channels: [
-        ...(seededCoding.channels ?? []),
-        { id: 'pa-c-active', from: 'Post-Approval', to: 'Coding' },
-        { id: 'c-pa-active', from: 'Coding', to: 'Post-Approval' },
-      ],
-    });
-    const staleHash = 'stale-pre-upgrade-hash-active';
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      staleHash,
-      codingId
-    );
-
-    const deferred = seedBuiltInWorkflows(
-      SPACE_ID,
-      manager,
-      (workflowId) => workflowId === codingId
-    );
-    const stillLegacy = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
-    expect(stillLegacy.name).toBe('Coding');
-    expect(stillLegacy.templateName).toBe('Coding');
-    expect(stillLegacy.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
-    expect(stillLegacy.nodes.flatMap((n) => n.agents).some((a) => a.name === 'merger')).toBe(true);
-    expect(deferred.restamped).not.toContain('Coding');
-    expect(stillLegacy.templateHash).toBe(staleHash);
-
-    const converged = seedBuiltInWorkflows(SPACE_ID, manager);
-    const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
-    expect(migrated.nodes.some((n) => n.name === 'Post-Approval')).toBe(false);
-    expect(migrated.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
-    expect(migrated.templateHash).toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === 'Coding')!)
-    );
-    expect(converged.restamped).toContain('Coding');
-    expect(converged.errors).toEqual([]);
-  });
-
   test('preserves a user-customized Post-Approval node instead of stripping it', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
@@ -2965,7 +2419,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(modelPa.agents[0].model).toBe('claude-sonnet-4-6');
   });
 
-  test('preserves a Post-Approval node whose merger prompt was appended to', () => {
+  test('keeps a Post-Approval node whose merger prompt was appended to', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
@@ -2985,7 +2439,7 @@ describe('seedBuiltInWorkflows()', () => {
               agentId: MERGER_ID,
               name: 'merger',
               customPrompt: {
-                value: RETIRED_PR_MERGER_SLOT_PROMPT + '\n\nRemember to also sync the docs.',
+                value: 'You are the PR Merger.\n\nRemember to also sync the docs.',
               },
             },
           ],
@@ -3004,27 +2458,90 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
-    expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
     const appendPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(appendPa).toBeDefined();
     expect(appendPa.agents[0].customPrompt?.value).toContain('Remember to also sync the docs.');
   });
 
-  test('handle collision on a new stable template fails safely without aborting the seed', () => {
-    manager.createWorkflow({
-      spaceId: SPACE_ID,
-      name: 'My Coding',
-      handle: 'coding',
-      nodes: [{ name: 'Code', agentId: CODER_ID }],
+  const retiredMergerGuard = {
+    matcher: 'Bash',
+    pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
+    decision: 'deny' as const,
+    reason: 'Direct PR merges are blocked — use the merge_pr tool instead.',
+  };
+  const retiredMergerPrompt = 'You are the PR Merger — the designated shell-capable agent.';
+
+  test('keeps a pristine retired Post-Approval node instead of stripping it', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'retired-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: { value: retiredMergerPrompt },
+              toolGuards: [retiredMergerGuard],
+            },
+          ],
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
+        },
+      ],
     });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager);
+
+    const after = manager.getWorkflow(codingId)!;
+    expect(after.nodes.some((n) => n.id === 'retired-pa')).toBe(true);
+  });
+
+  test('migrates a legacy "Coding Workflow" row to the stable identity', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
-    expect(result.seeded).toHaveLength(4);
-    expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
-    expect(result.errors[0].error).toContain('coding');
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    expect(after.name).toBe('Coding');
+    expect(after.handle).toBe('coding');
+    expect(after.templateName).toBe('Coding');
+    expect(result.errors).toEqual([]);
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
+  });
+
+  test('migrating a legacy row does not seed a duplicate canonical workflow', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    revertToLegacyIdentity(seededCoding.id, 'Coding Workflow', 'coding-workflow');
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+
+    expect(result.seeded).toEqual([]);
+    const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
+    expect(names.filter((name) => name === 'Coding')).toHaveLength(1);
+    expect(names).not.toContain('Coding Workflow');
   });
 
   test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
@@ -3162,6 +2679,24 @@ describe('seedBuiltInWorkflows()', () => {
     expect(migrated.name).toBe('Coding with QA');
     expect(migrated.tags).not.toContain('default');
     expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
+  });
+
+  test('handle collision on a new stable template fails safely without aborting the seed', () => {
+    manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'My Coding',
+      handle: 'coding',
+      nodes: [{ name: 'Code', agentId: CODER_ID }],
+    });
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
+
+    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
+    expect(result.errors[0].error).toContain('coding');
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
   });
 
   test('seed syncs only default-tag membership onto drifted rows, preserving custom tags', () => {
@@ -4117,484 +3652,6 @@ test('CODING_WITH_QA_WORKFLOW coder prompt is behavioral coder-owned text', () =
   expect(prompt).not.toContain('QA');
 });
 
-test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA coder prompt to the stable text', () => {
-  const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-  const templatePrompt = templateNode.agents[0].customPrompt!.value;
-  const legacySeed =
-    'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
-    'write tests, and keep one PR updated across review and QA cycles.';
-
-  const existingNode: WorkflowNode = {
-    ...templateNode,
-    agents: templateNode.agents.map((a, i) =>
-      i === 0 ? { ...a, customPrompt: { value: legacySeed } } : a
-    ),
-  };
-
-  const merged = mergeNodeStructuralFieldsFromTemplate(
-    [existingNode],
-    CODING_WITH_QA_WORKFLOW.nodes
-  );
-  const mergedCoder = merged.find((n) => n.name === 'Coding')!;
-  const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
-  expect(mergedPrompt).toBe(legacySeed);
-});
-
-test('persisted prompts carrying the retired escalation target reconcile to the current text', () => {
-  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-  const templatePrompt = templateNode.agents[0].customPrompt!.value;
-
-  const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
-    ([current]) => current === templatePrompt
-  )![1];
-  const persisted = previous.replace(
-    'save a NON-result artifact describing the blocker (`save_artifact({ shape: "note", ' +
-      'kind: "no_external_review_bot", summary: "<why the explicit external selection cannot be satisfied>" })`) ' +
-      'and stop; do NOT mark the task complete and do NOT wait for a reply — the unfinished task carrying ' +
-      'that artifact is the signal a human acts on. The fallback substitution is for `auto`',
-    'and escalate per your escalation contract; the fallback substitution is for `auto`'
-  );
-
-  expect(persisted).not.toBe(templatePrompt);
-  expect(persisted).toContain('escalate per your escalation contract');
-
-  const existingNode: WorkflowNode = {
-    ...templateNode,
-    agents: templateNode.agents.map((a, i) =>
-      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
-    ),
-  };
-  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
-  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
-
-  expect(mergedPrompt).toBe(templatePrompt);
-});
-
-test('persisted Coder-Only prompts carrying the retired escalation target reconcile', () => {
-  const templateNode = CODER_ONLY_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-  const templatePrompt = templateNode.agents[0].customPrompt!.value;
-
-  const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
-    ([current]) => current === templatePrompt
-  )![1];
-  const persisted = previous
-    .replace(
-      'do NOT fabricate an empty commit or PR — record the blocker with `save_artifact({ shape: "note", kind: "no_code_changes", summary: "<why this task needs no code changes>" })` and stop. Do NOT wait for a reply: there is no Space-level recipient, and the unfinished task carrying that artifact is the signal a human acts on.',
-      'do NOT fabricate an empty commit or PR — escalate via send_message to the escalation target in your Runtime Execution Contract, explain that the task produced no code changes and needs re-routing, and stop and wait for guidance.'
-    )
-    .replace(
-      'Record the failure with `save_artifact({ shape: "note", kind: "review_gate_failed", summary: "<which gate failed and why>" })` and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review). Do NOT wait for a reply: there is no Space-level recipient.',
-      'Escalate via send_message to the escalation target in your Runtime Execution Contract and STOP only when you can run neither an external gate nor a credible internal fallback review (for example, the diff is too large or too risky to self-review) — say which gate failed and why.'
-    )
-    .replace(
-      'an EXPLICIT `external` with no installed bot is likewise never substituted — record the blocker with `save_artifact({ shape: "note", kind: "no_external_review_bot", summary: "the repository has no external reviewer despite an explicit external selection" })` and stop)',
-      'an EXPLICIT `external` with no installed bot is likewise never substituted — escalate saying the repository has no external reviewer)'
-    )
-    .replace(
-      '(`both` mode excepted — an emptied gate set there is a blocker: record it with `save_artifact({ shape: "note", kind: "external_gate_died", summary: "every gate-set bot failed and `both` mode forbids the internal fallback" })` and stop)',
-      '(`both` mode excepted — an emptied gate set there is a blocker: escalate saying the external gate died)'
-    );
-
-  expect(persisted).not.toBe(templatePrompt);
-  expect(persisted).toContain('escalate via send_message to the escalation target');
-  expect(persisted).toContain('Escalate via send_message to the escalation target');
-  expect(persisted).toContain('escalate saying the repository has no external reviewer');
-  expect(persisted).toContain('escalate saying the external gate died');
-
-  const existingNode: WorkflowNode = {
-    ...templateNode,
-    agents: templateNode.agents.map((a, i) =>
-      i === 0 ? { ...a, customPrompt: { value: persisted } } : a
-    ),
-  };
-  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODER_ONLY_WORKFLOW.nodes);
-  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
-
-  expect(mergedPrompt).toBe(templatePrompt);
-});
-
-test('persisted prompts naming the retired artifact.* operations reconcile to workflow.run.*', () => {
-  const workflows = [
-    CODER_ONLY_WORKFLOW,
-    CODING_WITH_QA_WORKFLOW,
-    CODING_WORKFLOW,
-    RESEARCH_WORKFLOW,
-    REVIEW_ONLY_WORKFLOW,
-  ];
-  let reconciled = 0;
-  for (const workflow of workflows) {
-    for (const templateNode of workflow.nodes) {
-      for (let index = 0; index < templateNode.agents.length; index++) {
-        const templatePrompt = templateNode.agents[index]!.customPrompt?.value;
-        if (!templatePrompt?.includes('workflow.run.artifact.')) continue;
-        const persisted = templatePrompt.replaceAll('workflow.run.artifact.', 'artifact.');
-        expect(persisted).not.toBe(templatePrompt);
-        const existingNode: WorkflowNode = {
-          ...templateNode,
-          agents: templateNode.agents.map((agent, i) =>
-            i === index ? { ...agent, customPrompt: { value: persisted } } : agent
-          ),
-        };
-        const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-        const mergedPrompt = merged.find((n) => n.name === templateNode.name)!.agents[index]!
-          .customPrompt!.value;
-        expect(mergedPrompt, `${workflow.name} / ${templateNode.name}`).toBe(templatePrompt);
-        reconciled++;
-      }
-    }
-  }
-  expect(reconciled).toBe(9);
-});
-
-test('the Coding-with-QA coder legacy seed is frozen, not composed from the live guidance', () => {
-  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding with QA|coder']!.find((candidate) =>
-    candidate.includes('escalation target listed in your Runtime Execution Contract')
-  );
-  expect(seed).toBeDefined();
-  expect(seed).not.toContain('no_code_changes');
-  expect(seed).not.toContain(FULLSTACK_CODING_NOCHANGE_GUIDANCE);
-});
-
-test('the Coding coder legacy seed keeps its historical escalation wording', () => {
-  const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-  const seed = LEGACY_CODING_SLOT_PROMPTS['Coding|coder']!.find((candidate) =>
-    candidate.includes('escalation target listed in your Runtime Execution Contract')
-  );
-  expect(seed).toBeDefined();
-  const existingNode: WorkflowNode = {
-    ...templateNode,
-    agents: templateNode.agents.map((a, i) =>
-      i === 0
-        ? {
-            ...a,
-            customPrompt: { value: seed! },
-          }
-        : a
-    ),
-  };
-  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], CODING_WORKFLOW.nodes);
-  const mergedPrompt = merged.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
-  expect(mergedPrompt).toBe(templateNode.agents[0].customPrompt!.value);
-});
-
-test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
-  const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, '94d119f31fcc92b72c8ce759a67c96392698c93318ca874d8f082ce59b1d825a'],
-    [CODER_OWNED_MERGE_PROMPT, '882f1beaabbe9dc502f1f3f3f1de247cdb97779a0462731e2f594f3276ad43c0'],
-    [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
-    [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
-    [
-      CODER_OWNED_QA_REVIEW_PROMPT,
-      'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
-    ],
-    [RESEARCH_PROMPT, '8e19248b31a36c8b4f7f09ee09aae1a6acd6221867b12c093359b0930b72fa83'],
-    [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
-    [REVIEW_ONLY_REVIEW_PROMPT, 'c62030e468fe49a3204fe6bbecf7debcd3dbb908222e2e218248475e371e88f4'],
-  ]);
-  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
-  const migratedKeys = new Set<string>();
-
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      for (const agent of node.agents) {
-        const value = agent.customPrompt?.value;
-        if (!value?.includes(CALL_ACTION_PREFERENCE_GUIDANCE)) continue;
-        const expectedHash = preDispatcherHashes.get(value);
-        expect(expectedHash, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
-        const previous = RETIRED_INLINE_OPERATION_PROMPT_PAIRS.find(
-          ([current]) => current === value
-        )![1];
-        const retiredGuidance = CALL_ACTION_PREFERENCE_GUIDANCE_PRE_TASK_APPROVE.replaceAll(
-          'workflow.run.artifact.',
-          'artifact.'
-        );
-        const persisted = [
-          previous.replace(`\n${retiredGuidance}`, ''),
-          previous.replace(retiredGuidance, ''),
-        ].find((stripped) => sha(stripped) === expectedHash);
-        expect(persisted, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
-        const existingNode: WorkflowNode = {
-          ...node,
-          agents: node.agents.map((candidate) =>
-            candidate === agent ? { ...candidate, customPrompt: { value: persisted! } } : candidate
-          ),
-        };
-        const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-        const mergedNode = merged.find((candidate) => candidate.name === node.name)!;
-        const mergedAgent = mergedNode.agents.find((candidate) => candidate.name === agent.name)!;
-        expect(mergedAgent.customPrompt?.value, `${workflow.name}/${node.name}/${agent.name}`).toBe(
-          value
-        );
-        migratedKeys.add(value);
-      }
-    }
-  }
-
-  expect(migratedKeys.size).toBe(preDispatcherHashes.size);
-});
-
-test('persisted typed-tool prompts migrate to the operation-name templates', () => {
-  const currentTerminalActions =
-    'invoke(name="workflow.run.artifact.save", input={ shape: "link", kind: "pr", data: { url: "<url>" } }) ' +
-    'to record the PR, then invoke(name="task.approve", input={ taskId: "<task id>" }) ' +
-    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }) only on APPROVE';
-  const retiredTerminalActions =
-    'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, ' +
-    'then approve_task() or submit_for_approval only on APPROVE';
-
-  const reviewNode = REVIEW_ONLY_WORKFLOW.nodes.find((node) => node.name === 'Review')!;
-  const current = reviewNode.agents[0].customPrompt!.value;
-  expect(current).toContain(currentTerminalActions);
-
-  const persisted = current
-    .replace(CALL_ACTION_PREFERENCE_GUIDANCE, CALL_ACTION_PREFERENCE_GUIDANCE_PRE_OPERATION_NAMES)
-    .replace(currentTerminalActions, retiredTerminalActions);
-  expect(persisted).not.toBe(current);
-  expect(persisted).toContain('identical to the action name it replaced');
-
-  const existingNode: WorkflowNode = {
-    ...reviewNode,
-    agents: reviewNode.agents.map((agent, index) =>
-      index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-    ),
-  };
-  const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], REVIEW_ONLY_WORKFLOW.nodes);
-  expect(merged.find((node) => node.name === 'Review')!.agents[0].customPrompt!.value).toBe(
-    current
-  );
-});
-
-const SUBMIT_FOR_REVIEW_WORDING: [current: string, retired: string][] = [
-  [
-    'call invoke(name="task.transition", input={ taskId: "<task id>", status: "review", reviewReason: "External gate on',
-    'call invoke(name="task.submitForReview", input={ taskId: "<task id>", reason: "External gate on',
-  ],
-  [
-    'always routes completion through a task.transition to review,',
-    'always routes completion through task.submitForReview,',
-  ],
-  [
-    '`submit_for_approval` is `task.transition` with `status: "review"`',
-    '`submit_for_approval` is `task.submitForReview`',
-  ],
-  [
-    'do not call task.approve or a task.transition to review',
-    'do not call task.approve or task.submitForReview',
-  ],
-  [
-    'terminal gates immediately before `task.approve` or a `task.transition` to `review`',
-    'terminal gates immediately before `task.approve` or `task.submitForReview`',
-  ],
-  [
-    'decision artifact, then call `task.approve` or a `task.transition` to `review`',
-    'decision artifact, then call `task.approve` or `task.submitForReview`',
-  ],
-  [
-    'so you do NOT call task.approve or a task.transition to review',
-    'so you do NOT call task.approve or task.submitForReview',
-  ],
-  [
-    'save the PR link artifact and call task.approve, or a task.transition to review',
-    'save the PR link artifact and call task.approve, or task.submitForReview',
-  ],
-  [
-    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }).',
-    'or task.submitForReview.',
-  ],
-  [
-    'or invoke(name="task.transition", input={ taskId: "<task id>", status: "review" }) only on APPROVE',
-    'or invoke(name="task.submitForReview", input={ taskId: "<task id>" }) only on APPROVE',
-  ],
-];
-
-function retireTransitionReview(value: string): string {
-  return SUBMIT_FOR_REVIEW_WORDING.reduce(
-    (text, [current, retired]) => text.replaceAll(current, retired),
-    retireSubscribeRename(retireTransitionDone(retireGenericPrSubscribe(value)))
-  );
-}
-
-function retireTransitionDone(value: string): string {
-  return value
-    .replaceAll(
-      'complete its cleanup and workspace-sync steps, and move the task to done with task.transition.',
-      'complete its cleanup and workspace-sync steps, and call task.complete.'
-    )
-    .replaceAll(
-      '`mark_complete` is `task.transition` with `status: "done"`.',
-      '`mark_complete` is `task.complete`.'
-    );
-}
-
-test('prompts persisted with task.complete migrate forward to a transition to done', () => {
-  const covered: string[] = [];
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      if (!current) continue;
-      const persisted = retireTransitionDone(current);
-      if (persisted === current) continue;
-      expect(persisted).toContain('task.complete');
-      const existingNode: WorkflowNode = {
-        ...node,
-        agents: node.agents.map((agent, index) =>
-          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-        ),
-      };
-      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-      const label = `${workflow.name}/${node.name}`;
-      expect(
-        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
-        label
-      ).toBe(current);
-      covered.push(label);
-    }
-  }
-  expect(covered.length).toBe(9);
-});
-
-const GENERIC_PR_SUBSCRIBE_CALL =
-  'call `invoke(name="event.external.subscribe", input={ prUrl: "<PR URL>" })`';
-
-function retireGenericPrSubscribe(value: string): string {
-  return value
-    .replaceAll(
-      GENERIC_PR_SUBSCRIBE_CALL,
-      'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`'
-    )
-    .replaceAll(
-      '`subscribe_pr_events` is `event.external.subscribe` with `prUrl`, and `send_message` is an operation name already.',
-      '`subscribe_pr_events` is `event.external.pr.subscribe`, and `send_message` is an operation name already.'
-    );
-}
-
-test('prompts persisted with event.external.pr.subscribe migrate forward to event.external.subscribe', () => {
-  const covered: string[] = [];
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      if (!current) continue;
-      const persisted = retireGenericPrSubscribe(current);
-      if (persisted === current) continue;
-      expect(persisted).toContain('event.external.pr.subscribe');
-      const existingNode: WorkflowNode = {
-        ...node,
-        agents: node.agents.map((agent, index) =>
-          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-        ),
-      };
-      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-      const label = `${workflow.name}/${node.name}`;
-      expect(
-        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
-        label
-      ).toBe(current);
-      covered.push(label);
-    }
-  }
-  expect(covered.length).toBe(9);
-});
-
-function retireSubscribeRename(value: string): string {
-  return value
-    .replaceAll(
-      'call `invoke(name="event.external.pr.subscribe", input={ prUrl: "<PR URL>" })`',
-      'call `subscribe_pr_events({ prUrl: "<PR URL>" })`'
-    )
-    .replaceAll(
-      '`subscribe_pr_events` is `event.external.pr.subscribe`, and `send_message` is an operation name already.',
-      '`send_message` and `subscribe_pr_events` are operation names already.'
-    );
-}
-
-test('prompts persisted with subscribe_pr_events migrate forward to event.external.subscribe', () => {
-  const covered: string[] = [];
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      if (!current || retireGenericPrSubscribe(current) === current) continue;
-      const persisted = retireSubscribeRename(retireGenericPrSubscribe(current));
-      expect(persisted).not.toContain('event.external.pr.subscribe');
-      expect(persisted).not.toContain(GENERIC_PR_SUBSCRIBE_CALL);
-      const existingNode: WorkflowNode = {
-        ...node,
-        agents: node.agents.map((agent, index) =>
-          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-        ),
-      };
-      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-      const label = `${workflow.name}/${node.name}`;
-      expect(
-        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
-        label
-      ).toBe(current);
-      covered.push(label);
-    }
-  }
-  expect(covered.length).toBe(9);
-});
-
-test('prompts persisted with task.submitForReview migrate forward to task.transition', () => {
-  const covered: string[] = [];
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      if (!current) continue;
-      const persisted = retireTransitionReview(current);
-      if (persisted === current) continue;
-      expect(persisted).toContain('task.submitForReview');
-      const existingNode: WorkflowNode = {
-        ...node,
-        agents: node.agents.map((agent, index) =>
-          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-        ),
-      };
-      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-      const label = `${workflow.name}/${node.name}`;
-      expect(
-        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
-        label
-      ).toBe(current);
-      covered.push(label);
-    }
-  }
-  expect(covered.length).toBe(9);
-});
-
-test('prompts persisted with task.resolvePendingCompletion migrate forward to task.approve', () => {
-  const retire = (value: string) =>
-    retireTransitionReview(value)
-      .replaceAll(
-        'invoke(name="task.approve", input={ taskId: "<task id>" })',
-        'invoke(name="task.resolvePendingCompletion", input={ taskId: "<task id>", approved: true })'
-      )
-      .replaceAll('task.approve', 'task.resolvePendingCompletion');
-
-  const covered: string[] = [];
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      if (!current?.includes('task.approve')) continue;
-      const persisted = retire(current);
-      expect(persisted).not.toBe(current);
-      const existingNode: WorkflowNode = {
-        ...node,
-        agents: node.agents.map((agent, index) =>
-          index === 0 ? { ...agent, customPrompt: { value: persisted } } : agent
-        ),
-      };
-      const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
-      const label = `${workflow.name}/${node.name}`;
-      expect(
-        merged.find((candidate) => candidate.name === node.name)?.agents[0].customPrompt?.value,
-        label
-      ).toBe(current);
-      covered.push(label);
-    }
-  }
-  expect(covered.length).toBeGreaterThan(0);
-});
-
 test('post-approval merge instructions refresh from the template, retiring dead tool names', () => {
   const covered: string[] = [];
   for (const workflow of getBuiltInWorkflows()) {
@@ -4714,76 +3771,3 @@ test('CODING_WITH_QA_WORKFLOW cyclic back-channels permit more than 6 review/QA 
   expect(reviewToCoding!.maxCycles).toBeGreaterThan(6);
   expect(qaToCoding!.maxCycles).toBeGreaterThan(6);
 });
-
-test('all retired inline-operation slot prompts migrate without rewriting customizations', () => {
-  const pairs = new Map<string, string>(RETIRED_INLINE_OPERATION_PROMPT_PAIRS);
-  const covered = new Set<string>();
-  for (const workflow of getBuiltInWorkflows()) {
-    for (const node of workflow.nodes) {
-      const current = node.agents[0]?.customPrompt?.value;
-      const retired = current && pairs.get(current);
-      if (!retired) continue;
-      expect(retired).not.toBe(current);
-      const existing = {
-        ...node,
-        agents: [{ ...node.agents[0]!, customPrompt: { value: retired } }],
-      };
-      const migrated = mergeNodeStructuralFieldsFromTemplate([existing], [node]);
-      expect(migrated[0]!.agents[0]!.customPrompt?.value).toBe(current);
-      const customized = `${retired}\nUser customization: retain this policy.`;
-      existing.agents[0]!.customPrompt.value = customized;
-      const preserved = mergeNodeStructuralFieldsFromTemplate([existing], [node]);
-      expect(preserved[0]!.agents[0]!.customPrompt?.value).toBe(customized);
-      covered.add(current!);
-    }
-  }
-  expect(covered.size).toBe(pairs.size);
-});
-
-test('pre-operation slot snapshots retain the earlier external-gate retirement chain', () => {
-  for (const [current, retired] of RETIRED_INLINE_OPERATION_PROMPT_PAIRS) {
-    if (!retired.includes(RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE)) continue;
-    const node = getBuiltInWorkflows()
-      .flatMap((workflow) => workflow.nodes)
-      .find((candidate) => candidate.agents[0]?.customPrompt?.value === current)!;
-    const previous = retired.replace(
-      RETIRED_INLINE_EXTERNAL_REVIEW_BOTS_GUIDANCE,
-      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING
-    );
-    expect(previous).not.toBe(retired);
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [
-        {
-          ...node,
-          agents: [{ ...node.agents[0]!, customPrompt: { value: previous } }],
-        },
-      ],
-      [node]
-    );
-    expect(merged[0]!.agents[0]!.customPrompt?.value).toBe(current);
-  }
-});
-
-test.each(historicalQaSlotPrompts)(
-  'migrates a frozen historical QA seed without changing customized prompts',
-  (persisted) => {
-    const node = CODING_WITH_QA_WORKFLOW.nodes.find((candidate) => candidate.name === 'QA')!;
-    const previous = {
-      ...node,
-      agents: node.agents.map((agent) => ({ ...agent, customPrompt: { value: persisted } })),
-    };
-    const merged = mergeNodeStructuralFieldsFromTemplate([previous], CODING_WITH_QA_WORKFLOW.nodes);
-    expect(merged[0].agents[0].customPrompt?.value).toBe(node.agents[0].customPrompt?.value);
-    const customized = {
-      ...previous,
-      agents: previous.agents.map((agent) => ({
-        ...agent,
-        customPrompt: { value: persisted + '\nKeep my custom QA policy.' },
-      })),
-    };
-    expect(
-      mergeNodeStructuralFieldsFromTemplate([customized], CODING_WITH_QA_WORKFLOW.nodes)[0]
-        .agents[0].customPrompt?.value
-    ).toBe(customized.agents[0].customPrompt.value);
-  }
-);

@@ -4,11 +4,7 @@ import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import {
-  neoChoiceByLetter,
-  neoLabelledOptions,
-  neoReplyExcerpt,
-} from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByLetter, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
@@ -24,6 +20,7 @@ import {
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
+import { attribute, escapeSessionText } from '../messaging/session-envelope.ts';
 import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
@@ -102,13 +99,36 @@ export function requireNeoIntakeTarget(
   return { value: session };
 }
 
+type StoredBlock = { type: string; text?: string };
+
+export function readStoredEnvelope(
+  blocks: readonly StoredBlock[] | null,
+  requestId: string
+): { enveloped: boolean; head: string | null } {
+  const all = blocks ?? [];
+  const last = all.at(-1);
+  const open = new RegExp(`^\\s*<human-message id="${attribute(requestId)}"`);
+  const openIndex = all.findIndex((block) => block.type === 'text' && open.test(block.text ?? ''));
+  const closes = last?.type === 'text' && /^\s*<\/human-message>\s*$/.test(last.text ?? '');
+  if (!closes || openIndex < 0 || openIndex > 1 || openIndex >= all.length - 1)
+    return { enveloped: false, head: null };
+  const before = all
+    .slice(0, openIndex)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join('')
+    .trim();
+  return { enveloped: true, head: before || null };
+}
+
 export function neoIntakeMessage(
   input: IntakeInput,
   sessionId: string = input.sessionId,
   reply: NeoReply | null = null,
   localTime: string | null = null,
   stored?: SDKMessage,
-  previewContext: NeoPreviewReference | null = null
+  previewContext: NeoPreviewReference | null = null,
+  saidBlock: string | null = null
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
@@ -121,21 +141,77 @@ export function neoIntakeMessage(
       ? [{ type: 'text' as const, text: input.content }]
       : input.content;
   const fact =
-    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
+    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
     neoQuoteFact(input.replyTo);
-  const messageId = `[message id: ${input.requestId}]`;
-  const first =
+  const storedBlocks =
     stored?.type === 'user' && Array.isArray(stored.message.content)
-      ? stored.message.content[0]
+      ? stored.message.content
       : null;
-  const identifier =
-    !stored || (first?.type === 'text' && first.text === messageId) ? messageId : null;
+  const has = (text: string) =>
+    storedBlocks?.some(
+      (block: { type: string; text?: string }) =>
+        block.type === 'text' && block.text?.startsWith(text) === true
+    ) === true;
+  const storedShape = readStoredEnvelope(storedBlocks, input.requestId);
+  const enveloped = storedShape.enveloped;
+  const legacy = stored !== undefined && !enveloped;
+  const storedSaid = storedBlocks?.find(
+    (block: { type: string; text?: string }) =>
+      block.type === 'text' && block.text?.startsWith('<already-said>') === true
+  );
+  const said = saidBlock ?? (storedSaid?.type === 'text' ? (storedSaid.text ?? null) : null);
   const previewFact = previewContext
     ? `Preview context: registered artifact ${previewContext.artifactId}, exact SHA-256 snapshot ${previewContext.snapshot}.`
     : null;
   const sourceFact = input.inputMode ? `[input: ${input.inputMode}]` : null;
-  const facts = [identifier, localTime, fact, previewFact, sourceFact].flatMap((text) =>
-    text ? [{ type: 'text' as const, text }] : []
+  const storedHumanContent = (stored as { humanContent?: unknown } | undefined)?.humanContent;
+  if (legacy) {
+    const facts = [
+      has('(local time: ') ? null : localTime,
+      has('Preview context: ') ? null : previewFact,
+    ].filter((text): text is string => Boolean(text));
+    return {
+      type: 'user',
+      uuid: input.requestId as UUID,
+      session_id: sessionId,
+      parent_tool_use_id: null,
+      message: {
+        role: 'user',
+        content: [
+          ...facts.map((text) => ({ type: 'text' as const, text })),
+          ...(stored?.type === 'user' ? stored.message.content : content),
+        ],
+      },
+      inputKind: 'human',
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(previewContext ? { previewContext } : {}),
+      ...(storedHumanContent !== undefined
+        ? { humanContent: storedHumanContent as SDKUserMessage['message']['content'] }
+        : facts.length
+          ? { humanContent: content }
+          : {}),
+    };
+  }
+  const head =
+    storedShape.head ??
+    [said, [localTime, sourceFact].filter(Boolean).join(' '), previewFact]
+      .filter(Boolean)
+      .join('\n');
+  const askId = reply?.question?.askId ?? reply?.ask?.id ?? null;
+  const questionId = reply?.question?.id ?? null;
+  const reference = [
+    questionId ? ` question="${attribute(questionId)}"` : '',
+    askId ? ` ask="${attribute(askId)}"` : '',
+  ].join('');
+  const envelope = [
+    `id="${attribute(input.requestId)}"`,
+    askId ? `ask="${attribute(askId)}"` : '',
+    questionId ? `question="${attribute(questionId)}"` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const human = content.map((block) =>
+    block.type === 'text' ? { ...block, text: escapeSessionText(block.text) } : block
   );
   return {
     type: 'user',
@@ -144,26 +220,48 @@ export function neoIntakeMessage(
     parent_tool_use_id: null,
     message: {
       role: 'user',
-      content: facts.length ? [...facts, ...content] : content,
+      content: [
+        ...(head ? [{ type: 'text' as const, text: `${head}\n` }] : []),
+        {
+          type: 'text' as const,
+          text: `<human-message ${envelope}>\n${fact ? '' : '\n'}`,
+        },
+        ...(fact
+          ? [
+              {
+                type: 'text' as const,
+                text: `<reference${reference}>\n${escapeSessionText(fact)}\n</reference>\n\n`,
+              },
+            ]
+          : []),
+        ...human,
+        { type: 'text' as const, text: '\n\n</human-message>' },
+      ],
     },
     inputKind: 'human',
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     ...(previewContext ? { previewContext } : {}),
-    ...(facts.length ? { humanContent: content } : {}),
+    humanContent: content,
   };
 }
 
 export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string): string | null {
   if (!stored) return fresh;
   const content = stored.type === 'user' ? stored.message.content : null;
-  const first = Array.isArray(content) ? content[0] : null;
-  const time =
-    first?.type === 'text' && first.text.startsWith('[message id: ')
-      ? Array.isArray(content)
-        ? content[1]
-        : null
-      : first;
-  return time?.type === 'text' && time.text.startsWith('(local time: ') ? time.text : null;
+  if (!Array.isArray(content)) return null;
+  const humanContent = (stored as { humanContent?: unknown }).humanContent;
+  const words = Array.isArray(humanContent) ? humanContent.length : 0;
+  const facts = words ? content.slice(0, -words) : content;
+  for (const block of facts) {
+    if (block.type !== 'text') continue;
+    if (block.text.trimStart().startsWith('<human-message')) break;
+    const line = block.text
+      .split('\n')
+      .find((candidate: string) => candidate.startsWith('(local time: '));
+    const time = line?.match(/^\(local time: [^)]*\)/)?.[0];
+    if (time) return time;
+  }
+  return null;
 }
 
 export type NeoReply = {
@@ -184,24 +282,15 @@ export function readNeoReply(
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
-export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
-  const picked = neoChoiceByLetter(words, reply?.question ?? null);
-  if (reply?.question && picked)
-    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked, reply.question.labels)}:`;
-  if (reply?.question?.kind === 'start')
-    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
-  if (reply?.question) return `The human answered your question "${reply.question.text}":`;
-  if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
-  return reply?.replyTo.kind === 'ask' && reply.ask
-    ? `The human replied to the work card "${reply.ask.title}":`
-    : null;
+export function neoReplyFact(reply: NeoReply | null): string | null {
+  if (reply?.question) return reply.question.text;
+  if (reply?.todo) return reply.todo.title;
+  return reply?.replyTo.kind === 'ask' && reply.ask ? reply.ask.title : null;
 }
 
 export function neoQuoteFact(replyTo: NeoReplyTo | undefined): string | null {
   if (replyTo?.kind !== 'message' || !replyTo.excerpt) return null;
-  return replyTo.author === 'neo'
-    ? `The human replied to the Neo message "${replyTo.excerpt}":`
-    : `The human replied to their earlier message "${replyTo.excerpt}":`;
+  return replyTo.excerpt;
 }
 
 export function neoReplySnapshot(

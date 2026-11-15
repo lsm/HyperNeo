@@ -28,7 +28,6 @@ import { Logger } from '../../../daemon/src/lib/logger.ts';
 import {
   getLongHorizonAgentTemplate,
   isRelocationMarkerLabel,
-  normalizeLegacyWorkerTemplateKey,
   RELOCATED_FROM_LABEL_PREFIX,
 } from '../../../daemon/src/lib/agents/long-horizon-templates.ts';
 import {
@@ -213,84 +212,6 @@ function ambiguousTemplateReferenceError(
   );
 }
 
-interface ImportedRouteSlot {
-  entry: NonNullable<WorkflowNodeInput['agents']>[number];
-  rawTemplateKey: string;
-}
-
-function normalizeImportedPostApproval(
-  postApproval: WorkflowNodeInput['postApproval'],
-  slots: ReadonlyArray<ImportedRouteSlot>
-): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
-  if (!postApproval || typeof postApproval.targetAgent !== 'string') {
-    return { postApproval, error: null };
-  }
-  const target = postApproval.targetAgent;
-  const normalized = normalizeLegacyWorkerTemplateKey(target);
-  if (normalized === target) {
-    return recheckUnchangedRoute(postApproval, target, slots);
-  }
-  const selectedIndex = slots.findIndex(
-    ({ entry, rawTemplateKey }) =>
-      entry.name === target ||
-      (entry.agentId !== '' && entry.agentId === target) ||
-      rawTemplateKey === target
-  );
-  if (selectedIndex < 0) return { postApproval, error: null };
-  const { entry: selected } = slots[selectedIndex];
-  if (selected.templateKey !== normalized || !selected.name) {
-    return { postApproval, error: null };
-  }
-  const nameFirstMatch = slots.findIndex(
-    ({ entry }) =>
-      entry.name === selected.name ||
-      (entry.agentId !== '' && entry.agentId === selected.name) ||
-      entry.templateKey === selected.name
-  );
-  if (nameFirstMatch !== selectedIndex) {
-    return {
-      postApproval,
-      error:
-        `post-approval route "${target}" resolves to a slot whose name "${selected.name}" is ` +
-        `shadowed by an earlier slot; rename the slot in the bundle and retry`,
-    };
-  }
-  return { postApproval: { ...postApproval, targetAgent: selected.name }, error: null };
-}
-
-function firstRouteMatch(
-  slots: ReadonlyArray<ImportedRouteSlot>,
-  target: string,
-  useRawKeys: boolean
-): number {
-  return slots.findIndex(
-    ({ entry, rawTemplateKey }) =>
-      entry.name === target ||
-      (entry.agentId !== '' && entry.agentId === target) ||
-      (useRawKeys ? rawTemplateKey : entry.templateKey) === target
-  );
-}
-
-function recheckUnchangedRoute(
-  postApproval: WorkflowNodeInput['postApproval'],
-  target: string,
-  slots: ReadonlyArray<ImportedRouteSlot>
-): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
-  const normalizationChangedKeys = slots.some(
-    ({ entry, rawTemplateKey }) => rawTemplateKey !== entry.templateKey
-  );
-  if (!normalizationChangedKeys) return { postApproval, error: null };
-  const rawFirst = firstRouteMatch(slots, target, true);
-  const normalizedFirst = firstRouteMatch(slots, target, false);
-  if (rawFirst === normalizedFirst) return { postApproval, error: null };
-  return {
-    postApproval,
-    error:
-      `post-approval route "${target}" resolves to a different slot after legacy-key ` +
-      `normalization; rename the route or the shadowing slot in the bundle and retry`,
-  };
-}
-
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
   const normalized = new Set([...existingNames].map((n) => nameKey(n)));
   if (!normalized.has(nameKey(baseName))) return baseName;
@@ -430,8 +351,7 @@ export function buildWorkflowCreateParams(
         agentId: '',
         name: a.name,
       };
-      const rawTemplateKey = a.templateKey?.trim() ?? '';
-      const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
+      const templateKey = a.templateKey?.trim() ?? '';
       if (templateKey) {
         const agentRef = a.agentRef?.trim() ?? '';
         const agentId = agentRef
@@ -440,10 +360,7 @@ export function buildWorkflowCreateParams(
             null)
           : null;
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey =
-            rawTemplateKey === templateKey && relocatedTemplateKey
-              ? relocatedTemplateKey(templateKey)
-              : null;
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
           if (relocatedKey) {
             warnings.push(
               ambiguousTemplateReferenceError(exportedNode.name, templateKey, relocatedKey)
@@ -517,20 +434,14 @@ export function buildWorkflowCreateParams(
       return entry;
     });
 
-    const rawTemplateKeys = exportedNode.agents.map((a) => a.templateKey ?? '');
-    return { exportedNode, agents, rawTemplateKeys } as const;
+    return { exportedNode, agents } as const;
   });
-  const flattenedRoutes = builtAgents.flatMap(({ agents, rawTemplateKeys }) =>
-    agents.map((entry, index) => ({ entry, rawTemplateKey: rawTemplateKeys[index] ?? '' }))
-  );
   const nodes: WorkflowNodeInput[] = builtAgents.map(({ exportedNode, agents }) => {
-    const route = normalizeImportedPostApproval(exportedNode.postApproval, flattenedRoutes);
-    if (route.error) warnings.push(`node "${exportedNode.name}": ${route.error}`);
     const node: WorkflowNodeInput = {
       id: nodeNameToId.get(exportedNode.name)!,
       name: exportedNode.name,
       agents,
-      postApproval: route.postApproval,
+      postApproval: exportedNode.postApproval,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));
@@ -579,7 +490,7 @@ function referencedStoredTemplateKeys(
       for (const slot of node.agents) {
         const raw = slot.templateKey?.trim();
         if (!raw) continue;
-        const key = normalizeLegacyWorkerTemplateKey(raw);
+        const key = raw;
         if (getLongHorizonAgentTemplate(key) && !ownsOverride(key)) continue;
         const agentRef = slot.agentRef?.trim() ?? '';
         if (agentRef && resolveAgentId(agentRef)) continue;
@@ -602,14 +513,10 @@ function validateWorkflowForPreview(
 
   for (const node of exported.nodes) {
     for (const a of node.agents) {
-      const rawTemplateKey = a.templateKey?.trim() ?? '';
-      const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
+      const templateKey = a.templateKey?.trim() ?? '';
       if (templateKey) {
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey =
-            rawTemplateKey === templateKey && relocatedTemplateKey
-              ? relocatedTemplateKey(templateKey)
-              : null;
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
           if (relocatedKey) {
             errors.push(ambiguousTemplateReferenceError(node.name, templateKey, relocatedKey));
           }
