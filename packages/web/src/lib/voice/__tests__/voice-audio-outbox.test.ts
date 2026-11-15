@@ -9,6 +9,47 @@ vi.mock('../../connection-manager', () => ({
 
 const store = vi.hoisted(() => ({ records: [] }));
 
+const recorder = vi.hoisted(() => ({
+  isRecording: false,
+  isStarting: false,
+  durationLimitHit: false,
+  sessionId: null as string | null,
+  ownerId: null as string | null,
+  stop: vi.fn(),
+  cancel: vi.fn(async () => {}),
+}));
+vi.mock('../voice-recorder-store.ts', () => ({
+  voiceRecorderStore: {
+    isRecording: {
+      get value() {
+        return recorder.isRecording;
+      },
+    },
+    isStarting: {
+      get value() {
+        return recorder.isStarting;
+      },
+    },
+    durationLimitHit: {
+      get value() {
+        return recorder.durationLimitHit;
+      },
+    },
+    recordingSessionId: {
+      get value() {
+        return recorder.sessionId;
+      },
+    },
+    recordingOwnerId: {
+      get value() {
+        return recorder.ownerId;
+      },
+    },
+    stop: recorder.stop,
+    cancel: recorder.cancel,
+  },
+}));
+
 vi.mock('../voice-audio-store.ts', () => ({
   listVoiceRecords: async () => store.records.map((r) => ({ ...r })),
   getVoiceRecord: async (id) => store.records.find((r) => r.id === id) ?? null,
@@ -16,7 +57,10 @@ vi.mock('../voice-audio-store.ts', () => ({
     store.records = store.records.filter((r) => r.id !== id);
     return true;
   },
-  putVoiceRecord: async () => true,
+  putVoiceRecord: async (entry) => {
+    store.records.push({ ...entry });
+    return true;
+  },
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn(() => true));
@@ -29,10 +73,10 @@ vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
 
 import { connectionManager } from '../../connection-manager.ts';
 import { connectionState } from '../../state.ts';
-import { voiceRecorderStore } from '../voice-recorder-store.ts';
 import {
   beginInteractiveVoiceSubmit,
   endInteractiveVoiceSubmit,
+  finalizeUnmountedRecording,
   flushPendingVoiceAudio,
   markVoiceAudioBusy,
   pendingVoiceAudioRecords,
@@ -59,8 +103,13 @@ describe('voice audio outbox', () => {
   beforeEach(() => {
     resetVoiceAudioOutbox();
     store.records = [];
-    voiceRecorderStore.isRecording.value = false;
-    voiceRecorderStore.isStarting.value = false;
+    recorder.isRecording = false;
+    recorder.isStarting = false;
+    recorder.durationLimitHit = false;
+    recorder.sessionId = null;
+    recorder.ownerId = null;
+    recorder.stop.mockReset();
+    recorder.cancel.mockClear();
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
     enqueueTranscript.mockReset().mockReturnValue(true);
     removePendingTranscript.mockClear();
@@ -155,13 +204,13 @@ describe('voice audio outbox', () => {
   it('defers the flush while a recording is active', async () => {
     vi.useFakeTimers();
     seedEntry();
-    voiceRecorderStore.isRecording.value = true;
+    recorder.isRecording = true;
     await flushPendingVoiceAudio();
 
     expect(hubRequest).not.toHaveBeenCalled();
     expect(store.records).toHaveLength(1);
 
-    voiceRecorderStore.isRecording.value = false;
+    recorder.isRecording = false;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(hubRequest).toHaveBeenCalled();
     expect(store.records).toEqual([]);
@@ -291,6 +340,69 @@ describe('voice audio outbox', () => {
     await vi.advanceTimersByTimeAsync(600);
 
     expect(hubRequest).toHaveBeenCalled();
+    expect(store.records).toEqual([]);
+  });
+
+  it('finalizes an unmounted recording into a pending draft record the flush delivers', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's1';
+    recorder.stop.mockImplementation(async () => {
+      recorder.isRecording = false;
+      recorder.sessionId = null;
+      return { audioBase64: 'bmV3', mimeType: 'audio/wav', peakLevel: 0.5 };
+    });
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).toHaveBeenCalledOnce();
+    expect(hubRequest).toHaveBeenCalledWith(
+      'voice.transcribe',
+      expect.objectContaining({ audioBase64: 'bmV3' }),
+      expect.anything()
+    );
+    expect(hubRequest).toHaveBeenCalledWith('session.appendVoiceDraft', {
+      sessionId: 's1',
+      text: 'hello world',
+      dedupId: expect.any(String),
+    });
+    expect(store.records).toEqual([]);
+  });
+
+  it('drops a silent recording instead of parking it in the retry tray', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's1';
+    recorder.stop.mockImplementation(async () => {
+      recorder.isRecording = false;
+      recorder.sessionId = null;
+      return { audioBase64: 'c2lsZW50', mimeType: 'audio/wav', peakLevel: 0.0004 };
+    });
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).toHaveBeenCalledOnce();
+    expect(store.records).toEqual([]);
+  });
+
+  it('refuses to finalize a recording another composer owns', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's1';
+    recorder.ownerId = 'other-owner';
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(store.records).toEqual([]);
+  });
+
+  it('refuses to finalize a recording belonging to another session', async () => {
+    recorder.isRecording = true;
+    recorder.sessionId = 's2';
+
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(store.records).toEqual([]);
+  });
+
+  it('does nothing when no recording is active', async () => {
+    await finalizeUnmountedRecording('s1', 'owner-1');
+    expect(recorder.stop).not.toHaveBeenCalled();
     expect(store.records).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@ const voice = vi.hoisted(() => ({
   stop: vi.fn(),
   cancel: vi.fn(),
   submit: vi.fn(),
+  finalize: vi.fn(),
   deleteRecord: vi.fn(),
   batch: vi.fn(),
   hub: null as object | null,
@@ -21,6 +22,7 @@ vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.e
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   isVoiceRecordingSupported: () => true,
   useVoiceRecorder: () => ({
+    ownerId: 'owner-1',
     get isRecording() {
       return voice.recording;
     },
@@ -58,6 +60,7 @@ vi.mock('../../lib/voice/voice-audio-outbox.ts', () => {
     unmarkVoiceAudioBusy: vi.fn(),
     isVoiceAudioBusy: () => false,
     recordingFromEntry: vi.fn(),
+    finalizeUnmountedRecording: voice.finalize,
   };
 });
 vi.mock('../../components/voice/VoiceWaveform.tsx', () => ({
@@ -496,6 +499,41 @@ describe('Neo voice', () => {
       recordId: 'recording',
     });
     await waitFor(() => expect(originalDraft).toHaveBeenCalledWith('Eight people'));
+  });
+  it('finalizes the recording to the draft when the composer unmounts', () => {
+    voice.recording = true;
+    const view = render(
+      <NeoVoice
+        sessionId="neo:club"
+        connected
+        draftText="typed first"
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    view.unmount();
+    expect(voice.finalize).toHaveBeenCalledExactlyOnceWith('neo:club', 'owner-1');
+    expect(voice.cancel).not.toHaveBeenCalled();
+  });
+  it('routes unmount cleanup through the outbox when no transcription is pending', () => {
+    const view = render(
+      <NeoVoice
+        sessionId="neo:club"
+        connected
+        draftText="typed first"
+        onTranscript={vi.fn()}
+        onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    view.unmount();
+    expect(voice.finalize).toHaveBeenCalledExactlyOnceWith('neo:club', 'owner-1');
+    expect(voice.cancel).not.toHaveBeenCalled();
   });
   it('surfaces saved recording failures and microphone refusal', async () => {
     voice.enabled = true;

@@ -52,6 +52,9 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
   });
 
   const view = {
+    get ownerId() {
+      return ownerId;
+    },
     get isRecording() {
       return voiceRecorderStore.isRecording.value && owns();
     },
