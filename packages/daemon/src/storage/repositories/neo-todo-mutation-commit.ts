@@ -13,6 +13,7 @@ import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
 import { neoTodoMutationReads } from './neo-todo-mutation-planning.ts';
+import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Planner = InstanceType<typeof neoTodoMutationReads.Repository>;
@@ -148,6 +149,14 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       }
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
+      if (args.input.kind !== 'edit')
+        queueNeoRequestReply(
+          db,
+          plan.todo,
+          committed.todo!,
+          args.input.reason,
+          todos.getAsk(plan.todo.askId)?.sessionId ?? null
+        );
       return {
         ok: true,
         todo: committed.todo!,

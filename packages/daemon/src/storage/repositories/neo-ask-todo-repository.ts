@@ -1,3 +1,4 @@
+import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
@@ -594,10 +595,16 @@ export class NeoAskTodoRepository {
       .run(status, outcome, now, now, ask.id);
     for (const todo of this.listTodos(ask.id))
       if (['todo', 'doing', 'blocked'].includes(todo.state))
-        this.updateTodo(
+        queueNeoRequestReply(
+          this.db,
           todo,
-          { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
-          now
+          this.updateTodo(
+            todo,
+            { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
+            now
+          ),
+          outcome,
+          ask.sessionId
         );
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;

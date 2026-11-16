@@ -6,8 +6,11 @@ import { createTestDb } from '../../../helpers/database.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
+  type RemoteSendForwarder,
   type SessionSent,
 } from '../../../../src/lib/messaging/message-send.ts';
+import { NEO_REQUEST_REPLY, recordNeoRequestTodo } from '../../../../src/lib/neo/request-todo.ts';
+import { neoTodoMutations } from '../../../../src/storage/repositories/neo-todo-mutation-commit.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -794,6 +797,8 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
     const before = wakes().length;
     await sweep(now + 60 * 60_000);
     expect(wakes().length).toBe(before + 1);
+    expect(wakes().at(-1)).toContain('is a request from session stranger waiting for your answer');
+    expect(wakes().at(-1)).not.toContain('Write the instruction and start it');
     expect(
       await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker')
     ).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
@@ -891,6 +896,260 @@ test('a retried request whose todo failed to record records it on the retry, wak
     expect(wakes()).toHaveLength(1);
   } finally {
     add.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+async function replySetup(forward: RemoteSendForwarder) {
+  const db = await createTestDb();
+  const sent: SessionSent[] = [];
+  const forwarded: { target: string; idempotencyKey?: string; origin: string }[] = [];
+  let registry = createOperationRegistry([]);
+  const service = createNeoService(
+    db,
+    { getOperationRegistry: () => registry } as unknown as SessionManager,
+    { event: mock(() => {}) } as unknown as MessageHub,
+    new InternalEventBus<DaemonInternalEventMap>()
+  );
+  registry = createOperationRegistry([
+    createSendMessageOperation(
+      db.getJobQueueRepo(),
+      (id) => {
+        if (id === 'broken') throw new Error('synthetic session read failure');
+        return id === 'gone' ? null : 'active';
+      },
+      async (target, input, origin) => {
+        forwarded.push({
+          target: `${target.daemonId}/${target.sessionId}`,
+          idempotencyKey: input.idempotencyKey,
+          origin,
+        });
+        return forward(target, input, origin);
+      },
+      undefined,
+      undefined,
+      (item) => {
+        sent.push(item);
+      },
+      (id) => id === 'neo',
+      (...args) => service.handleWorkerQuestion(...args)
+    ),
+  ]);
+  service.repo.reserveBinding({ sessionId: 'neo', projectId: null, kind: 'neo' });
+  const closeOnly = async (sender: string) => {
+    recordNeoRequestTodo(service.todos, {
+      incident: sender,
+      neoSession: 'neo',
+      sender,
+      text: 'Close the merged todo',
+      messageId: 'request-message',
+      now: 1,
+    });
+    const [ask] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(ask.id);
+    const closed = await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+      input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+      now: Date.now(),
+    });
+    expect(closed).toMatchObject({ ok: true });
+  };
+  const close = async (sender: string) => {
+    await closeOnly(sender);
+    const jobs = db.getJobQueueRepo().dequeue(NEO_REQUEST_REPLY, 10);
+    expect(jobs).toHaveLength(1);
+    return service.deliverRequestReply(jobs[0]);
+  };
+  const wakes = (text: string) =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .filter((job) => JSON.stringify(job.payload).includes(text));
+  return { db, service, sent, forwarded, close, closeOnly, wakes };
+}
+
+test('a request from an attached remote session is answered once through the remote forwarder', async () => {
+  const { db, service, sent, forwarded, close, wakes } = await replySetup(async () => ({
+    kind: 'accepted',
+    mailboxId: 'remote-mailbox',
+    messageId: 'remote-message',
+  }));
+  try {
+    expect(await close('daemon:peer::session:worker')).toEqual({ kind: 'accepted' });
+    expect(forwarded).toEqual([
+      expect.objectContaining({ target: 'peer/worker', origin: 'session:neo' }),
+    ]);
+    expect(forwarded[0].idempotencyKey).toMatch(/^neo-request-reply:/);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        fromSession: 'neo',
+        toSession: 'daemon:peer::session:worker',
+        text: 'Neo closed your request "Close the merged todo" as done: Merged',
+      }),
+    ]);
+    expect(wakes('did not reach')).toEqual([]);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('an unreachable remote requester or a gone local one wakes Neo with the failed answer', async () => {
+  for (const sender of ['daemon:peer::session:worker', 'gone']) {
+    const { db, service, sent, close, wakes } = await replySetup(async () => ({
+      kind: 'rejected',
+      reason: 'unavailable: daemon peer is unreachable',
+    }));
+    try {
+      expect(await close(sender)).toEqual({ kind: 'rejected' });
+      expect(sent).toEqual([]);
+      expect(wakes(`did not reach session ${sender}`)).toHaveLength(1);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  }
+});
+
+test('a local request answer is delivered once and recorded as a sent message', async () => {
+  const { db, service, sent, close } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    expect(await close('stranger')).toEqual({ kind: 'accepted' });
+    expect(sent).toHaveLength(1);
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'stranger' })
+    ).toHaveLength(1);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a reply that keeps failing to send wakes Neo on its last attempt instead of dying silently', async () => {
+  const { db, service, sent, closeOnly, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  try {
+    await closeOnly('broken');
+    const queue = db.getJobQueueRepo();
+    const outcomes: string[] = [];
+    let id = '';
+    for (let attempt = 0; attempt < 10; attempt++) {
+      clock.mockReturnValue(start + (attempt + 1) * 3_600_000);
+      const [job] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+      if (!job) break;
+      id = job.id;
+      try {
+        const result = await service.deliverRequestReply(job);
+        queue.complete(job.id, result);
+        outcomes.push(String(result.kind));
+      } catch (error) {
+        queue.fail(job.id, String(error));
+        outcomes.push('retry');
+      }
+    }
+    expect(outcomes).toEqual(['retry', 'retry', 'retry', 'retry', 'failed']);
+    expect(sent).toEqual([]);
+    expect(wakes('did not reach session broken')).toHaveLength(1);
+    expect(queue.getJob(id)?.status).toBe('completed');
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+test('seven answers to one sender within a minute all arrive; the rate-limited one waits and retries', async () => {
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  const { db, service, sent, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    const queue = db.getJobQueueRepo();
+    const outcomes: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      recordNeoRequestTodo(service.todos, {
+        incident: `request-${i}`,
+        neoSession: 'neo',
+        sender: 'stranger',
+        text: `Request ${i}`,
+        messageId: `request-message-${i}`,
+        now: 1,
+      });
+      const ask = service.todos.listOpenAsks().find((item) => item.title === `Request ${i}`)!;
+      const [todo] = service.todos.listTodos(ask.id);
+      await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+        input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+        now: Date.now(),
+      });
+      const [job] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+      const result = await service.deliverRequestReply(job);
+      queue.complete(job.id, result);
+      outcomes.push(String(result.kind));
+    }
+    expect(outcomes).toEqual([...Array(6).fill('accepted'), 'deferred']);
+    expect(queue.dequeue(NEO_REQUEST_REPLY, 1)).toEqual([]);
+    clock.mockReturnValue(start + 11 * 60_000);
+    const [later] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+    expect(await service.deliverRequestReply(later)).toEqual({ kind: 'accepted' });
+    expect(sent.map((item) => item.text)).toEqual(
+      Array.from({ length: 7 }, (_, i) => `Neo closed your request "Request ${i}" as done: Merged`)
+    );
+    expect(wakes('did not reach')).toEqual([]);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a lost answer wakes Neo even under an open ask card, and a replayed job wakes it once', async () => {
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  const { db, service, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    recordNeoRequestTodo(service.todos, {
+      incident: 'gone',
+      neoSession: 'neo',
+      sender: 'gone',
+      text: 'Close the merged todo',
+      messageId: 'request-message',
+      now: 1,
+    });
+    const [ask] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(ask.id);
+    service.todos.askQuestion(
+      'shared',
+      ask.id,
+      {
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        text: 'Which release?',
+      },
+      2
+    );
+    await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+      input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+      now: Date.now(),
+    });
+    expect(service.todos.getQuestion('shared')?.state).toBe('open');
+    const [job] = db.getJobQueueRepo().dequeue(NEO_REQUEST_REPLY, 1);
+    expect(await service.deliverRequestReply(job)).toEqual({ kind: 'rejected' });
+    clock.mockReturnValue(start + 3_600_000);
+    expect(await service.deliverRequestReply(job)).toEqual({ kind: 'rejected' });
+    expect(wakes('did not reach session gone')).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
     service.dispose();
     db.close();
   }
