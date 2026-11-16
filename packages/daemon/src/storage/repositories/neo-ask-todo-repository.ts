@@ -1039,19 +1039,14 @@ export class NeoAskTodoRepository {
   }
 
   listBlockingQuestions(askId: string): NeoQuestion[] {
-    return (
-      this.db
-        .prepare(
-          `${QUESTION_SELECT} WHERE ask_id = ? AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')} ORDER BY created_at, rowid`
-        )
-        .all(askId) as QuestionRow[]
-    ).map(toQuestion);
+    return this.listQuestions(askId, true);
   }
 
-  listQuestions(askId: string): NeoQuestion[] {
+  listQuestions(askId: string, blockingOnly = false): NeoQuestion[] {
+    const advisory = blockingOnly ? `AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')}` : '';
     return (
       this.db
-        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
+        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ${advisory} ORDER BY created_at, rowid`)
         .all(askId) as QuestionRow[]
     ).map(toQuestion);
   }
