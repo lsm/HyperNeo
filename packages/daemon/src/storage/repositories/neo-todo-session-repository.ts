@@ -11,7 +11,7 @@ import {
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
-import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef, WorkStatus, WorkTurnQuestion } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
@@ -243,33 +243,81 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       : null;
   }
 
-  queueFacts(trackerHolds: Record<string, string | null> = {}) {
+  private openAskFacts() {
     const store = new NeoAskTodoRepository(this.db);
     const asks = store.listOpenAsks();
-    const todos = store.listTodosForAsks(asks.map((ask) => ask.id));
-    const running = todos.flatMap((todo) =>
+    const roots = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
+    const children = this.db
+      .prepare(
+        'SELECT id, parent_id AS parentId FROM neo_asks WHERE parent_id IN (SELECT value FROM json_each(?))'
+      )
+      .all(JSON.stringify(roots)) as { id: string; parentId: string }[];
+    const members = (root: string) => [
+      root,
+      ...children.filter((child) => child.parentId === root).map((child) => child.id),
+    ];
+    const ids = [...new Set(roots.flatMap(members))];
+    const todos = store.listTodosForAsks(ids);
+    const questions = store.listQuestionsForAsks(ids);
+    const sessions = this.readMany(todos.map((todo) => todo.id));
+    const nudges = new Map(
+      (
+        this.db
+          .prepare(
+            `SELECT todo_id AS id, value_json FROM pack_facts
+             WHERE pack = 'core' AND key = 'nudge' AND todo_id IN (SELECT value FROM json_each(?))`
+          )
+          .all(JSON.stringify(todos.map((todo) => todo.id))) as { id: string; value_json: string }[]
+      ).map((row) => [row.id, JSON.parse(row.value_json) as FollowThroughIncident])
+    );
+    const nudge = (id: string) => nudges.get(id) ?? null;
+    return {
+      store,
+      asks,
+      todos: todos.filter((todo) => asks.some((ask) => ask.id === todo.askId)),
+      plan: (ask: NeoAsk) => todos.filter((todo) => todo.askId === ask.id),
+      family: (ask: NeoAsk) => {
+        const family = members(ask.parentId ?? ask.id);
+        return todos.filter((todo) => family.includes(todo.askId));
+      },
+      cards: (ask: NeoAsk) => {
+        const gate = ask.parentId ? [ask.parentId, ask.id] : [ask.id];
+        return questions.filter((question) => gate.includes(question.askId));
+      },
+      target: (id: string) => sessions.get(id)?.target ?? null,
+      ref: (id: string) => sessions.get(id)?.ref ?? null,
+      nudge,
+      idle: (id: string) =>
+        ['done', 'stopped', 'failed', 'needs_you'].includes(nudge(id)?.live ?? ''),
+    };
+  }
+
+  queueFacts(trackerHolds: Record<string, string | null> = {}, open = this.openAskFacts()) {
+    const { asks } = open;
+    const running = open.todos.flatMap((todo) =>
       todo.state === 'doing'
         ? [
             {
               group: asks.find((ask) => ask.id === todo.askId)?.projectId ?? null,
-              worker: neoWorkerKey(this.readRef(todo.id)),
+              worker: neoWorkerKey(open.ref(todo.id)),
               title: todo.title,
-              idle: this.workerIdle(todo.id),
+              idle: open.idle(todo.id),
             },
           ]
         : []
     );
     const waiting = asks.flatMap((ask) => {
-      const plan = todos.filter((todo) => todo.askId === ask.id);
-      const asked = store.gateQuestions(ask);
-      const family = store.listFamilyTodos(ask.id);
-      return plan.flatMap((next) =>
-        (next.state === 'todo' || (next.state === 'blocked' && next.blockedBy === 'question')) &&
-        next.startedAt === null &&
-        !neoTodoWaitReason(next, family, asked, next.instruction ? trackerHolds[next.id] : null)
-          ? [{ ask, next, target: this.get(next.id) }]
-          : []
-      );
+      const asked = open.cards(ask);
+      const family = open.family(ask);
+      return open
+        .plan(ask)
+        .flatMap((next) =>
+          (next.state === 'todo' || (next.state === 'blocked' && next.blockedBy === 'question')) &&
+          next.startedAt === null &&
+          !neoTodoWaitReason(next, family, asked, next.instruction ? trackerHolds[next.id] : null)
+            ? [{ ask, next, target: open.target(next.id) }]
+            : []
+        );
     });
     const candidates = waiting.flatMap(({ ask, next, target }) =>
       next.approvedAt !== null &&
@@ -299,18 +347,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   neoStepFacts() {
-    const store = new NeoAskTodoRepository(this.db);
-    const { candidates, running, unworked } = this.queueFacts();
+    const open = this.openAskFacts();
+    const { store } = open;
+    const { candidates, running, unworked } = this.queueFacts({}, open);
     const pending = new Set(store.questionAnswers.pending().map((route) => route.todoId));
     const failedAt = (todo: NeoTodo) =>
       todo.state === 'blocked' && todo.blockedBy === 'failure' ? todo.updatedAt : null;
-    const asks = store.listOpenAsks().map((ask) => ({
+    const asks = open.asks.map((ask) => ({
       ask,
-      family: store.listFamilyTodos(ask.id),
-      cards: store.gateQuestions(ask),
+      family: open.family(ask),
+      cards: open.cards(ask),
     }));
     const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRow => {
-      const nudge = this.readNudge(todo.id);
+      const nudge = open.nudge(todo.id);
       const answered = cards.flatMap((card) =>
         card.state === 'answered' && card.todos.includes(todo.id) ? (card.answeredAt ?? []) : []
       );
@@ -336,11 +385,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           answerPending: pending.has(todo.id),
           cardClosedAt: answered.length ? Math.max(...answered) : null,
           failedAt: failedAt(todo),
-          worker: this.readRef(todo.id)
+          worker: open.ref(todo.id)
             ? {
                 status: ['running', 'queued'].includes(nudge?.live ?? '')
                   ? 'running'
-                  : this.workerIdle(todo.id)
+                  : open.idle(todo.id)
                     ? 'idle'
                     : 'unknown',
                 since: Math.max(nudge?.since ?? 0, todo.startedAt ?? todo.createdAt),
