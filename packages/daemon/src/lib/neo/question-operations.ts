@@ -194,7 +194,14 @@ export function createNeoWorkerQuestionWriter(
           const existing = daemonCard ? null : open;
           const workerCard =
             !!existing &&
-            store.questionAnswers.list(existing.id).some((route) => route.todoId === todo.id);
+            store.questionAnswers
+              .list(existing.id)
+              .some(
+                ({ todoId, sourceSession: s }) =>
+                  todoId === todo.id &&
+                  ((s.adapter === ref.adapter && s.id === ref.id && s.daemon === ref.daemon) ||
+                    existing.document === input.report)
+              );
           if (
             existing &&
             (!workerCard ||
