@@ -1,7 +1,7 @@
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { bindGateway, type DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { Database } from '../../../../src/storage/sqlite-compat';
-import { beforeEach, describe, expect, it, jest, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
 import type { FallbackModelEntry, ModelLimit } from '@hyperneo/shared';
 import {
   BACKOFF_JITTER,
@@ -1650,6 +1650,134 @@ describe('RateLimitWatchdog', () => {
         parkArmedAt + BACKOFF_LADDER_MS[0] * (1 - BACKOFF_JITTER)
       );
       expect(lastPause(notifyPause).resetAt ?? 0).toBeGreaterThan(nearResetAt + RESET_BUFFER_MS);
+      watchdog.cancel();
+    });
+  });
+
+  describe('hold reason and since', () => {
+    type HoldPayload = { reason?: string; since?: number; retryAt: number };
+    const writesOf = (set: unknown) =>
+      (set as ReturnType<typeof mock>).mock.calls.map((call) => call[0] as HoldPayload);
+
+    it('writes reason limit and the hold start for a usage limit', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const before = Date.now();
+      await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() + 60 * 60 * 1000, kind: 'usage_limit' }
+      );
+      const [held] = writesOf(stateManager.setRateLimitCooldown);
+      expect(held.reason).toBe('limit');
+      expect(held.since).toBeGreaterThanOrEqual(before);
+      expect(held.since).toBeLessThanOrEqual(Date.now());
+      watchdog.cancel();
+    });
+
+    it('keeps the hold start across later cooldowns of the same hold', async () => {
+      const now = spyOn(Date, 'now');
+      try {
+        const start = 1_800_000_000_000;
+        now.mockReturnValue(start);
+        const { deps } = createMockDeps({ chain: [] });
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+        await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+        watchdog.clearPendingCooldown();
+        now.mockReturnValue(start + 10 * 60 * 1000);
+        await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+        const writes = writesOf(stateManager.setRateLimitCooldown);
+        expect(writes).toHaveLength(2);
+        expect(writes.map((w) => w.since)).toEqual([start, start]);
+        expect(writes.map((w) => w.reason)).toEqual(['limit', 'limit']);
+        watchdog.cancel();
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('gives a new hold after recovery a new start', async () => {
+      const now = spyOn(Date, 'now');
+      try {
+        const start = 1_800_000_000_000;
+        now.mockReturnValue(start);
+        const { deps } = createMockDeps({ chain: [] });
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+        await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+        watchdog.reset();
+        now.mockReturnValue(start + 60 * 60 * 1000);
+        await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+        const writes = writesOf(stateManager.setRateLimitCooldown);
+        expect(writes.map((w) => w.since)).toEqual([start, start + 60 * 60 * 1000]);
+        watchdog.cancel();
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('keeps reason and start when a failed refinement re-arms the cooldown', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) throw new Error('publish rejected after persist');
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+      await flush();
+      const writes = writesOf(originalSet);
+      expect(writes.length).toBeGreaterThanOrEqual(2);
+      const rearm = writes[writes.length - 1];
+      expect(rearm.reason).toBe('limit');
+      expect(rearm.since).toBe(writes[0].since);
+      watchdog.cancel();
+    });
+
+    it('keeps reason and start when a stale write restores the newer cooldown', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let releaseStateWrite: () => void = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseStateWrite = resolve;
+      });
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) await writeGate;
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+      await watchdog.scheduleRetry('throttled by proxy again', { uuid: 'm1', content: 'x' });
+      await flush();
+      releaseStateWrite();
+      await flush();
+      await flush();
+      const writes = writesOf(originalSet);
+      const restored = writes[writes.length - 1];
+      expect(restored.retryAt).not.toBe(writes[0].retryAt);
+      expect(restored.reason).toBe('limit');
+      expect(restored.since).toBe(writes[0].since);
       watchdog.cancel();
     });
   });
