@@ -1491,7 +1491,7 @@ describe('shared GitHub budget', () => {
       })
     );
   afterEach(() => budget(5000));
-  const row = (number: number, state: string) => ({
+  const row = (number: number, state: 'approved_green' | 'waiting_ci') => ({
     repo: 'synthetic/merge',
     number,
     title: 'Fixture',
