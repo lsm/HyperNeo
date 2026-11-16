@@ -1,8 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 
-// Synthetic Neo work for desktop-control-where: several open asks, todos in every
-// eligible state, workers on desktop adapters and one open question.
 const [run] = process.argv.slice(2);
 if (!run) throw new Error('usage: dc-where-seed.ts <run>');
 const db = new Database(join(run, 'data/daemon.db'));
