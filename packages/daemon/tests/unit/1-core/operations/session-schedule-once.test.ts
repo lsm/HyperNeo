@@ -47,7 +47,7 @@ describe('one-shot reminder cadence', () => {
       },
       { source: 'internal', role: 'neo' }
     );
-    return outcome.kind === 'completed' ? (outcome.value as Record<string, any>) : outcome;
+    return (outcome.kind === 'completed' ? outcome.value : outcome) as Record<string, any>;
   };
   const fire = async (id: string) => {
     const row = scheduler.repo.get(id)!;
@@ -61,19 +61,24 @@ describe('one-shot reminder cadence', () => {
     })(jobs.getJob(row.pendingJobId!)!);
   };
   const pending = (id: string) =>
-    jobs.listActiveByPayload('sessionSchedule.fire', { scheduleId: id }).length;
+    jobs.listActiveByPayload('sessionSchedule.fire', { scheduleId: id }).map((job) => job.id);
 
   test('delivers exactly one message at its time and then the schedule is done', async () => {
     const at = now + 3_600_000;
     const created = await create(at);
     expect(created).toMatchObject({ ok: true, schedule: { nextRunAt: at } });
     const id = created.schedule.id;
+    const due = pending(id);
 
     expect(await fire(id)).toEqual({ outcome: 'fired' });
 
     expect(sent).toEqual(['Call the venue']);
-    expect(scheduler.repo.get(id)).toMatchObject({ status: 'done', pendingJobId: null });
-    expect(pending(id)).toBe(0);
+    expect(scheduler.repo.get(id)).toMatchObject({
+      status: 'done',
+      pendingJobId: null,
+      nextRunAt: null,
+    });
+    expect(pending(id)).toEqual(due);
   });
 
   test('a busy target gets the reminder once it is free, not dropped', async () => {

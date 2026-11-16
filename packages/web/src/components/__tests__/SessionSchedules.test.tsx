@@ -139,6 +139,20 @@ describe('SessionSchedules', () => {
     expect(screen.getByText(/Session closed/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
   });
+  it('shows a one-shot reminder as once at its time', async () => {
+    rows = [
+      {
+        ...row,
+        sourceKind: 'reminder',
+        sourceLabel: 'Call the venue',
+        cadence: { kind: 'once', at: 1792580400000 },
+      },
+    ];
+    render(<SessionSchedules sessionId="root" />);
+    await screen.findByText('Call the venue');
+    fireEvent.click(screen.getByText('Schedules'));
+    expect(screen.getByText(/^Once:/)).toBeTruthy();
+  });
   it('keeps refused mutations visible and allows a fresh read without changing status', async () => {
     render(<SessionSchedules sessionId="root" />);
     await open();

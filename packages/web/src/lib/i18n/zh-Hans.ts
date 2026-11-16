@@ -88,6 +88,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'schedules.pause': '暂停',
   'schedules.resume': '恢复',
   'schedules.every': '每 {minutes} 分钟',
+  'schedules.once': '一次',
   'schedules.next': '下次检查',
   'schedules.last': '上次检查',
   'schedules.none': '—',

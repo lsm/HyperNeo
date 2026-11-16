@@ -87,6 +87,7 @@ export const en = {
   'schedules.pause': 'Pause',
   'schedules.resume': 'Resume',
   'schedules.every': 'Every {minutes} min',
+  'schedules.once': 'Once',
   'schedules.next': 'Next run',
   'schedules.last': 'Last run',
   'schedules.none': '—',

@@ -31,7 +31,9 @@ function toSchedule(row: Row): SessionSchedule {
     cadence:
       row.cadence_kind === 'cron'
         ? { kind: 'cron', cron: row.cron as string, timezone: row.timezone as string }
-        : { kind: 'every', everyMs: row.every_ms as number },
+        : row.cadence_kind === 'once'
+          ? { kind: 'once', at: row.once_at as number }
+          : { kind: 'every', everyMs: row.every_ms as number },
     nudgeEvery: row.nudge_every as number,
     status: row.status as SessionScheduleStatus,
     nextRunAt: num('next_run_at'),
@@ -112,9 +114,9 @@ export class SessionScheduleRepository {
     this.db
       .prepare(
         `INSERT INTO session_schedules (id, target, source_kind, source_id, note, cadence_kind,
-           every_ms, cron, timezone, nudge_every, next_run_at, created_by_session, created_at,
-           updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           every_ms, cron, timezone, once_at, nudge_every, next_run_at, created_by_session,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -126,6 +128,7 @@ export class SessionScheduleRepository {
         cadence.kind === 'every' ? cadence.everyMs : null,
         cadence.kind === 'cron' ? cadence.cron : null,
         cadence.kind === 'cron' ? cadence.timezone : 'UTC',
+        cadence.kind === 'once' ? cadence.at : null,
         input.nudgeEvery,
         nextRunAt,
         input.createdBySession,
@@ -281,8 +284,7 @@ export class SessionScheduleRepository {
         this.db
           .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
           .run(id, expectedJobId).changes > 0;
-      if (deleted)
-        this.db.prepare('DELETE FROM session_schedule_runs WHERE schedule_id = ?').run(id);
+      if (deleted) this.db.run('DELETE FROM session_schedule_runs WHERE schedule_id = ?', id);
       return deleted;
     })();
   }
