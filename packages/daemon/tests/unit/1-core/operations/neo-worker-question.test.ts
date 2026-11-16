@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createNeoWorkerQuestionWriter } from '../../../../src/lib/neo/question-operations.ts';
+import { NEO_TODO_STALLED_CARD_TAIL } from '../../../../src/lib/neo/todo-state.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -113,6 +114,33 @@ test('worker reports reuse the card only for the same report and keep a durable 
     store.answerQuestion(first.question, ['Use staging'], 'button', 6);
     store.updateTodo(store.getTodo('todo')!, { state: 'doing' }, 7);
     expect(store.getTodo('todo')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+  } finally {
+    db.close();
+  }
+});
+
+test('a refused worker card leaves the stalled card open', async () => {
+  const { db, store, ref, write } = setup();
+  try {
+    const stalled = store.askQuestion(
+      'stalled',
+      'ask',
+      {
+        text: `"Build"${NEO_TODO_STALLED_CARD_TAIL}`,
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: 'todo',
+      },
+      2
+    );
+    expect(await write(ref, { ...report, title: 'Ship 44fe3547ab?' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_internal_id'),
+    });
+    expect(store.getQuestion(stalled.id)?.state).toBe('open');
   } finally {
     db.close();
   }
