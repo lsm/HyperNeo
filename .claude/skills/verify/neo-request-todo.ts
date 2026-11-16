@@ -99,6 +99,7 @@ try {
   assert.equal(asks.length, 1, 'a request from a session with no open todo is recorded');
   const [recorded] = todos.listTodos(asks[0]!.id);
   assert.equal(recorded!.title, title);
+  assert.deepEqual(recorded!.named, { requestFrom: 'synthetic-requester' });
   assert.equal(asks[0]!.originMessageId, (sent as { value: { messageId: string } }).value.messageId);
   (evidence.checks as unknown[]).push({ name: 'recorded', ask: asks[0], todo: recorded });
   const wakes = () =>
@@ -124,11 +125,23 @@ try {
   const half = await sweep('Neo ignored it for 30 minutes', 0.5);
   const hour = await sweep('Neo still ignored it at 1 h', 1);
   assert.equal(hour.length, half.length + 1, 'the request todo wakes Neo again at its 1 h rung');
+  const mailbox = () =>
+    (db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox'").get() as { n: number }).n;
+  todos.updateTodo(todos.getTodo(recorded!.id)!, { state: 'done', finishedAt: clock }, clock);
+  clock += 11 * 60_000;
+  const queued = mailbox();
+  const repeat = await send('synthetic-requester', `${title}\nIts pull request merged.`);
+  assert.equal((repeat as { value?: { kind?: string } }).value?.kind, 'rejected', JSON.stringify(repeat));
+  assert.equal(mailbox(), queued, 'a repeat of a closed request queues no wake');
+  assert.equal(todos.listTodos(asks[0]!.id).length, 1);
+  (evidence.checks as unknown[]).push({ name: 'repeat after close', repeat, mailbox: mailbox() });
   const reported = await send('synthetic-worker', 'Which synthetic region should I use?');
   assert.equal((reported as { value?: { kind?: string } }).value?.kind, 'accepted');
   assert.equal(requestAsks().length, 1, "a worker's own report records no request todo");
   evidence.passed = true;
-  console.log(`PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length}`);
+  console.log(
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} closed_repeat=rejected`
+  );
 } catch (error) {
   evidence.error = String(error);
   throw error;
