@@ -445,7 +445,7 @@ describe('spoken replies separate from publications', () => {
         undefined,
         async () => part
       );
-    const speakOnce = async (speaker: NeoSpeech, voice: string | undefined = 'alloy') => {
+    const speakOnce = async (speaker: NeoSpeech, voice: string | null = 'alloy') => {
       const parts = createOperationRegistry(speaker.operations);
       await invokeOperation(
         parts,
@@ -484,7 +484,7 @@ describe('spoken replies separate from publications', () => {
     });
 
     test.each([
-      [undefined, 'echo'],
+      [null, 'echo'],
       ['alloy', 'alloy'],
     ])(
       'a listener voice of %s speaks with %s over the configured voice',
@@ -507,7 +507,7 @@ describe('spoken replies separate from publications', () => {
       const server = fakeServer(() => pcm());
       const speaker = withPart(undefined, server.request);
       try {
-        await speakOnce(speaker, undefined);
+        await speakOnce(speaker, null);
         expect(server.seen[0].body?.voice).toBe('vivian');
       } finally {
         await speaker.dispose();
