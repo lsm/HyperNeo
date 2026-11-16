@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [portText, runText, mode = 'all'] = process.argv.slice(2);
@@ -22,7 +23,7 @@ const evidence: Record<string, any> = { operations: [] };
 let ws: WebSocket | undefined;
 try {
   await app.spaceRuntimeService.ready();
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
   const rpc = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID(); const timer = setTimeout(() => fail(new Error(`RPC timeout: ${name}`)), 10000);
@@ -63,6 +64,7 @@ try {
     } else {
     assert(payload,'Scheduled wake was not delivered to the actual mailbox');
     assert(payload.includes('rewrite')&&payload.includes('worksNote'),'Model-facing wake omitted compaction instruction');
+    for (const section of ['Resources and Do alone', 'Needs the human', 'Daily limit', 'ask the human first']) assert(payload.includes(section),`Model-facing wake omitted goal definition section: ${section}`);
     assert.equal(evidence.schedule.last_outcome,'fired');
     console.log(`PASS: actual ${mode} schedule delivered a compaction request to Neo mailbox`);
     }
