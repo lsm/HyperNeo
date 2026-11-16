@@ -58,12 +58,12 @@ try {
   const prs = new CodingTodoPrRepository(db);
   const pr = { url: 'https://github.com/example/synthetic/pull/1', state: 'OPEN' as const, checks: 'passing' as const, review: 'none' as const };
   prs.record(id, [pr], 1);
-  const waitingLine = readFileSync(new URL('../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts', import.meta.url), 'utf8').split('\n').findIndex((line) => /^\s+waiting: \(todo\) =>/.test(line)) + 1;
+  const waitingLine = readFileSync(new URL('../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts', import.meta.url), 'utf8').split('\n').findIndex((line) => /^\s+waiting: \(todos\) =>/.test(line)) + 1;
   assert(waitingLine > 0);
   const otherCachedPrQueries: string[] = [];
   const mainQueries: string[] = [];
   db.prepare = ((sql: string) => {
-    if (recording && sql.includes('SELECT prs_json AS prs FROM pack_coding_todo_prs WHERE todo_id = ?')) {
+    if (recording && sql.includes('SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs')) {
       const target = new Error().stack?.includes(`todo-prs.ts:${waitingLine}:`) ? mainQueries : otherCachedPrQueries;
       target.push(sql);
     }
@@ -72,7 +72,7 @@ try {
   const readerCalls: { roundTripMs: number; failed: boolean }[] = [];
   const call = app.db.gateway.call.bind(app.db.gateway);
   app.db.gateway.call = (async (op, method, ...args) => {
-    if (op.name !== 'coding.todoPrReads' || method !== 'isWaiting') return call(op, method, ...args);
+    if (op.name !== 'coding.todoPrReads' || method !== 'waiting') return call(op, method, ...args);
     const start = performance.now();
     try { const result = await call(op, method, ...args); readerCalls.push({ roundTripMs: performance.now() - start, failed: false }); return result; }
     catch (error) { readerCalls.push({ roundTripMs: performance.now() - start, failed: true }); throw error; }
@@ -124,7 +124,7 @@ try {
   const start = performance.now();
   recording = true;
   const readStart = performance.now();
-  const waiting = mode === 'before' ? prs.prs(id).some((entry) => entry.state === 'OPEN') : await prs.readWaiting(id);
+  const waiting = mode === 'before' ? prs.prs(id).some((entry) => entry.state === 'OPEN') : (await prs.readWaiting([id])).has(id);
   report.readUnderWriterLock = { waiting, readMs: performance.now() - readStart };
   assert.equal(waiting, false);
   assert((report.readUnderWriterLock as { readMs: number }).readMs < 250);
