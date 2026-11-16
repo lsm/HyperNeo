@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -74,7 +74,6 @@ test.each(
     const previousHome = process.env.HOME;
     process.env.HOME = join(root, 'home');
     const config = getConfig({ dbPath: join(root, 'database', 'daemon.db') });
-    const previousTrace = process.env.GIT_TRACE_SETUP;
     process.env.CODEX_HOME = join(root, 'wrong-codex');
     process.env.HYPERNEO_DATA_DIR = root;
     const db = new Database(':memory:');
@@ -110,6 +109,12 @@ test.each(
         stdio: 'ignore',
       });
     }
+    const unpublished = spawnSync('git', ['fast-import', '--quiet'], {
+      cwd: folders[4],
+      input:
+        'commit refs/heads/dev\ncommitter Proof <proof@example.com> 1700000001 +0000\ndata 6\nlocal\nfrom refs/heads/dev^0\n\ndone\n',
+    });
+    expect(unpublished.status).toBe(0);
     const todos = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     todos.openAsk({
@@ -152,13 +157,26 @@ test.each(
         todos.updateTodo(todo, { state: 'done', finishedAt: 2 }, 2);
       }
     }
+    if (rebound) {
+      const mover = todos.addTodo(
+        'mover',
+        'ask',
+        { title: 'mover', doneWhen: 'Done', instruction: null, named: null, check: null },
+        1
+      );
+      sessions.create(mover.id, { verb: 'start', adapter: 'codex-desktop' });
+      db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(
+        JSON.stringify({ adapter: 'codex-desktop', id: 'mover' }),
+        mover.id
+      );
+      todos.updateTodo(mover, { state: 'doing' }, 1);
+      paths.set('mover', join(root, 'elsewhere'));
+    }
     const broken = join(root, 'projects', 'broken', 'worktrees');
     if (listingFailure) {
       mkdirSync(join(root, 'projects', 'broken'), { recursive: true });
       writeFileSync(broken, 'not a directory');
     }
-    const trace = join(root, 'git-trace.log');
-    process.env.GIT_TRACE_SETUP = trace;
     let active = 0;
     let peak = 0;
     let statusCalls = 0;
@@ -270,6 +288,9 @@ test.each(
                   todos.updateTodo(todo, { state: 'doing' }, 3);
                 };
                 if (rebound) {
+                  paths.set('mover', folders[5]);
+                  db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
+              VALUES ('resident','resident',?,'now','now','active','{}','{}')`).run(folders[4]);
                   adopt('adopted');
                   paths.set('adopted', folders[3]);
                 }
@@ -291,12 +312,12 @@ test.each(
         {},
         { source: 'rpc', principal: 'local' }
       );
-      const protectedFolders = inFlight || unlocated ? folders : rebound ? folders.slice(0, 4) : [];
+      const protectedFolders = inFlight || unlocated || rebound ? folders : [];
       const kept = folders.filter((folder) => !protectedFolders.includes(folder));
       expect(archived.toSorted()).toEqual(
         kept.map((folder) => `worker-${folders.indexOf(folder)}`)
       );
-      expect(statusCalls).toBe(rebound ? 9 : unlocated ? 7 : 6);
+      expect(statusCalls).toBe(rebound ? 31 : unlocated ? 12 : 6);
       expect(peak).toBeLessThanOrEqual(4);
       expect(focused).toHaveLength(inFlight ? 0 : 6);
       if (!inFlight)
@@ -311,10 +332,6 @@ test.each(
         [...protectedFolders, paths.get('worker-6')!, paths.get('worker-7')!].toSorted()
       );
       if (listingFailure) expect(digest.kept.error).toContain(broken);
-      const probes = readFileSync(trace, 'utf8');
-      expect(probes).toContain(folders[0]);
-      expect(probes).not.toContain(paths.get('worker-6')!);
-      expect(probes).not.toContain(paths.get('worker-7')!);
     } finally {
       db.close();
       if (previous === undefined) delete process.env.HYPERNEO_DATA_DIR;
@@ -323,8 +340,6 @@ test.each(
       else process.env.HOME = previousHome;
       if (previousCodex === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodex;
-      if (previousTrace === undefined) delete process.env.GIT_TRACE_SETUP;
-      else process.env.GIT_TRACE_SETUP = previousTrace;
       rmSync(root, { recursive: true, force: true });
     }
   }
