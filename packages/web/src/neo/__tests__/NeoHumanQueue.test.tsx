@@ -255,6 +255,27 @@ describe('NeoHumanQueue', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe(anchor));
   });
 
+  it('loads an ask the snapshot left out, so its card has a title and can be answered', async () => {
+    const onLoadDetails = vi.fn(async () => entry('far', 'Far ask', [question('qf', 'far')]));
+    const view = render(
+      <NeoHumanQueue
+        queue={{
+          items: [
+            { state: 'waiting', askId: 'far', questionId: 'qf', text: 'Question qf', todos: [] },
+          ],
+          counts: { far: { waiting: 1, held: 0, progress: 0 } },
+        }}
+        entries={[]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={onLoadDetails}
+      />
+    );
+    expect(onLoadDetails).toHaveBeenCalledWith('far');
+    const far = within(await view.findByRole('region', { name: 'Far ask' }));
+    expect(await far.findByRole('button', { name: 'Agree' })).toBeTruthy();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
