@@ -46287,6 +46287,98 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "scheduleId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId"
+        ],
+        "type": "object"
+      },
+      "name": "schedule.session.runs",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "runs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dueAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "firedAt": {
+                      "type": "number"
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "skipReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dueAt",
+                    "firedAt",
+                    "outcome",
+                    "skipReason",
+                    "messageId"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ok",
+              "runs"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "scheduleId": {
