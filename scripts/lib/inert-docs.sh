@@ -2,14 +2,15 @@
 # CI path filter (.github/workflows/main.yml) and the pre-commit hook so both
 # skip code checks by one rule.
 #
-# Only Markdown and plain text under docs/, and top-level *.md, count. Other
-# docs/ files (JSON, HTML, CSS) are formatted or read by tooling. A nested *.md
-# outside docs/ can be a functional asset (packages/skills/*/SKILL.md feeds
-# the bundled skill registry), so it is not inert.
+# Markdown and plain text under docs/, top-level *.md, and agent instruction
+# files (AGENTS.md, CLAUDE.md) at any depth count. Other docs/ files (JSON,
+# HTML, CSS) are formatted or read by tooling. Any other nested *.md outside
+# docs/ can be a functional asset (packages/skills/*/SKILL.md feeds the bundled
+# skill registry), so it is not inert.
 
 is_inert_doc() {
   case "$1" in
-    docs/*.md | docs/*.txt) return 0 ;;
+    docs/*.md | docs/*.txt | */AGENTS.md | */CLAUDE.md) return 0 ;;
     */*) return 1 ;;
     *.md) return 0 ;;
   esac
