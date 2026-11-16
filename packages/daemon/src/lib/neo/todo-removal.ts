@@ -33,7 +33,7 @@ type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
 type CardPlan<C> = { askId: string; replaces: C[]; todos: string[]; text: string };
 
-const live = (todo: Row) => !['done', 'closed_unverified', 'removed'].includes(todo.state);
+const live = (todo: Row) => !['done', 'removed'].includes(todo.state);
 
 const prerequisites = (family: readonly Row[], id: string) =>
   neoTodoDependencyNodes(family).find((node) => node.id === id)?.dependsOn ?? [];
@@ -110,7 +110,7 @@ export function neoRemovedPrerequisiteCodes(
 ): { textCodes?: NeoStatusCode[]; optionCodes?: NeoStatusCode[] } {
   if (question.cause !== NEO_REMOVED_PREREQUISITE) return {};
   const rows = question.todos.flatMap((id) => family.filter((todo) => todo.id === id));
-  const gone = rows.filter((todo) => ['closed_unverified', 'removed'].includes(todo.state));
+  const gone = rows.filter((todo) => todo.state === 'removed');
   const line = removedLine(
     gone,
     rows.filter((todo) => !gone.includes(todo))

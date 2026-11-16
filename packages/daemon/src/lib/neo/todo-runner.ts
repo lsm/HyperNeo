@@ -119,7 +119,6 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   doing: 'queued',
   blocked: 'queued',
   done: 'reported',
-  closed_unverified: 'cancelled',
   failed: 'failed',
   removed: 'cancelled',
 };
@@ -311,8 +310,7 @@ export function planNeoTodoCheck(
   if (!result || todo.state === 'done') return null;
   if (result.done && !result.failed)
     return { state: 'done', evidence: result.evidence, finishedAt: now };
-  if (neoTodoFailed(todo) || todo.state === 'closed_unverified' || todo.blockedBy === 'held')
-    return null;
+  if (neoTodoFailed(todo) || todo.blockedBy === 'held') return null;
   if (result.failed) return planNeoTodoFailure(todo, result.failed);
   if (result.blocked)
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
@@ -327,8 +325,6 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
-  if (todo.state === 'closed_unverified')
-    return `Todo "${todo.title}" is closed unverified, never done: ${todo.reason ?? 'Its outcome check has not passed.'}`;
   if (todo.state === 'doing')
     return `Todo "${todo.title}" reported, and nothing checks it: record evidence for "${todo.doneWhen}"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
@@ -981,11 +977,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
-      if (
-        (neoTodoFailed(live) || live.state === 'closed_unverified') &&
-        completion?.state !== 'done'
-      )
-        continue;
+      if (neoTodoFailed(live) && completion?.state !== 'done') continue;
       const next = completion
         ? await recompute(live, {}, now, completion)
         : await finish(live, ask, planNeoTodoCheck(live, result, now), now);
@@ -1250,9 +1242,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const retireWorker = ({ todo, ref }: NudgeClaim) =>
-    ['done', 'closed_unverified', 'failed', 'removed'].includes(
-      store.getTodo(todo.id)?.state ?? 'removed'
-    )
+    ['done', 'failed', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
       ? null
       : sessions.write('markWorkerUnusable', ref);
 
@@ -1260,9 +1250,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['claim', 'reason', 'now'])
     .pipe(
       (claim: NudgeClaim) =>
-        ['done', 'closed_unverified', 'failed', 'removed'].includes(
-          store.getTodo(claim.todo.id)?.state ?? 'removed'
-        )
+        ['done', 'failed', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
           ? { reason: null }
           : { value: claim },
       'claim',
@@ -1285,8 +1273,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       ({ todo }: NudgeClaim, reason: string, now: number) => {
         const current = store.getTodo(todo.id) ?? todo;
-        if (['done', 'closed_unverified', 'failed', 'removed'].includes(current.state))
-          return current;
+        if (['done', 'failed', 'removed'].includes(current.state)) return current;
         return recompute(
           current,
           planNeoTodoBlocked(current, 'stalled', reason, NEO_TODO_STALL_NEXT) ?? {},

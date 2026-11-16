@@ -141,7 +141,7 @@ describe('Atomic interrupted-start recovery build', () => {
     expect(changes).toEqual([]);
   });
 
-  test.each(['todo', 'done', 'blocked', 'failed', 'removed', 'closed_unverified'] as const)(
+  test.each(['todo', 'done', 'blocked', 'failed', 'removed'] as const)(
     'current %s work stays unchanged',
     async (state) => {
       expect(sessions.unrecordedStarts()).toEqual(['todo']);

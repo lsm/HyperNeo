@@ -64,7 +64,7 @@ for (const phase of ['initial', 'reopen']) {
     };
     const described = await call('operations.describe', { name: 'neo.question.ask' });
     assert.equal(described.found, true);
-    assert(described.description.includes('If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed'));
+    assert(described.description.includes('If a supplied todoId is unknown, belongs to another ask, or is done or removed'));
     assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
     assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
     if (phase === 'initial') {
@@ -116,7 +116,7 @@ for (const phase of ['initial', 'reopen']) {
       const closed = store.addTodo('closed', ask.id, { title: 'Closed work', doneWhen: 'Checked', instruction: null, check: null, named: null }, 1);
       const failed = store.addTodo('failed', ask.id, { title: 'Failed work', doneWhen: 'Build observed', instruction: null, check: null, named: null }, 1);
       store.updateTodo(failed, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
-      store.updateTodo(closed, { state: 'closed_unverified', reason: 'Not observed' }, 2);
+      store.updateTodo(closed, { state: 'removed', reason: 'Not observed' }, 2);
       const question = await call('neo.question.ask', { askId: ask.id, todoId: closed.id, text: 'What next?', kind: 'reply', replaces: workerQuestion.question.id, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } } });
       assert(question.records[0].startsWith('todo_closed:')); assert.equal(question.question.todoId ?? null, null);
       const beforeTodos = store.listTodos(ask.id), beforeQuestions = store.listQuestions(ask.id);
@@ -153,7 +153,7 @@ for (const phase of ['initial', 'reopen']) {
     const local = await call('neo.ask.read', { askId: 'repository' });
     assert.equal(packRepo(local.entry.todos.find((todo: { title: string }) => todo.title === 'Local work').id), null);
     assert.equal(askRepo('repository'), 'github.com/synthetic/root');
-    for (const [id, state] of [['unfinished', 'removed'], ['closed', 'closed_unverified'], ['failed', 'removed']])
+    for (const [id, state] of [['unfinished', 'removed'], ['closed', 'removed'], ['failed', 'removed']])
       assert.equal(read.entry.todos.find((todo: { id: string }) => todo.id === id)?.state, state);
     assert.equal(read.entry.doneCount, 0);
     assert((await call('neo.todo.read', { todoId: 'failed' })).todo.reason.includes('check_failed: build exited 7'));

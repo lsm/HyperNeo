@@ -912,7 +912,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
              AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
                OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
@@ -925,7 +925,7 @@ export class NeoAskTodoRepository {
   getCheckable(id: string): NeoTodo | null {
     const row = this.db
       .prepare(
-        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed', 'closed_unverified')
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed')
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;
@@ -1208,7 +1208,7 @@ export class NeoAskTodoRepository {
           AND waiting.started_at IS NULL AND waiting.state IN ('todo', 'blocked'))
         AND EXISTS (SELECT 1 FROM neo_todos gone JOIN neo_asks home ON home.id = gone.ask_id
           WHERE COALESCE(home.parent_id, home.id) = COALESCE(a.parent_id, a.id)
-          AND (gone.state = 'removed' OR (gone.state = 'closed_unverified' AND gone.started_at IS NULL)))`)
+          AND gone.state = 'removed')`)
       .all() as { id: string }[];
     return candidates.flatMap(({ id }) =>
       neoTodosAwaitingNeoDecision(

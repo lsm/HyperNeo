@@ -125,13 +125,13 @@ export class WorkDeliveryInputRepository {
             FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
             JOIN work_delivery_inputs d ON d.todo_id = t.id
             WHERE a.status = 'open'
-              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+              AND t.state NOT IN ('done', 'failed', 'removed')
           UNION
           SELECT s.ref
             FROM neo_asks a JOIN neo_todos t ON t.ask_id = a.id
             JOIN neo_todo_sessions s ON s.todo_id = t.id
             WHERE a.status = 'open'
-              AND t.state NOT IN ('done', 'closed_unverified', 'failed', 'removed')
+              AND t.state NOT IN ('done', 'failed', 'removed')
               AND json_extract(s.target, '$.verb') = 'adopt'
         )
         SELECT workers.ref AS ref, w.last_activity_at AS lastActivityAt FROM workers

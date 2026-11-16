@@ -28,6 +28,6 @@ Check desktop 1280 and mobile 390 widths; inspect `marked-done.png` and
 `observed.json` records persisted ask states and cleanup. The card's progress badge
 is derived from its todos; it is not the ask's settled status. Component contracts
 also cover transport rejection/non-Error failures and clearing errors on retry.
-Agent settlement also refuses done with unfinished todos. Historical closed-unverified rows retain their label and never count as done. The ask-bookkeeping-actions journey proves the MCP and public-reader payloads. Native iOS is outside this slice.
+Agent settlement also refuses done with unfinished todos. The ask-bookkeeping-actions journey proves the MCP and public-reader payloads. Native iOS is outside this slice.
 
 Never restart or modify the live daemon for this journey.

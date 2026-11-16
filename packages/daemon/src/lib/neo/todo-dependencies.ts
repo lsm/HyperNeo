@@ -17,8 +17,7 @@ export function neoTodoDependencyNodes(todos: readonly NeoTodoEdge[]): Dependenc
   return todos.map((todo) => ({ id: todo.id, dependsOn: todo.dependsOn ?? [] }));
 }
 
-export const neoTodoFinished = (todo: NeoTodo | undefined) =>
-  todo?.state === 'done' || (todo?.state === 'closed_unverified' && todo.startedAt !== null);
+export const neoTodoFinished = (todo: NeoTodo | undefined) => todo?.state === 'done';
 
 const dependencies = (todos: readonly NeoTodoEdge[], todoId: string) =>
   neoTodoDependencyNodes(todos).find((item) => item.id === todoId)?.dependsOn ?? [];
@@ -34,11 +33,7 @@ export function neoTodoCancelledDependencies<T extends NeoTodoEdge>(
   todoId: string
 ): T[] {
   const ids = dependencies(todos, todoId);
-  return todos.filter(
-    (todo) =>
-      ids.includes(todo.id) &&
-      (todo.state === 'removed' || (todo.state === 'closed_unverified' && todo.startedAt === null))
-  );
+  return todos.filter((todo) => ids.includes(todo.id) && todo.state === 'removed');
 }
 
 export function neoTodoDependenciesAfterApproval(

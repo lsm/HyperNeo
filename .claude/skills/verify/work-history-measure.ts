@@ -21,7 +21,7 @@ try {
   const before = all.slice(0, 50);
   const open = all.filter(entry => entry.ask.status === 'open');
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const protectedEntry = (entry: typeof all[number]) => entry.ask.status === 'open' || entry.questions.some(question => question.state === 'open') || entry.todos.some(todo => ['todo', 'doing', 'blocked', 'failed', 'closed_unverified'].includes(todo.state));
+  const protectedEntry = (entry: typeof all[number]) => entry.ask.status === 'open' || entry.questions.some(question => question.state === 'open') || entry.todos.some(todo => ['todo', 'doing', 'blocked', 'failed'].includes(todo.state));
   const fields: Record<string, number> = {};
   const todoFields: Record<string, number> = {};
   for (const entry of before) {

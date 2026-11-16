@@ -93,7 +93,7 @@ test('leaves checked and settled rows alone and plans unfinished rows', () => {
   };
   const plan = planNeoTodoCheckBackfill([
     checked,
-    ...(['done', 'closed_unverified', 'removed'] as const).map((state) => ({
+    ...(['done', 'removed'] as const).map((state) => ({
       ...named,
       id: state,
       state,

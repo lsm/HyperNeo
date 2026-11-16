@@ -91,7 +91,7 @@ export class CodingTodoPrRepository {
         (todo) =>
           (!todoId || todo.id === todoId) &&
           todo.check?.pack === 'coding' &&
-          !['done', 'removed', 'closed_unverified'].includes(todo.state) &&
+          !['done', 'removed'].includes(todo.state) &&
           facts.asks.some((ask) => ask.id === todo.askId && ask.status === 'open')
       )
       .flatMap((todo) => {
@@ -458,11 +458,7 @@ export function createCodingTodoPolicy(
       const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
       const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
       for (const peer of peers) {
-        if (
-          peer.id === draft.id ||
-          ['done', 'closed_unverified', 'removed', 'failed'].includes(peer.state)
-        )
-          continue;
+        if (peer.id === draft.id || ['done', 'removed', 'failed'].includes(peer.state)) continue;
         const named =
           peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
             ? peer.check.params.urls
