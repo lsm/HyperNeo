@@ -52,7 +52,16 @@ describe('Git capture committed identity admission', () => {
   };
   const invoke = (check = current) =>
     Promise.resolve().then(() =>
-      captureGitArtifact(main, root, plan, 'synthetic-request', check, blob, join(root, 'home'))
+      captureGitArtifact(
+        'artifact.reference.resolve.capture',
+        main,
+        root,
+        plan,
+        'synthetic-request',
+        check,
+        blob,
+        join(root, 'home')
+      )
     );
   beforeEach(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-git-identity-')));

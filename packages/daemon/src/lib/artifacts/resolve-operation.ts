@@ -81,6 +81,7 @@ export function createArtifactReferenceResolve(
     const result =
       selected.kind === 'git-blob'
         ? ((await captureGitArtifact(
+            'artifact.reference.resolve.capture',
             database(),
             data,
             selected,

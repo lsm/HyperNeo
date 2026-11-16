@@ -57,6 +57,7 @@ function movie(brand: string, length = 600_007) {
 }
 async function capture(bytes: Buffer, path: string) {
   const result = await captureGitArtifact(
+    'artifact.reference.resolve.capture',
     db,
     data,
     {

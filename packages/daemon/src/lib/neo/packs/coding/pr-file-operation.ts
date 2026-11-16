@@ -74,6 +74,7 @@ export function createCodingPrFileOperation(
           return 'value' in checked && JSON.stringify(checked.value) === JSON.stringify(selected);
         };
         const result = await captureGitArtifact(
+          'neo.coding.pr.file.capture',
           database(),
           data,
           selected,

@@ -17,6 +17,7 @@ import { storedKind } from './stored-kind.ts';
 type Plan = { repository: string; sha: string; path: string; context: ArtifactContext };
 const lanes = new WeakMap<Database, Promise<unknown>>();
 export function captureGitArtifact(
+  pipeline: string,
   db: Database,
   data: string,
   plan: Plan,
@@ -77,7 +78,7 @@ export function captureGitArtifact(
     );
     return (await matches()) ? { accepted: true, artifact: saved.artifact } : unavailable();
   }
-  const run = (superpipe({})('artifact-git-capture') as PipelineAPI)
+  const run = (superpipe({})(pipeline) as PipelineAPI)
     .input(['plan', 'repo'])
     .pipe(
       async (plan: Plan) => {

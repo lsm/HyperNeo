@@ -185,6 +185,7 @@ try {
   for (const name of ['sample.mp4', 'sample.mov', 'external.mp4']) {
     const bytes = readFileSync(join(workspace, name));
     const captured = (await captureGitArtifact(
+      'artifact.reference.resolve.capture',
       db,
       join(run, 'data'),
       {

@@ -37,7 +37,7 @@ writeFileSync(join(root, 'workspace', 'report.md'), markdown);
 const local = await legacyAttachmentFixture(() => db, data, join(root, 'home')).execute({ requestId: 'layout-markdown', context, path: 'report.md', title: 'Launch plan (Markdown)' }, { source: 'rpc', principal: 'local' });
 assert(local.accepted, JSON.stringify(local));
 const bytes = Buffer.from('# PR layout proposal\n\nThis synthetic PR file is captured as an immutable git blob.\n\n## Review notes\n\n- Keep the conversation clickable.\n- Replace the preview when another attachment opens.\n- Close with X, Escape or browser Back.\n');
-const git = await captureGitArtifact(db, data, { context, repository: 'github.com/example/demo', sha: 'a'.repeat(40), path: 'docs/proposal.md' }, 'layout-git', async () => true, async () => ({ accepted: true, bytes, sha256: createHash('sha256').update(bytes).digest('hex'), blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') }), join(root, 'home'));
+const git = await captureGitArtifact('artifact.reference.resolve.capture', db, data, { context, repository: 'github.com/example/demo', sha: 'a'.repeat(40), path: 'docs/proposal.md' }, 'layout-git', async () => true, async () => ({ accepted: true, bytes, sha256: createHash('sha256').update(bytes).digest('hex'), blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') }), join(root, 'home'));
 assert(git.accepted, JSON.stringify(git));
 writeFileSync(join(root, 'evidence', 'seed.json'), JSON.stringify({ local, git }, null, 2));
 db.close();
