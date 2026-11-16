@@ -46,6 +46,9 @@ describe('Runtime runner commits before external effects', () => {
       tell: async () => {
         effects.push('tell');
       },
+      attend: async () => {
+        effects.push('tell');
+      },
       invoke: async (_caller, name) => {
         if (name === 'work.status' && store.getTodo('first')?.state === 'todo')
           return {
@@ -216,7 +219,7 @@ describe('Runtime runner commits before external effects', () => {
     expect(effects).toEqual([]);
   });
 
-  test('a recovery notice waits for the committed receipt and is sent once', async () => {
+  test('a recovered interrupted start is committed once and left for the sweep to tell', async () => {
     store.updateTodo(store.getTodo('first')!, { state: 'doing', report: 'Full prior report' }, 2);
     let committed!: () => void;
     let release!: () => void;
@@ -245,12 +248,12 @@ describe('Runtime runner commits before external effects', () => {
       release();
       await pending;
     }
-    expect(effects).toEqual(['changed', 'tell']);
+    expect(effects).toEqual(['changed']);
     afterWrite = () => {};
     await runner.refresh((_message, error) => {
       throw error;
     });
-    expect(effects).toEqual(['changed', 'tell']);
+    expect(effects).toEqual(['changed']);
   });
 
   test('a completion queued behind a changed check cannot advance the todo', async () => {

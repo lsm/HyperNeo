@@ -124,6 +124,7 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
     tell: async (_ask, todo, note) => {
       if (note.startsWith('Worker turn report')) reported.push(todo.id);
     },
+    attend: async () => {},
     changed: () => {},
   });
   const deliver = createNeoQuestionAnswerDelivery(

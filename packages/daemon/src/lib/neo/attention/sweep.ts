@@ -28,7 +28,7 @@ export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRow[] {
 
 export function planNeoSweepEvents(
   steps: readonly NeoStepRow[],
-  followUps: Facts['followUps']
+  { followUps, unapproved }: Pick<Facts, 'followUps' | 'unapproved'>
 ): NeoAttentionEvent[] {
   return [
     ...steps.flatMap((row) => {
@@ -57,6 +57,15 @@ export function planNeoSweepEvents(
       since: todo.finishedAt ?? todo.updatedAt,
       facts: { title: todo.title, todoId: todo.id, askTitle: ask.title },
     })),
+    ...unapproved.map((todo) => ({
+      kind: 'todo.unworked',
+      subject: { type: 'todo', id: todo.id },
+      since: todo.updatedAt,
+      facts: {
+        reason: 'unapproved',
+        text: `Todo "${todo.title}" (${todo.id}) cannot start: it was not approved. Review it with neo.todo.read.`,
+      },
+    })),
   ];
 }
 
@@ -84,7 +93,7 @@ export function createNeoAttentionSweep(deps: {
       'steps'
     )
     .pipe(
-      (steps: NeoStepRow[], facts: Facts) => planNeoSweepEvents(steps, facts.followUps),
+      (steps: NeoStepRow[], facts: Facts) => planNeoSweepEvents(steps, facts),
       ['steps', 'facts'],
       'events'
     )

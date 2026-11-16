@@ -14,7 +14,11 @@ export function neoAttentionNotes(
 ) {
   const dropped: string[] = [];
   const texts = (queue: 'mailbox' | 'neo_notes') =>
-    (db.prepare('SELECT payload FROM job_queue WHERE queue = ?').all(queue) as { payload: string }[])
+    (
+      db.prepare('SELECT payload FROM job_queue WHERE queue = ?').all(queue) as {
+        payload: string;
+      }[]
+    )
       .map((row) => JSON.parse(row.payload) as { message: { message: { content: unknown } } })
       .map((entry) => String(entry.message.message.content));
   const delivery = neoAttentionDelivery(

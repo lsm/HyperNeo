@@ -92,6 +92,9 @@ function world(coding = false) {
     tell: async (_ask, todo, note, key) => {
       told.push({ id: todo.id, note, key });
     },
+    attend: async (event) => {
+      told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
+    },
     changed: () => {},
     limits: () => ({ running: 6, perGroup: 3 }),
   });

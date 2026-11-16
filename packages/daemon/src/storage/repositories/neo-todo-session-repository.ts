@@ -296,7 +296,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   neoStepFacts() {
     const store = new NeoAskTodoRepository(this.db);
-    const { candidates, running } = this.queueFacts();
+    const { candidates, running, unworked } = this.queueFacts();
     const pending = new Set(store.questionAnswers.pending().map((route) => route.todoId));
     const failedAt = (todo: NeoTodo) =>
       todo.state === 'blocked' && todo.blockedBy === 'failure' ? todo.updatedAt : null;
@@ -350,6 +350,15 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return {
       candidates,
       running,
+      unapproved: asks.flatMap(({ ask, family, cards }) =>
+        family.filter(
+          (todo) =>
+            todo.askId === ask.id &&
+            todo.approvedAt === null &&
+            unworked.includes(todo.id) &&
+            !neoTodoCovered(todo, cards)
+        )
+      ),
       followUps: asks.flatMap(({ ask, family }) => {
         const todo = neoTodoWithoutFollowUp(family.filter((item) => item.askId === ask.id));
         return todo ? [{ ask, todo }] : [];

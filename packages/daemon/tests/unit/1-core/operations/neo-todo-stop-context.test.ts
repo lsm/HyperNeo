@@ -60,6 +60,7 @@ describe('current worker stop context', () => {
       packs: () => [],
       changed: () => {},
       tell: async () => {},
+      attend: async () => {},
       invoke: async (caller, name, input) => {
         expect(name).toBe('work.stop');
         db.exec('BEGIN');

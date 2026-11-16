@@ -18,10 +18,12 @@ import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   createNeoTodoRunner,
   neoTodoNote,
+  neoTodoStateEvent,
   neoTurnQuestionDue,
   neoTurnQuestionGone,
   planNeoTodoCheck,
@@ -78,6 +80,7 @@ function setup(
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
   const toldKeys: (string | undefined)[] = [];
+  const events: NeoAttentionEvent[] = [];
   let prOpen: boolean | Promise<boolean> = false;
   const checkedTodos: string[] = [];
   let status: unknown = null;
@@ -124,6 +127,12 @@ function setup(
       told.push(note);
       toldKeys.push(key);
     },
+    attend: async (event) => {
+      beforeTell?.();
+      events.push(event);
+      told.push(String(event.facts.text));
+      toldKeys.push(event.kind);
+    },
 
     changed: () => {},
   });
@@ -157,6 +166,7 @@ function setup(
     calls,
     told,
     toldKeys,
+    events,
     checkedTodos,
     packs,
     add,
@@ -2234,6 +2244,7 @@ describe('neo todo runner', () => {
       },
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     await runner.start(todo.id);
@@ -2308,7 +2319,7 @@ describe('neo todo runner', () => {
       blockedBy: 'failure',
       blockedReason: 'Start was interrupted; a session may have started without being recorded.',
     });
-    expect(told).toEqual([expect.stringContaining('Start was interrupted')]);
+    expect(told).toEqual([]);
     expect(await runner.retry(todo.id)).toMatchObject({
       ok: false,
       reason: expect.stringContaining('start_uncertain'),
@@ -2331,6 +2342,9 @@ describe('neo todo runner', () => {
       packs: () => [],
       tell: async (_ask, _todo, note) => {
         told.push(note);
+      },
+      attend: async (event) => {
+        told.push(String(event.facts.text));
       },
       changed: () => {},
     });
@@ -2357,7 +2371,7 @@ describe('neo todo runner', () => {
         text: '"Rows" could not start after 2 automatic retries: unavailable: login expired. Retry, mark done, or remove?',
       },
     ]);
-    expect(told).toHaveLength(1);
+    expect(told).toEqual([]);
   });
 
   test('a refused dispatch records failure after a concurrent report write', async () => {
@@ -2376,6 +2390,7 @@ describe('neo todo runner', () => {
           return completed({ ok: false, reason: 'unavailable', detail: 'Synthetic refusal' });
         },
         tell: async () => {},
+        attend: async () => {},
         changed: () => {},
       });
       expect(await runner.start(todo.id)).toMatchObject({
@@ -2409,6 +2424,7 @@ describe('neo todo runner', () => {
         }),
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     const result = await accepted.start(todo.id);
@@ -2444,6 +2460,9 @@ describe('neo todo runner', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
+      attend: async (event) => {
+        told.push(String(event.facts.text));
+      },
       changed: () => {},
     });
     const result = await waiting.start(todo.id);
@@ -2453,7 +2472,7 @@ describe('neo todo runner', () => {
       blockedReason: `Could not start: ${hint}`,
       nextAction: 'Ask the human to open Claude Desktop, then retry this todo.',
     });
-    expect(told).toEqual([expect.stringContaining(hint)]);
+    expect(told).toEqual([]);
     expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
@@ -2512,7 +2531,7 @@ describe('a todo session waiting on the human', () => {
   const warn = () => {};
 
   test('tells Neo once with the link, holds sends, and clears when the session runs again', async () => {
-    const { runner, told, calls, add, setStatus } = setup();
+    const { runner, told, events, calls, add, setStatus } = setup();
     const todo = add();
     await runner.start(todo.id);
     const waiting = {
@@ -2531,6 +2550,11 @@ describe('a todo session waiting on the human', () => {
     expect(notes).toEqual([
       'Todo "Rows": its session is waiting on the human (permission prompt). Ask the human once to answer it there: claude://claude.ai/epitaxy/local_x. Do not send to it until it runs again.',
     ]);
+    expect(events.at(-1)).toMatchObject({
+      kind: 'turn.report',
+      subject: { type: 'todo', id: todo.id },
+      facts: { status: 'needs_you' },
+    });
     const sends = calls.filter((call) => call.name === 'work.send').length;
     expect(await runner.proceed(todo.id, 'next')).toEqual({
       ok: false,
@@ -2546,7 +2570,7 @@ describe('a todo session waiting on the human', () => {
   });
 
   test('a question the worker ended its turn on goes to Neo, and Neo can answer it', async () => {
-    const { runner, told, calls, add, setStatus } = setup();
+    const { runner, told, events, calls, add, setStatus } = setup();
     const todo = add();
     await runner.start(todo.id);
     setStatus({
@@ -2568,6 +2592,7 @@ describe('a todo session waiting on the human', () => {
     expect(told.filter((note) => note.includes('ended its turn'))).toEqual([
       `Todo "Rows": its session ended its turn with a question: Ship it? Options: Yes; Not now. If the plan, saved rules or your authority settle it, answer with neo.todo.continue. If not, relay it with neo.question.ask {kind:relay,todoId:"${todo.id}",text,options}.`,
     ]);
+    expect(events.at(-1)).toMatchObject({ kind: 'turn.report', facts: { question: true } });
     const sends = calls.filter((call) => call.name === 'work.send').length;
     expect(await runner.proceed(todo.id, 'Yes, ship it')).toMatchObject({ ok: true });
     expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(sends + 1);
@@ -2615,6 +2640,7 @@ describe('neo todo runner uncertainty', () => {
       },
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     const result = await flaky.start(todo.id);
@@ -2646,6 +2672,7 @@ describe('neo todo runner uncertainty', () => {
         completed({ ok: false, reason: 'unsupported', detail: 'This adapter cannot stop.' }),
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
@@ -2657,6 +2684,7 @@ describe('neo todo runner uncertainty', () => {
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     expect(await refusing.stop(store.getTodo(resumed.id)!)).toBe('stop_failed: Offline.');
@@ -2765,6 +2793,31 @@ describe('planNeoTodoCheck', () => {
   });
 });
 
+describe('neoTodoStateEvent', () => {
+  const todo = (change: Partial<NeoTodo>) =>
+    ({ id: 't', title: 'T', updatedAt: 7, report: 'Shipped', ...change }) as NeoTodo;
+
+  test.each([
+    ['a done todo', todo({ state: 'done', evidence: '#1 merged' }), 'todo.done'],
+    ['a blocked todo', todo({ state: 'blocked', blockedBy: 'check' }), 'todo.blocked'],
+    ['a report nothing checks', todo({ state: 'doing', check: null }), 'turn.report'],
+  ])('%s is a %s event since its last change, carrying its note', (_name, item, kind) => {
+    expect(neoTodoStateEvent(item)).toEqual({
+      kind,
+      subject: { type: 'todo', id: 't' },
+      since: 7,
+      facts: { text: neoTodoNote(item) },
+    });
+  });
+
+  test.each([
+    ['a failed row', todo({ state: 'failed' })],
+    ['a todo blocked by its failure', todo({ state: 'blocked', blockedBy: 'failure' })],
+  ])("%s raises nothing: the sweep's Neo step tells it", (_name, item) => {
+    expect(neoTodoStateEvent(item)).toBeNull();
+  });
+});
+
 describe('neoTodoNote', () => {
   test('an unverified closure is disclosed instead of described as done or blocked', () => {
     const note = neoTodoNote({
@@ -2851,6 +2904,7 @@ describe('a todo sent to an existing session', () => {
           : completed({ ok: true, value: { status: 'done', lastActivityAt: lastActivity } }),
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     const sent = (id: string) => {
@@ -2940,7 +2994,7 @@ describe('blocked todos', () => {
       blockedBy: 'failure',
       blockedReason: 'CI keeps failing',
     });
-    expect(told.at(-1)).toContain('Todo "Rows" is blocked: CI keeps failing');
+    expect(told).toEqual([]);
     await runner.proceed(todo.id, 'Try another approach.');
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
@@ -3017,6 +3071,7 @@ describe('blocked todos', () => {
       },
       packs: () => [],
       tell: async () => {},
+      attend: async () => {},
       changed: () => {},
     });
     await flaky.start(todo.id);
@@ -3079,6 +3134,9 @@ describe('blocked todos', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
+      attend: async (event) => {
+        told.push(String(event.facts.text));
+      },
       changed: () => {},
     });
     await runner.start(todo.id);
@@ -3087,7 +3145,7 @@ describe('blocked todos', () => {
     expect(store.listQuestions('ask').map((q) => [q.cause, q.state, q.todos])).toEqual([
       ['retries_exhausted', 'open', [todo.id]],
     ]);
-    expect(told).toHaveLength(1);
+    expect(told).toEqual([]);
   });
 
   test('a todo whose retries ran out starts again on retry once its card is answered', async () => {
@@ -3102,6 +3160,9 @@ describe('blocked todos', () => {
       packs: () => [],
       tell: async (_ask, _todo, note) => {
         told.push(note);
+      },
+      attend: async (event) => {
+        told.push(String(event.facts.text));
       },
       changed: () => {},
     });
@@ -3530,6 +3591,7 @@ describe('current explicit removal behavior before recompute', () => {
             });
           },
           tell: async () => {},
+          attend: async () => {},
           changed: () => {},
         });
         await runner.refresh(() => {});

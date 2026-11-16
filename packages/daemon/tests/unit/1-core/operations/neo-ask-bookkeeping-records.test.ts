@@ -65,6 +65,7 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
       throw new Error('Unexpected worker call');
     },
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
   });
   const registry: OperationRegistry = createOperationRegistry([

@@ -35,6 +35,7 @@ function setup() {
     sessions,
     packs: () => packs,
     tell: async (_ask, _todo, note) => void told.push(note),
+    attend: async (event) => void told.push(String(event.facts.text)),
     changed: () => {},
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: {} } }),
   });
@@ -115,15 +116,14 @@ async function approvedPlan() {
 }
 
 describe('todos given work later', () => {
-  test('an approved step with nothing to run it is told to Neo once', async () => {
+  test("an approved step with nothing to run it is the sweep's to tell, not the runner's", async () => {
     const { db, sessions, runner, told, second } = await approvedPlan();
     try {
       expect(sessions.queueFacts().unworked).toEqual([second.id]);
       await runner.refresh(() => {});
       await runner.refresh(() => {});
-      expect(told.filter((note) => note.includes('cannot start'))).toEqual([
-        expect.stringContaining(second.id),
-      ]);
+      expect(told).toEqual([]);
+      expect(sessions.neoStepFacts().unapproved).toEqual([]);
     } finally {
       db.close();
     }

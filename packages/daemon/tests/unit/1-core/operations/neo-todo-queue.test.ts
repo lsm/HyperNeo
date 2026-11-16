@@ -372,7 +372,7 @@ describe('queued todos start themselves', () => {
     expect(w.started).toEqual([first, next]);
   });
 
-  test('a refused place waits on one retries card, and the card is what tells', async () => {
+  test('a refused place waits on one retries card and sends Neo no note', async () => {
     const w = (current = world({ running: 6, perGroup: 3 }, false, true));
     const todo = w.add(w.approved());
     await w.tick();
@@ -383,8 +383,7 @@ describe('queued todos start themselves', () => {
         .listQuestions(w.store.getTodo(todo)!.askId)
         .map(({ cause, todos }) => ({ cause, todos }))
     ).toEqual([{ cause: 'retries_exhausted', todos: [todo] }]);
-    expect([w.told, w.notes.told()]).toEqual([[], []]);
-    expect(w.notes.dropped).toContain(`todo.blocked ${todo}: covered by card`);
+    expect([w.told, w.notes.told(), w.notes.dropped]).toEqual([[], [], []]);
   });
 
   test('the runner says nothing about a ready step with no target: the sweep owns it', async () => {

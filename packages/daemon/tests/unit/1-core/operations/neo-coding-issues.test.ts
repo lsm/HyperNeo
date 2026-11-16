@@ -92,6 +92,9 @@ function fixture() {
       tell: async (_ask, _todo, text) => {
         notes.push(text);
       },
+      attend: async (event) => {
+        notes.push(String(event.facts.text));
+      },
       invoke: async (_caller, name) => {
         calls.push(name);
         return {

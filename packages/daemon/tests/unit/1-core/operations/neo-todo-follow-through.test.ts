@@ -563,7 +563,7 @@ describe('a doing todo never sits idle without someone on it', () => {
     }
   );
 
-  test('a stalled todo with no known place tells Neo once, once more after four hours, and opens no card', async () => {
+  test('a stalled todo with no known place tells Neo once and opens no card', async () => {
     const w = (current = world());
     w.knobs.placeKnown = false;
     const todo = w.adopt(null);
@@ -574,11 +574,6 @@ describe('a doing todo never sits idle without someone on it', () => {
       []
     );
     expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(1);
-    expect(w.sessions.readNudge(todo.id)).not.toHaveProperty('unreachableToldAt');
-    await w.at(64 + 4 * 60);
-    expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(2);
-    await w.at(64 + 9 * 60);
-    expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(2);
   });
 
   test("the human's own tracked session goes to Neo, not a fresh worker", async () => {

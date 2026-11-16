@@ -50,6 +50,10 @@ beforeEach(() => {
       if (failNotes) throw new Error('Synthetic mailbox failure');
       notes.push(note);
     },
+    attend: async (event) => {
+      if (failNotes) throw new Error('Synthetic mailbox failure');
+      notes.push(String(event.facts.text));
+    },
     invoke: async (_caller, name) => {
       if (name === 'work.send' || name === 'work.start') sends.push(name);
       return {
@@ -134,7 +138,9 @@ test('three failures release the hold and say so', async () => {
   row(3);
   await runner.fill();
   expect(sends).toEqual(['work.send']);
-  expect(notes.some((note) => note.includes('Tracker item is missing'))).toBe(true);
+  expect(notes).toContain(
+    'Todo "Step" (todo): its tracker item is missing after three failures; work continues.'
+  );
 });
 
 test('no tracker never holds', async () => {
@@ -177,7 +183,9 @@ test('an enabled adapter without a home reaches the same retry cap', async () =>
   }
   await runner.fill();
   expect(sends).toEqual(['work.send']);
-  expect(notes.some((note) => note.includes('Tracker item is missing'))).toBe(true);
+  expect(notes).toContain(
+    'Todo "Step" (todo): its tracker item is missing after three failures; work continues.'
+  );
   await sweepNeoTrackerMirrors(db, [tracker]);
   expect(mirrors.facts().mirrors.find((row) => row.ownerId === 'todo')?.failures).toBe(3);
   expect(calls).toBe(0);
