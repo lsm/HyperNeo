@@ -165,7 +165,7 @@ describe('createModelRoutingPack', () => {
 
   const provider = (signedIn: boolean, used: number | null): Provider =>
     ({
-      isAvailable: async () => true,
+      isAvailable: async () => signedIn,
       getAuthStatus: async () => ({ isAuthenticated: signedIn }),
       ...(used === null
         ? {}
@@ -207,7 +207,8 @@ describe('createModelRoutingPack', () => {
       now: () => NOW,
     });
 
-    const ranking = await pack.rankLines!('coding.write', [A, B, C], {});
+    const gone = { provider: 'not-installed', model: 'x' };
+    const ranking = await pack.rankLines!('coding.write', [A, B, C, gone], {});
 
     expect(ranking).toEqual({
       ranked: [],
@@ -215,6 +216,7 @@ describe('createModelRoutingPack', () => {
         { line: C, reason: 'not signed in' },
         { line: B, reason: 'usage exhausted' },
         { line: A, reason: 'held (limit) until 2026-11-16T12:01:00.000Z' },
+        { line: gone, reason: 'not configured' },
       ],
       exhausted: true,
     });
