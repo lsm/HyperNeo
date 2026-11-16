@@ -98,7 +98,7 @@ export function createArtifactReferenceResolve(
       ? unavailable()
       : result;
   }
-  const resolve = (superpipe({})('artifact-reference-resolve') as PipelineAPI)
+  const resolve = (superpipe({})('artifact.reference.resolve') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller) =>
