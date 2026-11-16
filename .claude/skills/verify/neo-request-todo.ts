@@ -105,6 +105,22 @@ try {
   assert.deepEqual(recorded!.named, { requestFrom: 'synthetic-requester' });
   assert.equal(asks[0]!.originMessageId, (sent as { value: { messageId: string } }).value.messageId);
   (evidence.checks as unknown[]).push({ name: 'recorded', ask: asks[0], todo: recorded });
+  const snapshot = await invokeOperation(registry, 'neo.snapshot', {}, {
+    source: 'mcp',
+    sessionId: root,
+    role: 'neo',
+  });
+  const snapshotNamed = Object.fromEntries(
+    (snapshot as { value: { todoAsks: { todos: { id: string; named: unknown }[] }[] } }).value.todoAsks
+      .flatMap((entry) => entry.todos)
+      .map((todo) => [todo.id, todo.named])
+  );
+  assert.deepEqual(
+    snapshotNamed,
+    { worked: null, [recorded!.id]: { requestFrom: 'synthetic-requester' } },
+    'neo.snapshot keeps the request marker on the request todo only'
+  );
+  (evidence.checks as unknown[]).push({ name: 'snapshot marker', named: snapshotNamed });
   const wakes = () =>
     (
       db
@@ -237,7 +253,7 @@ try {
   assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} reply_failed=woke_neo closed_repeat=rejected`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only`
   );
 } catch (error) {
   evidence.error = String(error);
