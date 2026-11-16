@@ -130,7 +130,9 @@ export function createCodingAssignmentOperation(deps: Deps) {
     const { owner, repo } = parsePrUrl(input.url)!;
     const view = getNeoReadCheckoutPath(owner, repo);
     if (!isReadyNeoReadCheckout(view))
-      return refuse(`The ${owner}/${repo} read checkout is not ready; assign again once it syncs.`);
+      return refuse(
+        `${owner}/${repo} has no read-only view yet, so no actor was started; assign again after the view syncs.`
+      );
     const place = { machine: hostname(), folder: view, name: `${owner}/${repo}` };
     const select = (candidates: Input['candidates']) =>
       assignments.planTargetCurrent({

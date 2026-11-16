@@ -120,7 +120,7 @@ try {
         assert.equal(ledger.stageFacts.read(bot.url)[0].stage, 'qa');
         assert.equal(starts.at(-1)!.folder, join(run, 'data/worktrees/synthetic/bot/neo-read'), 'Verify starts in the repository read view');
         const unsynced = await seed('unsynced', 12, 'synthetic/unsynced', false); const beforeUnsynced = attempts;
-        assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /read checkout is not ready/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a read view');
+        assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no read-only view yet/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a read view');
         const session = await seed('session', 8, 'synthetic/session');
         const readView = join(run, 'data/worktrees/synthetic/session/neo-read');
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);

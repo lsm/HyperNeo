@@ -583,7 +583,7 @@ describe('review place', () => {
   test('without a read view assignment refuses and starts nobody', async () => {
     const f = fixture();
     rmSync(join(f.view, '.git', 'index'));
-    const notReady = { ok: false, reason: expect.stringContaining('read checkout is not ready') };
+    const notReady = { ok: false, reason: expect.stringContaining('has no read-only view yet') };
     expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
     expect(f.starts).toHaveLength(0);
     writeFileSync(join(f.view, '.git', 'index'), '');
