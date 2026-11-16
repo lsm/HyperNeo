@@ -732,6 +732,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       onProviderChanged: () => {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
+      setNeedsLogin: (providerId, at) => db.providers.setNeedsLogin(providerId, at),
     });
     const credentialWriteListeners = new Set<(providerId: string) => void>();
     credentialManager.setCredentialWriteHooks({
