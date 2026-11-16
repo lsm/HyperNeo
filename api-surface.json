@@ -34611,7 +34611,7 @@
                     "type": "string"
                   },
                   "todoId": {
-                    "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
+                    "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
                   }
@@ -34832,7 +34832,7 @@
                     "type": "string"
                   },
                   "todoId": {
-                    "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
+                    "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
                   }

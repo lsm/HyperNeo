@@ -60,7 +60,8 @@ try {
   assert.deepEqual(read.question.sourceSession, source);
   assert.equal(read.question.document, report.report);
   const distinct = await rpc('neo.question.ask', {
-    askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question',
+    askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question?',
+    retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } },
   });
   assert.equal(distinct.ok, true, JSON.stringify(distinct));
   assert.notEqual(distinct.question.id, first.question.id);
@@ -74,7 +75,6 @@ try {
   await app.spaceRuntimeService.ready();
   const restored = new NeoAskTodoRepository(app.db.getDatabase());
   restored.updateTodo(restored.getTodo(todo.id)!, { state: 'doing', report: 'Routine activity' }, 9);
-  await restored.recompute(restored.getTodo(todo.id)!, {}, 10, { state: 'done', evidence: 'Routine completion' }, async () => {});
   assert.equal(restored.getTodo(todo.id)?.blockedBy, 'needs-human');
   assert.equal(restored.getTodo(todo.id)?.state, 'blocked');
   const after = await rpc('neo.question.get', { questionId: first.question.id });

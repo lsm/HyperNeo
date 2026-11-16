@@ -194,12 +194,7 @@ export function createNeoWorkerQuestionWriter(
           const existing = daemonCard ? null : open;
           const allowed = existing
             ? null
-            : requireHumanCard(
-                { text: input.title, kind: 'choice' as const },
-                store.listQuestions(todo.askId),
-                null,
-                language()
-              );
+            : requireHumanCard({ text: input.title, kind: 'choice' as const }, language());
           if (allowed && 'reason' in allowed) {
             rejection = allowed.reason.reason;
             return null;
@@ -284,9 +279,7 @@ const Asked = {
   sourceSession: WorkRefSchema.optional(),
   artifacts: Artifacts,
   document: Text.optional().describe('Full detail shown apart from the short card text.'),
-  todoId: Text.optional().describe(
-    'The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.'
-  ),
+  todoId: Text.optional().describe('The todo this card belongs to.'),
   askId: Text.optional().describe(
     'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.'
   ),
@@ -804,12 +797,7 @@ export function createNeoQuestionOperations(
       ): QuestionReceipt | Rejection => {
         let reason = 'question_closed: the question to replace is no longer open.';
         const question = store.writeCardReply(reply.context, reply.mutationId, () => {
-          const card = requireHumanCard(
-            plan.draft,
-            store.listQuestions(plan.ask.id),
-            plan.replaced,
-            language()
-          );
+          const card = requireHumanCard(plan.draft, language());
           if ('reason' in card) {
             reason = card.reason.reason;
             return null;

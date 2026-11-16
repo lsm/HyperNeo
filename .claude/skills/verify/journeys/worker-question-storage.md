@@ -15,8 +15,8 @@ Asking a distinct question through `neo.question.ask` on the same todo must
 open a second card, with both cards open in the Neo snapshot. Worker repeats
 still reuse the card; explicit replacement is covered by the operation tests.
 After stopping and reopening that daemon's own DB,
-routine activity and a completion judgement must leave the todo blocked with
-its needs-human hold and the card still readable. The free-text answer route
+routine activity must leave the todo blocked with its needs-human hold and the
+card still readable. A passed completion check finishes the todo by design. The free-text answer route
 is the existing card reply control; no new card UI is introduced.
 
 The helper then seeds a persisted human answer without delivering it, attempts
