@@ -69,9 +69,14 @@ try {
   const status = async (ref: WorkRef) => ({ kind: 'completed' as const, value: await op('work.status', { ref }) });
   const decided = async (label: string, askId: string) => {
     const item = ready(askId);
-    const decision = await pack.workerTarget!(item, sessions.get(item.id)!, status, (input) =>
-      invokeOperation(app.sessionManager.getOperationRegistry(), 'pack.preferences.ask', { askId, ...input }, { source: 'internal', role: 'neo', sessionId: root }));
-    evidence.push({ surface: 'coding pack workerTarget', label, decision });
+    const asks: unknown[] = [];
+    const decision = await pack.workerTarget!(item, sessions.get(item.id)!, status, async (input) => {
+      const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'pack.preferences.ask', { askId, ...input }, { source: 'internal', role: 'neo', sessionId: root });
+      asks.push(outcome);
+      return outcome;
+    });
+    evidence.push({ surface: 'coding pack workerTarget', label, decision, asks });
+    assert.deepEqual(asks, [], 'the open repo question is reused, not re-asked');
     return decision;
   };
   const cards = async () => (await op('neo.snapshot', {})).todoAsks.flatMap((entry: any) => entry.questions).filter((q: any) => q.text?.startsWith('Choose one of these settings?'));

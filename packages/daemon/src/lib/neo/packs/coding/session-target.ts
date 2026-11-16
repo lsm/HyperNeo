@@ -10,7 +10,7 @@ import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
-import { codingSessionStrategyQuestion, planCodingSessionDispatch } from './session-strategy.ts';
+import { planCodingSessionDispatch, planCodingStrategyQuestion } from './session-strategy.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
 type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
@@ -19,6 +19,7 @@ type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   strategySaved: boolean;
+  strategyQuestions: { id: string; state: string }[];
   owner: { todoId: string; session: Pooled | null } | null;
   pool: Pooled[];
 } | null;
@@ -66,12 +67,18 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   )
   .pipe(
     async (facts: Facts, askSetting: AskSetting) => {
-      if (facts && !facts.strategySaved)
-        await askSetting(codingSessionStrategyQuestion(facts.repo));
-      return true;
+      const plan =
+        facts &&
+        planCodingStrategyQuestion({
+          repo: facts.repo,
+          saved: facts.strategySaved,
+          questions: facts.strategyQuestions,
+        });
+      if (plan?.ask) await askSetting(plan.ask);
+      return plan;
     },
     ['facts', 'askSetting'],
-    'strategyAsked'
+    'strategyQuestion'
   )
   .pipe(
     async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {

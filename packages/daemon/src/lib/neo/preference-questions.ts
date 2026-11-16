@@ -61,7 +61,11 @@ export function createPackPreferenceQuestions(
       (input: z.infer<typeof Ask>) =>
         db.transaction(() => {
           const json = JSON.stringify(
-            input.alternatives ? { alternatives: input.alternatives } : input.values
+            input.hold === false
+              ? { values: input.values, alternatives: input.alternatives, hold: false }
+              : input.alternatives
+                ? { alternatives: input.alternatives }
+                : input.values
           );
           const prior = db
             .prepare(`SELECT p.question_id, p.values_json, q.ask_id, q.state FROM neo_pack_preference_proposals p

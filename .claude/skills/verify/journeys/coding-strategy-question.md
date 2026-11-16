@@ -15,8 +15,9 @@ coding todo that worked there. No `sessionStrategy` is saved for the repo.
   PR and Keep, naming the repo. The card holds no todo, so the slice runs.
   Nothing is saved.
 - The coding pack's `workerTarget` hook decides work from another ask in the
-  repo: still long-lived (`backend-2`, since the backend session is busy), and
-  no second card opens.
+  repo: still long-lived (`backend-2`, since the backend session is busy). It
+  reuses the open repo question without calling `pack.preferences.ask`, so no
+  refusal is hidden and no second card opens.
 - The human picks One session per task over RPC. `per_task` is saved for the
   repo with human provenance.
 - The next decision keeps its own `backend` start instead of `backend-2`, and

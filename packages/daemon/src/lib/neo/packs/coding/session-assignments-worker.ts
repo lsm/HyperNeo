@@ -2,7 +2,11 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import { type CodingSessionStrategy, savedCodingSessionStrategy } from './session-strategy.ts';
+import {
+  type CodingSessionStrategy,
+  codingSessionStrategyRequest,
+  savedCodingSessionStrategy,
+} from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
 type PoolSession = { ref: WorkRef; name: string; held: boolean };
@@ -88,6 +92,13 @@ class CodingSessionAssignments {
       repo,
       strategy,
       strategySaved: saved !== null,
+      strategyQuestions: this.db
+        .prepare(
+          `SELECT q.id, q.state FROM neo_pack_preference_proposals p
+           JOIN neo_questions q ON q.id = p.question_id
+           WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
+        )
+        .all(codingSessionStrategyRequest(repo)) as { id: string; state: string }[],
       owner: owner && {
         todoId: owner.todoId,
         session:

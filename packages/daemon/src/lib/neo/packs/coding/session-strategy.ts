@@ -34,18 +34,32 @@ export function savedCodingSessionStrategy(db: Database, repo: string) {
   return STRATEGIES.find((strategy) => strategy === value) ?? null;
 }
 
-export const codingSessionStrategyQuestion = (repo: string) => ({
-  requestId: `coding.sessionStrategy:${repo.toLowerCase()}`,
-  hold: false as const,
-  alternatives: STRATEGIES.map((value) => [
-    {
-      pack: 'coding',
-      scope: { kind: 'repo' as const, key: repo.toLowerCase() },
-      key: 'sessionStrategy',
-      value,
+export const codingSessionStrategyRequest = (repo: string) =>
+  `coding.sessionStrategy:${repo.toLowerCase()}:`;
+
+export function planCodingStrategyQuestion(input: {
+  repo: string;
+  saved: boolean;
+  questions: readonly { id: string; state: string }[];
+}) {
+  const [latest] = input.questions;
+  if (input.saved || latest?.state === 'answered') return null;
+  if (latest?.state === 'open') return { reuse: latest.id };
+  return {
+    ask: {
+      requestId: `${codingSessionStrategyRequest(input.repo)}${input.questions.length + 1}`,
+      hold: false as const,
+      alternatives: STRATEGIES.map((value) => [
+        {
+          pack: 'coding',
+          scope: { kind: 'repo' as const, key: input.repo.toLowerCase() },
+          key: 'sessionStrategy',
+          value,
+        },
+      ]),
     },
-  ]),
-});
+  };
+}
 
 type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' };
 type Plan =
