@@ -844,7 +844,9 @@ export function NeoAskTodos({
   const focusedFallback =
     focused?.link &&
     onOpen &&
-    !asked.some((question) => question.sourceSession?.link === focused.link) &&
+    !entry.questions.some(
+      (question) => question.state === 'open' && question.sourceSession?.link === focused.link
+    ) &&
     !listed.some((todo) => todo.link === focused.link)
       ? focused
       : null;
