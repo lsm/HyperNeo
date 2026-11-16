@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { generateKeyPairSync, sign } from 'node:crypto';
+import { request } from 'node:http';
 import { createTestDb } from '../../../helpers/database.ts';
 import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
@@ -117,12 +118,30 @@ async function begin(input: unknown = { clientId: 'synthetic-microsoft-client' }
   expect(start.state).toBe('pending');
   return { start, authorize: new URL(start.authorizeUrl) };
 }
+function get(url: string, host: string) {
+  return new Promise<number>((done, fail) => {
+    const target = new URL(url);
+    const call = request(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname + target.search,
+        headers: { host },
+      },
+      (response) => {
+        response.resume();
+        response.on('end', () => done(response.statusCode ?? 0));
+      }
+    );
+    call.on('error', fail);
+    call.end();
+  });
+}
 async function callback(authorize: URL, params: Record<string, string>, host?: string) {
   const redirect = new URL(authorize.searchParams.get('redirect_uri')!);
   const target = new URL(redirect.pathname, `http://127.0.0.1:${redirect.port}`);
   target.search = new URLSearchParams(params).toString();
-  const response = await fetch(target, { headers: { host: host ?? redirect.host } });
-  return response.status;
+  return get(target.href, host ?? redirect.host);
 }
 async function consent(authorize: URL, code = `synthetic-code-${crypto.randomUUID()}`) {
   nonces.set(code, authorize.searchParams.get('nonce')!);

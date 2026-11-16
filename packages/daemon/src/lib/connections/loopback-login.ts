@@ -22,6 +22,7 @@ export async function startLoopbackLogin(options: {
     signal: AbortSignal
   ) => Promise<LoginOutcome>;
   timeoutMs?: number;
+  serve?: typeof createHttpWsServer;
 }) {
   const verifier = randomBytes(32).toString('base64url');
   const state = randomBytes(32).toString('base64url');
@@ -57,7 +58,7 @@ export async function startLoopbackLogin(options: {
         },
       }
     );
-  const server = await createHttpWsServer({
+  const server = await (options.serve ?? createHttpWsServer)({
     hostname: '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 30,
