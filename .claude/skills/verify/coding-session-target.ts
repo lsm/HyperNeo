@@ -112,7 +112,15 @@ try {
   reserve('refused', reused.todo!.id);
   await pack.workerTargetRefused(reused.todo!);
   assert.deepEqual(reserved('refused'), [{ todoId: reused.todo!.id }]);
-  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target; a sessionless failed owner and a refused claim's unbound reservation stop holding their feature, while a started todo keeps its reservation. Evidence: ${run}/evidence/session-target.json`);
+  for (const ref of [front, back]) await rpc('session.archive', { sessionId: ref.id, confirmed: true });
+  for (const id of ['after-archive', 'after-fresh'])
+    store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
+  const onlyArchived = await decide('only archived sessions: a new session starts', todo('after-archive'), { verb: 'start', adapter: 'hyperneo', name: 'backend' });
+  assert.equal('value' in onlyArchived && onlyArchived.value.verb, 'start', JSON.stringify(onlyArchived));
+  const fresh = await session('fresh');
+  worked('earlier', fresh, 'dev');
+  assert.deepEqual(await decide('archived and live idle: the live one is reused', todo('after-fresh'), { verb: 'start', adapter: 'hyperneo', name: 'dev' }), { value: { verb: 'send', ref: fresh } });
+  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target; a sessionless failed owner and a refused claim's unbound reservation stop holding their feature, while a started todo keeps its reservation; archived sessions are never reused: with only archived ones a new session starts, and a live idle one is chosen over them. Evidence: ${run}/evidence/session-target.json`);
 } finally {
   writeFileSync(join(run, 'evidence/session-target.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app.cleanup();
