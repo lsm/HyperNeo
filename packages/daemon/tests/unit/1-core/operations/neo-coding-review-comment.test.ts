@@ -118,6 +118,21 @@ describe('createCodingReviewComments', () => {
       db.close();
     }
   });
+  test('pruning a PR the ledger no longer watches also drops its posted marker', async () => {
+    const { db, ledger, comments, sweep } = setup();
+    try {
+      ledger.recordStage(fact);
+      await sweep();
+      expect(comments).toHaveLength(1);
+      const markers = () =>
+        db.prepare('SELECT COUNT(*) AS n FROM pack_coding_review_comments').get() as { n: number };
+      expect(markers().n).toBe(1);
+      await ledger.write('prune', ['synthetic/review'], 30 * 24 * 60 * 60_000);
+      expect(markers().n).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
   test('a merged PR makes no GitHub calls', async () => {
     const { db, ledger, comments, calls, sweep, github } = setup('head-a', 5, 'merged');
     try {
