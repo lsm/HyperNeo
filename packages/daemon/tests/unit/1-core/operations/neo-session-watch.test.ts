@@ -688,6 +688,41 @@ describe('refreshDriverWork', () => {
     expect(holdNotices()).toHaveLength(1);
   });
 
+  test.each(['neo', 'front'])('a %s limit retry keeps its notice and alerts once', async (role) => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const id = role === 'neo' ? 'neo:root' : frontSessionId(conversation);
+    if (role === 'front') await db.createSession(createTestSession(id));
+    const state = (value: Record<string, unknown>) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify(value), id);
+    const since = Date.now();
+    const held = {
+      status: 'rate_limit_cooldown',
+      reason: 'limit',
+      since,
+      retryAt: since + 31 * 60_000,
+    };
+    state(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    state({ status: 'processing', phase: 'thinking' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(1);
+    state(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    state({ ...held, since: since + 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(2);
+    state({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+  });
+
   test('a model hold notice keeps the public notice list within its existing limit', async () => {
     service.sessionWatcher.sessionNotices = Array.from(
       { length: NEO_SESSION_NOTICES_MAX },
