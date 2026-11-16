@@ -48,7 +48,12 @@ import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { closedNeoRequest, type NeoRequestReply, recordNeoRequestTodo } from './request-todo.ts';
+import {
+  closedNeoRequest,
+  NEO_REQUEST_REPLY,
+  type NeoRequestReply,
+  recordNeoRequestTodo,
+} from './request-todo.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
@@ -1267,6 +1272,22 @@ export class NeoService {
             reason: `${sent.message} (gave up after ${job.retryCount + 1} attempts)`,
           }
         : (sent.value as { kind: string; reason?: string });
+    const deferred = reply.deferred ?? 0;
+    if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
+      this.db.getJobQueueRepo().enqueue({
+        queue: NEO_REQUEST_REPLY,
+        payload: {
+          todoId: reply.todoId,
+          to: reply.to,
+          from: reply.from,
+          text: reply.text,
+          deferred: deferred + 1,
+        } satisfies NeoRequestReply,
+        runAt: Date.now() + 10 * 60_000,
+        maxRetries: job.maxRetries,
+      });
+      return { kind: 'deferred' };
+    }
     if (result.kind !== 'accepted')
       await this.attention(
         {

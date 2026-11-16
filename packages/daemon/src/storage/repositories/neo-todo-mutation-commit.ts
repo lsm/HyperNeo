@@ -150,7 +150,13 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
       if (args.input.kind !== 'edit')
-        queueNeoRequestReply(db, plan.todo, committed.todo!, args.input.reason);
+        queueNeoRequestReply(
+          db,
+          plan.todo,
+          committed.todo!,
+          args.input.reason,
+          todos.getAsk(plan.todo.askId)?.sessionId ?? null
+        );
       return {
         ok: true,
         todo: committed.todo!,
