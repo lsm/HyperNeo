@@ -127,6 +127,7 @@ describe('the attention sweep with model-routing on', () => {
   let authReads = 0;
   let covered = false;
   let neo: string | null = 'neo:root';
+  let thinking: string | undefined;
 
   const wakes = () =>
     (
@@ -170,7 +171,7 @@ describe('the attention sweep with model-routing on', () => {
     ).run(
       ref.id,
       status,
-      JSON.stringify({ provider: 'anthropic', model: 'opus' }),
+      JSON.stringify({ provider: 'anthropic', model: 'opus', thinkingLevel: thinking }),
       JSON.stringify({
         status: 'rate_limit_cooldown',
         retryCount: 0,
@@ -190,6 +191,7 @@ describe('the attention sweep with model-routing on', () => {
     authReads = 0;
     covered = false;
     neo = 'neo:root';
+    thinking = undefined;
     runMigrations(db, () => {});
     createTables(db);
     new NeoAskTodoRepository(db).openAsk({
@@ -329,6 +331,21 @@ describe('the attention sweep with model-routing on', () => {
     neo = 'neo:root';
     await sweep(NOW + 5 * MINUTE);
     await sweep(NOW + 10 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('an onHold rule naming the held line with its effort applies to the worker', async () => {
+    thinking = 'think24k';
+    db.prepare(
+      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+       VALUES ('model-routing', 'global', '', 'onHold', ?, 'human', 1)`
+    ).run(
+      JSON.stringify([
+        { reason: 'limit', line: { ...HELD, effort: 'high' }, action: 'move', afterMinutes: 0 },
+      ])
+    );
+    heldTodo(5);
+    await sweep(NOW);
     expect(wakes()).toHaveLength(1);
   });
 
