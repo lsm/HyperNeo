@@ -189,6 +189,18 @@ export class SessionScheduleRepository {
     );
   }
 
+  releaseExternalDelivery(schedule: SessionSchedule, messageId: string): void {
+    this.db.run(
+      `UPDATE session_schedules SET last_message_id = ?, last_outcome = ?, updated_at = ?
+      WHERE id = ? AND last_message_id = ? AND last_outcome = 'sending' AND delivery_receipt IS NULL`,
+      schedule.lastMessageId,
+      schedule.lastOutcome,
+      Date.now(),
+      schedule.id,
+      messageId
+    );
+  }
+
   saveDeliveryReceipt(id: string, messageId: string, receipt: unknown): void {
     this.db.run(
       'UPDATE session_schedules SET delivery_receipt = ? WHERE id = ? AND last_message_id = ?',
