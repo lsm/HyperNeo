@@ -1,16 +1,16 @@
 import { expect, test } from 'bun:test';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
-import { createDriverHealthMonitor } from '../../../../src/lib/drivers/driver-health.ts';
+import {
+  createDriverHealthMonitor,
+  driverHealthEvents,
+} from '../../../../src/lib/drivers/driver-health.ts';
 
 function fixture() {
   let now = 1;
   let status: DriverHealth['status'] = 'ok';
   let version = '1.0.0';
   let probes = 0;
-  let failNotice = false;
-  let available = true;
   const stored: Record<string, DriverHealth> = {};
-  const notices = new Map<string, string>();
   const deps = {
     ids: ['codex-desktop'],
     now: () => now,
@@ -26,17 +26,11 @@ function fixture() {
         clientVersions: { desktop: version },
       };
     },
-    notify: async (id: string, text: string) => {
-      if (!available) return false;
-      notices.set(id, text);
-      if (failNotice) throw new Error('Reply was lost.');
-      return true;
-    },
   };
   return {
     deps,
     stored,
-    notices,
+    events: () => driverHealthEvents(stored),
     probes: () => probes,
     setNow: (n: number) => {
       now = n;
@@ -47,63 +41,53 @@ function fixture() {
     setVersion: (v: string) => {
       version = v;
     },
-    failNotice: (v: boolean) => {
-      failNotice = v;
-    },
-    setNeoAvailable: (v: boolean) => {
-      available = v;
-    },
   };
 }
 
-test('daily checks persist status and do not repeat unchanged notices across restart', async () => {
+test('daily checks persist status and keep the incident start across unchanged checks and restart', async () => {
   const f = fixture();
   await createDriverHealthMonitor(f.deps).check(true);
   expect(f.stored['codex-desktop']).toMatchObject({
     status: 'ok',
     unverifiedVersion: true,
     clientVersions: { desktop: '1.0.0' },
+    since: 1,
   });
+  f.setNow(5);
   await createDriverHealthMonitor(f.deps).check(true);
-  expect(f.notices.size).toBe(1);
+  expect(f.stored['codex-desktop'].since).toBe(1);
   await createDriverHealthMonitor(f.deps).check();
   expect(f.probes()).toBe(2);
   f.setNow(86_400_002);
   f.setStatus('unavailable');
   await createDriverHealthMonitor(f.deps).check();
-  expect([...f.notices.values()].at(-1)).toContain('State database is missing.');
-  expect(f.notices.size).toBe(2);
-  f.setStatus('ok');
+  f.setNow(86_400_010);
   await createDriverHealthMonitor(f.deps).check(true);
-  expect([...f.notices.values()].at(-1)).toContain('recovered');
-  expect(f.notices.size).toBe(3);
+  expect(f.events()).toEqual([
+    {
+      kind: 'driver.health',
+      subject: { type: 'driver', id: 'codex-desktop' },
+      since: 86_400_002,
+      facts: { text: expect.stringContaining('codex-desktop unavailable. State database is missing.') },
+    },
+  ]);
 });
 
-test('missing Neo does not stop daily probes, and queued transitions are delivered once later', async () => {
-  const f = fixture();
-  f.setNeoAvailable(false);
-  f.setStatus('unavailable');
-  const monitor = createDriverHealthMonitor(f.deps);
-  await monitor.check(true);
-  f.setStatus('ok');
-  f.setNow(86_400_002);
-  await monitor.check();
-  expect(f.stored['codex-desktop'].status).toBe('ok');
-  expect(f.notices.size).toBe(0);
-  f.setNeoAvailable(true);
-  await monitor.check();
-  expect(f.notices.size).toBe(2);
-  await monitor.check();
-  expect(f.notices.size).toBe(2);
-});
-
-test('a lost notice acknowledgement reuses its durable identity after restart', async () => {
-  const f = fixture();
-  f.failNotice(true);
-  await expect(createDriverHealthMonitor(f.deps).check(true)).rejects.toThrow('Reply was lost');
-  f.failNotice(false);
-  await createDriverHealthMonitor(f.deps).check(true);
-  expect(f.notices.size).toBe(1);
+test('a healthy, verified driver raises no event, and an unverified one says so', async () => {
+  const healthy = { status: 'ok' as const, reason: 'Readable.', clientVersions: {}, checkedAt: 1 };
+  expect(
+    driverHealthEvents({
+      fine: { ...healthy, unverifiedVersion: false, since: 1 },
+      newer: { ...healthy, unverifiedVersion: true, since: 7 },
+    })
+  ).toEqual([
+    {
+      kind: 'driver.health',
+      subject: { type: 'driver', id: 'newer' },
+      since: 7,
+      facts: { text: expect.stringMatching(/newer ok\. Readable\..*Unverified client version/) },
+    },
+  ]);
 });
 
 test('Check now probes again when a scheduled check is already reading recent results', async () => {
@@ -138,31 +122,13 @@ test('Check now probes again when a scheduled check is already reading recent re
   expect(f.probes()).toBe(2);
 });
 
-test('verification retires an undelivered version warning before Neo becomes available', async () => {
+test('verification ends the unverified-version incident', async () => {
   const f = fixture();
-  f.setNeoAvailable(false);
   const monitor = createDriverHealthMonitor(f.deps);
   await monitor.check(true);
+  expect(f.events()).toHaveLength(1);
   await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
-  f.setNeoAvailable(true);
-  await monitor.check();
-  expect(f.notices.size).toBe(0);
-});
-
-test('verification preserves queued health transitions without stale verification guidance', async () => {
-  const f = fixture();
-  f.setNeoAvailable(false);
-  f.setStatus('unavailable');
-  const monitor = createDriverHealthMonitor(f.deps);
-  await monitor.check(true);
-  f.setStatus('ok');
-  await monitor.check(true);
-  await monitor.verified('codex-desktop', 'codex-state-discovery', { desktop: '1.0.0' });
-  f.setNeoAvailable(true);
-  await monitor.check();
-  expect(f.notices.size).toBe(2);
-  expect([...f.notices.values()].some((text) => text.includes('recovered'))).toBe(true);
-  expect([...f.notices.values()].some((text) => /unverified/i.test(text))).toBe(false);
+  expect(f.events()).toEqual([]);
 });
 
 test('verification records the tested version; a later client upgrade remains usable and warns once', async () => {
@@ -181,10 +147,10 @@ test('verification records the tested version; a later client upgrade remains us
     unverifiedVersion: true,
     clientVersions: { desktop: '2.0.0' },
   });
-  expect([...f.notices.values()].at(-1)).toMatch(/unverified/i);
-  const count = f.notices.size;
+  const [warning] = f.events();
+  expect(warning.facts.text).toMatch(/2\.0\.0.*Unverified/);
   await monitor.check(true);
-  expect(f.notices.size).toBe(count);
+  expect(f.events()).toEqual([warning]);
 });
 
 test('a proof cannot mark a different installed version as verified', async () => {
@@ -240,18 +206,4 @@ test('a simultaneous daily check cannot erase a passed version verification', as
     verifiedVersions: { desktop: '1.0.0' },
     unverifiedVersion: false,
   });
-});
-
-test('one failed Neo notice does not prevent the other clients from being checked', async () => {
-  const f = fixture();
-  f.deps.ids = ['codex-desktop', 'hyperneo'];
-  const notify = f.deps.notify;
-  f.deps.notify = async (id, text) => {
-    if (text.includes('codex-desktop')) throw new Error('Neo admission failed.');
-    return notify(id, text);
-  };
-  await expect(createDriverHealthMonitor(f.deps).check(true)).rejects.toThrow(
-    'Neo admission failed'
-  );
-  expect(f.stored.hyperneo).toMatchObject({ status: 'ok' });
 });
