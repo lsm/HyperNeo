@@ -382,6 +382,31 @@ test('a project-scoped snapshot still carries the whole human queue, like needsY
   });
 });
 
+test('a pack whose wait check fails leaves the human queue out, not the snapshot', async () => {
+  seed(1);
+  db.getDatabase().exec("UPDATE neo_todos SET approved_at = 1 WHERE id = 'todo-0'");
+  const packs = service.installedPacks();
+  spyOn(service, 'installedPacks').mockReturnValue([
+    ...packs,
+    {
+      id: 'broken',
+      describe: 'Synthetic',
+      instructions: () => null,
+      todos: {
+        schema: () => {},
+        check: async () => null,
+        statusLine: () => null,
+        waiting: async () => {
+          throw new Error('synthetic waiting failure');
+        },
+      },
+    },
+  ]);
+  const value = await snapshot(rpc);
+  expect(value.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
+  expect(value).not.toHaveProperty('humanQueue');
+});
+
 test('unapproved pending work and a tracked session both have an owner in the human queue', async () => {
   seed(1);
   const ref = { adapter: 'codex-desktop', id: 'tracked-thread' };

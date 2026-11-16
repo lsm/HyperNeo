@@ -1436,12 +1436,17 @@ export class NeoService {
     const steps = await readNeoSteps(facts, {
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+    }).catch((error) => {
+      this.log.warn('Human queue pack waits failed', error);
+      return null;
     });
-    return neoHumanQueue({
-      questions: facts.cards,
-      todos: steps.map((row) => row.todo),
-      owners: neoStepOwners(steps),
-    });
+    return steps
+      ? neoHumanQueue({
+          questions: facts.cards,
+          todos: steps.map((row) => row.todo),
+          owners: neoStepOwners(steps),
+        })
+      : null;
   }
 
   installedPacks(): NeoPack[] {
