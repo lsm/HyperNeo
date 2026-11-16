@@ -94,6 +94,12 @@ async function effortOffers<T extends Candidate>(lines: CodingLines, source: T) 
   return [base, ...variants].map((offer) => ({ ...offer, source }));
 }
 
+const sameLine = (a: NeoLine, b: NeoLine) =>
+  a.provider === b.provider &&
+  a.model === b.model &&
+  a.harness === b.harness &&
+  a.effort === b.effort;
+
 const lineText = (line: NeoLine) =>
   `${[line.provider, line.model].filter(Boolean).join('/')} via ${line.harness}`;
 
@@ -113,7 +119,7 @@ export async function rankCodingTargets<T extends Candidate>(
     ...new Set(ranking.skipped.map(({ line, reason }) => `${lineText(line)}: ${reason}`)),
   ];
   const ranked = ranking.ranked
-    .flatMap(({ line }) => offers.filter((offer) => offer.line === line))
+    .flatMap(({ line }) => offers.filter((offer) => sameLine(offer.line, line)))
     .filter(
       (offer, index, all) => all.findIndex((other) => other.source === offer.source) === index
     )

@@ -24,6 +24,7 @@ import {
   rankLines,
   routeFor,
   type UsageReading,
+  USAGE_STALE_MS,
 } from './rank.ts';
 
 const PACK = 'model-routing';
@@ -199,14 +200,19 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
   ];
 
   const readUsage = async (candidates: readonly NeoLine[]) => {
-    for (const id of providers(candidates)) {
-      const result = await within(
-        readProviderUsage({ providerId: id }, deps).catch(() => null),
-        deadline,
-        null
-      );
-      if (result) readings.set(id, { result, readAt: now() });
-    }
+    const stale = providers(candidates).filter(
+      (id) => now() - (readings.get(id)?.readAt ?? Number.NEGATIVE_INFINITY) > USAGE_STALE_MS
+    );
+    await Promise.all(
+      stale.map(async (id) => {
+        const result = await within(
+          readProviderUsage({ providerId: id }, deps).catch(() => null),
+          deadline,
+          null
+        );
+        if (result) readings.set(id, { result, readAt: now() });
+      })
+    );
     return Object.fromEntries(readings);
   };
 
