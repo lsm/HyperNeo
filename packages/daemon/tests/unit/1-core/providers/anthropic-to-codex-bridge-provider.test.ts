@@ -1828,18 +1828,109 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
-    it('Test 2: refreshes expired token + imports into ~/.hyperneo/auth.json', async () => {
+    it('Test 2: imports the Codex access token as-is and leaves the refresh token with Codex', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       writeCodexAuth(codexDir, {
-        tokens: { access_token: 'old-expired-token', refresh_token: 'valid-refresh-token' },
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
+      });
+      const codexFileBefore = readFileSync(path.join(codexDir, 'auth.json'), 'utf-8');
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe('codex-access-token');
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as {
+        openai: { type: string; access: string; refresh?: string };
+      };
+      expect(hyperneoAuth.openai.type).toBe('oauth');
+      expect(hyperneoAuth.openai.access).toBe('codex-access-token');
+      expect(hyperneoAuth.openai.refresh).toBeUndefined();
+      expect(readFileSync(path.join(codexDir, 'auth.json'), 'utf-8')).toBe(codexFileBefore);
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2b: a rejected imported token is re-read from ~/.codex/auth.json instead of refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
       });
 
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe('codex-access-token');
+
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-rotated-access', refresh_token: 'codex-rotated-refresh' },
+      });
+      expect(await p.refreshToken()).toBe('refreshed');
+      expect(await p.getApiKey()).toBe('codex-rotated-access');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2c: a stored login holding the refresh token Codex still holds is never refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'codex-access-token',
+        refresh: 'codex-refresh-token',
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as { openai: { refresh?: string } };
+      expect(hyperneoAuth.openai.refresh).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
+    it.each([
+      [
+        'Codex has since rotated its refresh token',
+        '{"tokens":{"access_token":"codex-new-access","refresh_token":"codex-refresh-2"}}',
+      ],
+      ['the Codex file cannot be read', 'not-json'],
+    ])('Test 2e: a legacy imported login is never refreshed when %s', async (_case, codexFile) => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeFileSync(path.join(codexDir, 'auth.json'), codexFile, { mode: 0o600 });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'legacy-imported-access',
+        refresh: 'codex-refresh-1',
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as { openai?: { refresh?: string } };
+      expect(hyperneoAuth.openai?.refresh).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2f: an explicitly supplied login without an expiry is still refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-other-account', refresh_token: 'codex-refresh' },
+      });
       fetchSpy.mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            access_token: 'new-fresh-token',
-            refresh_token: 'new-refresh-token',
+            access_token: 'explicit-access-2',
+            refresh_token: 'explicit-refresh-2',
             expires_in: 3600,
             token_type: 'Bearer',
           }),
@@ -1848,50 +1939,98 @@ describe('AnthropicToCodexBridgeProvider', () => {
       );
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      const key = await p.getApiKey();
-
-      expect(key).toBe('new-fresh-token');
+      p.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-access-1',
+        refreshToken: 'explicit-refresh-1',
+      } as ProviderCredentials);
+      expect(await p.refreshToken()).toBe('refreshed');
       expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-      const hyperneoAuth = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
-      ) as {
-        openai: { type: string; access: string; refresh: string };
-      };
-      expect(hyperneoAuth.openai.type).toBe('oauth');
-      expect(hyperneoAuth.openai.access).toBe('new-fresh-token');
-      expect(hyperneoAuth.openai.refresh).toBe('new-refresh-token');
+      expect(await p.getApiKey()).toBe('explicit-access-2');
       p.stopAllBridgeServers();
     });
 
-    it('Test 3: falls back to importing existing token when refresh fails', async () => {
+    it('Test 2h: an explicit login without a refresh token is not replaced by the Codex login', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       writeCodexAuth(codexDir, {
-        tokens: { access_token: 'expired-token', refresh_token: 'invalid-refresh' },
+        tokens: { access_token: 'codex-other-account', refresh_token: 'codex-refresh' },
       });
 
-      fetchSpy.mockResolvedValueOnce(
-        new Response('{"error":"invalid_grant"}', {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      );
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      p.setCredentials({ type: 'oauth', accessToken: 'explicit-access' } as ProviderCredentials);
+      expect(await p.refreshToken()).toBe('definitive');
+      expect(await p.getApiKey()).toBe('explicit-access');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2i: a manual refresh of an imported login Codex has not rotated reports it current', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
+      });
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      const key = await p.getApiKey();
+      expect(await p.getApiKey()).toBe('codex-access-token');
+      expect(await p.refreshToken()).toBe('refreshed');
+      expect(await p.getApiKey()).toBe('codex-access-token');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
 
-      expect(key).toBe('expired-token');
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    it('Test 2g: a legacy imported login handed back by the credential store is not refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-new-access', refresh_token: 'codex-refresh-2' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'legacy-imported-access',
+        refresh: 'codex-refresh-1',
+      });
 
-      const hyperneoAuth = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
-      ) as {
-        openai: { type: string; access: string; refresh?: string };
-      };
-      expect(hyperneoAuth.openai.type).toBe('oauth');
-      expect(hyperneoAuth.openai.access).toBe('expired-token');
-      expect(hyperneoAuth.openai.refresh).toBe('invalid-refresh');
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      const mirrored = await p.getCredentials();
+      p.setCredentials(mirrored as ProviderCredentials);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2d: a late 401 for the old token reuses the Codex token already re-read', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct' },
+        n: 'a',
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct' },
+        n: 'b',
+      });
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: tokenA, refresh_token: 'codex-refresh' },
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe(tokenA);
+      const auth = (
+        p as unknown as {
+          resolveBridgeAuth(): {
+            refreshAuthTokens?: (rejected: string) => Promise<{ accessToken: string } | null>;
+          };
+        }
+      ).resolveBridgeAuth();
+
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: tokenB, refresh_token: 'codex-refresh-2' },
+      });
+      expect((await auth.refreshAuthTokens?.(tokenA))?.accessToken).toBe(tokenB);
+      expect((await auth.refreshAuthTokens?.(tokenA))?.accessToken).toBe(tokenB);
+      expect(fetchSpy).not.toHaveBeenCalled();
       p.stopAllBridgeServers();
     });
 
@@ -2080,32 +2219,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(await second.isAvailable()).toBe(true);
       second.stopAllBridgeServers();
     });
-
-    it('does not cache a miss when the in-import token refresh fails transiently (network error)', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo');
-      const codexDir = path.join(tmpDir, 'codex');
-      writeCodexAuth(codexDir, {
-        tokens: { access_token: 'codex-existing-token', refresh_token: 'codex-refresh-token' },
-      });
-
-      fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-
-      const p = makeProvider({}, hyperneoDir, codexDir);
-      expect(await p.getApiKey()).toBe('codex-existing-token');
-      expect(await p.isAvailable()).toBe(true);
-      expect(await p.getApiKey()).toBe('codex-existing-token');
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-      const hyperneoAuth = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
-      ) as {
-        openai: { type: string; access: string; refresh: string };
-      };
-      expect(hyperneoAuth.openai.type).toBe('oauth');
-      expect(hyperneoAuth.openai.access).toBe('codex-existing-token');
-      expect(hyperneoAuth.openai.refresh).toBe('codex-refresh-token');
-      p.stopAllBridgeServers();
-    });
   });
 
   describe('refreshToken() stale credential clearing', () => {
@@ -2156,6 +2269,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         type: 'oauth',
         access: 'stale-access-token',
         refresh: 'revoked-refresh-token',
+        expires: Date.now() - 60_000,
       });
 
       fetchSpy.mockResolvedValueOnce(
