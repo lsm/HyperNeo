@@ -325,7 +325,9 @@ The provider's own model list stays. A session picks a model as usual.
   saves the level and reports success while `applyThinking` calls only
   optional query setters (`sdk-runtime-config.ts`) that `OapQuery` lacks. So
   for a harness whose row takes no thinking level, the daemon refuses
-  `session.thinking.set` before it saves (PR 2), and the UI hides the control
+  `session.thinking.set`, and a `thinkingLevel` sent to
+  `session.runtimeSettings.update`, before either saves (PR 2), and the UI
+  hides the control
   (PR 7). Tests check the refusal and that the stored level is unchanged.
 - For a text-only harness, PR 7 disables attach, paste and drop in the message
   input and says why. A component test covers each of the three.
@@ -408,7 +410,13 @@ pipeline edges.
   `admitUpdateSessionConfig` calls `decideSwitch` whenever the update sets
   `provider` or `model`. A same-provider update still passes. Tests send raw
   `session.update` calls covering three cases: SDK → OXAP, OXAP → SDK, and
-  one OXAP provider to another on the same harness. This gate ships in PR 2,
+  one OXAP provider to another on the same harness. A third door is
+  `session.runtimeSettings.update`: for a chat with no live session it
+  commits `provider` and `thinkingLevel` straight to the stored config
+  (`runtime-settings-operations.ts`) without `ModelSwitchHandler`. Its
+  update pipeline calls `decideSwitch` and the thinking refusal before that
+  commit, with the same three switch cases tested on a cold chat. This gate
+  ships in PR 2,
   the same PR that derives the harness from the provider, so no build lets a
   chat store provider B while its cached hub slot still runs provider A.
 - `decideOxapOpen(session, providerRecord)` gates each open. It returns the
@@ -440,7 +448,7 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
 | 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex`, and the verify skill's OXAP wire script sends `oxap-codex` until PR 2 switches it to the provider | daemon | ~100 |
-| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce (create, update, live permission change, sandbox switch) and `session.thinking.set` for a harness without thinking levels, `decideSwitch` on both doors, open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~210 |
+| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce (create, update, live permission change, sandbox switch) and `session.thinking.set` for a harness without thinking levels, `decideSwitch` on all three doors (model switch, `session.update`, `session.runtimeSettings.update`), open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~210 |
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start with one entry per provider, the adapter name switched to `config.provider` in the same PR, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised | daemon | ~20 |
 | 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
