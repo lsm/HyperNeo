@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import {
   readNeoConversationAsks,
@@ -110,14 +110,14 @@ export function prependAskWindow(
   };
 }
 
-const placeAsks = (name: string, place: typeof appendAskWindow) =>
-  (superpipe({})(name) as PipelineAPI)
+const placeAsks = (pipeline: ReturnType<SuperPipeFactory>, place: typeof appendAskWindow) =>
+  (pipeline as PipelineAPI)
     .input(['state', 'response'])
     .pipe(admitAskPage, ['state', 'response'], 'result:page')
     .pipe(place, ['state', 'page'], 'page')
     .end('page') as (state: NeoAskState, response: ConversationAskRead) => NeoAskState;
-const applyAskTail = placeAsks('neo-conversation-ask-tail', placeAskTail);
-const applyEarlierAsks = placeAsks('neo-conversation-ask-earlier', prependAskWindow);
+const applyAskTail = placeAsks(superpipe({})('neo-conversation-ask-tail'), placeAskTail);
+const applyEarlierAsks = placeAsks(superpipe({})('neo-conversation-ask-earlier'), prependAskWindow);
 
 const applyAskPage = (superpipe({})('neo-conversation-ask-state') as PipelineAPI)
   .input(['state', 'response'])

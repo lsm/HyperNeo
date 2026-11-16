@@ -1,6 +1,6 @@
 import { errorMessage as failureMessage } from '../utils/error-message.ts';
 import type { Session } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
@@ -397,11 +397,10 @@ const SCOPE_NOTE =
   'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it. Neo (MCP) callers name any Space.';
 
 function sessionPipeline<Input, Result>(
-  label: string,
-  injected: Record<string, unknown>,
+  named: ReturnType<SuperPipeFactory>,
   stages: (pipeline: PipelineAPI) => PipelineAPI
 ): (input: Input, caller: OperationCaller) => Promise<Result> {
-  const scoped = (superpipe(injected)(label) as PipelineAPI)
+  const scoped = (named as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(resolveSessionScope, ['input', 'caller', 'deps', 'admission'], 'result:outcome');
   return stages(scoped).endAsync('outcome') as (
@@ -415,37 +414,32 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
   const write = { deps, admission: WRITE_ADMISSION };
 
   const list = sessionPipeline<ListSessionsInput, SessionListResult>(
-    'session-list',
-    read,
+    superpipe(read)('session-list'),
     (pipeline) => pipeline.pipe(listSpaceSessions, ['outcome', 'input', 'deps'], 'outcome')
   );
   const detail = sessionPipeline<SessionRefInput, SessionDetailResult>(
-    'session-get',
-    read,
+    superpipe(read)('session-get'),
     (pipeline) =>
       pipeline
         .pipe(requireSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(readSessionDetail, ['outcome', 'deps'], 'outcome')
   );
   const messages = sessionPipeline<SessionMessagesInput, SessionMessagesResult>(
-    'session-messages-list',
-    read,
+    superpipe(read)('session-messages-list'),
     (pipeline) =>
       pipeline
         .pipe(requireSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(readSessionMessages, ['outcome', 'input', 'deps'], 'outcome')
   );
   const updateState = sessionPipeline<UpdateSessionStateInput, SessionStateResult>(
-    'session-state-update',
-    write,
+    superpipe(write)('session-state-update'),
     (pipeline) =>
       pipeline
         .pipe(requireMutableSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(applySessionState, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   );
   const interrupt = sessionPipeline<InterruptSessionInput, SessionInterruptResult>(
-    'session-interrupt',
-    write,
+    superpipe(write)('session-interrupt'),
     (pipeline) =>
       pipeline
         .pipe(requireMutableSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
