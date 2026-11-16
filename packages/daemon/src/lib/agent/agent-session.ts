@@ -20,6 +20,7 @@ import type {
   ProcessingWaiting,
   Provider,
   QuestionDraftResponse,
+  RateLimitHoldReason,
   RewindMode,
   RewindPreview,
   RewindResult,
@@ -1114,6 +1115,7 @@ export class AgentSession
         maxRetries?: unknown;
         exhaustedCycles?: unknown;
         reason?: unknown;
+        since?: unknown;
         heldPrompt?: { uuid?: unknown; content?: unknown };
       };
       if (
@@ -1157,13 +1159,20 @@ export class AgentSession
           parsed.exhaustedCycles >= 0
             ? parsed.exhaustedCycles
             : 0;
+        const hold: { reason?: RateLimitHoldReason; since?: number } = {
+          ...(parsed.reason === 'limit' || parsed.reason === 'overloaded'
+            ? { reason: parsed.reason }
+            : {}),
+          ...(typeof parsed.since === 'number' ? { since: parsed.since } : {}),
+        };
         this.rateLimitWatchdog.armPersistedCooldown(
           parsed.retryAt,
           messageId,
           () => {
             void this.stateManager.setIdle().catch(() => {});
           },
-          exhaustedCycles
+          exhaustedCycles,
+          hold
         );
         void this.stateManager
           .setRateLimitCooldown({
@@ -1172,6 +1181,7 @@ export class AgentSession
             exhaustedCycles,
             retryAt: parsed.retryAt,
             ...(messageId !== undefined ? { messageId } : {}),
+            ...hold,
           })
           .catch(() => {});
       }
