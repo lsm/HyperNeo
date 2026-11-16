@@ -897,7 +897,12 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
-      if (result.changes && patch.state && prune) this.pruneQuestions(todo.askId, now);
+      if (
+        result.changes &&
+        prune &&
+        (patch.state || 'instruction' in patch || 'dependsOn' in patch)
+      )
+        this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
     if (!changed) return null;
