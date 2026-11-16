@@ -354,6 +354,34 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
   expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
 });
 
+test('a project-scoped snapshot still carries the whole human queue, like needsYou', async () => {
+  seed(2);
+  service.repo.saveProject({ id: 'scoped', title: 'Scoped', summary: '', context: '' }, 0);
+  db.getDatabase().exec("UPDATE neo_asks SET project_id = 'scoped' WHERE id = 'index-0'");
+  service.todos.askQuestion(
+    'other-project-card',
+    'index-1',
+    {
+      text: 'Elsewhere?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      document: null,
+      todoId: 'todo-1',
+    },
+    1
+  );
+  const scoped = await snapshot(rpc, { projectId: 'scoped' });
+  expect(scoped.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
+  expect(scoped.needsYou).toBe(1);
+  expect(scoped.humanQueue?.counts).toEqual({
+    'index-0': { waiting: 0, held: 0, progress: 1 },
+    'index-1': { waiting: 1, held: 0, progress: 0 },
+  });
+});
+
 test('unapproved pending work and a tracked session both have an owner in the human queue', async () => {
   seed(1);
   const ref = { adapter: 'codex-desktop', id: 'tracked-thread' };

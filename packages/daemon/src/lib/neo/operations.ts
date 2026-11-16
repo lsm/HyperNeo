@@ -186,7 +186,10 @@ const SnapshotOk = z.object({
       ),
       counts: z.record(z.string(), z.record(NeoHumanQueueState, z.number().int().nonnegative())),
     })
-    .optional(),
+    .optional()
+    .describe(
+      'Everything that waits on the human across every open ask, like needsYou: projectId and paging do not narrow it.'
+    ),
   needsYou: z.number().int().nonnegative().optional(),
   neoUnhandled: z.number().int().nonnegative().optional(),
   historyCursor: HistoryCursor.nullable().optional(),

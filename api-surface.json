@@ -30055,6 +30055,7 @@
               },
               "humanQueue": {
                 "additionalProperties": false,
+                "description": "Everything that waits on the human across every open ask, like needsYou: projectId and paging do not narrow it.",
                 "properties": {
                   "counts": {
                     "additionalProperties": {
@@ -38431,6 +38432,7 @@
               },
               "humanQueue": {
                 "additionalProperties": false,
+                "description": "Everything that waits on the human across every open ask, like needsYou: projectId and paging do not narrow it.",
                 "properties": {
                   "counts": {
                     "additionalProperties": {
