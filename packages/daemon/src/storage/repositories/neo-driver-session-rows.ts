@@ -44,6 +44,11 @@ export type NeoDriverTargetCard = {
   claimedAt: number | null;
 };
 
+const parseTarget = (json: string) => {
+  const target = NeoDriverTargetSchema.safeParse(JSON.parse(json));
+  return target.success ? target.data : null;
+};
+
 export class NeoDriverSessionRows {
   constructor(
     protected readonly db: Database,
@@ -52,13 +57,25 @@ export class NeoDriverSessionRows {
   ) {}
 
   get(id: string): NeoDriverTarget | null {
-    const row = this.db.prepare(`SELECT target FROM ${this.table} WHERE ${this.key} = ?`).get(id) as
-      | { target: string }
-      | null
-      | undefined;
-    if (!row) return null;
-    const target = NeoDriverTargetSchema.safeParse(JSON.parse(row.target));
-    return target.success ? target.data : null;
+    return this.readMany([id]).get(id)?.target ?? null;
+  }
+
+  readMany(ids: readonly string[]) {
+    const rows = this.db
+      .prepare(
+        `SELECT ${this.key} AS id, target, ref FROM ${this.table}
+         WHERE ${this.key} IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(ids)) as { id: string; target: string; ref: string | null }[];
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          target: parseTarget(row.target),
+          ref: row.ref ? (JSON.parse(row.ref) as WorkRef) : null,
+        },
+      ])
+    );
   }
 
   readCard(id: string): NeoDriverTargetCard | null {
@@ -104,10 +121,7 @@ export class NeoDriverSessionRows {
   }
 
   readRef(id: string): WorkRef | null {
-    const row = this.db
-      .prepare(`SELECT ref FROM ${this.table} WHERE ${this.key} = ? AND ref IS NOT NULL`)
-      .get(id) as { ref: string } | null | undefined;
-    return row ? (JSON.parse(row.ref) as WorkRef) : null;
+    return this.readMany([id]).get(id)?.ref ?? null;
   }
 
   readFollowAnchor(id: string): number | null {
