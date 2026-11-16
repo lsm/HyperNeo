@@ -59,7 +59,7 @@ const ENSURE_AGENT_SESSION_DESCRIPTION =
 
 export function createEnsureAgentSessionOperation(deps: EnsureAgentSessionDependencies) {
   const access = 'mutate' as const;
-  const ensure = (superpipe({ deps, access })('ensure-space-agent-session') as PipelineAPI)
+  const ensure = (superpipe({ deps, access })('agent.session.ensure') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(locateAgentForSession, ['outcome', 'input', 'deps'], 'result:outcome')
