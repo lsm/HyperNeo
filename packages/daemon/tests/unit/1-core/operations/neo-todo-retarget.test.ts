@@ -7,6 +7,7 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
+import { neoTodoMoveWrites } from '../../../../src/storage/repositories/neo-todo-move-worker.ts';
 
 const old = { adapter: 'hyperneo', id: 'old' };
 const next = { adapter: 'hyperneo', id: 'next' };
@@ -57,6 +58,8 @@ function setup() {
   let stopResult = { ok: true, value: { stopped: true } } as unknown;
   let beforeStop = async () => {};
   let beforeStart = async () => {};
+  let liveAfterStop = false;
+  let unreadable = false;
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const notices: string[] = [];
   const boot = () =>
@@ -77,7 +80,7 @@ function setup() {
         calls.push({ name, input });
         if (name === 'work.stop') {
           await beforeStop();
-          if ((stopResult as { ok: boolean }).ok) status = 'stopped';
+          if ((stopResult as { ok: boolean }).ok && !liveAfterStop) status = 'stopped';
           return { kind: 'completed', value: stopResult };
         }
         if (name === 'work.start') {
@@ -90,6 +93,7 @@ function setup() {
             },
           };
         }
+        if (name === 'work.status' && unreadable) throw new Error('Synthetic status read failed');
         return {
           kind: 'completed',
           value: {
@@ -111,7 +115,7 @@ function setup() {
         "SELECT value_json FROM pack_facts WHERE todo_id = 'todo' AND pack = 'core' AND key = 'move'"
       )
       .get();
-  const seed = (fromRef = old, at = 1) =>
+  const seed = (fromRef: WorkRef = old, at = 1) =>
     db
       .prepare(
         "INSERT OR REPLACE INTO pack_facts (todo_id,pack,key,value_json) VALUES ('todo','core','move',?)"
@@ -136,10 +140,23 @@ function setup() {
     refuse: (value: unknown) => {
       stopResult = value;
     },
+    keepLive: () => {
+      liveAfterStop = true;
+    },
+    unreadable: () => {
+      unreadable = true;
+    },
   };
 }
 
 describe('neo.todo.retarget', () => {
+  test('an unknown todo is refused', async () => {
+    const h = setup();
+    expect(await h.boot().retarget('missing', old)).toMatchObject({
+      ok: false,
+      reason: 'not_found: no such todo.',
+    });
+  });
   test('claims before stopping, reopens at the stored target and ignores an old fromRef', async () => {
     const h = setup();
     h.stop(async () => {
@@ -154,43 +171,56 @@ describe('neo.todo.retarget', () => {
     expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
   });
 
-  test.each(['unsupported', 'still_live', 'adopted', 'shared', 'outstanding'])(
-    '%s refuses without changing the todo or starting a worker',
-    async (mode) => {
-      const h = setup();
-      if (mode === 'unsupported') h.refuse({ ok: false, reason: 'unsupported' });
-      if (mode === 'still_live')
-        h.stop(async () => {
-          h.refuse({ ok: false, reason: 'still_running' });
-        });
-      if (mode === 'adopted')
-        h.db
-          .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
-          .run(JSON.stringify({ verb: 'adopt', ref: old }), 'todo');
-      if (mode === 'shared') {
-        const sibling = h.store.addTodo(
-          'sibling',
-          'ask',
-          { title: 'Other', doneWhen: 'Done', instruction: 'Other', check: null, named: null },
-          1
-        );
-        h.sessions.bind(sibling.id, old, 1);
-      }
-      if (mode === 'outstanding')
-        await h.sessions.inputs.accept(
-          null,
-          'neo',
-          { verb: 'send', ref: old },
-          'Pending',
-          Date.now()
-        );
-      expect((await h.boot().retarget('todo', old)).ok).toBe(false);
-      expect(h.store.getTodo('todo')?.state).toBe('doing');
-      expect(h.sessions.readRef('todo')).toEqual(old);
-      expect(h.pending()).toBeNull();
-      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
+  test.each([
+    'unsupported',
+    'still_live',
+    'unreadable',
+    'adopted',
+    'shared',
+    'reserved_send',
+    'outstanding',
+  ])('%s refuses without changing the todo or starting a worker', async (mode) => {
+    const h = setup();
+    if (mode === 'unsupported') h.refuse({ ok: false, reason: 'unsupported' });
+    if (mode === 'still_live') h.keepLive();
+    if (mode === 'unreadable') h.unreadable();
+    if (mode === 'adopted')
+      h.db
+        .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
+        .run(JSON.stringify({ verb: 'adopt', ref: old }), 'todo');
+    if (mode === 'shared') {
+      const sibling = h.store.addTodo(
+        'sibling',
+        'ask',
+        { title: 'Other', doneWhen: 'Done', instruction: 'Other', check: null, named: null },
+        1
+      );
+      h.sessions.bind(sibling.id, old, 1);
     }
-  );
+    if (mode === 'reserved_send') {
+      h.store.addTodo(
+        'reserved',
+        'ask',
+        { title: 'Reserved', doneWhen: 'Done', instruction: 'Other', check: null, named: null },
+        1
+      );
+      h.sessions.create('reserved', { verb: 'send', ref: old });
+    }
+    if (mode === 'outstanding')
+      await h.sessions.inputs.accept(
+        null,
+        'neo',
+        { verb: 'send', ref: old },
+        'Pending',
+        Date.now()
+      );
+    expect((await h.boot().retarget('todo', old)).ok).toBe(false);
+    expect(h.store.getTodo('todo')?.state).toBe('doing');
+    expect(h.sessions.readRef('todo')).toEqual(old);
+    expect(h.pending()).toBeNull();
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
+    if (mode === 'unsupported' || mode === 'still_live') expect(h.notices).toHaveLength(1);
+  });
 
   test('two calls past their claims stop only the old ref and start once', async () => {
     const h = setup();
@@ -229,6 +259,8 @@ describe('neo.todo.retarget', () => {
     async (phase) => {
       const h = setup();
       h.seed(old, Date.now() - 2 * 60 * 60_000);
+      if (phase === 'stop')
+        expect(await h.boot().stop(h.store.getTodo('todo')!)).toBeNull();
       if (phase === 'reopen') {
         h.db.prepare("DELETE FROM pack_facts WHERE key = 'move'").run();
         h.db
@@ -242,6 +274,16 @@ describe('neo.todo.retarget', () => {
       expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
     }
   );
+
+  test('the replacement gets the latest report without rewriting the instruction', async () => {
+    const h = setup();
+    h.store.updateTodo(h.store.getTodo('todo')!, { report: 'Continue from the saved branch' }, 2);
+    await h.boot().retarget('todo', old);
+    expect(h.calls.find((call) => call.name === 'work.start')?.input.message).toContain(
+      'Latest worker report:\nContinue from the saved branch'
+    );
+    expect(h.store.getTodo('todo')?.instruction).toBe('Continue work');
+  });
 
   test.each(['done', 'failed', 'removed'] as const)(
     'a todo that becomes %s during stop is not restarted',
@@ -292,5 +334,84 @@ describe('neo.todo.retarget', () => {
     release();
     await first;
     expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+  });
+
+  test('a delayed move off A cannot erase the newer move off B', async () => {
+    const h = setup();
+    let entered = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.stop(async () => {
+      entered();
+      await held;
+    });
+    const runner = h.boot();
+    const first = runner.retarget('todo', old);
+    await waiting;
+    h.sessions.recordRef('todo', next, 2);
+    h.seed(next, 2);
+    release();
+    await first;
+    expect(h.pending()).toMatchObject({ value_json: JSON.stringify({ fromRef: next, at: 2 }) });
+    h.stop(async () => {});
+    await runner.recoverMoves();
+    expect(h.pending()).toBeNull();
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+  });
+
+  test.each(['release', 'active', 'reopen'] as const)(
+    'old-pair %s never erases a newer fact',
+    async (method) => {
+      const h = setup();
+      h.seed(old, 2);
+      await gatewayFor(h.db).call(neoTodoMoveWrites, method, {
+        todoId: 'todo',
+        fromRef: old,
+        at: 1,
+      });
+      expect(h.pending()).toMatchObject({ value_json: JSON.stringify({ fromRef: old, at: 2 }) });
+      expect(h.sessions.readRef('todo')).toEqual(old);
+    }
+  );
+
+  test.each(['done', 'removed'] as const)(
+    'recovery cleans a move whose todo is already %s',
+    async (state) => {
+      const h = setup();
+      h.seed();
+      h.store.updateTodo(h.store.getTodo('todo')!, { state }, 2);
+      await h.boot().recoverMoves();
+      expect(h.pending()).toBeNull();
+      expect(
+        h.calls.filter((call) => call.name === 'work.stop' || call.name === 'work.start')
+      ).toHaveLength(0);
+    }
+  );
+
+  test('an unusable stall worker resumed without a move fact is not moved by recovery', async () => {
+    const h = setup();
+    h.db
+      .prepare(
+        "INSERT INTO work_started_sessions (adapter,id,started_at,unusable_at) VALUES ('hyperneo','old',1,2)"
+      )
+      .run();
+    h.sessions.recordNudge('todo', { since: 1, nudges: 0, redispatched: true });
+    await h.boot().recoverMoves();
+    expect(h.sessions.readRef('todo')).toEqual(old);
+    expect(
+      h.calls.filter((call) => call.name === 'work.start' || call.name === 'work.stop')
+    ).toHaveLength(0);
+  });
+
+  test('the shared stop helper refuses a successful stop whose worker is still running', async () => {
+    const h = setup();
+    h.keepLive();
+    expect(await h.boot().stop(h.store.getTodo('todo')!)).toContain('stop_unconfirmed');
+    expect(h.store.getTodo('todo')?.state).toBe('doing');
   });
 });

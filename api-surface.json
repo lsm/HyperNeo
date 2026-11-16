@@ -43822,6 +43822,61 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "fromRef": {
+            "properties": {
+              "adapter": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "daemon": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "adapter",
+              "id"
+            ],
+            "type": "object"
+          },
+          "todoId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "todoId",
+          "fromRef"
+        ],
+        "type": "object"
+      },
+      "name": "neo.todo.retarget",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "todo": {}
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
           "name": {
             "minLength": 1,
             "type": "string"

@@ -49,6 +49,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.home.read',
   'neo.home.save',
   'neo.pack.read',
+  'neo.todo.retarget',
   'neo.peer.accept',
   'neo.peer.invite',
   'neo.peer.list',

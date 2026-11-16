@@ -1242,6 +1242,9 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await this.todoRunner
+      .recoverMoves()
+      .catch((error) => this.log.warn('Todo move recovery pending', error));
     await sweepNeoTrackerMirrors(
       this.db.getDatabase(),
       this.packs().flatMap((pack) => pack.tracker ?? [])

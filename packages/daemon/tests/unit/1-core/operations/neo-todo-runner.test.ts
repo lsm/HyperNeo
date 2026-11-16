@@ -2667,7 +2667,7 @@ describe('neo todo runner uncertainty', () => {
       attend: async () => {},
       changed: () => {},
     });
-    expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
+    expect(await unsupported.stop(store.getTodo(resumed.id)!)).toContain('stop_failed');
     const refusing = createNeoTodoRunner({
       limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -3541,6 +3541,7 @@ describe('current explicit removal behavior before recompute', () => {
       await h.runner.start(todo.id);
       const report = 'Complete previous result 🦊\n'.repeat(4000);
       h.store.updateTodo(h.store.getTodo(todo.id)!, { report }, Date.now());
+      h.setStatus({ ok: true, value: { status: 'stopped', lastActivityAt: Date.now() } });
       expect(await remove(h, todo.id)).toMatchObject({ ok: true });
       const removed = h.store.getTodo(todo.id);
       const sibling = h.add();

@@ -1,4 +1,5 @@
 import { createNeoRelayOperations } from './relay-answer.ts';
+import { WorkRefSchema } from '../drivers/types.ts';
 import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -741,6 +742,23 @@ export function createNeoOperations(
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
+    defineOperation({
+      name: 'neo.todo.retarget',
+      description:
+        'Stop a todo worker, confirmed, and restart the todo through its stored target. The old fromRef makes a repeated request harmless. Shared or adopted workers are refused.',
+      inputSchema: z.object({ todoId: z.string().min(1), fromRef: WorkRefSchema }),
+      resultSchema: z.object({
+        ok: z.boolean(),
+        reason: z.string().optional(),
+        todo: z.unknown().optional(),
+      }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: path(
+        'neo.todo.retarget',
+        ({ todoId, fromRef }: { todoId: string; fromRef: z.infer<typeof WorkRefSchema> }) =>
+          service.todoRunner.retarget(todoId, fromRef)
+      ),
+    }),
     createRestartReservationOperation(() => {
       const id = service.repo.defaultBinding()?.sessionId;
       return {

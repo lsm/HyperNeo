@@ -14,6 +14,7 @@ const workers = new Set([
   'storage/db-gateway/db-gateway-worker.ts',
   'storage/repositories/google-connections-worker.ts',
   'storage/repositories/neo-ask-input-worker.ts',
+  'storage/repositories/neo-todo-move-worker.ts',
   'storage/repositories/neo-front-input-worker.ts',
   'storage/repositories/neo-front-read-worker.ts',
   'storage/repositories/anthropic-usage-read.ts',
