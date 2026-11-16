@@ -43,7 +43,7 @@ export const neoAttentionDelivery = (
       sessionId &&
       gatewayFor(db).call(
         neoWakeQueueWrite,
-        'hold',
+        'holdOnce',
         createMailboxEntry({
           to: { kind: 'session', sessionId },
           origin: renderAddress({ kind: 'session', sessionId }),

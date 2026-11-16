@@ -83,6 +83,18 @@ export class NeoWakeQueueRepository {
     });
   }
 
+  holdOnce(entry: MailboxEntry): void {
+    const sessionId = entry.to.kind === 'session' ? entry.to.sessionId : '';
+    new JobQueueRepository(this.db).commitSubmissionReceipt(
+      `neo-note:${sessionId}:${entry.messageUuid ?? entry.id}`,
+      'v1',
+      () => {
+        this.hold(entry);
+        return true;
+      }
+    );
+  }
+
   attach(
     sessionId: string,
     content: MailboxMessageContent,
@@ -177,5 +189,5 @@ export const neoWakeQueueWrite = defineRepositoryOp(
   'neo.wake-queue.write',
   'write',
   NeoWakeQueueRepository,
-  ['hold']
+  ['hold', 'holdOnce']
 );
