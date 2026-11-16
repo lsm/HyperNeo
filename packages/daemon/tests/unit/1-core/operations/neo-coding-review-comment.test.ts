@@ -3,6 +3,10 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
+import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrSweepRepository } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 import {
   codingGithubApi,
@@ -281,6 +285,86 @@ describe('createCodingReviewComments', () => {
   });
 });
 
+describe('coding pack review comments', () => {
+  const ledgerNode = (state: 'OPEN' | 'MERGED') => ({
+    number: 3,
+    title: 'Synthetic',
+    body: '',
+    headRefName: 'branch',
+    headRefOid: 'head-a',
+    state,
+    isDraft: false,
+    mergeable: 'MERGEABLE',
+    reviewDecision: null,
+    closedAt: state === 'MERGED' ? new Date(Date.now() - 1000).toISOString() : null,
+    createdAt: null,
+  });
+  const packWith = (read: () => Promise<unknown>) => {
+    const { db, ledger, comments, calls, github } = setup();
+    ledger.recordStage(fact);
+    const pack = createCodingPack({
+      database: () => db,
+      readPrs: async () => [],
+      todoPrs: new CodingTodoPrRepository(db),
+      prLedger: ledger,
+      prSweep: new CodingPrSweepRepository(db),
+      prEvents: new CodingPrEventRepository(db),
+      prSweepDeps: {
+        human: async () => false,
+        tell: async () => false,
+        wake: async () => false,
+      },
+      attend: async () => false,
+      projectRepos: () => ['synthetic/review'],
+      readLedgerRepo: read,
+      postReviewComments: createCodingReviewComments(github),
+    });
+    return { db, comments, calls, pack };
+  };
+  const response = (state: 'OPEN' | 'MERGED') => ({
+    data: {
+      rateLimit: { remaining: 5000 },
+      repository: {
+        nameWithOwner: 'synthetic/review',
+        open: {
+          pageInfo: { hasNextPage: false },
+          nodes: state === 'OPEN' ? [ledgerNode(state)] : [],
+        },
+        done: { nodes: state === 'MERGED' ? [ledgerNode(state)] : [] },
+      },
+    },
+  });
+  test('a PR that merged while the daemon was offline gets no comment on the next sweep', async () => {
+    const { db, comments, calls, pack } = packWith(async () => response('MERGED'));
+    try {
+      await pack.sweep!(Date.now());
+      expect(calls).toEqual([]);
+      expect(comments).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+  test('a sweep whose ledger read fails posts nothing', async () => {
+    const { db, comments, calls, pack } = packWith(async () => ({ error: 'ledger unavailable' }));
+    try {
+      await pack.sweep!(Date.now());
+      expect(calls).toEqual([]);
+      expect(comments).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+  test('a PR the ledger confirms open is commented once', async () => {
+    const { db, comments, pack } = packWith(async () => response('OPEN'));
+    try {
+      await pack.sweep!(Date.now());
+      expect(comments).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('codingGithubApi rate limits', () => {
   const start = Date.parse('2026-11-16T12:00:00Z');
   const reply = (stdout: string, code: number, stderr = '') =>
@@ -308,6 +392,27 @@ describe('codingGithubApi rate limits', () => {
       );
     return { db, ledger, comments, calls, sweep };
   };
+  test('a comment scan that runs past one minute stops and posts nothing', async () => {
+    const { db, ledger, calls, sweep } = sweepWith((args) => {
+      if (args.includes('POST')) return reply('{}', 0);
+      const page = Number(args.find((arg) => arg.startsWith('page='))?.slice(5));
+      jest.setSystemTime(Date.now() + 25_000);
+      return reply(
+        JSON.stringify(page <= 10 ? Array.from({ length: 100 }, () => ({ body: 'chatter' })) : []),
+        0
+      );
+    });
+    try {
+      jest.setSystemTime(start);
+      await sweep();
+      expect(calls.length).toBeLessThanOrEqual(3);
+      expect(calls.some((args) => args.includes('POST'))).toBe(false);
+      expect(await readCodingPostableReviews(db, ledger, 1)).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
   test('a marker on the second page of comments is found and nothing is posted', async () => {
     let marker = '';
     const { db, ledger, calls, sweep } = sweepWith((args) =>
