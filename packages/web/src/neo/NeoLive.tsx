@@ -26,7 +26,7 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
-import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
+import { NeoHumanQueue, neoHumanQueueHolder, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -737,7 +737,11 @@ export function NeoLive() {
         if (referenceRequest.current !== ticket) return;
         setCardOpening(false);
         if (result === 'unavailable') return setCardUnavailable(true);
-        if (topic && result.entry.ask.topic !== topic) chooseTopic(null);
+        const holder = fullQueue && neoHumanQueueHolder(fullQueue, result.target);
+        const targetTopic = holder
+          ? workEntries.find((entry) => entry.ask.id === holder.askId)?.ask.topic
+          : result.entry.ask.topic;
+        if (topic && targetTopic !== topic) chooseTopic(null);
         if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
           setReferenced({
             scope: sceneScope,
@@ -1103,6 +1107,7 @@ export function NeoLive() {
               focus={cardTarget}
               reveal={reveal}
               onStale={() => void neo.refresh()}
+              onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
               onReply={
                 ready
                   ? (question) =>

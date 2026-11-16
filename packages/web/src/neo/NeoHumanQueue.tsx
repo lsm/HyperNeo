@@ -11,6 +11,7 @@ import type {
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
 import { QuestionBox } from './NeoAskTodos.tsx';
+import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
 import { neoPlainClass } from './NeoCardParts.tsx';
 import type { NeoWorkFocus } from './neo-work-reference.ts';
 
@@ -29,6 +30,9 @@ const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
 export const neoHumanQueueHolds = (queue: Queue, focus: NeoWorkFocus) =>
   queue.items.some((item) => holds(item, focus));
 
+export const neoHumanQueueHolder = (queue: Queue, focus: NeoWorkFocus) =>
+  queue.items.find((item) => holds(item, focus));
+
 const tone = (on: boolean) =>
   on ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted hover:text-fg';
 
@@ -44,6 +48,7 @@ export function NeoHumanQueue({
   focus,
   reveal = 0,
   onStale,
+  onDesktopControl,
 }: {
   queue: Queue;
   entries: readonly NeoAskEntry[];
@@ -56,6 +61,7 @@ export function NeoHumanQueue({
   focus?: NeoWorkFocus | null;
   reveal?: number;
   onStale?: () => void;
+  onDesktopControl?: (todoId: string, on: boolean) => void;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
@@ -246,7 +252,9 @@ export function NeoHumanQueue({
               <QueueItem
                 key={'questionId' in item ? item.questionId : item.todoId}
                 item={item}
-                entry={card(id)}
+                entry={card(id) ?? details[id]}
+                refreshing={!card(id)}
+                onDesktopControl={onDesktopControl}
                 failed={failed(id)}
                 onRetry={() => setAttempt((value) => value + 1)}
                 anchor={anchor}
@@ -267,6 +275,7 @@ function QueueItem({
   item,
   entry,
   failed,
+  refreshing,
   onRetry,
   anchor,
   disabled,
@@ -274,10 +283,13 @@ function QueueItem({
   onHold,
   onReply,
   onOpen,
+  onDesktopControl,
 }: {
   item: NeoHumanQueueItem;
   entry?: NeoAskEntry;
   failed?: boolean;
+  refreshing?: boolean;
+  onDesktopControl?: (todoId: string, on: boolean) => void;
   onRetry: () => void;
   anchor: (todoId: string) => string | undefined;
   disabled?: boolean;
@@ -286,13 +298,50 @@ function QueueItem({
   onReply?: (question: NeoQuestionEntry) => void;
   onOpen?: (link: string, title: string) => void;
 }) {
-  if (item.state === 'progress')
+  const [open, setOpen] = useState(false);
+  if (item.state === 'progress') {
+    const todo = entry?.todos.find((candidate) => candidate.id === item.todoId);
+    const desktop =
+      onDesktopControl &&
+      todo &&
+      !todo.worker?.daemon &&
+      ['todo', 'doing', 'blocked'].includes(todo.state)
+        ? todo
+        : undefined;
     return (
-      <p id={anchor(item.todoId)} class="mt-2 flex flex-wrap justify-between gap-2 text-sm">
-        <span>{item.title}</span>
-        {item.owner && <span class="text-fg-muted">{t(`queue.owner.${item.owner}`)}</span>}
-      </p>
+      <div id={anchor(item.todoId)} data-ask-todo={item.todoId} class="mt-2 text-sm">
+        <p class="flex flex-wrap justify-between gap-2">
+          {desktop ? (
+            <button
+              type="button"
+              class="text-left hover:underline"
+              aria-expanded={open}
+              aria-label={t(open ? 'todo.hideDetails' : 'todo.showDetails', { title: item.title })}
+              onClick={() => setOpen(!open)}
+            >
+              {item.title}
+            </button>
+          ) : (
+            <span>{item.title}</span>
+          )}
+          {item.owner && <span class="text-fg-muted">{t(`queue.owner.${item.owner}`)}</span>}
+        </p>
+        {desktop && open && (
+          <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
+            <input
+              type="checkbox"
+              class={`${FORM_CHECKBOX_CLASS} accent-accent`}
+              checked={desktop.named?.desktopControl === true}
+              onChange={(event) =>
+                onDesktopControl?.(item.todoId, (event.target as HTMLInputElement).checked)
+              }
+            />
+            {t('todo.desktopControl')}
+          </label>
+        )}
+      </div>
     );
+  }
   const held = item.state === 'held';
   const hold = { held, toggle: () => onHold(item.questionId, !held) };
   const known = entry?.questions.find((card) => card.id === item.questionId);
@@ -313,7 +362,7 @@ function QueueItem({
       {question ? (
         <QuestionBox
           question={question}
-          disabled={disabled}
+          disabled={disabled || refreshing}
           onAnswer={(answer) => onAnswer(item.questionId, answer)}
           onReply={onReply && (() => onReply(question))}
           onOpen={onOpen}
