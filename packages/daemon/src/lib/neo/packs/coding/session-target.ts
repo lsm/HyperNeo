@@ -62,17 +62,24 @@ const strategyAsks = new Map<string, Promise<unknown>>();
 function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
   const key = repo.toLowerCase();
   const asked = (strategyAsks.get(key) ?? Promise.resolve()).then(async () => {
-    const read = () =>
-      gatewayFor(db).call(codingSessionAssignmentReads, 'strategyQuestions', repo) as Promise<
-        { id: string; state: string }[]
-      >;
-    const plan = planCodingStrategyQuestion({ repo, saved: false, questions: await read() });
-    if (!plan?.ask) return plan;
-    const outcome = await askSetting(plan.ask);
+    const plan = async () =>
+      planCodingStrategyQuestion({
+        repo,
+        saved: false,
+        nonce: crypto.randomUUID(),
+        questions: await gatewayFor(db).call(
+          codingSessionAssignmentReads,
+          'strategyQuestions',
+          repo
+        ),
+      });
+    const first = await plan();
+    if (!first?.ask) return first;
+    const outcome = await askSetting(first.ask);
     const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
-    if (reply?.ok) return plan;
-    const winner = (await read()).find((question) => question.state === 'open');
-    return winner ? { reuse: winner.id } : { refused: outcome };
+    if (reply?.ok) return first;
+    const winner = await plan();
+    return winner?.reuse ? winner : { refused: outcome };
   });
   strategyAsks.set(
     key,

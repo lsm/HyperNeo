@@ -37,26 +37,32 @@ export function savedCodingSessionStrategy(db: Database, repo: string) {
 export const codingSessionStrategyRequest = (repo: string) =>
   `coding.sessionStrategy:${repo.toLowerCase()}:`;
 
+const strategyAlternatives = (repo: string) =>
+  STRATEGIES.map((value) => [
+    {
+      pack: 'coding',
+      scope: { kind: 'repo' as const, key: repo.toLowerCase() },
+      key: 'sessionStrategy',
+      value,
+    },
+  ]);
+
 export function planCodingStrategyQuestion(input: {
   repo: string;
   saved: boolean;
-  questions: readonly { id: string; state: string }[];
+  nonce: string;
+  questions: readonly { id: string; state: string; proposal: string }[];
 }) {
-  const [latest] = input.questions;
+  const alternatives = strategyAlternatives(input.repo);
+  const proposal = JSON.stringify({ alternatives, hold: false });
+  const [latest] = input.questions.filter((question) => question.proposal === proposal);
   if (input.saved || latest?.state === 'answered') return null;
   if (latest?.state === 'open') return { reuse: latest.id };
   return {
     ask: {
-      requestId: `${codingSessionStrategyRequest(input.repo)}${input.questions.length + 1}`,
+      requestId: `${codingSessionStrategyRequest(input.repo)}${input.nonce}`,
       hold: false as const,
-      alternatives: STRATEGIES.map((value) => [
-        {
-          pack: 'coding',
-          scope: { kind: 'repo' as const, key: input.repo.toLowerCase() },
-          key: 'sessionStrategy',
-          value,
-        },
-      ]),
+      alternatives,
     },
   };
 }
