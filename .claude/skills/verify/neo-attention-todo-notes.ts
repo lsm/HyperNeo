@@ -164,18 +164,20 @@ try {
   const driver = await pass('two driver refreshes after the last todo finished', 0, () =>
     service!.refreshDriverWork()
   );
-  assert.deepEqual(driver, { wakes: [], digest: [finished] }, 'the finished ask is told once');
+  assert.deepEqual(driver, { wakes: [finished], digest: [] }, 'the finished ask is one wake');
 
   const unapproved =
     'Todo "unapproved-step" (unapproved-step) cannot start: it was not approved. Review it with neo.todo.read.';
   const first = await pass('two sweeps at the start', 0, () => service!.sweepPacks());
-  assert.equal(first.wakes.length, 1, 'the failed start is one wake');
+  const steps = first.wakes.filter((text) => text !== finished);
+  assert.equal(steps.length, 1, 'the failed start is one wake');
+  assert.equal(first.wakes.length, 2, 'the finished ask is not told again');
   assert(
-    first.wakes[0]!.startsWith(
+    steps[0]!.startsWith(
       'Todo "interrupted-step" (interrupted-step) needs your next step: it failed: Start was interrupted'
     )
   );
-  assert.deepEqual(first.digest, [finished, unapproved], 'the unapproved todo is one digest line');
+  assert.deepEqual(first.digest, [unapproved], 'the unapproved todo is one digest line');
   assert(![...first.wakes, ...first.digest].some((text) => text.includes('confirmed-step')));
 
   todos.updateTodo(todos.getTodo('interrupted-step')!, { state: 'removed', reason: 'Synthetic' }, at);
@@ -185,7 +187,7 @@ try {
     [unapproved, unapproved],
     'and one more line a day later'
   );
-  assert.equal(later.wakes.length, 1, 'a removed todo is no longer told');
+  assert.equal(later.wakes.length, 2, 'a removed todo is no longer told');
   evidence.passed = true;
   console.log('PASS');
 } catch (error) {

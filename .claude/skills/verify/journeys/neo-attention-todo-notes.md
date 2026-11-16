@@ -19,8 +19,8 @@ the digest queue (`neo_notes`) after each pass:
 - a todo the runner finishes and a start the runner finds interrupted add
   nothing by themselves: the done note is dropped and the failure is not a
   note of its own;
-- the driver refresh tells the ask whose last todo finished once, as "All
-  todos are finished", through the stalled-ask producer;
+- the driver refresh wakes Neo once for the ask whose last todo finished, as
+  "All todos are finished", through the stalled-ask producer;
 - the sweep then tells the failed start once, as a "needs your next step"
   wake that carries the failure;
 - a todo that was never approved and has no card is one digest line, and one

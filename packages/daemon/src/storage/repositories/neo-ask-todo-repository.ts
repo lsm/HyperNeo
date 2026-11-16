@@ -643,37 +643,25 @@ export class NeoAskTodoRepository {
 
   listStalledAsks(
     before: number,
-    repeatBefore: number | null = null,
-    includeStalledTodos = true,
+    includeBlocked = true,
     wakeFinishedNow = false
-  ): {
-    id: string;
-    sessionId: string;
-    title: string;
-    wakeKey: string;
-    finished: number;
-  }[] {
+  ): { id: string; sessionId: string; title: string; since: number; finished: number }[] {
     return this.db
       .prepare(`SELECT id, session_id AS sessionId, title, ${ASK_ALL_DONE} AS finished,
-      'neo-stalled-ask:' || id || ':' || updated_at || ':' || COALESCE(stalled_wake_at, 0) AS wakeKey
+      COALESCE((SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id), updated_at) AS since
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?3 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked' AND blocked_by IN ('stalled', 'environment')))
-      AND ((updated_at <= ?1 AND (?2 IS NULL OR stalled_wake_at IS NULL OR stalled_wake_at <= ?2))
-        OR (?4 AND ${ASK_ALL_DONE} AND (stalled_wake_at IS NULL OR stalled_wake_at < updated_at)))`)
-      .all(before, repeatBefore, includeStalledTodos ? 1 : 0, wakeFinishedNow ? 1 : 0) as {
+      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
+      AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
+      .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as {
       id: string;
       sessionId: string;
       title: string;
-      wakeKey: string;
+      since: number;
       finished: number;
     }[];
-  }
-
-  recordStalledAskWake(askId: string, now: number): void {
-    this.db.prepare('UPDATE neo_asks SET stalled_wake_at = ? WHERE id = ?').run(now, askId);
   }
 
   getTodo(id: string): NeoTodo | null {

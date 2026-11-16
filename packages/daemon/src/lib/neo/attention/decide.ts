@@ -126,6 +126,15 @@ export function renderNeoAttention(
   return kinds.find((item) => item.id === event.kind)?.render(event) ?? '';
 }
 
+export function neoAttentionUuids(
+  event: NeoAttentionEvent,
+  kinds: readonly NeoAttentionKind[]
+): string[] {
+  const text = renderNeoAttention(event, kinds);
+  const rungs = kinds.find((item) => item.id === event.kind)?.ladder?.length ?? 0;
+  return Array.from({ length: rungs + 1 }, (_, step) => neoAttentionUuid(event, step, text));
+}
+
 export const neoAttentionUuid = (event: NeoAttentionEvent, step: number, text: string) =>
   neoDerivedId(
     JSON.stringify([

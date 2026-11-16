@@ -44,7 +44,7 @@ try {
   service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
   const ask = service.todos.openAsk({ id: 'stalled', sessionId: root, projectId: null, originMessageId: null,
     title: 'Synthetic stalled ask', request: 'Complete work', createdAt: now - 3 * 3_600_000 });
-  await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+  await wakeStalledAsks(service.todos, (service as unknown as { attention: Parameters<typeof wakeStalledAsks>[1] }).attention, now);
   service.installedPacks = () => [{ id: 'synthetic-proof', describe: 'Fixture completion check', todos: {
     schema: () => {}, check: async () => ({ done: true, evidence: 'Observed' }), statusLine: () => null,
   } }];
