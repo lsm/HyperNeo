@@ -1,5 +1,10 @@
 import { runLagPhase } from '../event-loop-activity.ts';
-import type { FallbackModelEntry, MessageContent, ModelLimit } from '@hyperneo/shared';
+import type {
+  FallbackModelEntry,
+  MessageContent,
+  ModelLimit,
+  RateLimitHoldReason,
+} from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import {
   BACKOFF_LADDER_MS,
@@ -119,6 +124,7 @@ export class RateLimitWatchdog {
   private persistedExpiryCallback: (() => void) | null = null;
   private exhaustedRetryCycles = 0;
   private retryFiredForEpisode = false;
+  private holdSince: number | null = null;
 
   constructor(
     sessionId: string,
@@ -208,8 +214,9 @@ export class RateLimitWatchdog {
     return this.persistedCooldownArm;
   }
 
-  private holdReason(): { reason?: 'overloaded' } {
-    return this.lastHint?.hold ? { reason: this.lastHint.hold } : {};
+  private hold(): { reason: RateLimitHoldReason; since: number } {
+    this.holdSince ??= Date.now();
+    return { reason: this.lastHint?.hold ?? 'limit', since: this.holdSince };
   }
 
   private querySuperseded(queryGeneration?: number): boolean {
@@ -494,6 +501,7 @@ export class RateLimitWatchdog {
                   retryAt: this.currentRetryAt,
                   messageId: this.lastUserMessage?.uuid,
                   exhaustedCycles: this.exhaustedRetryCycles,
+                  ...this.hold(),
                 },
                 queryGeneration
               )
@@ -534,7 +542,7 @@ export class RateLimitWatchdog {
         retryAt,
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
-        ...this.holdReason(),
+        ...this.hold(),
       },
       queryGeneration
     );
@@ -678,7 +686,7 @@ export class RateLimitWatchdog {
             messageId: this.lastUserMessage?.uuid,
             exhaustedCycles: this.exhaustedRetryCycles,
             manualRetry: true,
-            ...this.holdReason(),
+            ...this.hold(),
           },
           queryGeneration
         )
@@ -698,7 +706,7 @@ export class RateLimitWatchdog {
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
           messageId: this.lastUserMessage?.uuid,
           exhaustedCycles: this.exhaustedRetryCycles,
-          ...this.holdReason(),
+          ...this.hold(),
         },
         queryGeneration
       );
@@ -822,6 +830,7 @@ export class RateLimitWatchdog {
                 messageId: this.lastUserMessage?.uuid,
                 exhaustedCycles: this.exhaustedRetryCycles,
                 manualRetry: true,
+                ...this.hold(),
               },
               queryGeneration
             );
@@ -923,6 +932,7 @@ export class RateLimitWatchdog {
         retryAt: this.currentRetryAt,
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
+        ...this.hold(),
       });
       return;
     }
@@ -933,6 +943,7 @@ export class RateLimitWatchdog {
         retryAt: Date.now(),
         messageId: this.lastUserMessage?.uuid,
         exhaustedCycles: this.exhaustedRetryCycles,
+        ...this.hold(),
       });
     }
   }
@@ -993,6 +1004,7 @@ export class RateLimitWatchdog {
     this.chain = null;
     this.limitKind = null;
     this.lastHint = null;
+    this.holdSince = null;
   }
 
   private getRemainingMs(): number {

@@ -122,6 +122,7 @@ export type AgentProcessingState =
       messageId?: string;
       manualRetry?: boolean;
       reason?: RateLimitHoldReason;
+      since?: number;
     }
   | { status: 'interrupted' };
 

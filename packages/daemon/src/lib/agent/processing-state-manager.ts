@@ -350,6 +350,7 @@ export class ProcessingStateManager {
       messageId?: string;
       manualRetry?: boolean;
       reason?: RateLimitHoldReason;
+      since?: number;
       heldPrompt?: { uuid: string; content: string | MessageContent[] };
     },
     ownerGeneration?: number
@@ -367,6 +368,7 @@ export class ProcessingStateManager {
       ...(state.messageId !== undefined ? { messageId: state.messageId } : {}),
       ...(state.manualRetry ? { manualRetry: true } : {}),
       ...(state.reason ? { reason: state.reason } : {}),
+      ...(state.since !== undefined ? { since: state.since } : {}),
     };
     let writeError: unknown;
     try {
