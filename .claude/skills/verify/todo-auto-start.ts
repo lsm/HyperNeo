@@ -207,7 +207,7 @@ try {
     const step = (title: string, id = 'flow') => ({ after: [], title, instruction: `Complete ${title}.`, target: target(id), check: { pack: 'core', kind: 'evidence', params: { path: join(run, title) } } });
     const read = async (askId: string) => (await rpc('neo.ask.read', { askId })).entry;
     const complete = async (title: string) => { writeFileSync(join(run, title), 'Verified outcome'); await refresh(); };
-    const open = (view: { questions: { state: string }[] }) => view.questions.filter((q) => q.state === 'open');
+    const open = (view: { questions: { id: string; state: string; cause?: string; todos: string[]; options: string[] | null }[] }) => view.questions.filter((q) => q.state === 'open');
     const state = (view: { todos: { id: string; state: string }[] }, id: string) => view.todos.find((t) => t.id === id)?.state;
     const dispatched = async (count: number, what: string) => {
       const deadline = Date.now() + 15000;
@@ -237,6 +237,13 @@ try {
     assert.deepEqual([state(first, one.id), state(first, two.id), state(first, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
     await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
+    const afterHold = await read(one.askId);
+    evidence.afterHold = afterHold;
+    const [holdCard] = open(afterHold);
+    assert(holdCard);
+    assert.equal(holdCard.cause, 'hold');
+    assert.deepEqual(holdCard.todos, [held.id]);
+    assert.deepEqual(holdCard.options, ['Start', 'Remove']);
     const unapproved = seedUnapproved(one.askId);
     app!.db.getDatabase().prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(unapproved.id);
     const unrelated = reply(one.askId);
@@ -244,9 +251,10 @@ try {
     await refresh();
     const afterUnrelated = await read(one.askId);
     evidence.afterUnrelatedCard = afterUnrelated;
-    assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
+    assert.equal(store.getTodo(held.id)?.blockedBy, 'question');
+    assert.equal(store.getTodo(held.id)?.startedAt, null);
     assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
-    assert.deepEqual(open(afterUnrelated), []);
+    assert.deepEqual(open(afterUnrelated).map((card) => card.id), [holdCard.id]);
     assert.equal(starts(), 1);
     await complete('chain-1');
     await dispatched(2, 'the second step');
@@ -258,11 +266,12 @@ try {
     evidence.chainFinished = finished;
     assert.equal(state(finished, three.id), 'doing');
     assert.equal(starts(), 3);
-    assert.deepEqual(open(finished), []);
-    assert.equal(store.getTodo(held.id)?.blockedBy, 'held');
+    assert.deepEqual(open(finished).map((card) => card.id), [holdCard.id]);
+    assert.equal(store.getTodo(held.id)?.blockedBy, 'question');
+    assert.equal(store.getTodo(held.id)?.startedAt, null);
     assert.equal(store.getTodo(unapproved.id)?.startedAt, null);
     evidence.verified = true;
-    console.log('PASS: an added chain started step by step with no Start card; an unrelated answer left the held and the unapproved todo held');
+    console.log('PASS: an added chain started step by step with no Start card; the hold card stayed open and neither the held nor the unapproved todo started');
   }
 } finally {
   ws?.close();
