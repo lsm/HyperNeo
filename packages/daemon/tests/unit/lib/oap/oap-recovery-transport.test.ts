@@ -42,7 +42,7 @@ function fixture(initial?: Recovery) {
     id: 'session-a',
     workspacePath: '/synthetic/workspace',
     sdkSessionId: 'native-thread-a',
-    config: { harness: 'codex' },
+    config: { harness: 'oxap-codex' },
     metadata: { messageCount: 2, ...(initial ? { oapRecovery: initial } : {}) },
   } as TestSession;
   let stored = structuredClone(current);
@@ -547,7 +547,7 @@ describe('OAP recovery claim transport', () => {
         ...base,
         workspacePath: '/synthetic/workspace',
         sdkSessionId: 'native-thread-a',
-        config: { ...base.config, harness: 'codex' },
+        config: { ...base.config, harness: 'oxap-codex' },
         metadata: { ...base.metadata, oapRecovery: recovery() },
       };
       await db.createSession(session);

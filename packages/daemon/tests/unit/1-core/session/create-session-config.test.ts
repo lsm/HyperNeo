@@ -125,18 +125,23 @@ describe('admitCreateSessionConfig', () => {
   it('admits a known harness only at creation and rejects unknown values', () => {
     expect(admitCreateSessionConfig({})).not.toHaveProperty('harness');
     expect(admitCreateSessionConfig({ harness: 'sdk' })).toEqual({ harness: 'sdk' });
-    expect(admitCreateSessionConfig({ harness: 'codex' })).toEqual({ harness: 'codex' });
-    expect(() => admitCreateSessionConfig({ harness: 'other' as 'codex' })).toThrow(/harness/i);
+    expect(admitCreateSessionConfig({ harness: 'oxap-codex' })).toEqual({ harness: 'oxap-codex' });
+    expect(() => admitCreateSessionConfig({ harness: 'other' as 'oxap-codex' })).toThrow(
+      /harness/i
+    );
+    expect(() => admitCreateSessionConfig({ harness: 'codex' as 'oxap-codex' })).toThrow(
+      /harness/i
+    );
     expect(() => admitUpdateSessionConfig({ harness: 'sdk' })).toThrow(/harness/);
-    expect(() => admitUpdateSessionConfig({ harness: 'codex' })).toThrow(/harness/);
+    expect(() => admitUpdateSessionConfig({ harness: 'oxap-codex' })).toThrow(/harness/);
   });
 
   it('refuses explicit Codex session instructions while instruction wiring is unavailable', () => {
     expect(() =>
-      admitCreateSessionConfig({ harness: 'codex', systemPrompt: 'synthetic instruction' })
+      admitCreateSessionConfig({ harness: 'oxap-codex', systemPrompt: 'synthetic instruction' })
     ).toThrow(/instruction/i);
     expect(() =>
-      admitUpdateSessionConfig({ systemPrompt: 'synthetic instruction' }, undefined, 'codex')
+      admitUpdateSessionConfig({ systemPrompt: 'synthetic instruction' }, undefined, 'oxap-codex')
     ).toThrow(/instruction/i);
     expect(
       admitCreateSessionConfig({ harness: 'sdk', systemPrompt: 'synthetic instruction' })
@@ -150,12 +155,12 @@ describe('admitCreateSessionConfig', () => {
       decision: 'deny' as const,
       reason: 'synthetic',
     };
-    expect(() => admitCreateSessionConfig({ harness: 'codex', toolGuards: [guard] })).toThrow(
+    expect(() => admitCreateSessionConfig({ harness: 'oxap-codex', toolGuards: [guard] })).toThrow(
       /Codex.*not supported/i
     );
-    expect(() => admitCreateSessionConfig({ harness: 'codex', workerOperations: true })).toThrow(
-      /Codex.*not supported/i
-    );
+    expect(() =>
+      admitCreateSessionConfig({ harness: 'oxap-codex', workerOperations: true })
+    ).toThrow(/Codex.*not supported/i);
     expect(admitCreateSessionConfig({ harness: 'sdk', toolGuards: [guard] })).toEqual({
       harness: 'sdk',
       toolGuards: [guard],
@@ -199,14 +204,14 @@ describe('admitUpdateSessionConfig', () => {
       decision: 'deny' as const,
       reason: 'synthetic',
     };
-    expect(() => admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, 'codex')).toThrow(
-      /Codex.*not supported/i
-    );
-    expect(() => admitUpdateSessionConfig({ workerOperations: true }, undefined, 'codex')).toThrow(
-      /Codex.*not supported/i
-    );
+    expect(() =>
+      admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, 'oxap-codex')
+    ).toThrow(/Codex.*not supported/i);
+    expect(() =>
+      admitUpdateSessionConfig({ workerOperations: true }, undefined, 'oxap-codex')
+    ).toThrow(/Codex.*not supported/i);
     expect(
-      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, 'codex')
+      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, 'oxap-codex')
     ).toEqual({ toolGuards: [], workerOperations: false });
     expect(
       admitUpdateSessionConfig({ toolGuards: [guard], workerOperations: true }, undefined, 'sdk')
@@ -348,10 +353,10 @@ describe('stripRejectedSessionConfig', () => {
     expect(
       stripRejectedSessionConfig({
         model: 'synthetic',
-        harness: 'codex',
+        harness: 'oxap-codex',
         env: { SECRET: 'synthetic' },
       } as SessionConfig)
-    ).toEqual({ model: 'synthetic', harness: 'codex' });
+    ).toEqual({ model: 'synthetic', harness: 'oxap-codex' });
   });
 
   it('leaves unknown keys alone', () => {
@@ -465,9 +470,9 @@ describe('SessionLifecycle.create', () => {
   });
 
   it('persists the explicitly chosen harness and leaves the SDK default implicit', async () => {
-    await lifecycle.create({ config: { harness: 'codex' } });
+    await lifecycle.create({ config: { harness: 'oxap-codex' } });
     await lifecycle.create({});
-    expect(createdSessions[0]?.config.harness).toBe('codex');
+    expect(createdSessions[0]?.config.harness).toBe('oxap-codex');
     expect(createdSessions[1]?.config.harness).toBeUndefined();
   });
 
