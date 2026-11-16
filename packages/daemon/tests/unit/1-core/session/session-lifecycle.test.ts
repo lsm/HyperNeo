@@ -1546,9 +1546,13 @@ describe('SessionLifecycle', () => {
       process.env.HYPERNEO_DATA_DIR = realpathSync(workerDataDir);
     });
 
-    function sessionWithUnsavedWorktree(id: string, unsaved = true) {
+    function sessionWithUnsavedWorktree(id: string, unsaved = true, origin = true) {
       const run = realpathSync(mkdtempSync(join(workerDataDir, 'session-repo-')));
       const { repo, git } = createPushedWorkerRepo(run);
+      if (!origin) {
+        git('remote', 'remove', 'origin');
+        git('commit', '--allow-empty', '-m', 'local base work');
+      }
       const folder = join(getWorktreeBaseDir(repo), id);
       git('worktree', 'add', '--quiet', '-b', `session/${id}`, folder, 'HEAD');
       if (unsaved) writeFileSync(join(folder, 'unsaved.txt'), 'local work');
@@ -1569,6 +1573,15 @@ describe('SessionLifecycle', () => {
       const folder = sessionWithUnsavedWorktree('daemon-archive');
       await lifecycle.archiveResources('daemon-archive', 'work_archive');
       expect(readFileSync(join(folder, 'unsaved.txt'), 'utf8')).toBe('local work');
+    });
+
+    it('a daemon archive removes a clean worktree whose base has no origin', async () => {
+      const folder = sessionWithUnsavedWorktree('local-base', false, false);
+      expect(await lifecycle.archiveResources('local-base', 'work_archive')).toEqual({
+        directory: folder,
+        removed: true,
+      });
+      expect(existsSync(folder)).toBe(false);
     });
 
     it('a daemon archive keeps a busy worktree on the session for a later cleanup', async () => {
