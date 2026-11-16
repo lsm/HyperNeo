@@ -17,7 +17,24 @@ cd "$ROOT"
 "${ENV[@]}" bun run packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" \
   < /dev/null > "$RUN/daemon.log" 2>&1 &
 PID=$!
-trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$RUN"' EXIT
+finish() {
+  local status=$? daemon=0
+  trap - EXIT INT TERM
+  kill -TERM "$PID" 2>/dev/null || true
+  wait "$PID" || daemon=$?
+  if [ "$daemon" -ne 0 ] && [ "$daemon" -ne 143 ]; then
+    echo "daemon shutdown failed: exit $daemon" >&2
+    status=1
+  elif ! grep -q 'Graceful shutdown complete' "$RUN/daemon.log"; then
+    echo "daemon shutdown failed: no graceful shutdown in its log" >&2
+    status=1
+  fi
+  if [ "$status" -eq 0 ]; then rm -rf "$RUN"; else echo "kept the run and its daemon.log: $RUN" >&2; fi
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for _ in $(seq 1 120); do curl -fs -o /dev/null "http://127.0.0.1:$PORT/" && break; sleep 1; done
 for _ in $(seq 1 30); do [ -S "$RUN/data/session-door.sock" ] && break; sleep 1; done
 cli() { "${ENV[@]}" HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" bun run packages/cli/main.ts "$@"; }
@@ -35,14 +52,22 @@ print('ok' if r['ok'] else 'refused: '+r['reason'].split(':')[0], *('%s=%s'%(k,l
 laptop() {
   local op=$1
   shift
-  [ "$op" = "${DEVICE_OPS_FAIL:-}" ] && op=$op.unknown
+  if [ "$op" = "${DEVICE_OPS_FAIL:-}" ]; then
+    rpc "$op.unknown" "$@" > "$RUN/injected.json" || return 1
+    python3 -c "import json,sys;print('injected', sys.argv[1], 'RPC answered error:', json.load(open(sys.argv[2]))['reply']['error'])" \
+      "$op" "$RUN/injected.json" >&2
+    return 1
+  fi
   rpc "$op" "$@" | outcome
 }
 local_tools() { terminal "$@" | outcome; }
 step() {
   local label=$1 got
   shift
-  got=$("$@")
+  if ! got=$("$@"); then
+    echo "step failed: $label" >&2
+    exit 1
+  fi
   echo "$label: $got" | tee -a "$RUN/transcript"
 }
 

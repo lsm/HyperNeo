@@ -3,8 +3,11 @@
 Calls each `device.*` and `device.pair.*` operation on a real isolated daemon. Use it
 when one of them changes. It stops with a non-zero exit at the first failed call, and
 diffs the whole transcript against the expected one below, exiting non-zero on any difference.
-The second command proves that: it breaks the `device.list` call and passes only if the
-journey then fails.
+It also fails when the daemon does not shut down cleanly (a non-zero exit, or no
+`Graceful shutdown complete` in its log), and keeps the run with its `daemon.log` whenever it fails.
+The second command proves the RPC check: it breaks the `device.list` call and passes only if the
+journey fails at that step after the daemon answered it with an error. It first checks that a
+run refused before any RPC (port 8399) does not count.
 
 ```bash
 .claude/skills/verify/device-operations.sh 9337
@@ -22,5 +25,6 @@ Expect:
 - The first command ends with `device operations: transcript matches`; the second with
   `failure check: ok`. Both exit 0.
 
-The script owns its daemon and removes its run directory on exit. It prints no codes
-or credentials.
+The script owns its daemon and removes its run directory only after a clean pass. It prints
+no codes or credentials. The failure check removes the run its broken journey kept once the
+check passes.
