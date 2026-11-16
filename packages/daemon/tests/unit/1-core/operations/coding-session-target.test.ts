@@ -118,8 +118,13 @@ function setup() {
     async () => {}
   );
   const asks: unknown[] = [];
+  const failing = { ask: false };
   const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
     decideCodingSessionTarget(db, item, target, status, async (input) => {
+      if (failing.ask) {
+        asks.push('failed');
+        return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'synthetic' };
+      }
       const value = await askSetting!.execute(
         { askId: item.askId, ...input },
         { source: 'internal', sessionId: 'neo', role: 'neo' }
@@ -130,7 +135,7 @@ function setup() {
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
   const agentAsk = (input: Record<string, unknown>) =>
     askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
-  return { db, todos, todo, worked, live, decide, questions, asks, agentAsk };
+  return { db, todos, todo, worked, live, decide, questions, asks, agentAsk, failing };
 }
 
 describe('coding session target decision', () => {
@@ -296,6 +301,22 @@ describe('coding session target decision', () => {
       expect(asked!.id).not.toBe(borrowed.questionId);
       expect(asks).toEqual([{ ok: true, questionId: asked!.id }]);
     });
+
+  test('a strategy question that cannot be opened is retried at once, keeps work going and is asked by a later dispatch', async () => {
+    const { todo, worked, decide, questions, asks, failing } = setup();
+    worked(todo('other'), 'idle', 'dev', 'done');
+    failing.ask = true;
+    expect(await decide(todo(), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('idle') },
+    });
+    expect(asks).toEqual(['failed', 'failed']);
+    expect(questions('feature')).toEqual([]);
+    failing.ask = false;
+    await decide(todo('other'), start('dev'));
+    const [asked] = questions('other');
+    expect(asked).toMatchObject({ state: 'open', kind: 'choice', todos: [] });
+    expect(asks).toEqual(['failed', 'failed', { ok: true, questionId: asked!.id }]);
+  });
 
   test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
     const { todo, worked, decide, questions, asks } = setup();

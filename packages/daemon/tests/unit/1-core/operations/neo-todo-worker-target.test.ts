@@ -52,6 +52,7 @@ function world(coding = false) {
   const failing = {
     refuse: null as string | null,
     start: false,
+    setting: false,
     status: null as (() => unknown) | null,
   };
   const pack = {
@@ -80,6 +81,8 @@ function world(coding = false) {
     sessions,
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
+      if (name === 'pack.preferences.ask' && failing.setting)
+        return { kind: 'failed', code: 'execution_failed', message: 'synthetic_failure' };
       if (name === 'work.status' && failing.status)
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
@@ -182,6 +185,22 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
         name: 'pack.preferences.ask',
         input: { askId: 'ask', requestId: 'synthetic-request', alternatives },
       },
+    ]);
+  });
+
+  test('a settings question that cannot be opened is told to Neo instead of dropped', async () => {
+    const w = (current = world());
+    const id = w.add();
+    await w.runner.start(id);
+    w.failing.setting = true;
+    const alternatives = [
+      [{ pack: 'synthetic', scope: { kind: 'global' as const, key: '' }, key: 'k', value: 1 }],
+    ];
+    expect(await w.setting()!({ requestId: 'synthetic-request', alternatives })).toMatchObject({
+      kind: 'failed',
+    });
+    expect(w.told.filter((told) => told.note.includes('settings question'))).toEqual([
+      { id, key: 'todo.unworked', note: expect.stringContaining('synthetic_failure') },
     ]);
   });
 
