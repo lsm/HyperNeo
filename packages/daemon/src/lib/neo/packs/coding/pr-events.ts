@@ -14,7 +14,7 @@ import {
 } from './pr-ledger.ts';
 import {
   CODING_MANUAL_MERGE_NEXT_STEP,
-  codingFindingsText,
+  codingReviewKey,
   codingPrUrl,
   type CodingSweepDeps,
 } from './pr-sweep.ts';
@@ -30,19 +30,20 @@ const log = new Logger('NeoPrSweep');
 const head = (row: CodingPrTransition) => row.head.slice(0, 7);
 const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}"`;
 
-export function planCodingPrEvent(row: CodingPrTransition): { key: string; text: string } | null {
+export function planCodingPrEvent(
+  row: CodingPrTransition
+): { key: string; text: string; findings?: string[] } | null {
   const owner = (text: string) => ({
-    key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
+    key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}`,
     text: `${pr(row)} ${text}`,
+    ...(row.findings?.length ? { findings: row.findings } : {}),
   });
   if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
   if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
   if (row.state === 'failing')
     return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
   if (row.state === 'changes_requested')
-    return owner(
-      `has requested changes on head ${head(row)}. Address the review and push.${codingFindingsText(row.findings)}`
-    );
+    return owner(`has requested changes on head ${head(row)}. Address the review and push.`);
   if (row.state === 'dirty')
     return owner('now conflicts with its base. Merge the base branch in and push.');
   if (row.state === 'approved_green')
@@ -176,7 +177,7 @@ export async function deliverCodingPrEvents(
       if (!owner) continue;
       const told = event
         ? await deps
-            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row))
+            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row), event.findings)
             .catch(() => false)
         : true;
       if (told) await repo.acceptEvent(row, owner);

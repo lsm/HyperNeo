@@ -33,7 +33,13 @@ export type CodingSweepRow = {
 export type CodingSweepDeps = {
   host: string;
   human?(key: string, text: string): Promise<boolean>;
-  tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
+  tell(
+    ref: WorkRef,
+    key: string,
+    text: string,
+    pr?: string,
+    findings?: readonly string[]
+  ): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -73,11 +79,19 @@ const minutesSince = (row: CodingSweepRow, now: number) =>
 
 const owned = (ref: WorkRef) => `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
 
-export const codingFindingsText = (findings: readonly string[] = []) =>
-  findings.length ? ` Review findings: ${findings.join(' ')}` : '';
+const TRUNCATED = ' … (truncated; ask Neo for the full cross-model review of this head)';
+
+export function codingFindingsText(findings: readonly string[] = [], budget = Infinity): string {
+  const text = findings.length ? ` Review findings: ${findings.join(' ')}` : '';
+  if (text.length <= budget) return text;
+  return budget > TRUNCATED.length ? `${text.slice(0, budget - TRUNCATED.length)}${TRUNCATED}` : '';
+}
+
+export const codingReviewKey = (findings: readonly string[] = []) =>
+  findings.length ? ':review' : '';
 
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
-  return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}${codingFindingsText(row.findings)}`;
+  return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
 
 export function codingPrEscalationText(row: CodingSweepRow): string {
@@ -146,12 +160,18 @@ export async function sweepCodingPrs(
   for (const row of await repo.rowsAsync()) {
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
-    const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
+    const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}:${nudge.nudges}`;
     const told =
       nudge.kind === 'remind' &&
       row.state !== 'waiting_cross_review' &&
       (await deps
-        .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
+        .tell(
+          row.owner!,
+          key,
+          codingPrNudgeText(row, now),
+          codingPrUrl(deps.host, row),
+          row.findings
+        )
         .catch(() => false));
     if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);

@@ -15,6 +15,7 @@ import {
   type CodingStageFact,
   type CodingActor,
 } from './stage-facts.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
@@ -189,6 +190,7 @@ export function codingPrState(
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
   if (pr.isDraft) return 'draft';
+  if (codingCrossModelFindings(pr.headRefOid, stageFacts).length) return 'changes_requested';
   if (pr.mergeable === 'CONFLICTING') return 'dirty';
   const head = pr.commits.nodes[0]?.commit;
   const ci = head?.statusCheckRollup?.state ?? null;
@@ -197,8 +199,7 @@ export function codingPrState(
   const review =
     pr.reviews.nodes.filter((item) => item.commit?.oid === pr.headRefOid).at(-1)?.state ??
     pr.reviewDecision;
-  if (review === 'CHANGES_REQUESTED' || codingCrossModelFindings(pr.headRefOid, stageFacts).length)
-    return 'changes_requested';
+  if (review === 'CHANGES_REQUESTED') return 'changes_requested';
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
   const humanSignoff =
@@ -524,8 +525,25 @@ export class CodingPrLedgerRepository {
     return gatewayFor(this.db).call(codingLedgerReads, method);
   }
 
-  recordStage(fact: CodingStageFact): boolean {
-    return this.stageFacts.record(fact);
+  recordStage(fact: CodingStageFact, at = Date.now()): boolean {
+    const recorded = this.stageFacts.record(fact);
+    const pr = parsePrUrl(fact.url);
+    if (recorded && fact.verdict === 'fail' && pr)
+      this.db.run(
+        `UPDATE pack_coding_pr_ledger SET nudges = 0, state_since = ?, told_at = NULL,
+           terminal_event_json = json_object('repo', repo, 'number', number, 'title', title,
+             'branch', branch, 'head', head, 'state', state, 'closedAt', closed_at, 'ci', NULL,
+             'replyAt', reply_at, 'createdAt', created_at,
+             'authorIsBot', json(CASE WHEN author_is_bot THEN 'true' ELSE 'false' END),
+             'findings', json(?), 'from', state)
+         WHERE repo = ? AND number = ? AND head = ? AND state = 'changes_requested' AND closed_at IS NULL`,
+        at,
+        JSON.stringify(codingCrossModelFindings(fact.head, this.stageFacts.read(fact.url))),
+        `${pr.owner}/${pr.repo}`.toLowerCase(),
+        Number(pr.number),
+        fact.head
+      );
+    return recorded;
   }
 
   readHealthDelivery(repos: readonly string[], staleBefore: number) {

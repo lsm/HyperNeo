@@ -49,6 +49,7 @@ try {
   );
 
   let head = 'a'.repeat(40);
+  let botReview = 'APPROVED';
   const pr = () => ({
     number: 1,
     title: 'Fix it',
@@ -60,7 +61,7 @@ try {
     mergeable: 'MERGEABLE',
     reviewDecision: null,
     reviews: {
-      nodes: [{ state: 'APPROVED', commit: { oid: head }, author: { login: 'synthetic-bot' } }],
+      nodes: [{ state: botReview, commit: { oid: head }, author: { login: 'synthetic-bot' } }],
     },
     closedAt: null,
     author: { login: 'someone', __typename: 'User' },
@@ -132,7 +133,7 @@ try {
       verdict: 'fail',
       acceptanceContract: 'Synthetic contract',
       evidence: [finding],
-    }),
+    }, t0 + MIN / 2),
     true
   );
   const failed = await sweep('the cross-model review recorded fail on the head', 1);
@@ -152,8 +153,44 @@ try {
   head = 'b'.repeat(40);
   const pushed = await sweep('the author pushed a new head', 22);
   assert.equal(pushed.state, 'waiting_cross_review');
+
+  botReview = 'CHANGES_REQUESTED';
+  const github = await sweep('the review bot requested changes on the new head', 23);
+  assert.equal(github.state, 'changes_requested');
+  assert.equal(told.length, 3);
+  assert.doesNotMatch(told[2].text, /Review findings/);
+  for (const minutes of [43, 63, 83, 103]) await sweep('the GitHub change request ladder runs out', minutes);
+  const exhausted = told.length;
+  await sweep('no more reminders after the ladder', 160);
+  assert.equal(told.length, exhausted, 'the GitHub change request ladder is exhausted');
+  assert.equal(
+    await ledger.write(
+      'recordStage',
+      {
+        url,
+        head,
+        stage: 'review',
+        actor: { kind: 'agent', id: 'synthetic-reviewer', model: 'gpt-6.1-sol', harness: 'codex' },
+        verdict: 'fail',
+        acceptanceContract: 'Synthetic contract',
+        evidence: ['P1 the second head still never stops.'],
+      },
+      t0 + 161 * MIN
+    ),
+    true
+  );
+  const late = await sweep('a cross-model fail lands on a head GitHub already asked to change', 162);
+  assert.equal(late.state, 'changes_requested');
+  assert.equal(told.length, exhausted + 1);
+  assert.deepEqual(told.at(-1)!.ref, author);
+  assert.match(told.at(-1)!.key, /:changes_requested:review$/);
+  assert.match(told.at(-1)!.text, /Review findings: P1 the second head still never stops\./);
+  const restarted = await sweep('20 min after the late fail', 182);
+  assert.equal(told.length, exhausted + 2, 'the reminder ladder restarts for the findings');
+  assert.match(told.at(-1)!.text, /Review findings: P1 the second head still never stops\./);
+  assert.equal(restarted.state, 'changes_requested');
   evidence.passed = true;
-  console.log('PASS: a failed cross-model review asks its author with the findings; a new head waits for review again');
+  console.log('PASS: a failed cross-model review asks its author with the findings, also after GitHub already asked for changes; a new head waits for review again');
 } catch (error) {
   evidence.error = String(error);
   throw error;

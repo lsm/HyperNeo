@@ -20,7 +20,10 @@ approval and green CI on its head, and an author todo that claims it. Observe
   at once with the review findings;
 - 20 minutes later with no push, the author is reminded with the findings, and
   Neo is not asked for another reviewer;
-- after the author pushes a new head, the PR waits for a cross-model review again.
+- after the author pushes a new head, the PR waits for a cross-model review again;
+- when the review bot then asks for changes on that head and its reminders run
+  out, a cross-model `fail` recorded later still tells the author at once with
+  the findings, and the reminders start over.
 
 This does not show the message reaching a live worker session, or the verdict
 arriving through `neo.coding.result`; the fail is recorded with the same ledger
