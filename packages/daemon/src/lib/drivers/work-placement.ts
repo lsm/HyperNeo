@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { readdir, readlink } from 'node:fs/promises';
+import { readdir, readlink, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -114,16 +114,35 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
 export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
 
+type ProcReader = {
+  readdir(path: string): Promise<string[]>;
+  stat(path: string): Promise<{ uid: number }>;
+  readlink(path: string): Promise<string>;
+};
+
+export async function procFolderInUse(
+  root: string,
+  proc: ProcReader = { readdir, stat, readlink }
+): Promise<boolean> {
+  const uid = process.getuid?.();
+  const pids = (await proc.readdir('/proc')).filter((name) => /^\d+$/.test(name));
+  const busy = await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        if ((await proc.stat(`/proc/${pid}`)).uid !== uid) return false;
+        return `${await proc.readlink(`/proc/${pid}/cwd`)}/`.startsWith(`${root}/`);
+      } catch (error) {
+        return !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');
+      }
+    })
+  );
+  return busy.includes(true);
+}
+
 async function folderInUse(directory: string): Promise<boolean> {
   const root = realpathSync(directory);
-  const inside = (path: string | null) => !!path && `${path}/`.startsWith(`${root}/`);
-  if (process.platform === 'linux') {
-    const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
-    const cwds = await Promise.all(
-      pids.map((pid) => readlink(`/proc/${pid}/cwd`).catch(() => null))
-    );
-    return cwds.some(inside);
-  }
+  const inside = (path: string) => `${path}/`.startsWith(`${root}/`);
+  if (process.platform === 'linux') return procFolderInUse(root);
   const uid = String(process.getuid?.() ?? '');
   const { stdout } = await execFileAsync('lsof', ['-w', '-a', '-d', 'cwd', '-u', uid, '-Fn']);
   return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
