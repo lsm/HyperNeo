@@ -68,6 +68,19 @@ export interface ModelRoutingDeps {
   database: () => Database;
   provider: (providerId: string) => Provider | undefined;
   now?: () => number;
+  readDeadlineMs?: number;
+}
+
+const READ_DEADLINE_MS = 3_000;
+
+function within<T>(promise: Promise<T>, ms: number, expired: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(expired), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 const readPreference = (db: Database, key: keyof typeof preferences) =>
@@ -179,6 +192,7 @@ async function readAvailability(provider: Provider | undefined): Promise<Availab
 
 export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
   const now = deps.now ?? Date.now;
+  const deadline = deps.readDeadlineMs ?? READ_DEADLINE_MS;
   const readings = new Map<string, UsageReading>();
   const providers = (candidates: readonly NeoLine[]) => [
     ...new Set(candidates.map((line) => line.provider)),
@@ -186,7 +200,11 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
 
   const readUsage = async (candidates: readonly NeoLine[]) => {
     for (const id of providers(candidates)) {
-      const result = await readProviderUsage({ providerId: id }, deps).catch(() => null);
+      const result = await within(
+        readProviderUsage({ providerId: id }, deps).catch(() => null),
+        deadline,
+        null
+      );
       if (result) readings.set(id, { result, readAt: now() });
     }
     return Object.fromEntries(readings);
@@ -197,7 +215,14 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
       await Promise.all(
         providers(candidates).map(
           async (id) =>
-            [id, await readAvailability(deps.provider(id)).catch(() => 'not configured')] as const
+            [
+              id,
+              await within(
+                readAvailability(deps.provider(id)).catch((): Availability => 'not configured'),
+                deadline,
+                'availability unknown'
+              ),
+            ] as const
         )
       )
     );

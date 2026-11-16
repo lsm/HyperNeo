@@ -7,7 +7,7 @@ export type Route = { kind: string; repos?: string[]; lines: RouteLine[] };
 export type LineRule = { line: NeoLine; only?: LineFilter; never?: LineFilter };
 export type LineHold = { provider: string; model: string; reason?: string; retryAt: number };
 export type UsageReading = { result: ProviderUsageResult; readAt: number };
-export type Availability = 'ready' | 'not configured' | 'not signed in';
+export type Availability = 'ready' | 'not configured' | 'not signed in' | 'availability unknown';
 
 export const USAGE_STALE_MS = 15 * 60 * 1000;
 

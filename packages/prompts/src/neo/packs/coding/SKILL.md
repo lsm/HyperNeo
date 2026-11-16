@@ -86,21 +86,24 @@ target.preparationParameters.verifySkill "create", and merge it under the
 repository's merge rule. Put the real work in later todos.
 
 Include coding.provenance in the existing first-use pack preference question.
-Use one preference shape for Write, Review and Verify: `write.harness/model/effort`,
-`review.harness/model/effort` and `verify.harness/model/effort` in the coding pack.
-All prefer a configuration; empty means default. Before starting a coding Write
-todo, read `write.harness`, `write.model` and `write.effort` with
-`pack.preferences.get` for the coding pack and repository scope. Repository keys
-match case-insensitively; use the saved scope spelling from `pack.preferences.list`.
-Trim saved preference text. A missing repository value inherits the global
-value; an explicit empty value uses the default for that field. Keep available target configurations in default-first order.
-Choose the candidate matching the most nonempty preferences, comparing harness
-to its adapter and model/effort to their corresponding fields. Break ties by the
-original default-first order. For each preference the selected target cannot
-match, report the preferred value and the fallback value being used. Pass the
+Use one harness preference for each stage: `write.harness`, `review.harness` and
+`verify.harness` in the coding pack. Empty means default. Model and effort are not
+coding preferences: they come from `model-routing` routes for the `coding.write`,
+`coding.review` and `coding.verify` kinds. Propose a model or effort change as a
+`model-routing` route, never as a coding key. Older installs may still have saved
+coding model and effort values; coding keeps reading them until their migration is
+confirmed, so do not delete them. Before starting a coding Write todo, read
+`write.harness` with `pack.preferences.get` for the coding pack and repository
+scope. Repository keys match case-insensitively; use the saved scope spelling from
+`pack.preferences.list`. Trim saved preference text. A missing repository value
+inherits the global value; an explicit empty value uses the default. Keep available
+target configurations in default-first order, prefer the one whose adapter matches
+the harness preference, and break ties by that order. When the selected target
+cannot match it, report the preferred value and the fallback being used. Pass the
 selected configuration as a `target` with `verb: "start"` to `neo.todo.add`
-through the existing coding todo path. Use the existing pack preference question to propose changes; never
-save unanswered defaults. Review preferences do not apply to configured bots.
+through the existing coding todo path; coding ranks its line again at start. Use
+the existing pack preference question to propose changes; never save unanswered
+defaults. Review preferences do not apply to configured bots.
 Read the saved repository preference with pack.preferences.get; an unanswered
 provenance preference falls back to on without saving a value or marking it answered.
 Keep provenance an explicit pack preference. Keeping the current settings on an
