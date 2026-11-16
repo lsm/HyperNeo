@@ -261,6 +261,9 @@ type Gate<T> = { value: T } | { reason: Rejection };
 type QuestionReceipt = { ok: true; question: NeoQuestion; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
+const QUESTION_CLOSED = 'question_closed: this question is no longer open.';
+const QUESTION_HELD =
+  'question_held: the human put this card aside; leave it until they answer it or take it back.';
 
 const Text = z.string().trim().min(1);
 
@@ -343,6 +346,7 @@ const RelayAsk = z
 type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
+const Hold = z.object({ questionId: Text, held: z.boolean(), requestId: z.uuid() });
 type Relay = { todoId?: string; session?: string; title: string; options: string[] };
 
 const Answer = z.object({
@@ -392,6 +396,7 @@ export const NeoQuestionSchema = z.object({
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
   cause: z.string().nullable().optional(),
+  heldAt: z.number().nullable().optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
@@ -442,6 +447,7 @@ const QuestionReadResult = z.union([
       artifacts: true,
       sourceSession: true,
       retireWhen: true,
+      heldAt: true,
     }),
     answeredByHuman: z.boolean(),
     resolvedByAgent: z.boolean(),
@@ -467,6 +473,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     artifacts,
     sourceSession,
     retireWhen,
+    heldAt,
   } = question;
   return {
     ok: true,
@@ -486,6 +493,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       ...(retireWhen ? { retireWhen } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(todoId ? { todoId } : {}),
+      ...(heldAt ? { heldAt } : {}),
     },
     answeredByHuman: state === 'answered',
     resolvedByAgent: isAgentResolvedQuestion(question),
@@ -813,6 +821,10 @@ export function createNeoQuestionOperations(
             reason = card.reason.reason;
             return null;
           }
+          if (plan.replaced && store.getQuestion(plan.replaced.id)?.heldAt) {
+            reason = QUESTION_HELD;
+            return null;
+          }
           const id = reply.mutationId;
           return plan.replaced
             ? replaceHumanCard(store, plan.replaced, id, plan.draft, Date.now())
@@ -854,6 +866,7 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
         if (question.state !== 'open') return { reason: { ok: true, question } };
+        if (question.heldAt) return fail(QUESTION_HELD);
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };
       },
@@ -874,10 +887,10 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (question: NeoQuestion, input: z.infer<typeof Retire>): QuestionReceipt | Rejection => {
-        const retired = store.retireQuestion(question, input.reason, null, Date.now());
-        return retired
-          ? { ok: true, question: retired }
-          : { ok: false, reason: 'question_closed: this question is no longer open.' };
+        const retired = store.retireQuestion(question, input.reason, null, Date.now(), true);
+        if (retired) return { ok: true, question: retired };
+        const held = store.getQuestion(question.id)?.heldAt;
+        return { ok: false, reason: held ? QUESTION_HELD : QUESTION_CLOSED };
       },
       ['outcome', 'input'],
       'outcome'
@@ -954,6 +967,30 @@ export function createNeoQuestionOperations(
     caller: OperationCaller
   ) => Promise<QuestionReceipt | Rejection>;
 
+  const hold = (superpipe({})('neo.question.hold') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocalUser, 'caller', 'result:outcome')
+    .pipe(
+      (input: z.infer<typeof Hold>): Gate<NeoQuestion> => {
+        const question = store.getQuestion(input.questionId);
+        return question?.state === 'open' ? { value: question } : fail(QUESTION_CLOSED);
+      },
+      'input',
+      'result:outcome'
+    )
+    .pipe(
+      (question: NeoQuestion, input: z.infer<typeof Hold>): QuestionReceipt | Rejection => {
+        const held = store.holdQuestion(question.id, input.held, input.requestId, Date.now());
+        return held ? { ok: true, question: held } : { ok: false, reason: QUESTION_CLOSED };
+      },
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome') as (
+    input: z.infer<typeof Hold>,
+    caller: OperationCaller
+  ) => QuestionReceipt | Rejection;
+
   return [
     defineOperation({
       name: 'neo.question.ask',
@@ -1001,6 +1038,14 @@ export function createNeoQuestionOperations(
       resultSchema: QuestionResult,
       policy: { safetyClass: 'human_only' },
       execute: async (input, caller) => answer(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.question.hold',
+      description: neoToolDescription('neo.question.hold'),
+      inputSchema: Hold,
+      resultSchema: QuestionResult,
+      policy: { safetyClass: 'human_only' },
+      execute: async (input, caller) => hold(input, caller),
     }),
   ];
 }

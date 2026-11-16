@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { join, resolve } from 'node:path';
+import catalog from '../../../packages/daemon/src/lib/desktop/tool-catalog.json' with { type: 'json' };
 import { operationInvoke } from '../../../packages/daemon/tests/helpers/operation-mcp.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { planSessionDoorCall } from '../../../packages/daemon/src/lib/messaging/session-door.ts';
@@ -43,13 +44,15 @@ try {
   const worker = await app.sessionManager.createSession({ workspacePath: run, title: 'Synthetic desktop worker' });
   const agent = app.sessionManager.getSession(worker)!;
   assert(agent);
-  agent.setCallerScopeResolver(() => ({ role: 'direct_task_worker' }));
   const sql = app.db.getDatabase();
   const now = Date.now();
   sql.prepare("INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES('ask','neo:fixture','Synthetic action','','open',?,?)").run(now, now);
   sql.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,named,state,approved_at,created_at,updated_at) VALUES('todo','ask',0,'Synthetic click','Observed',?, 'doing',?,?,?)").run(JSON.stringify({ desktopControl: true }), now, now, now);
   sql.prepare('INSERT INTO neo_todo_sessions(todo_id,target,ref) VALUES(?,?,?)').run('todo', JSON.stringify({ adapter: 'hyperneo' }), JSON.stringify({ adapter: 'hyperneo', id: worker }));
   const call = operationInvoke(agent.getOperationMcpServer());
+  const described = JSON.stringify(JSON.parse((await call({ name: 'operations.describe', input: { name: 'desktop.call' } })).content[0].text));
+  const listedTools = catalog.filter(tool => described.includes(`"const":"${tool.name}"`));
+  assert.equal(listedTools.length, catalog.length, described);
   const input = { tool: 'click', args: { pid: 123, x: 5, y: 7 } };
   const allowed = await call({ name: 'desktop.call', input });
   const reply = JSON.parse(allowed.content[0].text);
@@ -73,8 +76,8 @@ try {
   sql.prepare("UPDATE neo_todos SET approved_at=NULL WHERE id='todo'").run();
   await call({ name: 'desktop.call', input });
   assert.equal(requests.length, 1);
-  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audit.length, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true }, null, 2));
-  console.log('desktop.call journey PASS host_requests=1 audit_rows=1 refused_paths=5');
+  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audit.length, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
+  console.log(`desktop.call journey PASS host_requests=1 audit_rows=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();
