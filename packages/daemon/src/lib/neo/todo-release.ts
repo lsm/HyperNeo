@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { NEO_TODO_RELEASE_PRINCIPAL } from './session-archive-operation.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -14,13 +15,22 @@ type Invoke = (
 ) => Promise<OperationOutcome>;
 type Released = { released: unknown };
 type Kept = {
-  kept: 'not_started_by_todo' | 'named_by_human' | 'bound_to_live_todo' | 'remote_worker';
+  kept:
+    | 'not_started_by_todo'
+    | 'named_by_human'
+    | 'bound_to_live_todo'
+    | 'remote_worker'
+    | 'worker_folder_unknown';
 };
 type Folder = { ref: WorkRef; directory: string | null; dirty: boolean; unpushed: number };
 type Pending = { pending: string };
 
 const RELEASE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const daemon: OperationCaller = { source: 'internal', role: 'neo' };
+const daemon: OperationCaller = {
+  source: 'internal',
+  role: 'neo',
+  principal: NEO_TODO_RELEASE_PRINCIPAL,
+};
 
 export function planNeoTodoRelease(row: FinishedWorker): { value: WorkRef } | { reason: Kept } {
   if (row.target.verb !== 'start') return { reason: { kept: 'not_started_by_todo' } };
@@ -30,8 +40,10 @@ export function planNeoTodoRelease(row: FinishedWorker): { value: WorkRef } | { 
   return { value: row.ref };
 }
 
-export function requireNeoWorkerSaved(folder: Folder): { value: WorkRef } | { reason: Pending } {
-  if (folder.directory === null) return { reason: { pending: 'worker folder unknown' } };
+export function requireNeoWorkerSaved(
+  folder: Folder
+): { value: WorkRef } | { reason: Kept | Pending } {
+  if (folder.directory === null) return { reason: { kept: 'worker_folder_unknown' } };
   if (folder.dirty) return { reason: { pending: `uncommitted changes in ${folder.directory}` } };
   if (folder.unpushed > 0)
     return { reason: { pending: `${folder.unpushed} unpushed commits in ${folder.directory}` } };

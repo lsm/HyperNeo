@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { releaseNeoTodoWorkers } from '../../../../src/lib/neo/todo-release.ts';
-import { admitSessionArchive } from '../../../../src/lib/neo/session-archive-operation.ts';
+import {
+  admitSessionArchive,
+  NEO_TODO_RELEASE_PRINCIPAL,
+} from '../../../../src/lib/neo/session-archive-operation.ts';
 import { WorktreeManager } from '../../../../src/lib/worktree-manager.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
@@ -341,7 +344,13 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
       await h.refresh();
       expect(h.archived).toEqual([]);
       const db = { getDatabase: () => h.db } as never;
-      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toMatchObject({
+      expect(
+        admitSessionArchive(
+          worker,
+          { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
+          db
+        )
+      ).toMatchObject({
         reason: 'live_todo',
       });
     } finally {
@@ -409,8 +418,15 @@ describe('admitSessionArchive', () => {
     const h = setup();
     try {
       const db = { getDatabase: () => h.db } as never;
-      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toBeNull();
+      expect(
+        admitSessionArchive(
+          worker,
+          { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
+          db
+        )
+      ).toBeNull();
       expect(admitSessionArchive(worker, { source: 'mcp', role: 'neo' }, db)).not.toBeNull();
+      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).not.toBeNull();
     } finally {
       h.db.close();
     }
@@ -421,7 +437,13 @@ describe('admitSessionArchive', () => {
     try {
       const db = { getDatabase: () => h.db } as never;
       h.queueOn(h.add(started).id);
-      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toMatchObject({
+      expect(
+        admitSessionArchive(
+          worker,
+          { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL },
+          db
+        )
+      ).toMatchObject({
         ok: false,
         reason: 'live_todo',
       });

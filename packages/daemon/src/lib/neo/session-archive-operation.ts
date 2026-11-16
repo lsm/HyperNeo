@@ -27,20 +27,19 @@ type Archived = Result<WorkArchived>;
 type Deps = WorkVerbDeps & { db: Database };
 type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archive']> };
 
+export const NEO_TODO_RELEASE_PRINCIPAL = 'neo.todo.release';
+
 export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
+  const release = caller.source === 'internal' && caller.principal === NEO_TODO_RELEASE_PRINCIPAL;
   const binding = caller.sessionId
     ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
     : null;
-  if (
-    caller.source !== 'internal' &&
-    !isLocalUser(caller) &&
-    !isNeoConversationSession(caller, binding)
-  )
+  if (!release && !isLocalUser(caller) && !isNeoConversationSession(caller, binding))
     return reject('human_only', 'This action needs the user or a bound Neo session.');
   const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(
     ref,
     null,
-    caller.source === 'internal' ? ['todo', 'doing', 'blocked', 'failed'] : ['doing']
+    release ? ['todo', 'doing', 'blocked', 'failed'] : ['doing']
   );
   return todo
     ? reject(
