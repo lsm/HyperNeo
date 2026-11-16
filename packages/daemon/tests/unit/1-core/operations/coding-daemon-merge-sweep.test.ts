@@ -1373,14 +1373,28 @@ test('the merge sweep keeps no record of what it told Neo', () => {
   expect(columns()).not.toContain('notified_at');
 });
 
-test('an unconfirmed receipt of a closed pull request is told once and released', async () => {
-  await reserve(2);
-  state = 'CLOSED';
-  const { run, wakes } = entry();
-  await run(10);
-  await run(11);
-  expect(wakes()).toEqual([expect.stringContaining('Daemon merge held:')]);
-  expect(db.prepare('SELECT count(*) AS n FROM pack_coding_daemon_merges').get()).toEqual({
-    n: 0,
-  });
-});
+test.each([null, 'Synthetic lost reply'])(
+  'an unconfirmed receipt of a closed pull request is told once and released, error=%s',
+  async (error) => {
+    const [receipt] = await reserve(2);
+    if (error)
+      await ledger.write('daemonMerge', {
+        ...receipt,
+        kind: 'uncertain',
+        at: receipt.startedAt,
+        error,
+      });
+    state = 'CLOSED';
+    const { run, wakes } = entry();
+    await run(10);
+    await run(11);
+    expect(wakes()).toEqual([expect.stringContaining('Daemon merge held:')]);
+    expect(wakes()[0]).toContain(`${url} head ${head}`);
+    expect(wakes()[0]).toContain('no longer open');
+    expect(wakes()[0]).not.toMatch(/receipt|retries are held/);
+    expect(wakes()[0].includes('Last error: Synthetic lost reply.')).toBe(error !== null);
+    expect(db.prepare('SELECT count(*) AS n FROM pack_coding_daemon_merges').get()).toEqual({
+      n: 0,
+    });
+  }
+);
