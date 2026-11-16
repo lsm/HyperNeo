@@ -1,0 +1,116 @@
+# Voice providers: pick a service, give it a key
+
+Status: proposal, 2026-11-16. Design only.
+Scope: the daemon's speech-to-text (recorded and live) and text-to-speech, and the web
+voice settings page. Paths without a prefix are under `packages/daemon/src/lib/`.
+
+## Why
+
+A user should be able to point HyperNeo at the speech service they already pay for, or
+at their own server, and have recorded voice, live voice and spoken replies all work.
+Today only some combinations do, and spoken replies cannot be configured from the app at
+all.
+
+## What exists
+
+| Job | How it is configured | What it can talk to |
+|---|---|---|
+| Recorded voice to text | Web settings: "Batch endpoint", "Model", "API key" (`VoiceSettings` in `packages/shared/src/types/settings.ts`) | Only the OpenAI shape: multipart `file` + `model` to `/v1/audio/transcriptions` (`voice/transcribe-pipeline.ts`) |
+| Live voice to text | Web settings: "Live endpoint" | Only Deepgram's stream (`voice/stream-protocols.ts`). `openai-realtime` is in the type but has no implementation, and the form treats any other protocol as no live route (`hasLiveRoute` in `packages/web/src/components/settings/VoiceSettings.tsx`). The form has no protocol picker. |
+| Text to speech | Not in settings. The `HYPERNEO_SPEECH_URL` environment variable of the daemon process (`neo/speech-audio.ts`) | `POST {base}/v1/audio/speech` with no key, plus a non-standard `language` field; voices from `{base}/v1/audio/voices`, which the OpenAI API does not have; default voice `vivian` (`neo/speech.ts`), which only one self-hosted model knows |
+
+Keys: there is one key, stored as the credential `voice-transcription` and sent only to
+the batch endpoint it was saved for (`resolveApiKey`). The live stream reuses that key
+(`voice/stream-relay.ts`), so a live service on another host gets no key. Text to speech
+sends none.
+
+So today a Deepgram user cannot transcribe recordings, an OpenAI user has no live voice,
+and nobody can use a hosted text-to-speech service.
+
+## The design
+
+**Three jobs, each with a provider.** Voice settings hold three parts, each with its own
+provider, address and model or voice:
+
+| Part | Providers in the first version | Wire shape |
+|---|---|---|
+| Recorded voice to text | `openai` (OpenAI and every server that copies it: Groq, self-hosted Whisper servers) | multipart to `/v1/audio/transcriptions`, `Authorization: Bearer` |
+| | `deepgram` | raw WAV body to `/v1/listen?model=…`, `Authorization: Token` |
+| Live voice to text | `deepgram` (exists) | as today |
+| | `openai-realtime` | the Realtime API in transcription mode: `input_audio_buffer.append` frames, transcript delta and completed events. It takes 24 kHz PCM, so the daemon resamples the 16 kHz capture. |
+| Text to speech | `openai` (OpenAI and self-hosted servers that copy it) | `POST /v1/audio/speech`, `response_format: pcm` (24 kHz, the rate clients already play, `neo/speech.ts`) |
+| | `deepgram` | `POST /v1/speak?model=…&encoding=linear16&sample_rate=24000` |
+
+Each provider is one small adapter in the daemon behind the seam that already exists for
+live voice (`StreamProtocol` in `voice/stream-protocols.ts`). There is one adapter
+interface for recorded voice and one for speech. An adapter sends only the fields its
+service defines; fields that only one self-hosted server knows, like `language: 'auto'`,
+stay in that server's preset.
+
+**Keys belong to a host.** A key is saved for a host name, and any part whose address has
+that host uses it. One OpenAI key then serves all three OpenAI parts, and one Deepgram key
+serves Deepgram's recorded, live and speech addresses. A key is still never sent to another
+host, and never over plain HTTP or WS. The existing `voice-transcription` credential is read
+as the key for the host of the current batch endpoint, so a saved key keeps working.
+
+**Voices.** The speech part has a voice field. The adapter offers a list: OpenAI's published
+voices; Deepgram's from its model names; for a self-hosted server, its own
+`/v1/audio/voices` when it answers. The user can always type a name. The default voice comes
+from the preset, not from the code.
+
+**The settings page.** One "Voice" page with three blocks, one per part. Each block
+has a provider picker, an address (filled by the provider), a model or voice, and a "Test"
+button:
+
+- Recorded voice: sends a short silent WAV, as today's test does (`voice.testConnection`).
+- Live voice: opens the stream, sends one second of silence, closes it.
+- Speech: synthesizes one short sentence and plays it.
+
+Keys are entered once per host, in the block where that host first appears, and shown as
+saved in the other blocks.
+
+Presets fill all three blocks at once: **OpenAI**, **Deepgram**, and **My own server**
+(OpenAI-shaped recorded and speech addresses plus a Deepgram-shaped live address on one
+base URL). After a preset the user only adds the key.
+
+**Upgrade.** Existing settings map without loss: the batch endpoint and model become the
+recorded part (`openai`), the live endpoint becomes the live part (`deepgram`, or its saved
+`streamProtocol`). The speech part starts empty. While it is empty the daemon falls back to
+`HYPERNEO_SPEECH_URL` with the same OpenAI shape and no key, so existing installs keep
+speaking without any change. Nothing else reads that variable.
+
+## What does not change
+
+- The phone and web clients: they still record, stream and play through the daemon. They
+  never see keys or provider addresses.
+- Voice mode (`batch`, `streaming`, `auto`), the TLS and private-network switches, and the
+  recording queue and retries.
+
+## Change plan
+
+Each slice is one PR from `dev` (the repository's default and target branch), about 100
+to 200 production lines, failing tests first.
+
+1. **Settings shape and keys by host.** The three parts in `VoiceSettings`, the upgrade
+   mapping, and key lookup by host. No new providers yet; behaviour is unchanged.
+2. **Speech from settings.** Text to speech reads the speech part (OpenAI shape, with
+   key), the environment variable becomes the fallback, and the voice list comes from the
+   adapter.
+3. **Deepgram recorded voice and Deepgram speech.** Two adapters.
+4. **OpenAI Realtime live voice.** One adapter, with 16 to 24 kHz resampling.
+5. **The settings page.** Three blocks, presets, the three tests.
+
+Acceptance, as tests against local fake servers, one per row:
+
+| Case | Expected |
+|---|---|
+| Settings saved before this change | same requests to the same addresses with the same key |
+| Each provider of each part | the request shape and auth header that service documents |
+| One key, three OpenAI parts | the key is sent to all three; never to a part on another host |
+| Speech part empty, `HYPERNEO_SPEECH_URL` set | speech works as today |
+| Each Test button against a fake that succeeds, then one that fails | passes, then shows the service's error |
+
+## Out of scope
+
+ElevenLabs, Azure, Google and AssemblyAI. Each is one more adapter behind the same
+interfaces when someone needs it.
