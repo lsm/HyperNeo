@@ -286,7 +286,8 @@ export async function setupRPCHandlers<SpaceServices = never>(
     deps.settingsManager,
     deps.internalEventBus,
     deps.db,
-    deps.credentialManager
+    deps.credentialManager,
+    () => neoService.installedPacks()
   );
   registerCustomEndpointHandlers(
     deps.messageHub,

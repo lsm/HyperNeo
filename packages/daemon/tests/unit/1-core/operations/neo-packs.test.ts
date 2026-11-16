@@ -9,6 +9,8 @@ import {
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { NEO_DEFAULT_PACKS, neoPackBriefs, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
+import { chooseLine } from '../../../../src/lib/neo/pack-selection.ts';
+import { validatePackPreference } from '../../../../src/lib/neo/preference-operations.ts';
 import { DELEGATION_PACK_BRIEF } from '../../../../src/lib/neo/packs/delegation/pack.ts';
 
 const pack = (id: string, describe = id): NeoPack => ({ id, describe, instructions: () => null });
@@ -100,6 +102,121 @@ describe('neoPacks', () => {
     const packs = neoPacks({ builtins: [coding], filePacks, enabled });
     expect(packs.map((item) => item.id)).toEqual(ids);
     expect(packs[0]).toBe(coding);
+  });
+});
+
+const lineA = { provider: 'anthropic', model: 'a' };
+const lineB = { provider: 'openai', model: 'b', harness: 'codex', effort: 'high' };
+
+describe('chooseLine', () => {
+  test('passes the candidates through in order when no pack ranks them', async () => {
+    expect(await chooseLine([pack('coding')], 'coding.write', [lineB, lineA], {})).toEqual({
+      ranked: [{ line: lineB }, { line: lineA }],
+      skipped: [],
+      exhausted: false,
+    });
+  });
+
+  test("returns the ranking pack's answer for the kind, candidates and scope", async () => {
+    const calls: unknown[] = [];
+    const ranking = { ranked: [{ line: lineA }], skipped: [{ line: lineB, reason: 'held' }] };
+    const ranker: NeoPack = {
+      ...pack('model-routing'),
+      rankLines: (...args) => {
+        calls.push(args);
+        return { ...ranking, exhausted: false };
+      },
+    };
+    const scope = { repo: 'org/app' };
+    expect(
+      await chooseLine([pack('coding'), ranker], 'coding.review', [lineB, lineA], scope)
+    ).toEqual({ ...ranking, exhausted: false });
+    expect(calls).toEqual([['coding.review', [lineB, lineA], scope]]);
+  });
+});
+
+describe('validatePackPreference', () => {
+  const declares = (kind: 'routes' | 'lineRules' | 'holdRules'): NeoPack => ({
+    ...pack('model-routing'),
+    preferences: {
+      value: {
+        label: { en: kind, 'zh-Hans': kind },
+        valueLabels: {},
+        scope: 'global',
+        type: { kind },
+        default: [],
+        ask: kind,
+      },
+    },
+  });
+  test.each<[string, 'routes' | 'lineRules' | 'holdRules', unknown, boolean]>([
+    [
+      'routes for a kind and a repo',
+      'routes',
+      [
+        { kind: 'coding.write', lines: [lineA, lineB] },
+        { kind: 'coding.write', repos: ['org/app'], lines: [{ ...lineB, stopAtPercent: 90 }] },
+      ],
+      true,
+    ],
+    ['a route with no lines', 'routes', [{ kind: 'coding.write', lines: [] }], false],
+    [
+      'stopAtPercent above 100',
+      'routes',
+      [{ kind: 'coding.write', lines: [{ ...lineA, stopAtPercent: 120 }] }],
+      false,
+    ],
+    [
+      'a route repo that is not owner/name',
+      'routes',
+      [{ kind: 'k', repos: ['app'], lines: [lineA] }],
+      false,
+    ],
+    [
+      'only and never filters',
+      'lineRules',
+      [
+        { line: lineA, only: { kinds: ['coding.review'] } },
+        { line: lineA, only: { kinds: ['coding.write'], repos: ['org/tools'] } },
+        { line: lineB, never: { kinds: ['coding.write'], projects: ['p1'] } },
+      ],
+      true,
+    ],
+    ['an unknown filter dimension', 'lineRules', [{ line: lineA, only: { teams: ['x'] } }], false],
+    ['a line without a model', 'lineRules', [{ line: { provider: 'anthropic' } }], false],
+    [
+      'hold rules with and without a line',
+      'holdRules',
+      [
+        { reason: 'limit', line: lineA, action: 'move', afterMinutes: 0 },
+        { reason: 'overloaded', action: 'wait', afterMinutes: 30 },
+      ],
+      true,
+    ],
+    [
+      'an unknown hold reason',
+      'holdRules',
+      [{ reason: 'quota', action: 'move', afterMinutes: 5 }],
+      false,
+    ],
+    [
+      'an unknown action',
+      'holdRules',
+      [{ reason: 'limit', action: 'switch', afterMinutes: 5 }],
+      false,
+    ],
+    [
+      'negative minutes',
+      'holdRules',
+      [{ reason: 'login', action: 'move', afterMinutes: -1 }],
+      false,
+    ],
+  ])('%s', (_label, kind, value, valid) => {
+    const result = validatePackPreference(
+      { pack: 'model-routing', scope: { kind: 'global', key: '' }, key: 'value', value },
+      [declares(kind)]
+    );
+    expect('value' in result).toBe(valid);
   });
 });
 

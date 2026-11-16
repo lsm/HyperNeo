@@ -1,4 +1,10 @@
-import type { NeoPack, NeoPackBrief } from './pack-contract.ts';
+import type {
+  NeoLine,
+  NeoLineRanking,
+  NeoLineScope,
+  NeoPack,
+  NeoPackBrief,
+} from './pack-contract.ts';
 
 export function neoEnabledPacks(
   settings: { packs?: string[] } | undefined,
@@ -31,4 +37,28 @@ export function neoPacks(input: {
     seen.add(pack.id);
     return true;
   });
+}
+
+export function refuseSecondLineRanker(
+  enabled: readonly string[],
+  installed: readonly NeoPack[]
+): string | null {
+  const rankers = neoPacks({ builtins: installed, filePacks: [], enabled })
+    .filter((pack) => pack.rankLines)
+    .map((pack) => pack.id);
+  return rankers.length > 1
+    ? `Only one enabled pack may rank model lines, but ${rankers.join(' and ')} both do.`
+    : null;
+}
+
+/** @public */
+export async function chooseLine(
+  packs: readonly NeoPack[],
+  kind: string,
+  candidates: readonly NeoLine[],
+  scope: NeoLineScope
+): Promise<NeoLineRanking> {
+  const ranker = packs.find((pack) => pack.rankLines);
+  if (ranker?.rankLines) return ranker.rankLines(kind, candidates, scope);
+  return { ranked: candidates.map((line) => ({ line })), skipped: [], exhausted: false };
 }
