@@ -289,7 +289,7 @@ export function NeoHumanQueue({
         if (showFull && !first) return null;
         return (
           <section
-            key={`${id}:${'questionId' in run[0] ? run[0].questionId : run[0].todoId}`}
+            key={first ? id : `${id}:${'questionId' in run[0] ? run[0].questionId : run[0].todoId}`}
             id={id === outside || showFull || !first ? undefined : `neo-ref-ask-${id}`}
             data-queue-ask={id}
             aria-label={title(id)}
