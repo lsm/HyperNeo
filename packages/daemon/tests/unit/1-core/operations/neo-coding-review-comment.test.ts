@@ -369,16 +369,93 @@ describe('codingGithubApi rate limits', () => {
     };
     ledger.stageFacts.observeHead(prUrl, 'head-a', 1);
     ledger.recordStage({ ...fact, url: prUrl });
-    const post = createCodingReviewComments((host, args, timeoutMs) =>
-      codingGithubApi(host, args, timeoutMs, spawn)
-    );
+    const make = () =>
+      createCodingReviewComments((host, args, timeoutMs) =>
+        codingGithubApi(host, args, timeoutMs, spawn)
+      );
+    let post = make();
     const sweep = () =>
       post(
         () => readCodingPostableReviews(db, ledger, 1),
         (posted, marker) => ledger.write('recordPostedReview', posted.url, marker)
       );
-    return { db, ledger, comments, calls, sweep };
+    const restart = () => {
+      post = make();
+    };
+    return { db, ledger, comments, calls, sweep, restart };
   };
+  const secondPr = (db: Database, ledger: CodingPrLedgerRepository) => {
+    const second = 'https://github.com/synthetic/review/pull/4';
+    db.prepare(
+      `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at)
+       VALUES ('synthetic/review', 4, 'Synthetic', 'branch-4', 'head-a', 'waiting_review', 1, NULL, 1)`
+    ).run();
+    ledger.stageFacts.observeHead(second, 'head-a', 1);
+    ledger.recordStage({ ...fact, url: second });
+  };
+  test('a restart during a Retry-After hold makes no comment calls until the reset', async () => {
+    const { db, calls, sweep, restart } = sweepWith((args) =>
+      args.includes('POST')
+        ? reply(
+            'HTTP/2.0 403 Forbidden\r\nRetry-After: 120\r\nContent-Type: application/json\r\n\r\n{"message":"Forbidden"}',
+            1,
+            'gh: Forbidden (HTTP 403)'
+          )
+        : reply(JSON.stringify([]), 0)
+    );
+    try {
+      jest.setSystemTime(start);
+      await sweep();
+      expect(calls.some((args) => args.includes('POST'))).toBe(true);
+      const tried = calls.length;
+      jest.setSystemTime(start + 30_000);
+      restart();
+      await sweep();
+      expect(calls).toHaveLength(tried);
+      jest.setSystemTime(start + 121_000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(tried);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
+  test.each([
+    [
+      'a 403 with an exhausted quota and a reset header',
+      (reset: number) =>
+        `HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: ${reset}\r\nContent-Type: application/json\r\n\r\n{"message":"Forbidden"}`,
+      120_000,
+    ],
+    [
+      'a 429 with no rate-limit wording',
+      () =>
+        'HTTP/2.0 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n{"message":"slow down"}',
+      60_000,
+    ],
+  ] as const)('%s stops the pass and holds until the reset', async (_label, headers, holdMs) => {
+    const reset = Math.floor(start / 1000) + 120;
+    const { db, ledger, calls, sweep } = sweepWith((args) =>
+      args.includes('--include')
+        ? reply(headers(reset), 1, 'gh: request failed')
+        : reply('', 1, 'gh: request failed')
+    );
+    try {
+      secondPr(db, ledger);
+      jest.setSystemTime(start);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + holdMs - 5_000);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + holdMs + 1_000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(1);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
   test('a comment scan that runs past one minute stops and posts nothing', async () => {
     const { db, ledger, calls, sweep } = sweepWith((args) => {
       if (args.includes('POST')) return reply('{}', 0);
