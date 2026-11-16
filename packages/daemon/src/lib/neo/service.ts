@@ -1292,8 +1292,8 @@ export class NeoService {
       await this.attention(
         {
           kind: 'request.reply_failed',
-          subject: { type: 'todo', id: reply.todoId },
-          since: Date.now(),
+          subject: { type: 'request_reply', id: reply.todoId },
+          since: job.createdAt,
           facts: {
             text: `Your answer to request todo ${reply.todoId} did not reach session ${reply.to}: ${result.reason ?? result.kind}. Tell it yourself with message.send.`,
           },
