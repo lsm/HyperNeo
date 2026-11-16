@@ -43,6 +43,21 @@ export function neoAskEntriesInOrder<
   });
 }
 
+export function neoUnansweredCards<T extends Pick<NeoAskEntry, 'questions'>>(
+  entries: readonly T[]
+): { entry: T; question: T['questions'][number] }[] {
+  return entries
+    .flatMap((entry) =>
+      entry.questions
+        .filter((question) => question.state === 'open' && !question.heldAt)
+        .map((question) => ({ entry, question }))
+    )
+    .sort(
+      (a, b) =>
+        b.question.createdAt - a.question.createdAt || a.question.id.localeCompare(b.question.id)
+    );
+}
+
 export function neoDonePageMerge(
   paged: readonly NeoTodoEntry[],
   known: readonly NeoTodoEntry[],

@@ -7,7 +7,7 @@ import {
   type NeoWorkSelector,
 } from './neo-work-reference.ts';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
-import type { NeoAskEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-snapshot';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
@@ -25,7 +25,7 @@ import { connectionManager } from '../lib/connection-manager.ts';
 import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
-import { NeoAskTodos } from './NeoAskTodos.tsx';
+import { NeoAskTodos, QuestionBox } from './NeoAskTodos.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -41,6 +41,7 @@ import {
   type NeoDoneTodosPage,
   neoAskEntriesInOrder,
   neoAskEntryGroup,
+  neoUnansweredCards,
 } from './neo-asks.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import {
@@ -317,6 +318,9 @@ export function NeoLive() {
     }
   });
   const topic = sceneEntries.some((entry) => entry.ask.topic === savedTopic) ? savedTopic : null;
+  const unanswered = neoUnansweredCards(
+    sceneGroups[0].entries.filter((entry) => !topic || entry.ask.topic === topic)
+  );
   const chooseTopic = (next: string | null) => {
     setSavedTopic(next);
     try {
@@ -437,6 +441,15 @@ export function NeoLive() {
     input?.scrollIntoView({ block: 'nearest' });
     input?.focus({ preventScroll: true });
   };
+  const replyToQuestion = ready
+    ? (question: NeoQuestionEntry) =>
+        replyInComposer({
+          author: 'Neo',
+          text: neoQuestionText(question),
+          anchor: `neo-ref-question-${question.id}`,
+          replyTo: { kind: 'question', id: question.id },
+        })
+    : undefined;
   const liveDraft = useRef(draft);
   liveDraft.current = draft;
   const livePreview = useRef(previewContext);
@@ -1056,6 +1069,25 @@ export function NeoLive() {
           {!workQuery.trim() && (
             <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
           )}
+          {!workQuery.trim() && unanswered.length > 0 && (
+            <section aria-label={t('live.group.cards')} class="mt-6 space-y-3" data-neo-cards>
+              <h2 class="text-xs font-medium text-fg-muted">
+                {t('live.group.cards')} · {unanswered.length}
+              </h2>
+              {unanswered.map(({ entry, question }) => (
+                <div key={question.id} class="rounded-2xl border border-line p-4">
+                  <p class="break-words text-xs text-fg-muted">{entry.ask.title}</p>
+                  <QuestionBox
+                    question={question}
+                    onOpen={openSession}
+                    disabled={!connected || !!neo.busyWork}
+                    onAnswer={(answer) => void neo.answerQuestion(question.id, answer)}
+                    onReply={replyToQuestion && (() => replyToQuestion(question))}
+                  />
+                </div>
+              ))}
+            </section>
+          )}
           {(workQuery.trim()
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
             : sceneGroups.map((group) => ({
@@ -1084,17 +1116,8 @@ export function NeoLive() {
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onControl={(todo, control) => neo.controlTodo(todo, control)}
-                    onReply={
-                      ready
-                        ? (question) =>
-                            replyInComposer({
-                              author: 'Neo',
-                              text: neoQuestionText(question),
-                              anchor: `neo-ref-question-${question.id}`,
-                              replyTo: { kind: 'question', id: question.id },
-                            })
-                        : undefined
-                    }
+                    onReply={replyToQuestion}
+                    hideUnanswered={group.key === 'attention'}
                     onReplyAsk={
                       ready
                         ? () =>

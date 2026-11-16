@@ -498,7 +498,7 @@ function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   );
 }
 
-function QuestionBox({
+export function QuestionBox({
   question,
   disabled,
   onAnswer,
@@ -644,8 +644,10 @@ export function NeoAskTodos({
   onTopic,
   onControl,
   onDesktopControl,
+  hideUnanswered,
 }: {
   entry: NeoAskEntry;
+  hideUnanswered?: boolean;
   onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
@@ -750,7 +752,7 @@ export function NeoAskTodos({
     readRevision,
   ]);
   const asked = entry.questions
-    .filter((question) => question.state === 'open')
+    .filter((question) => question.state === 'open' && (!hideUnanswered || !!question.heldAt))
     .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt);
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
@@ -806,6 +808,7 @@ export function NeoAskTodos({
       if (
         !target ||
         (!cardRef.current?.contains(target) &&
+          !target.closest('[data-neo-cards]') &&
           target.closest('[role="dialog"]')?.getAttribute('data-testid') !==
             `neo-ask-all-${received.ask.id}`)
       )

@@ -16,7 +16,12 @@ export function neoHumanQueue(input: {
   const cards = input.questions.filter((card) => card.state === 'open');
   const items: NeoHumanQueueItem[] = [
     ...[...cards]
-      .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt)
+      .sort(
+        (a, b) =>
+          Number(!!a.heldAt) - Number(!!b.heldAt) ||
+          b.createdAt - a.createdAt ||
+          a.id.localeCompare(b.id)
+      )
       .map((card) => ({
         state: card.heldAt ? ('held' as const) : ('waiting' as const),
         askId: card.askId,
