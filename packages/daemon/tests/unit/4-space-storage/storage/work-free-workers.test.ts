@@ -136,6 +136,18 @@ describe('readFreeWorkers', () => {
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
     });
 
+    test('a live todo with no binding row cannot claim, so the release still wins', () => {
+      bind('finished', 'w-done', 'done');
+      store.addTodo(
+        'targetless',
+        'ask',
+        { title: 'targetless', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        3
+      );
+      expect(sessions.claimWorker(ref, 'targetless')).toBeNull();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
     test('a start whose first message fails gives the binding back', () => {
       bind('finished', 'w-done', 'done');
       nextTodo();

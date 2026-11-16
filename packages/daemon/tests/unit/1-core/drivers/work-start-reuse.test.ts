@@ -196,6 +196,26 @@ describe('work.start against a worker release', () => {
     expect(run.started).toEqual(['loader']);
   });
 
+  test('a claim that fails leaves the worker free for the next start', async () => {
+    let calls = 0;
+    const run = harness(
+      [{ id: 'claim-throws', status: 'done' }],
+      ['claim-throws'],
+      undefined,
+      undefined,
+      {
+        claimWorker: async () => {
+          calls += 1;
+          if (calls === 1) throw new Error('db gateway write queue full');
+          return { previous: null };
+        },
+      }
+    );
+    await run.start(neo, false, { todoId: 'next' }).catch(() => null);
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('claim-throws');
+    expect(run.sent).toEqual(['claim-throws']);
+  });
+
   test('gives the binding back when the first message is refused', async () => {
     const undone: string[] = [];
     const run = harness(
