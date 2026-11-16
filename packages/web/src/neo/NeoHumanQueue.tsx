@@ -94,7 +94,8 @@ export function NeoHumanQueue({
       restore();
     };
   }, [focus, focused?.state, state, ask]);
-  const title = (id: string) => entries.find((entry) => entry.ask.id === id)?.ask.title ?? id;
+  const title = (id: string) =>
+    entries.find((entry) => entry.ask.id === id)?.ask.title ?? details[id]?.ask.title ?? id;
   const count = (s: NeoHumanQueueState, a: string | null) =>
     Object.entries(queue.counts).reduce(
       (total, [id, counts]) => total + (a === null || a === id ? counts[s] : 0),
@@ -108,12 +109,11 @@ export function NeoHumanQueue({
   const card = (askId: string): NeoAskEntry | undefined => {
     const entry = entries.find((candidate) => candidate.ask.id === askId);
     const loaded = details[askId];
-    if (!entry?.summary) return entry;
+    if (!entry) return loaded;
+    if (!entry.summary) return entry;
     return loaded && loaded.ask.updatedAt >= entry.ask.updatedAt ? loaded : undefined;
   };
-  const stale = groups.filter(
-    (id) => !card(id) && entries.some((entry) => entry.ask.id === id && entry.summary)
-  );
+  const stale = groups.filter((id) => !card(id));
   useEffect(() => {
     if (!onLoadDetails) return;
     for (const id of stale) {
