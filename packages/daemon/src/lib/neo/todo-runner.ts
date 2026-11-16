@@ -683,6 +683,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             Date.now(),
             `A settings question for this todo could not be opened (${JSON.stringify(outcome)}); the work continues without it.`,
             { reason: 'settings_question' }
+          ).catch((error) =>
+            log.warn('Settings question note pending', { todoId: todo.id }, error)
           );
         return outcome;
       }
