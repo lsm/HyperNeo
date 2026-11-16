@@ -107,6 +107,13 @@ interface StoredCredentials {
   accountId?: string;
   planType?: string;
   isFedrampAccount?: boolean;
+  owner?: CredentialOwner;
+}
+
+type CredentialOwner = 'hyperneo' | 'codex';
+
+function credentialOwner(credentials: StoredCredentials): CredentialOwner {
+  return credentials.owner ?? (credentials.expires === undefined ? 'codex' : 'hyperneo');
 }
 
 type StoredRefreshAttempt = StoredCredentials | 'transient' | 'definitive';
@@ -275,6 +282,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       planType: typeof raw.planType === 'string' ? raw.planType : undefined,
       isFedrampAccount:
         typeof raw.isFedrampAccount === 'boolean' ? raw.isFedrampAccount : undefined,
+      owner: raw.owner === 'codex' ? 'codex' : 'hyperneo',
     };
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
@@ -354,6 +362,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         accountId: credentials.accountId,
         planType: credentials.planType,
         isFedrampAccount: credentials.isFedrampAccount,
+        owner: credentialOwner(credentials),
       },
     };
   }
@@ -617,9 +626,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (rejectedAccessToken && credentials.access && credentials.access !== rejectedAccessToken) {
       return credentials;
     }
-    if (!credentials.refresh || credentials.expires === undefined) {
+    if (!credentials.refresh || credentialOwner(credentials) === 'codex') {
       if (credentials.refresh) {
-        const accessOnly: StoredCredentials = { ...credentials, refresh: undefined };
+        const accessOnly: StoredCredentials = {
+          ...credentials,
+          refresh: undefined,
+          owner: 'codex',
+        };
         await this.saveCredentials(accessOnly);
         this.cachedCredentials = accessOnly;
       }
@@ -653,6 +666,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isFedrampAccount:
         this.extractIsFedrampAccount(result.token.id_token ?? result.token.access_token) ??
         credentials.isFedrampAccount,
+      owner: 'hyperneo',
     };
 
     await this.saveCredentials(newCreds);
@@ -1096,6 +1110,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
               isFedrampAccount: this.extractIsFedrampAccount(
                 tokens.id_token ?? tokens.access_token
               ),
+              owner: 'hyperneo',
             };
             return this.saveCredentials(credentials).then(() => {
               this.cachedCredentials = credentials;
@@ -1272,6 +1287,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isFedrampAccount:
         this.extractIsFedrampAccount(codexData.tokens.id_token) ??
         this.extractIsFedrampAccount(accessToken),
+      owner: 'codex',
     };
     await this.saveCredentials(creds);
     this.cachedCredentials = creds;
