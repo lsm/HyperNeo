@@ -402,6 +402,15 @@ describe('daemon cards in the store', () => {
     expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
   });
 
+  test('a free reply to a human-step card holds off the next card for 24 hours', async () => {
+    await sweep(1);
+    store.answerQuestion(open()[0], ['I will do it tomorrow'], 'chat', 10);
+    await sweep(11);
+    expect(open()).toEqual([]);
+    await sweep(DAY + 10);
+    expect(open()).toHaveLength(1);
+  });
+
   test('an old Keep waiting answer still holds off the next card for 24 hours', async () => {
     const legacy = openHumanCard(
       store,
