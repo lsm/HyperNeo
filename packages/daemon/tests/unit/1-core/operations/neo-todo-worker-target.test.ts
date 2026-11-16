@@ -173,7 +173,9 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
   test('the pack can ask a settings question on the todo ask through the preferences operation', async () => {
     const w = (current = world());
     await w.runner.start(w.add());
-    const alternatives = [[{ pack: 'synthetic', scope: { kind: 'global' }, key: 'k', value: 1 }]];
+    const alternatives = [
+      [{ pack: 'synthetic', scope: { kind: 'global' as const, key: '' }, key: 'k', value: 1 }],
+    ];
     await w.setting()!({ requestId: 'synthetic-request', alternatives });
     expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toEqual([
       {
