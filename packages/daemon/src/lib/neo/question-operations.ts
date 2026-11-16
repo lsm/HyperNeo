@@ -194,18 +194,12 @@ export function createNeoWorkerQuestionWriter(
           const existing = daemonCard ? null : open;
           const workerCard =
             !!existing &&
-            store.questionAnswers
-              .list(existing.id)
-              .some(
-                ({ todoId, sourceSession: s }) =>
-                  todoId === todo.id &&
-                  ((s.adapter === ref.adapter && s.id === ref.id && s.daemon === ref.daemon) ||
-                    existing.document === input.report)
-              );
+            store.questionAnswers.list(existing.id).some((route) => route.todoId === todo.id);
           if (
             existing &&
             (!workerCard ||
               existing.text !== input.title ||
+              existing.document !== input.report ||
               JSON.stringify(existing.options) !== JSON.stringify(input.options))
           ) {
             rejection = `card_open: card ${existing.id} is already open on this todo; wait for its answer.`;
