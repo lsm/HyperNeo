@@ -298,6 +298,33 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
+  it('a login hold after a skipped restore starts its own clock', async () => {
+    const saved = Date.now() - 45 * 60_000;
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since: saved,
+      }),
+      needsLoginAt: null,
+    });
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(h.agent.isLoginHeld()).toBe(false);
+
+    const before = Date.now();
+    h.setNeedsLogin('anthropic', before);
+    await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
+
+    const state = h.agent.getProcessingState() as { reason?: string; since?: number };
+    expect(state.reason).toBe('login');
+    expect(state.since).toBeGreaterThanOrEqual(before);
+    await h.agent.cleanup();
+  });
+
   it('a restart restores a saved login hold and a credential write resumes it', async () => {
     const h = await harness({
       processingState: JSON.stringify({
