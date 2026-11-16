@@ -856,6 +856,82 @@ describe('NeoHumanQueue', () => {
     expect(view.container.querySelector('[data-queue-card="q3"]')).toBeTruthy();
   });
 
+  it('keeps the open full ask and its unsent choice when its leading card changes', async () => {
+    const choice = question('q1', 'trip', {
+      kind: 'choice',
+      options: ['iPhone', 'iPad'],
+      multiple: true,
+      createdAt: 1,
+    });
+    const newer = question('q0', 'trip', { text: 'Question q0', createdAt: 5 });
+    const at = (updatedAt: number, summary: boolean, questions: NeoQuestionEntry[]) => {
+      const shown = testAskEntry('trip', 'Plan the trip', { state: 'waiting', questions });
+      return {
+        ...shown,
+        ask: { ...shown.ask, updatedAt },
+        ...(summary ? { summary: {} } : {}),
+      } as unknown as NeoAskEntry;
+    };
+    const wait = (id: string): Queue['items'][number] => ({
+      state: 'waiting',
+      askId: 'trip',
+      questionId: id,
+      text: `Question ${id}`,
+      todos: [],
+    });
+    const counts = (waiting: number) => ({ trip: { waiting, held: 0, progress: 0 } });
+    const reads: ((value: NeoAskEntry) => void)[] = [];
+    const props = {
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+      onLoadDetails: () => new Promise<NeoAskEntry>((resolve) => reads.push(resolve)),
+      renderAsk: (shown: NeoAskEntry, refreshing?: boolean) => (
+        <NeoAskTodos entry={shown} disabled={refreshing} onAnswer={vi.fn()} />
+      ),
+    };
+    const view = render(
+      <NeoHumanQueue
+        {...props}
+        queue={{ items: [wait('q1')], counts: counts(1) }}
+        entries={[at(1, true, [choice])]}
+      />
+    );
+    await waitFor(() => expect(reads).toHaveLength(1));
+    reads[0](at(1, false, [choice]));
+    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
+    const pick = view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
+    fireEvent.click(pick);
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={{ items: [wait('q0'), wait('q1')], counts: counts(2) }}
+        entries={[at(2, true, [newer, choice])]}
+      />
+    );
+    await waitFor(() => expect(reads).toHaveLength(2));
+    expect(view.getByRole('checkbox', { name: 'iPad' })).toBe(pick);
+    expect(pick.checked).toBe(true);
+    reads[1](at(2, false, [newer, choice]));
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={{ items: [wait('q1')], counts: counts(1) }}
+        entries={[at(3, true, [{ ...newer, state: 'answered' }, choice])]}
+      />
+    );
+    await waitFor(() => expect(reads).toHaveLength(3));
+    expect(view.getByRole('checkbox', { name: 'iPad' })).toBe(pick);
+    expect(pick.checked).toBe(true);
+    reads[2](at(3, false, [{ ...newer, state: 'answered' }, choice]));
+    await waitFor(() =>
+      expect((view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(
+        false
+      )
+    );
+    expect(view.getByRole('checkbox', { name: 'iPad' })).toBe(pick);
+    expect(pick.checked).toBe(true);
+  });
+
   it('has no header button when the full ask cannot be shown', () => {
     const { view } = show();
     expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
