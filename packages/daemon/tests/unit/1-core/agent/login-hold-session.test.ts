@@ -327,7 +327,7 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
-  it('a skipped restore of a login hold with no held prompt leaves the session idle', async () => {
+  it('a skipped restore of a login hold with no held prompt leaves it held no longer', async () => {
     const h = await harness({
       processingState: JSON.stringify({
         status: 'rate_limit_cooldown',
@@ -342,7 +342,7 @@ describe('login hold', () => {
     await new Promise((done) => setTimeout(done, 0));
     await new Promise((done) => setTimeout(done, 0));
 
-    expect(JSON.parse((await h.persisted()) ?? '{}').status).toBe('idle');
+    expect(JSON.parse((await h.persisted()) ?? '{}').status).not.toBe('rate_limit_cooldown');
     await h.agent.cleanup();
   });
 

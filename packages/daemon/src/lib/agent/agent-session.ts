@@ -1142,6 +1142,7 @@ export class AgentSession
           .hold(this.providerId(), prompt)
           .then((held) => {
             if (!held && prompt) void this.resumeLoginPrompt(prompt);
+            else if (!held) void this.stateManager.setIdle().catch(() => {});
           })
           .catch((error: unknown) =>
             this.logger.warn(`Restoring a login hold failed: ${String(error)}`)

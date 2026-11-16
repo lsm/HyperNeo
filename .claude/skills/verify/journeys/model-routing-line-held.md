@@ -12,8 +12,8 @@ bound to a HyperNeo worker session held by a usage limit (`rate_limit_cooldown`,
 `limit`): one has been held for 31 minutes, the other for 10. The real pack sweep runs:
 - with `model-routing` off, Neo gets nothing;
 - with it on, two sweeps queue exactly one mailbox wake for Neo, about the 31-minute hold. A
-  fresh daemon has no signed-in provider, so the notice says no other line is usable.
+  fresh daemon has no route, so the notice says no other line is listed.
 
 `evidence/result.json` keeps the wakes and the commit. Only synthetic data and a temp HOME
-are used, and no provider key may be set. The ranked-alternatives text and the `onHold`
+are used, and no provider key may be set. The route-lines text and the `onHold`
 rules are covered by the unit tests.

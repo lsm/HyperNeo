@@ -87,7 +87,7 @@ type HeldTodo = {
   hold: HeldLine;
 };
 
-function readHeldTodos(db: Database): HeldTodo[] {
+function readHeldTodos(db: Database, now: number): HeldTodo[] {
   return db
     .prepare(`SELECT t.id, t.title, t.named, x.id AS worker,
         json_extract(x.config, '$.provider') AS provider,
@@ -102,8 +102,10 @@ function readHeldTodos(db: Database): HeldTodo[] {
         AND json_extract(s.ref, '$.adapter') = 'hyperneo' AND json_extract(s.ref, '$.daemon') IS NULL
         AND x.status NOT IN ('archived', 'ended') AND x.archived_at IS NULL
         AND json_valid(x.processing_state) AND json_valid(x.config)
-        AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'`)
-    .all()
+        AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'
+        AND (json_extract(x.processing_state, '$.retryAt') IS NULL
+          OR json_extract(x.processing_state, '$.retryAt') > ?)`)
+    .all(now)
     .flatMap((row) => {
       const { id, title, named, worker, provider, model, reason, since, retryAt } = row as Record<
         string,
@@ -229,35 +231,44 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
 
   const scan = (superpipe({})('model-routing.line-held') as PipelineAPI)
     .input(['now'])
-    .pipe(() => readHeldTodos(deps.database()), 'now', 'held')
+    .pipe((at: number) => readHeldTodos(deps.database(), at), 'now', 'held')
     .pipe(() => readPreference(deps.database(), 'onHold'), 'now', 'rules')
     .pipe(() => readPrefs(deps.database()).routes, 'now', 'routes')
     .pipe(
-      (held: HeldTodo[], routes: Route[]) =>
-        Promise.all(
+      (held: HeldTodo[], routes: Route[]) => {
+        const rankings = new Map<string, Promise<NeoLineRanking>>();
+        return Promise.all(
           held.map(async (entry) => {
             const { kind, scope } = workOf(entry.todo.named);
             const route = routeFor(routes, kind, scope);
-            const candidates = (route?.lines ?? []).filter((line) => !names(line, entry.hold.line));
-            const ranking = await rank(kind, candidates, scope);
+            const others = (route?.lines ?? []).filter((line) => !names(line, entry.hold.line));
+            const key = JSON.stringify([kind, scope, entry.hold.line]);
+            if (!rankings.has(key)) rankings.set(key, rank(kind, others, scope));
+            const ranking = await rankings.get(key)!;
             return {
               ...entry,
+              others,
               ranking: { ...ranking, exhausted: !!route && ranking.ranked.length === 0 },
             };
           })
-        ),
+        );
+      },
       ['held', 'routes'],
       'ranked'
     )
-    .pipe(() => readHeldTodos(deps.database()), 'ranked', 'current')
+    .pipe(
+      (ranked: unknown[], at: number) => (ranked.length ? readHeldTodos(deps.database(), at) : []),
+      ['ranked', 'now'],
+      'current'
+    )
     .pipe(
       (
-        ranked: (HeldTodo & { ranking: NeoLineRanking })[],
+        ranked: (HeldTodo & { others: NeoLine[]; ranking: NeoLineRanking })[],
         current: HeldTodo[],
         rules: HoldRule[],
         at: number
       ): NeoAttentionEvent[] =>
-        ranked.flatMap(({ todo, worker, hold, ranking }) =>
+        ranked.flatMap(({ todo, worker, hold, others, ranking }) =>
           current.some(
             (live) =>
               live.todo.id === todo.id && live.worker === worker && live.hold.since === hold.since
@@ -267,7 +278,7 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
                   kind: LINE_HELD,
                   subject: { type: 'todo', id: todo.id },
                   since: hold.since,
-                  facts: { text: lineHeldText(todo, hold, ranking) },
+                  facts: { text: lineHeldText(todo, hold, others) },
                 },
               ]
             : []

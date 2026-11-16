@@ -50,12 +50,11 @@ const lineName = (line: NeoLine) =>
 export function lineHeldText(
   todo: { id: string; title: string },
   hold: HeldLine,
-  ranking: NeoLineRanking
+  others: readonly NeoLine[]
 ): string {
-  const others = ranking.ranked.map((entry) => lineName(entry.line));
   return `Todo "${todo.title}" (${todo.id}) is held on ${lineName(hold.line)} (${hold.reason}) since ${new Date(hold.since).toISOString()}. ${
     others.length
-      ? `Usable lines, best first: ${others.join('; ')}.`
-      : 'No other line is usable for it.'
-  } Decide whether it waits or moves.`;
+      ? `Other lines on its route: ${others.map(lineName).join('; ')}. Check their usage with settings.provider.usage, then decide whether it waits or moves.`
+      : 'No other line is listed for it. Decide whether it waits or moves.'
+  }`;
 }
