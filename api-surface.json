@@ -17792,6 +17792,11 @@
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "ownSession": {
+            "default": false,
+            "description": "Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.",
+            "type": "boolean"
+          },
           "ownerSessionId": {
             "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
             "minLength": 1,

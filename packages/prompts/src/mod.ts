@@ -161,6 +161,7 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 };
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
+import mdgoalsSessionCycle from './goals/session-cycle.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
 import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
 import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
@@ -437,6 +438,7 @@ const registry: Record<string, string> = {
   'agent/task-notification-continue.md': mdagentTaskNotificationContinue,
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
+  'goals/session-cycle.md': mdgoalsSessionCycle,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
   'drivers/codex-worker.md': mddriversCodexWorker,
   'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
@@ -509,6 +511,7 @@ export const {
   NEO_PACK_DELEGATION_INSTRUCTIONS,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
+  GOAL_SESSION_CYCLE,
   NEO_QUICK_ACK,
   NEO_QUICK_ACK_LISTENING,
   NEO_FOCUSED_DISCUSSION,

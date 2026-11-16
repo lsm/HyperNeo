@@ -72,6 +72,12 @@ const Create = z
       .positive()
       .default(4)
       .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
+    ownSession: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.'
+      ),
   })
   .strict();
 const Get = z.object({ ...Owner, goalId: z.string().min(1) }).strict();
@@ -175,9 +181,12 @@ export function resolveGoalOwner(
     return input.ownerSessionId
       ? { value: input.ownerSessionId }
       : refuse('owner_unresolved: ownerSessionId is required for this caller.');
-  if (!isAgentSessionCaller(caller) || !caller.sessionId)
+  if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
-  return { value: input.ownerSessionId ?? caller.sessionId };
+  if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
+  return !input.ownerSessionId || input.ownerSessionId === caller.sessionId
+    ? { value: caller.sessionId }
+    : refuse('owner_denied: this session may only use goals it owns.');
 }
 
 export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): Gate<SessionGoal> {
@@ -200,6 +209,14 @@ export function requireExistingGoal(goal: SessionGoal | null): Gate<SessionGoal>
   return goal ? { value: goal } : refuse('goal_not_found');
 }
 
+export function requireGoalAccess(goal: SessionGoal, caller: OperationCaller): Gate<SessionGoal> {
+  return caller.source !== 'mcp' ||
+    isAgentSessionCaller(caller) ||
+    goal.ownerSessionId === caller.sessionId
+    ? { value: goal }
+    : refuse('owner_denied: this session may only use goals it owns.');
+}
+
 export function requireGoalDoneTest<T>(
   value: T,
   goal: { metrics?: Record<string, unknown>; doneTest?: string | null }
@@ -220,6 +237,7 @@ export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
+  readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -227,6 +245,7 @@ export function createSessionGoalOperations({
   goals,
   schedules,
   sessionExists,
+  startSession,
   audit,
 }: SessionGoalDependencies) {
   const owner = (pipeline: PipelineAPI) =>
@@ -241,7 +260,8 @@ export function createSessionGoalOperations({
   const owned = (pipeline: PipelineAPI) =>
     owner(pipeline)
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
-      .pipe(requireExistingGoal, 'goal', 'result:outcome');
+      .pipe(requireExistingGoal, 'goal', 'result:outcome')
+      .pipe(requireGoalAccess, ['outcome', 'caller'], 'result:outcome');
   const done = (result: SessionGoal) => ({ accepted: true as const, goal: result });
 
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)
@@ -255,8 +275,9 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
-        const { ownerSessionId: _owner, cadence, nudgeEvery, ...draft } = input;
+      async (parent: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
+        const { ownerSessionId: _owner, cadence, nudgeEvery, ownSession, ...draft } = input;
+        const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
         const goal = goals.create(owned, draft, Date.now(), (created) =>
           schedules.sync(created, cadence, nudgeEvery)
         );
@@ -369,7 +390,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
+        'Create a goal owned by a session, with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,

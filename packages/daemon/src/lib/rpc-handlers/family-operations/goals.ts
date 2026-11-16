@@ -23,6 +23,13 @@ export function registerSessionGoalOperations(
     goals,
     schedules,
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
+    startSession: (parentSessionId, title) =>
+      context.deps.sessionManager.createSession({
+        workspacePath: context.deps.db.getSession(parentSessionId)?.workspacePath,
+        detectGit: false,
+        title,
+        parentSessionId,
+      }),
     audit: (caller, toolName, summary) =>
       audit.createEntry({
         agentName: caller.agentName,

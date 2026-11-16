@@ -1,4 +1,4 @@
-import { NEO_GOAL_CYCLE } from '@hyperneo/prompts';
+import { GOAL_SESSION_CYCLE, NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
@@ -132,11 +132,12 @@ export class SessionGoalSchedules implements ScheduleSource {
     const runId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
     const state = this.goals.factState(id);
     const compact = change.nudge || state.entries - (state.through ?? 0) >= 10;
-    return `${NEO_GOAL_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
+    const neo = goal.ownerSessionId.startsWith('neo:');
+    return `${neo ? NEO_GOAL_CYCLE : GOAL_SESSION_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
 ${state.note ?? 'No what-works note yet.'}
 ${compact ? 'Read the journal pages and rewrite the what-works note with goal.session.update {goalId, worksNote}, folding new entries into it. Journal entries are kept.' : ''}
-Act using the usual tools; new asks in this cycle carry goalId ${id}.
+Act using the usual tools${neo ? `; new asks in this cycle carry goalId ${id}` : ''}.
 Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
   }
 }
