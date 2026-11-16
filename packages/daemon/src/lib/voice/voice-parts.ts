@@ -49,3 +49,16 @@ export async function resolveVoiceKey(
   const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
   return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
 }
+
+export async function resolveSpeechPart(
+  voice: VoiceSettings | undefined,
+  credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
+): Promise<{ endpoint: string; model?: string; voice?: string; key?: string } | undefined> {
+  const speech = voiceParts(voice).speech;
+  const endpoint = speech?.endpoint.trim();
+  if (!endpoint) return undefined;
+  const key = URL.canParse(endpoint)
+    ? await resolveVoiceKey(voice, new URL(endpoint), credentialManager)
+    : undefined;
+  return { endpoint, model: speech?.model, voice: speech?.voice, key };
+}

@@ -1,6 +1,6 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { randomBytes, randomUUID } from 'node:crypto';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import { PeerMessage } from '../../routes/neo-peer-message.ts';
 import { readBody } from '../../routes/neo-peer.ts';
@@ -51,8 +51,12 @@ export function createPeerOperations(service: NeoService) {
     own: role === 'neo' && sessionId === service.repo.defaultBinding()?.sessionId,
     human: !!receivedNeoHumanInput(service, sessionId, consumedInputId),
   });
-  const run = <I, O>(name: string, effect: (input: I) => Promise<O>, manage = true) =>
-    (superpipe({})(name) as PipelineAPI)
+  const run = <I, O>(
+    pipeline: ReturnType<SuperPipeFactory>,
+    effect: (input: I) => Promise<O>,
+    manage = true
+  ) =>
+    (pipeline as PipelineAPI)
       .input(['input', 'caller'])
       .pipe(facts, 'caller', 'facts')
       .pipe(
@@ -166,7 +170,7 @@ export function createPeerOperations(service: NeoService) {
         Accepted.extend({ id: z.string(), code: z.string(), expiresAt: z.number() }),
         Refused,
       ]),
-      execute: run('neo.peer.invite', async ({ name }: { name: string }) => {
+      execute: run(superpipe({})('neo.peer.invite'), async ({ name }: { name: string }) => {
         const code = randomBytes(16).toString('hex'),
           expiresAt = Date.now() + 600_000;
         const { id } = await db.call(peerWrites, 'invite', randomUUID(), name, code, expiresAt);
@@ -187,7 +191,7 @@ export function createPeerOperations(service: NeoService) {
         Refused,
       ]),
       execute: run(
-        'neo.peer.list',
+        superpipe({})('neo.peer.list'),
         async () => ({ accepted: true as const, peers: await db.call(peerReads, 'list') }),
         false
       ),
@@ -198,7 +202,7 @@ export function createPeerOperations(service: NeoService) {
       policy,
       inputSchema: z.object({ id: z.string().min(1) }).strict(),
       resultSchema: z.union([Accepted, Refused]),
-      execute: run('neo.peer.remove', async ({ id }: { id: string }) => {
+      execute: run(superpipe({})('neo.peer.remove'), async ({ id }: { id: string }) => {
         await createCredentialStore(service.db.getDatabase()).delete(...(await secretAddress(id)));
         await db.call(peerWrites, 'remove', id);
         return { accepted: true as const };

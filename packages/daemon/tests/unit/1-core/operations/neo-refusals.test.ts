@@ -29,6 +29,11 @@ function neoRefusalCodes(): Set<string> {
 }
 
 describe('explainNeoRefusal', () => {
+  test('points an unconfigured speech backend to the voice settings', () => {
+    expect(NEO_REFUSALS.speech_backend_not_configured).toContain('voice settings');
+    expect(NEO_REFUSALS.speech_backend_not_configured).not.toContain('HYPERNEO_SPEECH_URL');
+  });
+
   test.each([
     'speech_backend_not_configured',
     'speech_backend_unavailable',
