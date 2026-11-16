@@ -1,3 +1,4 @@
+import { generateUUID } from '@hyperneo/shared';
 import { getDataDir } from './data-dir.ts';
 import {
   copyFileSync,
@@ -439,6 +440,8 @@ export async function validateSDKSessionFile(
   return result;
 }
 
+const BACKUPS_PER_SESSION = 2;
+
 function backupSDKSessionFile(sessionFilePath: string): string | null {
   try {
     const backupDir = join(dirname(sessionFilePath), 'backups');
@@ -449,10 +452,55 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
     const backupPath = join(backupDir, `${fileName}.backup.${timestamp}`);
 
     copyFileSync(sessionFilePath, backupPath);
+    const ownBackups = readdirSync(backupDir)
+      .filter((name) => name.startsWith(`${fileName}.backup.`))
+      .sort();
+    for (const surplus of ownBackups.slice(0, -BACKUPS_PER_SESSION)) {
+      unlinkSync(join(backupDir, surplus));
+    }
     return backupPath;
   } catch {
     return null;
   }
+}
+
+function findRequestBlobToolUse(lines: string[], toolUseId: string): SDKFileMessage | null {
+  for (const line of lines) {
+    if (!line.includes('"api-request-blob"') || !line.includes(toolUseId)) continue;
+    let blob: SDKFileMessage;
+    try {
+      blob = JSON.parse(line) as SDKFileMessage;
+    } catch {
+      continue;
+    }
+    const content = blob.message?.content;
+    if (
+      blob.type === 'api-request-blob' &&
+      blob.message?.role === 'assistant' &&
+      Array.isArray(content) &&
+      content.some((block) => block.type === 'tool_use' && block.id === toolUseId)
+    ) {
+      return { type: 'assistant', uuid: generateUUID(), message: blob.message };
+    }
+  }
+  return null;
+}
+
+function survivingParentUuid(
+  lines: string[],
+  lineIndex: number,
+  parentUuid: string | undefined
+): string | undefined {
+  if (parentUuid && lines.some((line) => line.includes(`"uuid":"${parentUuid}"`))) {
+    return parentUuid;
+  }
+  for (let i = lineIndex - 1; i >= 0; i--) {
+    try {
+      const line = JSON.parse(lines[i]) as SDKFileMessage;
+      if (line.uuid && !line.isSidechain) return line.uuid;
+    } catch {}
+  }
+  return undefined;
 }
 
 export async function repairSDKSessionFile(
@@ -482,18 +530,18 @@ export async function repairSDKSessionFile(
 
     const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
 
-    result.backupPath = backupSDKSessionFile(sessionFile);
-    if (!result.backupPath) {
-      result.errors.push('Failed to create backup - aborting repair');
-      return result;
-    }
-
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter((line) => line.trim());
 
     const insertions: Array<{ lineIndex: number; message: string }> = [];
+    const recoveredToolUseIds = new Set<string>();
+    const restoredTail = new Map<number, string>();
 
     for (const orphan of validation.orphanedToolResults) {
+      if (recoveredToolUseIds.has(orphan.toolUseId)) {
+        result.repairedCount++;
+        continue;
+      }
       const { messages: dbMessages } = db.getSDKMessages(kaiSessionId, 10000);
 
       let missingAssistantMsg: SDKFileMessage | null = null;
@@ -517,17 +565,25 @@ export async function repairSDKSessionFile(
         if (missingAssistantMsg) break;
       }
 
+      missingAssistantMsg ??= findRequestBlobToolUse(lines, orphan.toolUseId);
+
       if (!missingAssistantMsg) {
         result.errors.push(
-          `Could not find tool_use message for ${orphan.toolUseId} in HyperNeo DB`
+          `Could not find tool_use message for ${orphan.toolUseId} in HyperNeo DB or transcript`
         );
         continue;
+      }
+
+      for (const block of missingAssistantMsg.message?.content ?? []) {
+        if (block.type === 'tool_use' && block.id) recoveredToolUseIds.add(block.id);
       }
 
       const orphanedLine = JSON.parse(lines[orphan.lineIndex]) as SDKFileMessage;
 
       const repairedMsg: SDKFileMessage = {
-        parentUuid: orphanedLine.parentUuid,
+        parentUuid:
+          restoredTail.get(orphan.lineIndex) ??
+          survivingParentUuid(lines, orphan.lineIndex, orphanedLine.parentUuid),
         isSidechain: false,
         userType: 'external',
         cwd: orphanedLine.cwd || workspacePath,
@@ -548,6 +604,7 @@ export async function repairSDKSessionFile(
       });
 
       if (missingAssistantMsg.uuid) {
+        restoredTail.set(orphan.lineIndex, missingAssistantMsg.uuid);
         const updatedOrphan = {
           ...orphanedLine,
           parentUuid: missingAssistantMsg.uuid,
@@ -558,14 +615,29 @@ export async function repairSDKSessionFile(
       result.repairedCount++;
     }
 
-    insertions.sort((a, b) => b.lineIndex - a.lineIndex);
-    for (const insertion of insertions) {
+    if (
+      result.repairedCount === 0 ||
+      result.repairedCount !== validation.orphanedToolResults.length
+    ) {
+      return result;
+    }
+
+    result.backupPath = backupSDKSessionFile(sessionFile);
+    if (!result.backupPath) {
+      result.errors.push('Failed to create backup - aborting repair');
+      return result;
+    }
+
+    const ordered = insertions
+      .map((insertion, order) => ({ ...insertion, order }))
+      .sort((a, b) => b.lineIndex - a.lineIndex || b.order - a.order);
+    for (const insertion of ordered) {
       lines.splice(insertion.lineIndex, 0, insertion.message);
     }
 
     rewriteSessionFile(sessionFile, `${lines.join('\n')}\n`);
 
-    result.success = result.repairedCount > 0;
+    result.success = true;
   } catch (error) {
     result.errors.push(`Repair error: ${error}`);
   }
@@ -573,14 +645,19 @@ export async function repairSDKSessionFile(
   return result;
 }
 
-const validatingSessionFiles = new Map<string, Promise<boolean>>();
+export interface SDKTranscriptCheck {
+  valid: boolean;
+  repairError?: string;
+}
+
+const validatingSessionFiles = new Map<string, Promise<SDKTranscriptCheck>>();
 
 export function validateAndRepairSDKSession(
   workspacePath: string,
   sdkSessionId: string,
   kaiSessionId: string,
   db: Database
-): Promise<boolean> {
+): Promise<SDKTranscriptCheck> {
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   const running = validatingSessionFiles.get(sessionFile);
   if (running) return running;
@@ -596,25 +673,25 @@ async function validateAndRepairSessionFile(
   sdkSessionId: string,
   kaiSessionId: string,
   db: Database
-): Promise<boolean> {
+): Promise<SDKTranscriptCheck> {
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   if (!existsSync(sessionFile)) {
-    return false;
+    return { valid: false };
   }
 
   const validation = await validateSDKSessionFile(workspacePath, sdkSessionId);
 
   if (validation.valid) {
-    return true;
+    return { valid: true };
   }
 
   const repair = await repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
 
   if (repair.success) {
-    return true;
+    return { valid: true };
   }
 
-  return false;
+  return { valid: false, repairError: repair.errors.join('; ') || 'repair failed' };
 }
 
 export interface SDKDeleteResult {

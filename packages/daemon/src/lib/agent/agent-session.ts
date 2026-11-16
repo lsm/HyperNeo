@@ -37,6 +37,7 @@ import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyper
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import type { Database } from '../../storage/database.ts';
+import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -2190,7 +2191,7 @@ export class AgentSession
     return await this.lifecycleManager.restart(options);
   }
 
-  async validateSdkTranscript(): Promise<boolean> {
+  async validateSdkTranscript(): Promise<SDKTranscriptCheck> {
     return await this.lifecycleManager.validateSdkTranscript();
   }
 
