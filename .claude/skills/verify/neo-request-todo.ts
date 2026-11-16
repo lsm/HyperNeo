@@ -312,9 +312,49 @@ try {
     "Neo's work lands on the request's ask"
   );
   (evidence.checks as unknown[]).push({ name: 'request names its ask', envelope, report, filed });
+  const [splitRequest, label] = todos.listTodos(splitAsk.id);
+  const splitClosed = await invokeOperation(
+    registry,
+    'neo.todo.done',
+    { todoId: splitRequest!.id, reason: 'Filed the label step' },
+    asNeo
+  );
+  assert.equal((splitClosed as { value?: { ok?: boolean } }).value?.ok, true, JSON.stringify(splitClosed));
+  assert.deepEqual(await deliver(), [{ kind: 'accepted' }]);
+  const closeReply = inbox('synthetic-requester').at(-1)!.text;
+  assert.ok(
+    closeReply.includes(
+    `Neo closed your request "${split}" as done: Filed the label step\nTodos added for it: "Add the synthetic label" (${label!.id}).`
+    ),
+    'the close reply names the todo Neo added'
+  );
+  assert.equal(todos.getAsk(splitAsk.id)?.status, 'open', 'the ask stays open while its work runs');
+  await invokeOperation(
+    registry,
+    'neo.todo.remove',
+    { todoId: label!.id, reason: 'Already labelled' },
+    asNeo
+  );
+  const settled = await invokeOperation(
+    registry,
+    'neo.ask.settle',
+    { askId: splitAsk.id, status: 'done', outcome: 'Labelled' },
+    asNeo
+  );
+  assert.equal((settled as { kind?: string }).kind, 'completed', JSON.stringify(settled));
+  assert.deepEqual(await deliver(), [{ kind: 'accepted' }]);
+  const settleReply = inbox('synthetic-requester').at(-1)!.text;
+  assert.ok(
+    settleReply.includes(
+    `Your request "${split}" is finished:\n"Add the synthetic label" (${label!.id}) removed: Already labelled`
+    ),
+    'the settle reply gives each todo its final state'
+  );
+  assert.deepEqual(await deliver(), [], 'the settled ask queues no second settle reply');
+  (evidence.checks as unknown[]).push({ name: 'close and settle replies', closeReply, settleReply });
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request envelope_ask=request_only work_on_request_ask=yes`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request envelope_ask=request_only work_on_request_ask=yes close_reply=lists_todos settle_reply=once`
   );
 } catch (error) {
   evidence.error = String(error);

@@ -1,4 +1,4 @@
-import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
+import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
@@ -612,6 +612,7 @@ export class NeoAskTodoRepository {
           outcome,
           ask.sessionId
         );
+    queueNeoRequestSettledReply(this.db, ask.id, ask.sessionId);
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
   }
