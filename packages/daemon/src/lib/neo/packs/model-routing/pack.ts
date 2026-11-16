@@ -84,9 +84,10 @@ function readHolds(db: Database): LineHold[] {
 }
 
 async function readAvailability(provider: Provider | undefined): Promise<Availability> {
-  if (!provider || !(await provider.isAvailable())) return 'not configured';
+  if (!provider) return 'not configured';
   const status = await provider.getAuthStatus?.();
-  return status && !status.isAuthenticated ? 'not signed in' : 'ready';
+  if (status && !status.isAuthenticated) return 'not signed in';
+  return (await provider.isAvailable()) ? 'ready' : 'not configured';
 }
 
 export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
