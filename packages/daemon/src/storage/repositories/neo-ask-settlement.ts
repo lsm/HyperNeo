@@ -7,6 +7,7 @@ import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NeoRepository } from './neo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { neoNoteBatches } from './neo-wake-queue-repository.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
@@ -218,11 +219,7 @@ const sessionFacts = (db: Database, sessionId: string): SessionFacts => ({
 type Recipients = Map<string, Map<string, string[]>>;
 
 const wakeRecipients = (db: Database, asks: readonly Candidate[]): Recipients => {
-  const neo = (
-    db.prepare("SELECT session_id AS id FROM neo_session_bindings WHERE kind = 'neo'").get() as {
-      id: string;
-    } | null
-  )?.id;
+  const neo = new NeoRepository(db).defaultBinding()?.sessionId;
   return new Map(
     asks.map((ask) => {
       const sessions = new Map(
