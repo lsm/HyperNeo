@@ -319,8 +319,8 @@ describe('coding session target decision', () => {
     expect(asks).toEqual(['failed', 'failed', { ok: true, questionId: asked!.id }]);
   });
 
-  test('a strategy saved while the question is being asked is not asked again', async () => {
-    const { db, todo, decide, questions, asks, failing } = setup();
+  test('a strategy saved while the question is being asked is not asked again and decides routing', async () => {
+    const { db, todo, worked, decide, questions, asks, failing } = setup();
     failing.ask = true;
     failing.before = () =>
       db
@@ -329,7 +329,8 @@ describe('coding session target decision', () => {
            VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
         )
         .run(repo);
-    await decide(todo(), start('dev'));
+    worked(todo('other'), 'idle', 'dev', 'done');
+    expect(await decide(todo(), start('dev'))).toEqual({ value: start('dev') });
     expect(asks).toEqual(['failed']);
     expect(questions('feature')).toEqual([]);
   });
