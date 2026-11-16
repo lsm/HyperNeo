@@ -1385,7 +1385,7 @@ describe('voice stream RPC handlers', () => {
     }
   });
 
-  it('marks only the live-recording batch fallback as interactive speech', async () => {
+  it('marks the live-recording fallback and recorded voice messages as interactive speech', async () => {
     resetVoiceTranscriptionLimitsForTests();
     const { hub, handlers } = createMockMessageHub();
     Object.assign(hub, { getRouter: () => undefined });
@@ -1409,7 +1409,7 @@ describe('voice stream RPC handlers', () => {
       ).toEqual({ text: 'spoken' });
       expect(sent).toEqual([
         { 'X-Speech-Priority': 'interactive', Host: 'example.com' },
-        { Host: 'example.com' },
+        { 'X-Speech-Priority': 'interactive', Host: 'example.com' },
       ]);
     } finally {
       fetch.mockRestore();
