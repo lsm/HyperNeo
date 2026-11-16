@@ -1102,6 +1102,7 @@ export function NeoLive() {
               onOpen={openSession}
               focus={cardTarget}
               reveal={reveal}
+              onStale={() => void neo.refresh()}
               onReply={
                 ready
                   ? (question) =>

@@ -43,6 +43,7 @@ export function NeoHumanQueue({
   onOpen,
   focus,
   reveal = 0,
+  onStale,
 }: {
   queue: Queue;
   entries: readonly NeoAskEntry[];
@@ -54,6 +55,7 @@ export function NeoHumanQueue({
   onOpen?: (link: string, title: string) => void;
   focus?: NeoWorkFocus | null;
   reveal?: number;
+  onStale?: () => void;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
@@ -159,6 +161,19 @@ export function NeoHumanQueue({
         });
     }
   }, [stale.join(), onLoadDetails, known, queue, attempt, settled]);
+  const closed = queue.items.some(
+    (item) =>
+      'questionId' in item &&
+      !!card(item.askId)?.questions.some(
+        (question) => question.id === item.questionId && question.state !== 'open'
+      )
+  );
+  const staleQueue = useRef<Queue | null>(null);
+  useEffect(() => {
+    if (!closed || !onStale || staleQueue.current === queue) return;
+    staleQueue.current = queue;
+    onStale();
+  }, [closed, queue, onStale]);
   const anchored = new Set<string>();
   const anchor = (todoId: string) => {
     if (anchored.has(todoId)) return undefined;
@@ -280,9 +295,8 @@ function QueueItem({
     );
   const held = item.state === 'held';
   const hold = { held, toggle: () => onHold(item.questionId, !held) };
-  const question = entry?.questions.find(
-    (card) => card.id === item.questionId && card.state === 'open'
-  );
+  const known = entry?.questions.find((card) => card.id === item.questionId);
+  const question = known?.state === 'open' ? known : undefined;
   return (
     <div data-queue-card={item.questionId}>
       <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-fg-muted">
@@ -319,9 +333,11 @@ function QueueItem({
               </button>
             </span>
           )}
-          <button type="button" class={neoPlainClass} disabled={disabled} onClick={hold.toggle}>
-            {t(held ? 'queue.takeBack' : 'queue.hold')}
-          </button>
+          {!known && (
+            <button type="button" class={neoPlainClass} disabled={disabled} onClick={hold.toggle}>
+              {t(held ? 'queue.takeBack' : 'queue.hold')}
+            </button>
+          )}
         </div>
       )}
     </div>
