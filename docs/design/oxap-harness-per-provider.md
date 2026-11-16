@@ -8,7 +8,9 @@ This doc says OXAP for the protocol throughout. Code in HyperNeo today still
 uses the old name OAP (`lib/oap/`, the `oapx` binary, the `HYPERNEO_OAP_*`
 variables). A mechanical rename PR renames them (see "Pull requests"), and the
 `HYPERNEO_OAP_*` variables are removed earlier by PR 3. Everything this design
-stores or shows already says OXAP, so the rename needs no data migration.
+stores or shows already says OXAP. Older stored names (the `oap` state
+directory and the `oapRecovery` and `oapClearThreadId` metadata keys) keep
+their names, so the rename needs no data migration.
 
 Rule: every harness that runs through OXAP is shown as **OXAP <name>**
 (**OXAP Codex**, **OXAP DeepSeek**) and stored with an `oxap-` prefix
@@ -311,11 +313,11 @@ production-line estimates, sized against `oap-hub-config.ts`,
 
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
-| 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex` | daemon | ~100 |
+| 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex`, and the verify skill's OXAP wire script sends `oxap-codex` until PR 2 switches it to the provider | daemon | ~100 |
 | 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
 | 3 | Hub from settings: pinned download checked against the hash pinned in HyperNeo and the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
-| 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory keeps its name, so existing hub state stays in place. Moves and renames only, no behavior change | daemon | rename |
+| 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
 | OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction | OXAP repo | upstream |
 | 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME` | daemon | ~60 |
 | 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
