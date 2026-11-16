@@ -22,7 +22,7 @@
 # | PR to dev (daemon-only, per changes)  | check + unit + online (web skipped)             |
 # | PR to dev (prompts/daemon unit tests) | check + unit (online + web skipped)             |
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
-# | PR to dev (docs-only, per changes)    | check only                                      |
+# | PR to dev (docs-only, per changes)    | none (only the path filter and the gate run)    |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
 # | Push of a v* tag                      | check + unit + online + web (no path filter)    |
 # | workflow_dispatch                     | mocked CI + build                               |
