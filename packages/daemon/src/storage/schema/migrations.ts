@@ -5,6 +5,7 @@ import { runMigration511 } from './m511-provider-needs-login.ts';
 import { runMigration512 } from './m512-neo-todo-produces-follow-up.ts';
 import { runMigration513 } from './m513-drop-neo-question-start-todos.ts';
 import { runMigration514 } from './m514-neo-todo-closed-unverified-rows.ts';
+import { runMigration515 } from './m515-neo-question-held.ts';
 import { runMigration507 } from './m507-neo-question-option-labels.ts';
 import { runMigration501 } from './m501-pairing-first-device.ts';
 import { runMigration504 } from './m504-neo-front-input-owner-backfill.ts';
@@ -1063,6 +1064,7 @@ export function runMigrations(
   run(migrationMarkerKey(512), () => runMigration512(db));
   run(migrationMarkerKey(513), () => runMigration513(db));
   run(migrationMarkerKey(514), () => runMigration514(db));
+  run(migrationMarkerKey(515), () => runMigration515(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

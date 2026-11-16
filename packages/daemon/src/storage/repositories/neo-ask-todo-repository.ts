@@ -164,7 +164,7 @@ export type NeoQuestionDraft = Pick<
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -205,10 +205,12 @@ const toQuestion = ({
   todoId,
   cause,
   actionsAppliedAt,
+  heldAt,
   ...row
 }: QuestionRow): NeoQuestion => ({
   ...(cause ? { cause } : {}),
   ...(actionsAppliedAt ? { actionsAppliedAt } : {}),
+  ...(heldAt && row.state === 'open' ? { heldAt } : {}),
   ...(answerProvenanceJson
     ? { answerProvenance: JSON.parse(answerProvenanceJson) as NeoAnswerProvenance }
     : {}),
@@ -392,11 +394,11 @@ export class NeoAskTodoRepository {
     const questions = (
       this.db
         .prepare(
-          `SELECT q.ask_id AS askId, q.state, q.todos
+          `SELECT q.ask_id AS askId, q.state, q.todos, q.held_at AS heldAt
            FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
            WHERE q.state = 'open' AND a.status = 'open'`
         )
-        .all() as (Pick<NeoQuestion, 'askId' | 'state'> & { todos: string })[]
+        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'heldAt'> & { todos: string })[]
     ).map((row) => ({ ...row, todos: JSON.parse(row.todos) as string[] }));
     return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }
@@ -988,6 +990,13 @@ export class NeoAskTodoRepository {
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;
+  }
+
+  holdQuestion(question: NeoQuestion, held: boolean, now: number): NeoQuestion | null {
+    if (!!question.heldAt === held) return question;
+    if (!this.changeQuestion(question.id, { held_at: held ? now : null }, 'open')) return null;
+    this.touchAsk(question.askId, now);
+    return this.getQuestion(question.id);
   }
 
   markCardActionsApplied(id: string, now: number): void {

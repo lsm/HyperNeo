@@ -646,7 +646,7 @@ describe('neoWorkCounts', () => {
       blockedBy: 'question',
       startedAt: null,
     } as const;
-    const card = { askId: 'a', state: 'open', todos: ['t'] } as const;
+    const card = { askId: 'a', state: 'open' as const, todos: ['t'] };
     expect(neoWorkCounts([waiting], [card], [])).toEqual({ needsYou: 1, neoUnhandled: 0 });
     const held = { ...card, heldAt: 5 };
     expect(neoWorkCounts([waiting], [held], [])).toEqual({
