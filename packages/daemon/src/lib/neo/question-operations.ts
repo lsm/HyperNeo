@@ -192,9 +192,13 @@ export function createNeoWorkerQuestionWriter(
           if (open && daemonCard)
             store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
           const existing = daemonCard ? null : open;
+          const workerCard =
+            !!existing &&
+            store.questionAnswers.list(existing.id).some((route) => route.todoId === todo.id);
           if (
             existing &&
-            (existing.text !== input.title ||
+            (!workerCard ||
+              existing.text !== input.title ||
               JSON.stringify(existing.options) !== JSON.stringify(input.options))
           ) {
             rejection = `card_open: card ${existing.id} is already open on this todo; wait for its answer.`;
