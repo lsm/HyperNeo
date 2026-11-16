@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler.ts';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
+import {
+  type Job,
+  JobQueueRepository,
+} from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository.ts';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
@@ -312,6 +319,45 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     );
     sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
     sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a digest read before the queue cleanup settles the ask once its child settles', async () => {
+    add('removed', 'removed', { reason: 'Not needed' });
+    const queue = new NeoWakeQueueRepository(db);
+    queue.holdOnce(
+      createMailboxEntry({
+        to: { kind: 'session', sessionId: 'neo' },
+        origin: 'session:neo',
+        messageUuid: wakeUuid('ask', 2),
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'reminder' },
+          inputKind: 'system',
+        },
+      })
+    );
+    queue.attach('neo', [], undefined, 'digest-batch');
+    sdk('user', 'digest-batch', 10);
+    sdk('result', 'digest-result', 11);
+    store.openAsk({
+      id: 'child',
+      parentId: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Child',
+      request: 'Child work',
+      createdAt: 2,
+    });
+    expect(await sweep()).toEqual([]);
+    const later = Date.now() + 8 * 24 * 3_600_000;
+    const now = spyOn(Date, 'now').mockReturnValue(later);
+    const cleaned = await createCleanupHandler(new JobQueueRepository(db))({} as Job);
+    now.mockRestore();
+    expect(cleaned.deletedJobs).toBe(1);
+    store.settleAsk(store.getAsk('child')!, 'done', 'Child done', 3);
     expect(await sweep()).toEqual(['ask']);
   });
 
