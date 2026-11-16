@@ -910,9 +910,9 @@ export class CodingPrLedgerRepository {
     this.db
       .prepare('DELETE FROM pack_coding_stage_heads WHERE observed_at < ?')
       .run(now - CODING_LEDGER_KEEP_MS);
-    this.db.exec(`
-      DELETE FROM pack_coding_stage_facts WHERE url NOT IN (SELECT url FROM pack_coding_stage_heads);
-      DELETE FROM pack_coding_review_comments WHERE url NOT IN (SELECT url FROM pack_coding_stage_heads);`);
+    this.db.exec(
+      'DELETE FROM pack_coding_stage_facts WHERE url NOT IN (SELECT url FROM pack_coding_stage_heads)'
+    );
   }
 
   list(): (CodingLedgerRow & { stateSince: number; readAt: number })[] {

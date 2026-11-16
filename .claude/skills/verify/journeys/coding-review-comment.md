@@ -2,9 +2,12 @@
 
 Read shared isolation setup in `../SKILL.md` and `coding-assignment-results.md`.
 This proof starts one real daemon on an ephemeral loopback port with a fresh
-synthetic DB/home. `$RUN/bin/gh` runs `review-comment-gh.ts`, which answers only
-issue-comment list and create calls from `$RUN/comments.json` and logs every call
-to `$RUN/evidence/gh.log`. Nothing reaches github.com; HTTP is refused.
+synthetic DB/home. `$RUN/bin/gh` runs `review-comment-gh.ts`, which answers the
+ledger's identity, PR-list and hydration reads from `$RUN/pr.json` (head and
+OPEN/MERGED state), issue-comment list and create calls from `$RUN/comments.json`,
+and logs every call to `$RUN/evidence/gh.log`. Comments are posted only for PRs
+the same sweep's ledger read confirmed open. Nothing reaches github.com; HTTP is
+refused.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-review-comment-XXXXXX)
@@ -27,10 +30,12 @@ names the reviewer model and harness, the verdict and the head. The reviewer
 session id never appears. The helper prints the first comment as a sample.
 
 Then a second Neo service on the same DB stands in for a restart: two sweeps
-make no issue-comment calls, because each PR's posted marker is stored in the DB. A merged PR with a new review fact makes none either. Last, the
-stub answers every call with a rate-limit error (and `/rate_limit` with a reset
-ten minutes out): one sweep tries once, and the next sweeps make no comment
-calls until the reset.
+make no issue-comment calls, because each PR's posted marker is stored in the DB.
+Next the PR moves to a new open head with a new review, and the stub answers
+comment calls with a rate-limit error (and `/rate_limit` with a reset ten minutes
+out): one sweep tries once and the next sweeps make no comment calls. Last, the
+stub reports the PR merged and a third service starts: the still-pending review
+gets no comment call, because the ledger read in that sweep shows the PR merged.
 
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
 

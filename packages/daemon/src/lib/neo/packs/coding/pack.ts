@@ -265,17 +265,17 @@ export function createCodingPack(deps: {
     judge: todos.judge,
     attention: { kinds: CODING_ATTENTION_KINDS, scan: scanCodingIdleOpenPrs(deps.todoPrs) },
     sweep: async (now) => {
-      if (deps.postReviewComments)
-        await deps.postReviewComments(
-          () => readCodingPostableReviews(deps.database(), deps.prLedger),
-          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker)
-        );
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
+      if (deps.postReviewComments)
+        await deps.postReviewComments(
+          () => readCodingPostableReviews(deps.database(), deps.prLedger, now),
+          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker)
+        );
       await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(

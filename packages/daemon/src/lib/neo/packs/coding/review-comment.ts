@@ -13,18 +13,25 @@ import type { CodingStageFact } from './stage-facts.ts';
 
 const log = new Logger('NeoCodingReviewComment');
 
-export type CodingGithubApi = (host: string, args: string[]) => Promise<unknown>;
+export type CodingGithubApi = (
+  host: string,
+  args: string[],
+  timeoutMs?: number
+) => Promise<unknown>;
+
+const CODING_COMMENT_SCAN_MS = 60_000;
 
 export const codingGithubApi = async (
   host: string,
   args: string[],
+  timeoutMs = CODING_COMMENT_SCAN_MS,
   spawn: SpawnFn = spawnProcess
 ) => {
   const result = await runGhJson(['gh', 'api', '--hostname', host, ...args], homedir(), spawn, {
     stripGHRepo: true,
     hostHint: host,
     resourceHint: 'core',
-    timeoutMs: 60_000,
+    timeoutMs,
     maxBufferBytes: 64 * 1024 * 1024,
   });
   if (!result.ok)
@@ -67,17 +74,16 @@ export async function postCodingReviewComment(api: CodingGithubApi, fact: Coding
   const path = `repos/${pr.owner}/${pr.repo}/issues/${pr.number}/comments`;
   const { marker, body } = planCodingReviewComment(fact);
   const comments: z.infer<typeof Page> = [];
+  const deadline = Date.now() + CODING_COMMENT_SCAN_MS;
   for (let page = 1; ; page++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('review comment scan ran past its one-minute bound');
     const batch = Page.parse(
-      await api(pr.host, [
-        path,
-        '-f',
-        `per_page=${PER_PAGE}`,
-        '-f',
-        `page=${page}`,
-        '--method',
-        'GET',
-      ])
+      await api(
+        pr.host,
+        [path, '-f', `per_page=${PER_PAGE}`, '-f', `page=${page}`, '--method', 'GET'],
+        remaining
+      )
     );
     comments.push(...batch);
     if (batch.length < PER_PAGE) break;
@@ -127,9 +133,13 @@ export function createCodingReviewComments(api: CodingGithubApi) {
       .catch((error: unknown) => log.warn('review comments not read', { error: String(error) })));
 }
 
-export async function readCodingPostableReviews(db: Database, ledger: CodingPrLedgerRepository) {
+export async function readCodingPostableReviews(
+  db: Database,
+  ledger: CodingPrLedgerRepository,
+  readAt: number
+) {
   const open = (await ledger.read('list')).filter(
-    (row) => row.state !== 'closed' && row.state !== 'merged'
+    (row) => row.readAt === readAt && row.state !== 'closed' && row.state !== 'merged'
   );
   const gateway = gatewayFor(db);
   const facts = await Promise.all(

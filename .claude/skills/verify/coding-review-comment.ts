@@ -78,12 +78,9 @@ try {
   await restarted.sweepPacks();
   await restarted.sweepPacks();
   assert.equal(ghCalls().length, before, 'a restarted service with the same facts makes no GitHub calls');
-  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'merged', closed_at = ?").run(Date.now());
-  ledger.stageFacts.observeHead(url, 'head-b', Date.now());
-  ledger.recordStage({ ...fact, head: 'head-b' });
+  writeFileSync(join(run, 'pr.json'), JSON.stringify({ head: 'head-b', state: 'OPEN' }));
   await restarted.sweepPacks();
-  assert.equal(ghCalls().length, before, 'a merged PR makes no GitHub calls');
-  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'waiting_review', closed_at = NULL, head = 'head-b'").run();
+  assert(ledger.recordStage({ ...fact, head: 'head-b' }));
   writeFileSync(join(run, 'rate-limited'), '');
   await restarted.sweepPacks();
   const limited = ghCalls().length;
@@ -91,9 +88,14 @@ try {
   await restarted.sweepPacks();
   await restarted.sweepPacks();
   assert.equal(ghCalls().length, limited, 'after a rate-limit error no GitHub calls until the reset');
-  evidence.push({ restartCalls: 0, rateLimitedCalls: ghCalls().slice(before) });
+  writeFileSync(join(run, 'pr.json'), JSON.stringify({ head: 'head-b', state: 'MERGED' }));
+  const afterMerge = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  await afterMerge.sweepPacks();
+  await afterMerge.sweepPacks();
+  assert.equal(ghCalls().length, limited, 'a PR that merged while its review was pending gets no comment');
+  evidence.push({ restartCalls: 0, rateLimitedCalls: ghCalls().slice(before), mergedAfterPendingCalls: 0 });
   evidence.push({ comments: posted, ghCalls: readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n') });
-  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps, none after a restart or for a merged PR, and none after a rate-limit error until the reset. Evidence: ${run}/evidence/review-comment.json`);
+  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps, none after a restart, none after a rate-limit error until the reset, and none for a pending review once the ledger reads its PR as merged. Evidence: ${run}/evidence/review-comment.json`);
   console.log(`--- sample comment ---\n${posted[0].body}`);
 } finally {
   writeFileSync(join(run, 'evidence/review-comment.json'), JSON.stringify(evidence, null, 2));

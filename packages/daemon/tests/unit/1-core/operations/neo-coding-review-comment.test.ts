@@ -61,7 +61,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
   };
   const sweep = (post = createCodingReviewComments(github)) =>
     post(
-      () => readCodingPostableReviews(db, ledger),
+      () => readCodingPostableReviews(db, ledger, 1),
       (fact, marker) => ledger.write('recordPostedReview', fact.url, marker)
     );
   return { db, ledger, comments, outage, calls, github, sweep };
@@ -118,21 +118,6 @@ describe('createCodingReviewComments', () => {
       await sweep(createCodingReviewComments(github));
       await sweep(createCodingReviewComments(github));
       expect(calls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-  test('pruning a PR the ledger no longer watches also drops its posted marker', async () => {
-    const { db, ledger, comments, sweep } = setup();
-    try {
-      ledger.recordStage(fact);
-      await sweep();
-      expect(comments).toHaveLength(1);
-      const markers = () =>
-        db.prepare('SELECT COUNT(*) AS n FROM pack_coding_review_comments').get() as { n: number };
-      expect(markers().n).toBe(1);
-      await ledger.write('prune', ['synthetic/review'], 30 * 24 * 60 * 60_000);
-      expect(markers().n).toBe(0);
     } finally {
       db.close();
     }
@@ -293,7 +278,7 @@ describe('coding pack review comments', () => {
     headRefName: 'branch',
     headRefOid: 'head-a',
     state,
-    isDraft: false,
+    isDraft: true,
     mergeable: 'MERGEABLE',
     reviewDecision: null,
     closedAt: state === 'MERGED' ? new Date(Date.now() - 1000).toISOString() : null,
@@ -384,10 +369,12 @@ describe('codingGithubApi rate limits', () => {
     };
     ledger.stageFacts.observeHead(prUrl, 'head-a', 1);
     ledger.recordStage({ ...fact, url: prUrl });
-    const post = createCodingReviewComments((host, args) => codingGithubApi(host, args, spawn));
+    const post = createCodingReviewComments((host, args, timeoutMs) =>
+      codingGithubApi(host, args, timeoutMs, spawn)
+    );
     const sweep = () =>
       post(
-        () => readCodingPostableReviews(db, ledger),
+        () => readCodingPostableReviews(db, ledger, 1),
         (posted, marker) => ledger.write('recordPostedReview', posted.url, marker)
       );
     return { db, ledger, comments, calls, sweep };
@@ -423,7 +410,7 @@ describe('codingGithubApi rate limits', () => {
           : reply('', 1, 'gh: unexpected call')
     );
     try {
-      const [stored] = await readCodingPostableReviews(db, ledger);
+      const [stored] = await readCodingPostableReviews(db, ledger, 1);
       marker = planCodingReviewComment(stored).marker;
       await sweep();
       expect(calls.map((args) => args.find((arg) => arg.startsWith('page=')))).toEqual([
