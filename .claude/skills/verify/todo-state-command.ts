@@ -49,7 +49,7 @@ try {
   todos.openAsk({ id: 'state-ask', projectId: null, sessionId: root, originMessageId: null, title: 'Atomic ordered state', request: 'Commit without dispatch', createdAt: 1 });
   for (const todoId of [id, 'next']) todos.addTodo(todoId, 'state-ask', { title: todoId, doneWhen: 'Observed', check: null, instruction: 'Continue synthetic work', named: null }, 1);
   prepare("UPDATE neo_todos SET state='doing', started_at=2, report=? WHERE id=?").run(reportText, id);
-  todos.askQuestion('stale-start', 'state-ask', { text: 'Start first?', kind: 'start', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: [id] }, 3);
+  todos.askQuestion('stale-start', 'state-ask', { text: 'Ready for first?', kind: 'reply', todoId: id, options: null, multiple: false, noLabel: null, yesLabel: null }, 3);
   const mainQueries: string[] = [];
   db.prepare = ((sql: string) => {
     if (recording && /neo_todos|neo_asks|neo_questions|neo_todo_sessions/.test(sql)) mainQueries.push(sql);
@@ -79,7 +79,7 @@ try {
   assert.equal(card(report.refusedSnapshot)?.doneCount, mode === 'before' ? 1 : 0);
   db.exec('DROP TRIGGER refuse_ask_stamp');
   prepare("UPDATE neo_todos SET state='doing', evidence=NULL, finished_at=NULL WHERE id=?").run(id);
-  prepare("UPDATE neo_questions SET state='open', retired_reason=NULL, start_todos=? WHERE id=?").run(JSON.stringify([id]), 'stale-start');
+  prepare("UPDATE neo_questions SET state='open', retired_reason=NULL WHERE id=?").run('stale-start');
   const rssBefore = process.memoryUsage().rss;
   const walBefore = statSync(join(run, 'data/daemon.db-wal'), { throwIfNoEntry: false })?.size ?? 0;
   mainQueries.length = 0;

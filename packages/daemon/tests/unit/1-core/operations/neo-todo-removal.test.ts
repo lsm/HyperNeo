@@ -27,8 +27,6 @@ const step = (id: string, dependsOn: string[], patch: Partial<Row> = {}): Row =>
 const brief = (plan: { writes: { todo: Row; patch: object }[] }) =>
   Object.fromEntries(plan.writes.map(({ todo, patch }) => [todo.id, patch]));
 
-const startCard = (todos: string[]) => ({ state: 'open' as const, kind: 'start' as const, todos });
-
 describe('planNeoTodoRemoval', () => {
   const family = [
     step('a', []),
@@ -116,10 +114,7 @@ describe('planNeoTodoRemoval', () => {
     expect(plan.card).toBeNull();
   });
 
-  test('a dependent on a Start card is left to it; one on an earlier removal card gets one wider card', () => {
-    expect(
-      planNeoTodoRemoval(family[0], family, [startCard(['b', 'c'])], { root: 'ask' }, 9).card
-    ).toBeNull();
+  test('a dependent on an earlier removal card gets one wider card', () => {
     const twice = [step('a', [], { state: 'removed' }), step('b', []), step('c', ['a', 'b'])];
     const earlier = {
       state: 'open' as const,

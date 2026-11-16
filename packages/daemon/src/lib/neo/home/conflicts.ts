@@ -44,7 +44,6 @@ export function reportHomeConflict<T extends { ok: boolean }>(
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       Date.now()
     );

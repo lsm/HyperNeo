@@ -320,7 +320,6 @@ describe('a doing todo never sits idle without someone on it', () => {
         multiple: false,
         yesLabel: null,
         noLabel: null,
-        startTodos: null,
       } as unknown as Parameters<typeof w.store.askQuestion>[2],
       Date.now()
     );
@@ -354,7 +353,6 @@ describe('a doing todo never sits idle without someone on it', () => {
           multiple: false,
           yesLabel: null,
           noLabel: null,
-          startTodos: null,
         } as unknown as Parameters<typeof w.store.askQuestion>[2],
         Date.now()
       );
@@ -405,7 +403,6 @@ describe('a doing todo never sits idle without someone on it', () => {
         multiple: false,
         yesLabel: null,
         noLabel: null,
-        startTodos: null,
       } as unknown as Parameters<typeof w.store.askQuestion>[2],
       Date.now()
     );

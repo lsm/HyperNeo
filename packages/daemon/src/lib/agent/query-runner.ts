@@ -2505,7 +2505,7 @@ export class QueryRunner {
       suppressPreYieldCallback: true,
       queryGeneration,
     })) {
-      if (this.ctx.isLimitRecoveryPending?.()) {
+      if (this.ctx.isLimitRecoveryPending?.() && !this.retryPromptIdentity.retrying(message.uuid)) {
         logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
         const yieldedUuid = message.uuid;
         if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {

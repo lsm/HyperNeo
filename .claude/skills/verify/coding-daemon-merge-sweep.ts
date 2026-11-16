@@ -191,7 +191,7 @@ try{
    evidence.reviewReadOffMainThread = true;
    store.askQuestion('review-decision', 'review-ask', { todoId: todo.id,
      text: 'Choose next step', kind: 'reply', options: null, multiple: false,
-     noLabel: null, yesLabel: null, startTodos: null }, tick);
+     noLabel: null, yesLabel: null }, tick);
    await runSweep();
    assert.equal(held().length, beforeCovered + 1);
    evidence.humanDecisionWakes = 1;

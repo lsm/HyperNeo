@@ -32,7 +32,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   const store = new NeoAskTodoRepository(db);
   store.openAsk({ id: 'mic-shape', sessionId: root, projectId: null, originMessageId: null, title: 'Mic shape fixture', request: 'Synthetic UI verification', createdAt: Date.now() });
-  store.askQuestion('mic-shape-source', 'mic-shape', { kind: 'reply', text: 'Open the synthetic chat to inspect its composer.', options: null, multiple: false, noLabel: null, yesLabel: null, startTodos: null, sourceSession: { adapter: 'hyperneo', id: worker, name: 'Synthetic mic chat', label: 'HyperNeo · Synthetic mic chat', provider: 'Synthetic', link: `/session/${worker}` } }, Date.now());
+  store.askQuestion('mic-shape-source', 'mic-shape', { kind: 'reply', text: 'Open the synthetic chat to inspect its composer.', options: null, multiple: false, noLabel: null, yesLabel: null, sourceSession: { adapter: 'hyperneo', id: worker, name: 'Synthetic mic chat', label: 'HyperNeo · Synthetic mic chat', provider: 'Synthetic', link: `/session/${worker}` } }, Date.now());
   const dist = resolve('packages/web/dist');
   assert(existsSync(join(dist, 'neo/index.html')));
   front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {

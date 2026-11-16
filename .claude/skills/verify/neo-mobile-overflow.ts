@@ -49,7 +49,7 @@ try {
   const todo = store.addTodo('overflow-todo', 'overflow-work', { title: `Todo-${'UnbrokenTaskName'.repeat(15)}`, doneWhen: longLink, check: null, instruction: null, named: null }, at);
   links.bind(todo.id, { adapter: 'hyperneo', id: worker }, at);
   links.recordRef(todo.id, { adapter: 'hyperneo', id: worker }, at, `/session/${worker}`);
-  store.askQuestion('overflow-question', 'overflow-work', { kind: 'choice', text: rich, options: ['Continue with ' + longLink, 'Hold'], multiple: false, yesLabel: null, noLabel: null, startTodos: null }, at);
+  store.askQuestion('overflow-question', 'overflow-work', { kind: 'choice', text: rich, options: ['Continue with ' + longLink, 'Hold'], multiple: false, yesLabel: null, noLabel: null }, at);
   const dist = resolve('packages/web/dist');
   front = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request, server) {
     const path = new URL(request.url).pathname;

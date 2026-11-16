@@ -13,7 +13,7 @@ synthetic database. It observes complete Work cards through the real
 `neo.ask.read` RPC. Runtime callers stay unchanged until 2b.
 
 Recomputation must reuse commitState inside one transaction. An injected late
-ask-stamp failure must leave the public card and start question unchanged,
+ask-stamp failure must leave the public card and its question unchanged,
 without table notifications. A held WAL lock must produce no early receipt or
 notification while health/read RPCs remain responsive. After release, the
 receipt preserves the entire Unicode report and returns only a successor

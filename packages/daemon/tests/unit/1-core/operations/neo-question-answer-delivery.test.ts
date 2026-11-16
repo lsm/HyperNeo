@@ -76,11 +76,9 @@ async function fixture(path = ':memory:', title = 'Choose a destination') {
   };
   const result = await write(source, report);
   if (!result.ok) throw new Error(result.reason);
-  const get = createNeoQuestionOperations(
-    store,
-    async () => {},
-    async () => ({ ok: true })
-  ).find((op) => op.name === 'neo.question.get')!;
+  const get = createNeoQuestionOperations(store, async () => {}).find(
+    (op) => op.name === 'neo.question.get'
+  )!;
   const read = (questionId = result.question.id) => get.execute({ questionId }, { source: 'rpc' });
   return { db, store, source, write, report, question: result.question, read };
 }
@@ -404,11 +402,9 @@ test.each(
       f.db.close();
       reopened = new Database(path);
       const store = new NeoAskTodoRepository(reopened);
-      const get = createNeoQuestionOperations(
-        store,
-        async () => {},
-        async () => ({ ok: true })
-      ).find((op) => op.name === 'neo.question.get')!;
+      const get = createNeoQuestionOperations(store, async () => {}).find(
+        (op) => op.name === 'neo.question.get'
+      )!;
       const flush = createNeoQuestionAnswerDelivery(
         store,
         new NeoTodoSessionRepository(reopened),
@@ -559,7 +555,6 @@ test('a button answer never waits for an unrelated unavailable HyperNeo session'
   const answer = createNeoQuestionOperations(
     f.store,
     async () => {},
-    async () => ({ ok: true }),
     undefined,
     undefined,
     undefined,

@@ -89,7 +89,6 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       Date.now()
     );

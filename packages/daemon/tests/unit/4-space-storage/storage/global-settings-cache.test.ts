@@ -113,7 +113,6 @@ test('committed settings stay visible while repeated facade reads avoid SQLite',
           multiple: false,
           noLabel: 'Keep',
           yesLabel: 'Apply',
-          startTodos: null,
         },
         1
       );

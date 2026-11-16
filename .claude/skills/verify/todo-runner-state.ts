@@ -50,7 +50,7 @@ try {
   }
   const text='Stored runner report 🦊\n'.repeat(20000).trim();
   prepare("UPDATE neo_todos SET state='doing',started_at=2,report=? WHERE id='state'").run(text);
-  store.askQuestion('start','ask',{kind:'start',text:'Start?',startTodos:['state'],options:null,multiple:false,yesLabel:null,noLabel:null},2);
+  store.askQuestion('start','ask',{kind:'reply',text:'Ready?',todoId:'state',options:null,multiple:false,yesLabel:null,noLabel:null},2);
   const before=await visible();
   const sessionCount=()=>prepare('SELECT COUNT(*) AS n FROM sessions').get() as {n:number};
   const originalSessions=sessionCount();
@@ -87,7 +87,9 @@ try {
   result.singleClaimWinner=true; result.currentTarget=true; result.originalAskPreserved=true;
   store.addTodo('stable','ask',{ approvedAt: 1,title:'Stable',doneWhen:'Observed',check:null,instruction:null,named:null},4);
   prepare("UPDATE neo_todos SET state='doing',started_at=4 WHERE id='stable'").run();
-  store.askQuestion('stale','ask',{kind:'start',text:'Start?',startTodos:['stable'],options:null,multiple:false,yesLabel:null,noLabel:null},4);
+  store.addTodo('gone','ask',{ approvedAt: 1,title:'Gone',doneWhen:'Observed',check:null,instruction:null,named:null},4);
+  prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+  store.askQuestion('stale','ask',{kind:'reply',text:'Ready?',todoId:'gone',options:null,multiple:false,yesLabel:null,noLabel:null},4);
   const previous=tables.length; record=true;
   const pruned=await runCommand<State>('recompute',['stable',null,{},15,{state:'no_opinion'}]);
   record=false; assert(pruned.changed); assert.equal(pruned.todo?.state,'doing');

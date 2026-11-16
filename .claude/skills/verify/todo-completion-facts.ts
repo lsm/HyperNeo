@@ -82,7 +82,7 @@ try {
     db.prepare('UPDATE neo_todos SET state=?, blocked_by=?, blocked_reason=?, next_action=?, report=? WHERE id=?')
       .run(item.state, item.blocker ?? null, item.blocker ? 'Old blocker' : null, item.blocker ? 'Answer' : null, 'Preserve the complete worker report', todo.id);
     if (item.blocker === 'needs-human') store.askQuestion(`question-${item.id}`, item.id, {
-      text: 'Old question', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', startTodos: null, todoId: todo.id,
+      text: 'Old question', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', todoId: todo.id,
     }, 2);
     if (item.marked) {
       await new CodingTodoPrRepository(db).write('record', todo.id, [{ url, head: 'a'.repeat(40), state: 'OPEN', checks: 'none', review: 'none' }], Date.now());

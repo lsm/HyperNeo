@@ -45,11 +45,7 @@ const git = async (...args: string[]) => {
 const call = async (name: string, input: unknown, caller = human) => {
   const registry = createOperationRegistry([
     ...createNeoHomeOperations({ repo, todos, defaultSessionId: () => owner.sessionId! }, home),
-    ...createNeoQuestionOperations(
-      todos,
-      async () => {},
-      async () => ({ ok: true })
-    ),
+    ...createNeoQuestionOperations(todos, async () => {}),
   ]);
   const result = await invokeOperation(registry, name, input, caller);
   if (result.kind !== 'completed') throw new Error(result.message);
@@ -90,7 +86,6 @@ const proposal = async (value = input, state = 'button') => {
         multiple: false,
         noLabel: 'Keep old',
         yesLabel: 'Use new',
-        startTodos: null,
         confirm,
       },
       Date.now()

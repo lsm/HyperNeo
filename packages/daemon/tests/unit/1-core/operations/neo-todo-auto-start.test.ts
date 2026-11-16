@@ -124,30 +124,11 @@ function setup(
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       Date.now()
     );
   const seedUnapproved = (todo: NeoTodo) => {
-    store.updateTodo(
-      todo,
-      { state: 'blocked', blockedBy: 'question', approvedAt: null },
-      Date.now()
-    );
-    store.askQuestion(
-      crypto.randomUUID(),
-      todo.askId,
-      {
-        text: 'Start legacy step?',
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: [todo.id],
-      },
-      Date.now()
-    );
+    store.updateTodo(todo, { approvedAt: null }, Date.now());
   };
   return { db, store, sessions, invoke, step, runner, sent, target, work, reply, seedUnapproved };
 }
@@ -241,7 +222,7 @@ describe('todo automatic start', () => {
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Unapproved',
-        request: 'B waits for its Start card.',
+        request: 'B waits for approval.',
         todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
       const [x, b] = opened.todos;
@@ -251,7 +232,7 @@ describe('todo automatic start', () => {
       store.answerQuestion(unrelated, 'The next one', 'button', Date.now());
       await runner.refresh(() => {});
       expect(store.getTodo(b.id)).toMatchObject({ approvedAt: null, startedAt: null });
-      expect(openCards(store, b.askId).map((q) => q.kind)).toEqual(['start']);
+      expect(openCards(store, b.askId)).toEqual([]);
       expect(sent).toHaveLength(0);
     } finally {
       db.close();
@@ -263,7 +244,7 @@ describe('todo automatic start', () => {
     try {
       const opened = await invoke('neo.ask.open', {
         title: 'Gate',
-        request: 'B waits for its Start card.',
+        request: 'B waits for approval.',
         todos: [step('X', []), { ...step('B', [0]), ...work }],
       });
       const [x, b] = opened.todos;

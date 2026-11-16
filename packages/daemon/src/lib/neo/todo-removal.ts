@@ -28,7 +28,7 @@ const REMOVED_EN = {
     '{removed} were removed. Continue {steps} without them, or remove these steps too?',
 } as const;
 
-type Card = Pick<NeoQuestion, 'state' | 'kind' | 'todos' | 'cause'>;
+type Card = Pick<NeoQuestion, 'state' | 'todos' | 'cause'>;
 type Row = NeoTodoEdge & Pick<NeoTodo, 'title'>;
 type Write<T> = { todo: T; patch: NeoTodoPatch };
 type CardPlan<C> = { askId: string; replaces: C[]; todos: string[]; text: string };
@@ -122,10 +122,8 @@ export function neoRemovedPrerequisiteCodes(
   };
 }
 
-const onCard = (card: Card, id: string, kind: 'start' | 'removal') =>
-  card.state === 'open' &&
-  (kind === 'start' ? card.kind === 'start' : card.cause === NEO_REMOVED_PREREQUISITE) &&
-  card.todos.includes(id);
+const onCard = (card: Card, id: string) =>
+  card.state === 'open' && card.cause === NEO_REMOVED_PREREQUISITE && card.todos.includes(id);
 
 export function planNeoTodoRemoval<T extends Row, C extends Card>(
   todo: T,
@@ -169,13 +167,9 @@ export function planNeoTodoRemoval<T extends Row, C extends Card>(
     );
     return { writes: [...last.values()], card: null };
   }
-  const listed = undecided.filter(
-    (dependent) => !cards.some((card) => onCard(card, dependent.id, 'start'))
-  );
+  const listed = undecided;
   if (!listed.length) return { writes, card: null };
-  const replaces = cards.filter((card) =>
-    listed.some((dependent) => onCard(card, dependent.id, 'removal'))
-  );
+  const replaces = cards.filter((card) => listed.some((dependent) => onCard(card, dependent.id)));
   const covered = new Set([
     ...replaces.flatMap((card) => card.todos),
     ...listed.map((dependent) => dependent.id),

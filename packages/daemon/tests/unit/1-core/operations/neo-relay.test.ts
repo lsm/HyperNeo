@@ -60,7 +60,6 @@ function card(patch: Partial<NeoQuestion> = {}) {
       multiple: false,
       noLabel: null,
       yesLabel: null,
-      startTodos: null,
       ...patch,
     },
     1
@@ -151,12 +150,11 @@ test('a choice-letter relay maps the semantic answer and retains the exact words
     .content;
   expect(note).toContain(`\n${words}\n`);
 });
-test.each(['rule', 'home', 'start', 'preference'])(
+test.each(['rule', 'home', 'preference'])(
   '%s cards refuse relay without releasing a todo or writing preferences',
   async (kind) => {
     card({
-      kind: kind === 'start' ? 'start' : 'yesno',
-      ...(kind === 'start' ? { startTodos: ['held'] } : {}),
+      kind: 'yesno',
       ...(kind === 'home' ? { confirm: { path: 'direction.md', sha256: 'a'.repeat(64) } } : {}),
     });
     const sql = db.getDatabase();
@@ -194,7 +192,7 @@ test.each(['rule', 'home', 'start', 'preference'])(
       {
         state: 'blocked',
         blockedBy: 'question',
-        approvalQuestionId: kind === 'start' ? 'card' : null,
+        approvalQuestionId: null,
       },
       1
     );
@@ -204,9 +202,7 @@ test.each(['rule', 'home', 'start', 'preference'])(
       .prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_kind, scope_key, key')
       .all();
     await configure();
-    expect(
-      await invoke('neo.question.answer', answer({ words: kind === 'start' ? 'held' : 'yes' }))
-    ).toMatchObject({
+    expect(await invoke('neo.question.answer', answer({ words: 'yes' }))).toMatchObject({
       value: { ok: false },
     });
     expect(service.todos.getQuestion('card')).toMatchObject({ state: 'open', answer: null });

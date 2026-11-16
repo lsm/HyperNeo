@@ -9,7 +9,6 @@ const draft = (text: string, kind: 'reply' | 'yesno' | 'choice' = 'yesno') => ({
   yesLabel: 'Yes',
   options: null,
   multiple: false,
-  startTodos: null,
 });
 const open = (id: string, kind = 'yesno', text = 'Ship it?') =>
   ({ id, kind, text, state: 'open', todoId: 'todo' }) as NeoQuestion;
@@ -34,9 +33,6 @@ describe('requireHumanCard', () => {
       /^card_open/
     );
     expect(reason(requireHumanCard(draft('Ship it?'), [prior], prior, undefined))).toBeNull();
-    expect(
-      reason(requireHumanCard(draft('Ship it?'), [open('s', 'start')], null, undefined))
-    ).toBeNull();
     expect(
       reason(
         requireHumanCard(draft('Ship it?'), [{ ...prior, state: 'answered' }], null, undefined)

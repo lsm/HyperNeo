@@ -66,14 +66,21 @@ describe('Atomic interrupted-start recovery build', () => {
     cards: store.listQuestions('ask'),
     interrupted: sessions.readStartInterrupted('todo'),
   });
-  const startCard = () =>
-    store.askQuestion(
+  const startCard = () => {
+    store.addTodo(
+      'gone',
+      'ask',
+      { title: 'gone', doneWhen: 'Observed', check: null, instruction: null, named: null },
+      1
+    );
+    db.prepare("UPDATE neo_todos SET state='removed' WHERE id='gone'").run();
+    return store.askQuestion(
       'start',
       'ask',
       {
-        kind: 'start',
-        text: 'Start?',
-        startTodos: ['todo'],
+        kind: 'reply',
+        text: 'Ready?',
+        todoId: 'gone',
         options: null,
         multiple: false,
         yesLabel: null,
@@ -81,6 +88,7 @@ describe('Atomic interrupted-start recovery build', () => {
       },
       3
     );
+  };
 
   test('the committed receipt retains the entire report and marks only the interrupted start', async () => {
     const report = 'Complete report 🦊\n'.repeat(20000);

@@ -291,7 +291,6 @@ describe('daemon merge sweep behavior', () => {
           multiple: false,
           noLabel: null,
           yesLabel: null,
-          startTodos: null,
         },
         5
       );

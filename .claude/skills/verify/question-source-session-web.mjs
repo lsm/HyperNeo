@@ -23,9 +23,7 @@ try {
       const header = question.locator('[data-question-source]');
       assert.equal(await header.innerText(), 'Open');
       assert.equal(await header.locator('svg').count(), 1);
-      const joined = page.locator(`[data-ask-question="${saved.start.question.id}"]:visible`);
-      assert.equal(await joined.locator('[data-question-source]').innerText(), 'Open');
-      await joined.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
+      await question.getByRole('button', { name: 'Open session: Review worker', exact: true }).click();
       await sessionTitle(page, { name: 'HyperNeo · Review worker', exact: true }).waitFor();
       await leaveSession(page);
       const linkless = page.locator('[data-ask-question="linkless-source"]:visible');
@@ -57,7 +55,7 @@ try {
         assert.deepEqual(result.question.answer, ['Approve']);
         assert.deepEqual(result.question.sourceSession, saved.source.question.sourceSession);
       }
-      observed.push({ width, header: 'Open', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, joinedStartHasWorkingOpener: true, linklessHeaderAbsent: true });
+      observed.push({ width, header: 'Open', bounds, adapterOpener: '/session/source-worker', ordinaryHasNoOpener: true, answerControlsPreserved: true, sourceOpenerWorks: true, linklessHeaderAbsent: true });
     } finally { await page.close(); }
   }
   writeFileSync(`${run}/evidence/question-source-web.json`, JSON.stringify(observed, null, 2));

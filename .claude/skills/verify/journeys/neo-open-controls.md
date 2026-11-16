@@ -19,10 +19,7 @@ pill; each question and todo opener contains one harness/app logo and only the
 localized word Open. Inspect each supported app (Codex, Claude, Copilot, HyperNeo)
 in both themes. A retired focused discussion with no remaining opener must retain
 a single card-level logo + Open fallback, outside the header, and reach its session.
-An open start question whose selected todo has the focused link needs the same
-fallback: start-selection rows have no session opener. Verify both cards and
-retain separate before evidence for the missing start-question opener.
-Open and close each fallback card’s All dialog, then verify its card-level Open
+Open and close the fallback card’s All dialog, then verify its card-level Open
 still works. The helper records actual rendered colors and contrast against
 the question surface, checks todo logo colors agree, and saves each card PNG.
 Inspect the screenshots for readable colors and no clipping. Both the local

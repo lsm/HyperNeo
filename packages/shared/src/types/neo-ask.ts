@@ -78,7 +78,7 @@ export interface NeoTodo extends ArtifactProjection {
   producesFollowUp?: true;
 }
 
-export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'start';
+export type NeoQuestionKind = 'yesno' | 'choice' | 'reply';
 
 export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
@@ -123,7 +123,6 @@ export interface NeoQuestion {
   multiple: boolean;
   noLabel: string | null;
   yesLabel: string | null;
-  startTodos: string[] | null;
   todos: string[];
   confirm?: { path: string; sha256: string } | null;
   state: NeoQuestionState;

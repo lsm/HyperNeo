@@ -164,7 +164,6 @@ describe('NeoTodoSessionRepository.claimNudge', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
         todoId: 'step',
       },
       2
@@ -243,7 +242,6 @@ describe('projectNeoAskEntries', () => {
         multiple: false,
         noLabel: null,
         yesLabel: null,
-        startTodos: null,
       },
       2
     );

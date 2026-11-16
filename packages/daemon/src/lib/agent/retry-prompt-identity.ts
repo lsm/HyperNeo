@@ -15,6 +15,10 @@ export class RetryPromptIdentity {
     this.pending.add(uuid);
   }
 
+  retrying(uuid: string | undefined): boolean {
+    return uuid !== undefined && this.pending.has(uuid);
+  }
+
   outgoing(message: SDKUserMessage, fresh = false): SDKUserMessage {
     if (!message.uuid) return message;
     const retry = this.pending.delete(message.uuid);

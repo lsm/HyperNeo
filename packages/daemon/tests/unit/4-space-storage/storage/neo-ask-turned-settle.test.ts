@@ -191,7 +191,6 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         multiple: false,
         yesLabel: null,
         noLabel: null,
-        startTodos: null,
         confirm: null,
         document: null,
         replyTo: [],
