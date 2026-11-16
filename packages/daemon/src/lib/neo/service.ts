@@ -456,7 +456,7 @@ export class NeoService {
           if (status) this.notifyChanged();
           return;
         }
-        const conversation = status ? this.repo.readConversationId() : null;
+        const conversation = status || session?.status ? this.repo.readConversationId() : null;
         if (conversation && sessionId === frontSessionId(conversation)) this.noteWorking();
       },
       { subscriberName: 'neo-work-return' }
