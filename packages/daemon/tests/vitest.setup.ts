@@ -10,12 +10,11 @@ import { registerSchemaExtension } from '../src/storage/schema/extensions';
 import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 
 process.env.HYPERNEO_SPACE ??= 'on';
-if (!process.env.HYPERNEO_DATA_DIR) {
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
-  process.env.HOME = isolatedHome;
-  if ('Bun' in globalThis) process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
-  afterAll(() => rmSync(isolatedHome, { recursive: true, force: true }));
-}
+const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
+process.env.HOME = isolatedHome;
+if ('Bun' in globalThis) process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
+else delete process.env.HYPERNEO_DATA_DIR;
+afterAll(() => rmSync(isolatedHome, { recursive: true, force: true }));
 registerSchemaExtension(SPACE_SCHEMA);
 
 vi.mock('../src/lib/safe-fs.ts', async (importOriginal) => {
