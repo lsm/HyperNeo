@@ -110,4 +110,17 @@ describe('owners', () => {
       db.close();
     }
   });
+
+  test('an ended session without a todo binding is a finished owner', () => {
+    const { db, owners } = setup();
+    try {
+      db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata,worktree_path)
+        VALUES ('worker','Worker','/work','now','now','ended','{}','{}','/work/tree')`).run();
+      expect(owners()).toEqual([
+        expect.objectContaining({ ref, owner: { kind: 'session', archived: true } }),
+      ]);
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -18,7 +18,8 @@ import {
   codexWorkerHome,
   copilotWorkerDirectory,
 } from '../../../../src/lib/drivers/worker-directories.ts';
-import { WorkRefSchema } from '../../../../src/lib/drivers/types.ts';
+import { WorkRefSchema, type WorkRef } from '../../../../src/lib/drivers/types.ts';
+import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createWorkCleanupRuntime } from '../../../../src/lib/work-cleanup/runtime.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { workCleanupReads } from '../../../../src/storage/repositories/work-cleanup-worker.ts';
@@ -28,12 +29,13 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 test.each(
   process.env.HYPERNEO_CLEANUP_FIXTURE
     ? [process.env.HYPERNEO_CLEANUP_MODE ?? 'plain']
-    : ['plain', 'listing failure', 'rebound after listing']
+    : ['plain', 'listing failure', 'rebound after listing', 'start in flight']
 )(
   'createWorkCleanupRuntime uses adapter roots and keeps listed or rebound folders safe: %s',
   async (mode) => {
     const listingFailure = mode === 'listing failure';
     const rebound = mode === 'rebound after listing';
+    const inFlight = mode === 'start in flight';
     if (!process.env.HYPERNEO_CLEANUP_FIXTURE) {
       const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
       mkdirSync(join(fixture, 'home'));
@@ -124,7 +126,7 @@ test.each(
         VALUES (?,?,'/work','now','now',?,'{}','{}',?,?)`).run(
           id,
           id,
-          index >= 6 ? 'active' : 'archived',
+          index >= 6 ? 'active' : index === 5 ? 'ended' : 'archived',
           path,
           repo
         );
@@ -212,31 +214,42 @@ test.each(
           gateway: {
             call: async (...args: unknown[]) => {
               if (args[0] === workCleanupReads && args.length > 2) {
-                if (rebound && focused.length === 0) {
+                const live = (id: string, target: NeoDriverTarget, ref: WorkRef | null) => {
                   const todo = todos.addTodo(
-                    'rebound',
+                    id,
                     'ask',
-                    {
-                      title: 'rebound',
-                      doneWhen: 'Done',
-                      instruction: null,
-                      named: null,
-                      check: null,
-                    },
+                    { title: id, doneWhen: 'Done', instruction: null, named: null, check: null },
                     3
                   );
-                  sessions.create(todo.id, { verb: 'start', adapter: 'codex-desktop' });
-                  db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(
-                    JSON.stringify({ adapter: 'codex-desktop', id: 'rebound' }),
-                    todo.id
+                  sessions.create(todo.id, target);
+                  if (ref)
+                    db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(
+                      JSON.stringify(ref),
+                      todo.id
+                    );
+                  todos.updateTodo(todo, { state: 'doing' }, 3);
+                };
+                if (rebound && focused.length === 0) {
+                  live(
+                    'named',
+                    { verb: 'start', adapter: 'codex-desktop', name: 'Named' },
+                    { adapter: 'codex-desktop', id: 'named' }
                   );
-                  paths.set('rebound', folders[0]);
+                  paths.set('named', folders[0]);
+                  live(
+                    'sent',
+                    { verb: 'send', ref: { adapter: 'codex-desktop', id: 'sent' } },
+                    null
+                  );
+                  paths.set('sent', folders[2]);
                   db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata,worktree_path,main_repo_path)
               VALUES ('placed','placed','/work','now','now','active','{}','{}',?,?)`).run(
                     folders[1],
                     repo
                   );
                 }
+                if (inFlight && focused.length === 0)
+                  live('starting', { verb: 'start', adapter: 'codex-desktop' }, null);
                 focused.push(args[2]);
               }
               return Reflect.apply(gateway.call, gateway, args);
@@ -254,11 +267,12 @@ test.each(
         {},
         { source: 'rpc', principal: 'local' }
       );
-      const kept = rebound ? folders.slice(2) : folders;
+      const protectedFolders = inFlight ? folders : rebound ? folders.slice(0, 3) : [];
+      const kept = folders.filter((folder) => !protectedFolders.includes(folder));
       expect(archived.toSorted()).toEqual(
-        (rebound ? [2, 3, 4, 5] : [0, 1, 2, 3, 4, 5]).map((index) => `worker-${index}`)
+        kept.map((folder) => `worker-${folders.indexOf(folder)}`)
       );
-      expect(statusCalls).toBe(rebound ? 7 : 6);
+      expect(statusCalls).toBe(rebound ? 8 : 6);
       expect(peak).toBeLessThanOrEqual(4);
       expect(focused).toHaveLength(6);
       expect(focused.flat()).toEqual(
@@ -267,13 +281,9 @@ test.each(
         )
       );
       const digest = result as { kept: Record<string, string[]> };
-      expect(digest.kept['Unpublished branch; kept.'].toSorted()).toEqual(kept.toSorted());
+      expect((digest.kept['Unpublished branch; kept.'] ?? []).toSorted()).toEqual(kept.toSorted());
       expect(digest.kept.live.toSorted()).toEqual(
-        [
-          ...(rebound ? folders.slice(0, 2) : []),
-          paths.get('worker-6')!,
-          paths.get('worker-7')!,
-        ].toSorted()
+        [...protectedFolders, paths.get('worker-6')!, paths.get('worker-7')!].toSorted()
       );
       if (listingFailure) expect(digest.kept.error).toContain(broken);
       const probes = readFileSync(trace, 'utf8');
