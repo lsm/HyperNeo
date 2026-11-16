@@ -28,6 +28,7 @@ let dispatched: boolean;
 let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
+let body: Record<string, unknown>;
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
@@ -39,6 +40,7 @@ beforeEach(async () => {
   workspace = root;
   worktree = undefined;
   mismatchedReply = false;
+  body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
   db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
@@ -68,6 +70,7 @@ beforeEach(async () => {
             decision: reason ? 'refused' : 'allowed',
             reason,
             dispatched,
+            ...body,
           },
         }) + '\n'
       );
@@ -145,6 +148,28 @@ test.each(['universal_read', 'direct_task_worker'] as const)(
     expect(audit()[0].timestamp).toBeGreaterThan(0);
   }
 );
+
+test('a driver error reaches the session with the driver message and screenshot', async () => {
+  reason = 'driver_error';
+  body = {
+    content: [
+      { type: 'text', text: 'Call get_window_state first' },
+      { type: 'image', data: 'aW1n', mimeType: 'image/png' },
+    ],
+    structuredContent: { code: 'no_screenshot' },
+  };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({
+    ok: false,
+    reason: 'driver_error',
+    structuredContent: { code: 'no_screenshot' },
+  });
+  expect(response.content.slice(1)).toEqual(body.content);
+});
 
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
