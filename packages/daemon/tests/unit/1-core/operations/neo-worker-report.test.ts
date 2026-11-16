@@ -1062,3 +1062,48 @@ test('a reply that keeps failing to send wakes Neo on its last attempt instead o
     db.close();
   }
 });
+
+test('seven answers to one sender within a minute all arrive; the rate-limited one waits and retries', async () => {
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  const { db, service, sent, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    const queue = db.getJobQueueRepo();
+    const outcomes: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      recordNeoRequestTodo(service.todos, {
+        incident: `request-${i}`,
+        neoSession: 'neo',
+        sender: 'stranger',
+        text: `Request ${i}`,
+        messageId: `request-message-${i}`,
+        now: 1,
+      });
+      const ask = service.todos.listOpenAsks().find((item) => item.title === `Request ${i}`)!;
+      const [todo] = service.todos.listTodos(ask.id);
+      await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+        input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+        now: Date.now(),
+      });
+      const [job] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+      const result = await service.deliverRequestReply(job);
+      queue.complete(job.id, result);
+      outcomes.push(String(result.kind));
+    }
+    expect(outcomes).toEqual([...Array(6).fill('accepted'), 'deferred']);
+    expect(queue.dequeue(NEO_REQUEST_REPLY, 1)).toEqual([]);
+    clock.mockReturnValue(start + 11 * 60_000);
+    const [later] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+    expect(await service.deliverRequestReply(later)).toEqual({ kind: 'accepted' });
+    expect(sent.map((item) => item.text)).toEqual(
+      Array.from({ length: 7 }, (_, i) => `Neo closed your request "Request ${i}" as done: Merged`)
+    );
+    expect(wakes('did not reach')).toEqual([]);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});

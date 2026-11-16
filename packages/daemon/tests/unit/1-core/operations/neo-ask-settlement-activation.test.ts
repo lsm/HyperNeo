@@ -199,6 +199,27 @@ describe('activated ask settlement', () => {
     });
   });
 
+  test('dropping an ask answers its open request todo once, and a repeat settle adds none', async () => {
+    store.updateTodo(store.getTodo('first')!, { named: { requestFrom: 'stranger' } }, 3);
+    const replies = () =>
+      (
+        db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo.request.reply'").all() as {
+          payload: string;
+        }[]
+      ).map((row) => JSON.parse(row.payload));
+    expect(await settle('dropped')).toMatchObject({ ok: true, ask: { status: 'dropped' } });
+    expect(replies()).toEqual([
+      {
+        todoId: 'first',
+        to: 'stranger',
+        from: 'neo',
+        text: 'Neo closed your request "first" as removed: Explicitly ended',
+      },
+    ]);
+    await settle('dropped');
+    expect(replies()).toHaveLength(1);
+  });
+
   test('current admission, sweeps and receipts avoid the main repository', async () => {
     const report = store.getTodo('first')!.report;
     vi.spyOn(store, 'getAsk').mockImplementation(() => {
