@@ -5,6 +5,7 @@ import {
   CODING_STAGE_PREFERENCES,
   planCodingStageTarget,
 } from '../../../../src/lib/neo/packs/coding/stage-preferences.ts';
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { validatePackPreference } from '../../../../src/lib/neo/preference-operations.ts';
 
 const place = { machine: 'fixture', name: 'Fixture' };
@@ -196,5 +197,15 @@ describe('coding stage target preferences', () => {
           )
         ).toHaveProperty('reason');
     }
+  });
+  test('the coding skill names only declared stage keys and sends model and effort to routes', () => {
+    const named = [
+      ...NEO_PACK_CODING_INSTRUCTIONS.matchAll(/\b(write|review|verify)\.([a-z]+)(\/[a-z/]+)?/g),
+    ].flatMap(([, stage, field, more]) =>
+      [field, ...(more ?? '').split('/').filter(Boolean)].map((name) => `${stage}.${name}`)
+    );
+    expect(named.length).toBeGreaterThan(0);
+    expect(named.filter((key) => !(key in CODING_STAGE_PREFERENCES))).toEqual([]);
+    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('model-routing');
   });
 });

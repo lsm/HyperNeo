@@ -226,6 +226,26 @@ describe('createModelRoutingPack', () => {
     ]);
   });
 
+  test('a provider whose usage or sign-in read hangs cannot block ranking', async () => {
+    const never = () => new Promise<never>(() => {});
+    const providers: Record<string, Provider> = {
+      anthropic: { ...provider(true, null), getUsage: never } as unknown as Provider,
+      'anthropic-codex': provider(true, 10),
+      kimi: { ...provider(true, null), isAvailable: never } as unknown as Provider,
+    };
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: (id) => providers[id],
+      now: () => NOW,
+      readDeadlineMs: 20,
+    });
+    expect(await pack.rankLines!('coding.write', [A, B, C], {})).toEqual({
+      ranked: [{ line: A, reason: 'usage unknown' }, { line: B }],
+      skipped: [{ line: C, reason: 'availability unknown' }],
+      exhausted: false,
+    });
+  });
+
   test('ignores holds left on archived and ended sessions', async () => {
     const cooling = JSON.stringify({
       status: 'rate_limit_cooldown',
