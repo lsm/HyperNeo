@@ -172,7 +172,7 @@ describe('ledger reconciliation health', () => {
         });
         expect(ledger.list()).toEqual([]);
       }));
-  test('stale approved-pending snapshots retain acquisition diagnostics and raise one notice through cooldown', () =>
+  test('stale approved-pending snapshots retain acquisition diagnostics through cooldown', () =>
     using(async (db, ledger) => {
       const start = 10_000_000,
         stale = start + 15 * 60_000,
@@ -220,21 +220,6 @@ describe('ledger reconciliation health', () => {
         lastError: 'rate_limited',
         lastErrorAt: stale,
       });
-      const notices = ledger.health.read(repos[0])?.notices ?? [];
-      expect(notices).toHaveLength(1);
-      expect(notices[0]).toMatchObject({
-        pending: {
-          number: 1,
-          head: 'approved-head',
-          readAt: start,
-          completeAt: start,
-          nextRetryAt: reset,
-          lastError: 'rate_limited',
-          lastErrorAt: stale,
-        },
-      });
-      expect(notices[0].text).toContain('approved_pending');
-      expect(notices[0].text).toContain('readAt=');
       expect(JSON.stringify(ledger.health.read(repos[0]))).not.toContain(
         'synthetic-do-not-persist'
       );
@@ -248,7 +233,6 @@ describe('ledger reconciliation health', () => {
         }),
         stale + 1
       );
-      expect(ledger.health.read(repos[0])?.notices).toEqual(notices);
       expect(ledger.snapshot(null, stale + 1)[0]).toMatchObject({
         readAt: start,
         completeAt: start,
@@ -256,7 +240,6 @@ describe('ledger reconciliation health', () => {
         lastError: 'rate_limited',
         lastErrorAt: stale,
       });
-      ledger.acceptHealthNotice(repos[0], notices[0].key, stale + 2);
       await reconcileCodingPrLedger(ledger, repos, async (repo) => response(repo), reset);
       expect(ledger.health.read(repos[0])).toMatchObject({
         completeAt: reset,
@@ -264,9 +247,8 @@ describe('ledger reconciliation health', () => {
         lastError: 'rate_limited',
         lastErrorAt: stale,
       });
-      expect(ledger.health.read(repos[0])?.notices?.[0].pending).toEqual(notices[0].pending);
     }));
-  test('an aliased target exposes canonical pending diagnostics and delivers one durable notice', () =>
+  test('an aliased target exposes canonical pending diagnostics and raises its stalled read', () =>
     using(async (db, ledger) => {
       const alias = 'synthetic/old',
         canonical = 'synthetic/renamed';
@@ -305,19 +287,16 @@ describe('ledger reconciliation health', () => {
         lastError: 'rate_limited',
         lastErrorAt: stale,
       });
-      const wakes: string[] = [];
-      for (const instance of [ledger, new CodingPrLedgerRepository(db)])
-        await deliverCodingHealth(
-          instance,
-          [alias],
-          async (key) => {
-            wakes.push(key);
-            return true;
-          },
-          stale + 1
-        );
-      expect(wakes).toEqual([`github-pending:${canonical}#1:renamed-head:${start}`]);
-      expect(ledger.health.read(alias)?.notices?.[0].acceptedAt).toBe(stale + 1);
+      const raised: string[] = [];
+      await deliverCodingHealth(
+        ledger,
+        [alias],
+        async (event) => {
+          raised.push(`${event.kind} ${event.subject.id} ${event.since}`);
+        },
+        stale + 1
+      );
+      expect(raised).toEqual([`coding.github_health ${canonical}#1@renamed-head ${start}`]);
       expect(ledger.health.read(canonical)).toEqual(ledger.health.read(alias));
     }));
   test('unattributed low-budget summaries do not starve targets across reopening', () =>

@@ -37,7 +37,7 @@ describe('durable repository cycle health', () => {
       });
     }));
 
-  test('learning a rename preserves and accepts an already pending alias notice', () =>
+  test('learning a rename preserves the health of its alias', () =>
     using((db, ledger) => {
       const alias = 'synthetic/old-health';
       for (const at of [100, 200, 300]) ledger.recordHealth(alias, { at, outcome: 'failed' });
@@ -47,8 +47,6 @@ describe('durable repository cycle health', () => {
         .get(alias);
       ledger.recordAlias(alias, repo);
       expect(ledger.health.read(repo)).toEqual(previous);
-      ledger.acceptHealthNotice(repo, previous.notices![0].key, 400);
-      expect(ledger.health.read(alias)?.notices?.[0].acceptedAt).toBe(400);
       expect(ledger.health.read(repo)).toEqual(ledger.health.read(alias));
       expect(
         db.prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?').get(alias)
