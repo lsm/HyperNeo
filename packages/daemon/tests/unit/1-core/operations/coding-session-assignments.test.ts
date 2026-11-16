@@ -231,6 +231,21 @@ describe('durable session assignments', () => {
       `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
     ).run(
       author,
+      'assignment:github.com/synthetic/repo/pull/7:head3:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head3',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'reviewer', model: 'm', harness: 'claude-desktop' },
+        ref: ref('reviewer'),
+      })
+    );
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
       'assignment:github.com/synthetic/repo/pull/7:head2:review',
       JSON.stringify({
         url: 'github.com/synthetic/repo/pull/7',

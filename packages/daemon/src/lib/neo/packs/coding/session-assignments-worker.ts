@@ -1,4 +1,5 @@
 import type { WorkRef } from '../../../drivers/types.ts';
+import { WORK_START_EXCLUDE_REFS_MAX } from '../../../drivers/work-operations.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
@@ -88,14 +89,18 @@ class CodingSessionAssignments {
   }
 
   actorRefs(): WorkRef[] {
+    const seen = new Set<string>();
     return (
       this.db
         .prepare(
           `SELECT json_extract(value_json, '$.ref') AS ref FROM pack_facts
-           WHERE pack = 'coding' AND key LIKE 'assignment:%'`
+           WHERE pack = 'coding' AND key LIKE 'assignment:%' ORDER BY rowid DESC`
         )
         .all() as { ref: string | null }[]
-    ).flatMap((row) => (row.ref ? [JSON.parse(row.ref) as WorkRef] : []));
+    )
+      .flatMap((row) => (row.ref ? [JSON.parse(row.ref) as WorkRef] : []))
+      .filter((ref) => !seen.has(workKey(ref)) && (seen.add(workKey(ref)), true))
+      .slice(0, WORK_START_EXCLUDE_REFS_MAX);
   }
 
   dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
