@@ -50,6 +50,31 @@ function setup() {
 }
 
 describe('owners', () => {
+  test('confirmed worktree removal excludes every binding and its session fallback', () => {
+    const { db, bind, owners } = setup();
+    try {
+      bind('owned', { verb: 'start', adapter: 'hyperneo' });
+      bind('older', { verb: 'start', adapter: 'hyperneo' });
+      db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata,worktree_path)
+        VALUES ('worker','Worker','/work','now','now','archived','{}','{}','/work/tree')`).run();
+      const sessions = new NeoTodoSessionRepository(db);
+      sessions.recordReleased('owned', {
+        ok: true,
+        value: { archived: true, worktree: { removed: true } },
+      });
+      expect(owners()).toEqual([]);
+      sessions.recordReleased('owned', {
+        ok: true,
+        value: { archived: true, worktree: { removed: false } },
+      });
+      expect(owners()).toHaveLength(2);
+      sessions.recordReleased('owned', { ok: true, value: { archived: true } });
+      expect(owners()).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test('named and non-start bindings do not grant folder ownership', () => {
     const { db, bind, owners } = setup();
     try {

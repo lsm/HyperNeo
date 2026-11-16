@@ -11,6 +11,36 @@ const done = {
 } as const;
 
 describe('sweepWorkCleanup', () => {
+  test.each(['initial', 'fresh', 'release'])(
+    'a folder %s failure is kept as error without losing the digest',
+    async (phase) => {
+      let reads = 0;
+      let told = 0;
+      const digest = await sweepWorkCleanup({
+        list: async () => ['/work/bad', '/work/good'],
+        read: async (folder) => {
+          if (
+            folder === '/work/bad' &&
+            ++reads === (phase === 'initial' ? 1 : 2) &&
+            phase !== 'release'
+          )
+            throw new Error('Unreadable folder');
+          return done;
+        },
+        release: async (folder) => {
+          if (folder === '/work/bad') throw new Error('Archive failed');
+          return true;
+        },
+        tell: async () => {
+          told++;
+        },
+      });
+      expect(digest.kept.error).toEqual(['/work/bad']);
+      expect(digest.removed).toEqual([{ directory: '/work/good', reason: 'todo done' }]);
+      expect(told).toBe(1);
+    }
+  );
+
   test('the first planning pass checks at most four folders at a time', async () => {
     let active = 0;
     let peak = 0;
