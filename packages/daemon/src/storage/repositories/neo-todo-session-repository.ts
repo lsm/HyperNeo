@@ -9,7 +9,7 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { markWorkUnusable, readFreeWorkers, recordStartedWork } from '../work-started-sessions.ts';
+import { markWorkUnusable, readStartedWork, recordStartedWork } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -668,7 +668,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
                 LIMIT 1) AS releasedBy
              FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-            WHERE t.state IN ('done', 'removed') AND COALESCE(t.finished_at, t.updated_at) > ?
+            WHERE t.state IN ('done', 'removed')
+              AND CASE t.state WHEN 'removed' THEN t.updated_at ELSE t.finished_at END > ?
               AND s.ref IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM pack_facts f
                 WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
@@ -691,27 +692,39 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   fenceRelease(ref: WorkRef, now: number): boolean {
     if (this.doingTodoOn(ref, null, LIVE_TODO_STATES)) return false;
+    if (this.liveTodo(this.startedFacts(ref)?.claimedBy ?? null)) return false;
     recordStartedWork(this.db, ref, now, false, true);
     return true;
   }
 
-  claimWorker(ref: WorkRef, todoId: string | null): { previous: WorkRef | null } | null {
-    if (!todoId)
-      return this.doingTodoOn(ref, null, [...LIVE_TODO_STATES, 'done', 'removed'])
-        ? null
-        : { previous: null };
-    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
-    if (!todo || !LIVE_TODO_STATES.includes(todo.state)) return null;
-    if (!readFreeWorkers(this.db, ref.adapter).has(ref.id)) return null;
-    const previous = this.readRef(todoId);
-    this.recordRef(todoId, { adapter: ref.adapter, id: ref.id });
-    const bound = this.readRef(todoId);
-    return bound?.adapter === ref.adapter && bound.id === ref.id ? { previous } : null;
+  claimWorker(ref: WorkRef, todoId: string | null): boolean {
+    const workers = readStartedWork(this.db);
+    const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
+    if (own?.releasedAt) return false;
+    if (own?.claimedBy !== todoId && this.liveTodo(own?.claimedBy ?? null)) return false;
+    const holders = todoId ? LIVE_TODO_STATES : [...LIVE_TODO_STATES, 'done', 'removed'];
+    if (this.doingTodoOn(ref, null, holders)) return false;
+    if (!todoId) return true;
+    if (!this.liveTodo(todoId)) return false;
+    if (workers.some((worker) => worker.claimedBy === todoId && worker !== own)) return false;
+    recordStartedWork(this.db, ref, Date.now(), false, false, { todoId });
+    return true;
   }
 
-  unclaimWorker(todoId: string, ref: WorkRef, previous: WorkRef | null): void {
-    const current = this.readRef(todoId);
-    if (current?.adapter === ref.adapter && current.id === ref.id) this.recordRef(todoId, previous);
+  unclaimWorker(todoId: string, ref: WorkRef): void {
+    if (this.startedFacts(ref)?.claimedBy === todoId)
+      recordStartedWork(this.db, ref, Date.now(), false, false, { todoId: null });
+  }
+
+  private startedFacts(ref: WorkRef) {
+    return readStartedWork(this.db).find(
+      (worker) => worker.adapter === ref.adapter && worker.id === ref.id
+    );
+  }
+
+  private liveTodo(todoId: string | null): boolean {
+    const todo = todoId ? new NeoAskTodoRepository(this.db).getTodo(todoId) : null;
+    return !!todo && LIVE_TODO_STATES.includes(todo.state);
   }
 
   recordReleased(todoId: string, released: unknown): void {

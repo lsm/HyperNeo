@@ -6,19 +6,34 @@ export interface StartedWork {
   id: string;
 }
 
+export interface StartedWorkFacts extends StartedWork {
+  releasedAt: number | null;
+  claimedBy: string | null;
+}
+
 export function recordStartedWork(
   db: BunDatabase,
   ref: StartedWork,
   at = Date.now(),
   unusable = false,
-  released = false
+  released = false,
+  claim?: { todoId: string | null }
 ): void {
   db.prepare(
-    `INSERT INTO work_started_sessions (adapter, id, started_at, unusable_at, released_at)
-     VALUES (?, ?, ?, ?, ?) ON CONFLICT (adapter, id) DO UPDATE SET
+    `INSERT INTO work_started_sessions (adapter, id, started_at, unusable_at, released_at, claimed_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (adapter, id) DO UPDATE SET
        unusable_at = COALESCE(excluded.unusable_at, unusable_at),
-       released_at = COALESCE(released_at, excluded.released_at)`
-  ).run(ref.adapter, ref.id, at, unusable ? at : null, released ? at : null);
+       released_at = COALESCE(released_at, excluded.released_at),
+       claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END`
+  ).run(
+    ref.adapter,
+    ref.id,
+    at,
+    unusable ? at : null,
+    released ? at : null,
+    claim?.todoId ?? null,
+    Number(!!claim)
+  );
 }
 
 export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
@@ -31,7 +46,7 @@ export function readStartedWork(
   db: BunDatabase,
   freeOn: string | null = null,
   reuse?: { todoId?: string; sessionId?: string }
-): (StartedWork & Partial<WorkerReuseFacts>)[] {
+): (StartedWorkFacts & Partial<WorkerReuseFacts>)[] {
   const history = reuse
     ? `WITH uses AS (
          SELECT json_extract(bound.ref, '$.adapter') AS adapter,
@@ -59,7 +74,11 @@ export function readStartedWork(
     : '';
   return db
     .prepare(
-      `${history} SELECT worker.adapter, worker.id${ranks}
+      `${history} SELECT worker.adapter, worker.id${ranks},
+         (SELECT released_at FROM work_started_sessions own
+           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS releasedAt,
+         (SELECT claimed_by FROM work_started_sessions own
+           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
          SELECT adapter, id FROM work_started_sessions
          UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
@@ -81,7 +100,7 @@ export function readStartedWork(
       freeOn,
       Date.now() - UNUSABLE_FOR_MS,
       ...(reuse ? [reuse.todoId ?? null, reuse.sessionId ?? null] : [])
-    ) as (StartedWork & Partial<WorkerReuseFacts>)[];
+    ) as (StartedWorkFacts & Partial<WorkerReuseFacts>)[];
 }
 
 export function readFreeWorkers(db: BunDatabase, adapter: string): Set<string> {

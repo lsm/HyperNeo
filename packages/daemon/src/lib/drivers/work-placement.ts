@@ -131,7 +131,7 @@ export async function procFolderInUse(
       try {
         const ids = /^Uid:\s+(.*)$/m.exec(await proc.readFile(`/proc/${pid}/status`, 'utf8'));
         if (!ids) return true;
-        if (!ids[1].split(/\s+/).includes(String(uid))) return false;
+        if (ids[1].split(/\s+/)[1] !== String(uid)) return false;
         return `${await proc.readlink(`/proc/${pid}/cwd`)}/`.startsWith(`${root}/`);
       } catch (error) {
         return !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');

@@ -238,7 +238,7 @@ export class NeoDriverSessionRows {
 
   recordRef(
     id: string,
-    ref: WorkRef | null,
+    ref: WorkRef,
     startedAt?: number,
     link?: string,
     observed: Pick<NeoWorkDriverReceipt, 'model' | 'effort'> = {},
@@ -259,7 +259,7 @@ export class NeoDriverSessionRows {
             COALESCE(json_extract(ref, '$.daemon'), json_extract(target, '$.ref.daemon')) IS json_extract(?1, '$.daemon')))`
       )
       .run(
-        ref ? JSON.stringify(ref) : null,
+        JSON.stringify(ref),
         startedAt ?? null,
         link ?? null,
         observed.model ?? null,
