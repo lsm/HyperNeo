@@ -1920,6 +1920,56 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2f: an explicitly supplied login without an expiry is still refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-other-account', refresh_token: 'codex-refresh' },
+      });
+      fetchSpy.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: 'explicit-access-2',
+            refresh_token: 'explicit-refresh-2',
+            expires_in: 3600,
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      p.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-access-1',
+        refreshToken: 'explicit-refresh-1',
+      } as ProviderCredentials);
+      expect(await p.refreshToken()).toBe('refreshed');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(await p.getApiKey()).toBe('explicit-access-2');
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2g: a legacy imported login handed back by the credential store is not refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-new-access', refresh_token: 'codex-refresh-2' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'legacy-imported-access',
+        refresh: 'codex-refresh-1',
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      const mirrored = await p.getCredentials();
+      p.setCredentials(mirrored as ProviderCredentials);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2d: a late 401 for the old token reuses the Codex token already re-read', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
