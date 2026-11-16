@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_TODO_RELEASE_PRINCIPAL } from './session-archive-operation.ts';
-import { WORKTREE_IN_USE } from '../drivers/work-placement.ts';
+import { WORKTREE_IN_USE, WORKTREE_UNVERIFIED } from '../drivers/work-placement.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -93,7 +93,7 @@ export function readNeoTodoArchive(
       ? (outcome.value as { ok?: boolean; value?: { worktree?: { reason?: string } } })
       : null;
   const kept = result?.value?.worktree?.reason;
-  return result?.ok && kept !== WORKTREE_IN_USE && !kept?.startsWith('Could not verify or remove')
+  return result?.ok && kept !== WORKTREE_IN_USE && !kept?.startsWith(WORKTREE_UNVERIFIED)
     ? { value: { released: result } }
     : { reason: { pending: JSON.stringify(result ?? outcome).slice(0, 300) } };
 }

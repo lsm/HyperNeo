@@ -111,6 +111,10 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   )
   .end('ready') as (facts: Facts) => true | { reason: string };
 
+export const WORKTREE_UNVERIFIED = 'Could not verify or remove the worktree; kept';
+export const worktreeUnverified = (error: unknown) =>
+  `${WORKTREE_UNVERIFIED}: ${error instanceof Error ? error.message : String(error)}`;
+
 export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
 
@@ -196,7 +200,7 @@ async function cloneState(git: SimpleGit): Promise<string> {
       git.raw(['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']),
       git.raw(['stash', 'list']),
       git.raw(['worktree', 'list', '--porcelain']),
-      git.raw(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads']),
+      git.raw(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/tags']),
       git.raw(['rev-parse', 'HEAD']),
     ])
   );
@@ -240,7 +244,15 @@ export async function cleanupOwnedWorktree(
       git.status(['--ignore-submodules=none']),
       git.raw(
         clone
-          ? ['rev-list', '--count', 'HEAD', '--branches', '--not', '--glob=refs/hyperneo-check/*']
+          ? [
+              'rev-list',
+              '--count',
+              'HEAD',
+              '--branches',
+              '--tags',
+              '--not',
+              '--glob=refs/hyperneo-check/*',
+            ]
           : ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']
       ),
       workerWorktreeHasSubmodules(directory),
@@ -274,7 +286,7 @@ export async function cleanupOwnedWorktree(
     return {
       directory,
       removed: false,
-      reason: `Could not verify or remove the worktree; kept: ${error instanceof Error ? error.message : String(error)}`,
+      reason: worktreeUnverified(error),
     };
   }
 }

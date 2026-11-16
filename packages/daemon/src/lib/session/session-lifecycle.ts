@@ -1,4 +1,8 @@
-import { cleanupOwnedWorktree, releaseRemovedWorkerFolders } from '../drivers/work-placement.ts';
+import {
+  cleanupOwnedWorktree,
+  releaseRemovedWorkerFolders,
+  worktreeUnverified,
+} from '../drivers/work-placement.ts';
 import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
@@ -693,7 +697,7 @@ export class SessionLifecycle {
           cleanup = {
             directory: session.worktree.worktreePath,
             removed: false,
-            reason: `Could not verify or remove the worktree; kept: ${error instanceof Error ? error.message : String(error)}`,
+            reason: worktreeUnverified(error),
           };
       }
     }
