@@ -12,6 +12,7 @@ import {
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
 import { neoStallReminderWrite } from '../../../../src/storage/repositories/neo-stall-reminder-write.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -349,21 +350,73 @@ describe('daemon cards in the store', () => {
   });
   const sweep = (now: number) => gateway.run(neoStallReminderWrite, { now });
   const open = () =>
-    store.listQuestions('ask').filter((q) => q.state === 'open' && q.cause === 'check_overdue');
+    store.listQuestions('ask').filter((q) => q.state === 'open' && q.cause === 'human_step');
+  const after = (id: string, dependsOn: string[], instruction: string | null = null) =>
+    store.addTodo(
+      id,
+      'ask',
+      {
+        title: id,
+        doneWhen: id,
+        check: instruction ? null : { pack: 'core', kind: 'evidence', params: {} },
+        instruction,
+        named: null,
+        dependsOn,
+      },
+      0
+    );
+  const cardsFor = (id: string) => open().filter((q) => q.todos.includes(id));
 
-  test('an overdue check opens one card, and Keep waiting holds it off another 24 hours', async () => {
-    await sweep(DAY - 1);
-    expect(open()).toEqual([]);
-    await sweep(DAY);
-    await sweep(DAY + 1);
-    expect(open().map((q) => q.text)).toEqual([
-      `"Merged" has waited 24 hours and its check hasn't passed. Keep waiting, mark it done, or remove it?`,
+  test('a check-only todo that used to wait 24 hours gets its human-step card at once', async () => {
+    await sweep(1);
+    await sweep(2);
+    expect(open().map((q) => [q.text, q.options, q.todos])).toEqual([
+      [
+        '"Merged" is yours to do now. Do it, then mark it done, or remove it?',
+        ['Mark done', 'Remove'],
+        ['check'],
+      ],
     ]);
-    store.answerQuestion(open()[0], ['Keep waiting'], 'button', DAY + 2);
-    await sweep(2 * DAY + 1);
-    expect(open()).toEqual([]);
-    await sweep(2 * DAY + 2);
-    expect(open()).toHaveLength(1);
+  });
+
+  test('a check-only todo whose prerequisites are done gets its card at once', async () => {
+    after('build', [], 'Build it');
+    after('sign', ['build']);
+    store.updateTodo(store.getTodo('build')!, { state: 'done' }, 1);
+    await sweep(2);
+    expect(cardsFor('sign')).toHaveLength(1);
+  });
+
+  test('a check-only todo whose prerequisites are unfinished gets no card', async () => {
+    after('build', [], 'Build it');
+    after('sign', ['build']);
+    await sweep(DAY * 2);
+    expect(
+      store.listQuestions('ask').filter((q) => q.state === 'open' && q.todos.includes('sign'))
+    ).toEqual([]);
+  });
+
+  test('a check-only todo that already has a card gets no human-step card', async () => {
+    openHumanCard(
+      store,
+      'asked',
+      'ask',
+      {
+        text: 'Which branch?',
+        kind: 'choice',
+        options: ['main', 'dev'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todos: ['check'],
+        cause: null,
+      },
+      1
+    );
+    await sweep(DAY * 2);
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toMatchObject([
+      { id: 'asked' },
+    ]);
   });
 
   test('the overdue card retires when its check passes on its own', async () => {
