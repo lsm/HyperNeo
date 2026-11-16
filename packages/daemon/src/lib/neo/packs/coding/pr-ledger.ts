@@ -524,10 +524,6 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.record(fact);
   }
 
-  readHealthCurrent(repo: string) {
-    return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
-  }
-
   readHealthDelivery(repos: readonly string[], staleBefore: number) {
     return gatewayFor(this.db).call(codingLedgerReads, 'healthDelivery', repos, staleBefore);
   }
