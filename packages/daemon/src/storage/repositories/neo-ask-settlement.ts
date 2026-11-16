@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
-import { neoStalledAskUuids } from '../../lib/neo/stalled-asks.ts';
+import { neoFinishedAskUuids } from '../../lib/neo/stalled-asks.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
@@ -150,7 +150,13 @@ export const neoAskSettlementWrites = defineRepositoryOp(
 
 const MAX_IN_LIST = 500;
 
-type Candidate = { id: string; session_id: string; updated_at: number; uuids: string[] };
+type Candidate = {
+  id: string;
+  session_id: string;
+  updated_at: number;
+  since: number;
+  uuids: string[];
+};
 type SessionFacts = {
   maxConsumedInput: number | null;
   lastTerminal: { seq: number; timestamp: string } | null;
@@ -159,11 +165,9 @@ type SessionFacts = {
 const CANDIDATE_SELECT = `SELECT id, session_id, updated_at, title,
   (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id) AS since FROM neo_asks`;
 
-const candidate = (
-  row: Omit<Candidate, 'uuids'> & { title: string; since: number }
-): Candidate => ({
+const candidate = (row: Omit<Candidate, 'uuids'> & { title: string }): Candidate => ({
   ...row,
-  uuids: neoStalledAskUuids({ ...row, updatedAt: row.updated_at }),
+  uuids: neoFinishedAskUuids(row),
 });
 
 const latestConsumedSeq = (db: Database, sessionId: string, predicate: string): number | null =>
@@ -175,16 +179,22 @@ const latestConsumedSeq = (db: Database, sessionId: string, predicate: string): 
       .get(sessionId) as { seq: number } | undefined
   )?.seq ?? null;
 
-const wakeTurnSeqs = (db: Database, sessionId: string, uuids: readonly string[]): number[] => {
+const wakeTurnSeqs = (
+  db: Database,
+  sessionId: string,
+  uuids: readonly string[],
+  since: number
+): number[] => {
   const seqs: number[] = [];
+  const from = new Date(since).toISOString();
   for (let at = 0; at < uuids.length; at += MAX_IN_LIST) {
     const chunk = uuids.slice(at, at + MAX_IN_LIST);
     const marks = chunk.map(() => '?').join(',');
     const told =
       db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = ? AND message_type = 'user' AND consumed_seq IS NOT NULL
-        AND sdk_uuid IN (${marks})`);
-    for (const row of told.iterate(sessionId, ...chunk) as Iterable<{ seq: number }>)
+        AND sdk_uuid IN (${marks}) AND timestamp >= ?`);
+    for (const row of told.iterate(sessionId, ...chunk, from) as Iterable<{ seq: number }>)
       seqs.push(row.seq);
   }
   return seqs;
@@ -225,9 +235,8 @@ const wakeRecipients = (db: Database, asks: readonly Candidate[]): Recipients =>
       const sessions = new Map(
         [ask.session_id, neo ?? ask.session_id].map((id) => [id, [...ask.uuids]])
       );
-      for (const uuid of ask.uuids)
-        for (const { sessionId, batchUuid } of neoNoteBatches(db, uuid))
-          sessions.set(sessionId, [...(sessions.get(sessionId) ?? []), batchUuid]);
+      for (const { sessionId, batchUuid } of neoNoteBatches(db, `ask.idle:${ask.id}`))
+        sessions.set(sessionId, [...(sessions.get(sessionId) ?? []), batchUuid]);
       return [ask.id, sessions];
     })
   );
@@ -241,7 +250,7 @@ const askWakeEnded = (
 ): boolean => {
   let ended = false;
   for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
-    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids);
+    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids, ask.since);
     if (!wakeSeqs.length) continue;
     let fact = facts.get(sessionId);
     if (!fact) facts.set(sessionId, (fact = sessionFacts(db, sessionId)));

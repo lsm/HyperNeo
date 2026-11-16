@@ -26,9 +26,10 @@ export const neoStalledAskEvent = (ask: StalledAsk): NeoAttentionEvent => ({
   facts: { text: neoStalledAskNote(ask) },
 });
 
-export const neoStalledAskUuids = (ask: Omit<StalledAsk, 'finished'>): string[] =>
-  [1, 0].flatMap((finished) =>
-    neoAttentionUuids(neoStalledAskEvent({ ...ask, finished }), NEO_ATTENTION_KINDS)
+export const neoFinishedAskUuids = (ask: { id: string; title: string; since: number }): string[] =>
+  neoAttentionUuids(
+    neoStalledAskEvent({ ...ask, updatedAt: ask.since, finished: 1 }),
+    NEO_ATTENTION_KINDS
   );
 
 export const wakeStalledAsks = (superpipe({})('neo-stalled-ask-wake') as PipelineAPI)

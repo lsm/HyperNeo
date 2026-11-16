@@ -15,7 +15,7 @@ import {
   renderNeoAttention,
 } from './decide.ts';
 
-type Deliver = (uuid: string, text: string) => Promise<boolean>;
+type Deliver = (uuid: string, text: string, event: NeoAttentionEvent) => Promise<boolean>;
 
 export type NeoAttentionOutcome =
   | { told: 'wake' | 'digest'; step: number; uuid: string; text: string }
@@ -25,7 +25,7 @@ export const neoAttentionDelivery = (
   db: Database,
   session: () => string | null,
   busy: (sessionId: string) => boolean
-): { wake: Deliver; digest: Deliver } => ({
+): { wake: (uuid: string, text: string) => Promise<boolean>; digest: Deliver } => ({
   wake: async (uuid, text) => {
     const sessionId = session();
     if (!sessionId) return false;
@@ -38,7 +38,7 @@ export const neoAttentionDelivery = (
     if (outcome.kind === 'rejected') throw new Error(`Neo wake was not queued: ${outcome.reason}`);
     return true;
   },
-  digest: async (uuid, text) => {
+  digest: async (uuid, text, event) => {
     const sessionId = session();
     if (!sessionId) return false;
     await gatewayFor(db).call(
@@ -54,7 +54,8 @@ export const neoAttentionDelivery = (
           message: { content: text },
           inputKind: 'system',
         },
-      })
+      }),
+      `${event.kind}:${event.subject.id}`
     );
     return true;
   },
@@ -91,7 +92,7 @@ export function createNeoAttention(deps: {
     )
     .pipe(
       async (event: NeoAttentionEvent, message: Extract<NeoAttentionOutcome, { told: string }>) => {
-        if (await deps[message.told](message.uuid, message.text))
+        if (await deps[message.told](message.uuid, message.text, event))
           deps
             .kinds()
             .find((kind) => kind.id === event.kind)

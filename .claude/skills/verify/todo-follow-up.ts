@@ -10,7 +10,7 @@ import {
   createNeoService,
 } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
-import { neoStalledAskUuids } from '../../../packages/daemon/src/lib/neo/stalled-asks.ts';
+import { neoFinishedAskUuids } from '../../../packages/daemon/src/lib/neo/stalled-asks.ts';
 
 const run = resolve(process.argv[2]);
 assert(/^\/(private\/)?tmp\//.test(run));
@@ -93,12 +93,12 @@ try {
   finished('plan-ask', 'plan-step', true);
   finished('plain-ask', 'plain-step', false);
   const wakeUuid = (askId: string) =>
-    neoStalledAskUuids({
+    neoFinishedAskUuids({
       id: askId,
       ...(db
-        .prepare(`SELECT title, updated_at AS updatedAt, COALESCE((SELECT MAX(updated_at) FROM neo_todos
+        .prepare(`SELECT title, COALESCE((SELECT MAX(updated_at) FROM neo_todos
           WHERE ask_id = neo_asks.id), updated_at) AS since FROM neo_asks WHERE id = ?`)
-        .get(askId) as { title: string; since: number; updatedAt: number }),
+        .get(askId) as { title: string; since: number }),
     })[0]!;
   let seq = 0;
   const sdk = (kind: 'user' | 'result', uuid: string, consumedSeq: number) =>
