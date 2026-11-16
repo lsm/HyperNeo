@@ -1,7 +1,7 @@
 # Only Neo asks the human
 
 Status: proposal, 2026-11-16. Design only. Changes `neo-todo-minimal.md` (the section
-"Cards the daemon opens" and rules 4, 5 and 7) and builds on `neo-attention.md`.
+"Cards the daemon opens" and rules 4, 5, 6 and 7) and `neo-inbox.md` (rule 5) and builds on `neo-attention.md`.
 Paths without a prefix are under `packages/daemon/src/lib/neo/`.
 
 ## Why
