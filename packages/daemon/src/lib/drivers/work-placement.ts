@@ -110,7 +110,8 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   )
   .end('ready') as (facts: Facts) => true | { reason: string };
 
-export const WORKTREE_IN_USE = 'A running process is inside the worktree; kept.';
+export const WORKTREE_IN_USE =
+  'A running process is inside the worktree, or the process check failed; kept.';
 
 async function folderInUse(directory: string): Promise<boolean> {
   const uid = String(process.getuid?.() ?? '');
@@ -159,7 +160,8 @@ export async function cleanupOwnedWorktree(
     ]);
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
-    if (await folderInUse(directory)) return { directory, removed: false, reason: WORKTREE_IN_USE };
+    if (await folderInUse(directory).catch(() => true))
+      return { directory, removed: false, reason: WORKTREE_IN_USE };
     await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
     await releaseRemovedWorkerFolders(directory);
     return { directory, removed: true };

@@ -38,7 +38,15 @@ export function claimStartedWork(
         .get(ref.adapter, ref.id)
     )
       return null;
-    if (!todoId) return () => {};
+    if (!todoId)
+      return db
+        .prepare(
+          `SELECT 1 FROM neo_todo_sessions WHERE json_extract(ref, '$.adapter') = ?
+             AND json_extract(ref, '$.id') = ? AND json_extract(ref, '$.daemon') IS NULL`
+        )
+        .get(ref.adapter, ref.id)
+        ? null
+        : () => {};
     const previous =
       (
         db.prepare('SELECT ref FROM neo_todo_sessions WHERE todo_id = ?').get(todoId) as
@@ -46,7 +54,13 @@ export function claimStartedWork(
           | undefined
       )?.ref ?? null;
     const claimed = JSON.stringify({ adapter: ref.adapter, id: ref.id });
-    db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(claimed, todoId);
+    const bound = db
+      .prepare(
+        `UPDATE neo_todo_sessions SET ref = ?1 WHERE todo_id = ?2 AND EXISTS (SELECT 1 FROM neo_todos
+           WHERE id = ?2 AND state IN ('todo', 'doing', 'blocked', 'failed'))`
+      )
+      .run(claimed, todoId);
+    if (!bound.changes) return null;
     return () =>
       void db
         .prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ? AND ref = ?')
