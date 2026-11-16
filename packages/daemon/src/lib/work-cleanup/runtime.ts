@@ -120,13 +120,32 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       read: async (folder): Promise<WorkFolderFacts> => {
         if (errors.has(folder)) throw new Error('Folder listing failed');
         const matched = initial.filter((row) => row.path === folder);
-        const owners = read.has(folder)
+        const fresh = read.has(folder);
+        const bound = fresh ? await db.gateway.call(workCleanupReads, 'liveBindings') : [];
+        if (bound.some(({ ref }) => !ref))
+          return { owner: 'unreadable', inUse: false, unsaved: false };
+        const owners = fresh
           ? (
               await resolveOwners(
-                await readOwners(
-                  matched.map(({ ref }) => ref),
-                  folder
-                ),
+                [
+                  ...(await readOwners(
+                    matched.map(({ ref }) => ref),
+                    folder
+                  )),
+                  ...bound.flatMap(({ ref, todoId, state }) =>
+                    ref
+                      ? [
+                          {
+                            ref,
+                            todoId,
+                            path: null,
+                            repo: null,
+                            owner: { kind: 'todo' as const, state, boundToLiveTodo: true },
+                          },
+                        ]
+                      : []
+                  ),
+                ],
                 statuses
               )
             ).filter((row) => row.path === folder || !row.readable)

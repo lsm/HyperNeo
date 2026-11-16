@@ -39,10 +39,10 @@ class WorkCleanupRepository {
         AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = json_extract(s.ref, '$.adapter') AND removed.id = json_extract(s.ref, '$.id'))
         AND json_extract(s.target, '$.verb') = 'start'
         AND COALESCE(json_extract(s.target, '$.name'), '') = ''
-        AND (?1 IS NULL OR live = 1 AND ?2 IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
+        AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
           WHERE json_extract(requested.value, '$.adapter') = json_extract(s.ref, '$.adapter')
             AND json_extract(requested.value, '$.id') = json_extract(s.ref, '$.id')))`)
-      .all(selected, folder ?? null) as {
+      .all(selected) as {
       ref: string;
       state: NeoTodo['state'];
       todoId: string;
@@ -78,11 +78,26 @@ class WorkCleanupRepository {
         .map((session) => ({
           todoId: null,
           ref: { adapter: 'hyperneo', id: session.id },
-          owner: { kind: 'session' as const, archived: session.status === 'archived' },
+          owner: {
+            kind: 'session' as const,
+            archived: session.status === 'archived' || session.status === 'ended',
+          },
           path: session.path,
           repo: session.repo,
         })),
     ];
+  }
+
+  liveBindings(): { ref: WorkRef | null; todoId: string; state: NeoTodo['state'] }[] {
+    return (
+      this.db
+        .prepare(`SELECT COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref, t.id AS todoId, t.state
+        FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+        WHERE t.state IN ('todo', 'doing', 'blocked', 'failed')
+          AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS NULL
+          AND (COALESCE(s.ref, json_extract(s.target, '$.ref')) IS NOT NULL OR t.state = 'doing')`)
+        .all() as { ref: string | null; todoId: string; state: NeoTodo['state'] }[]
+    ).map((row) => ({ ...row, ref: row.ref ? (JSON.parse(row.ref) as WorkRef) : null }));
   }
 }
 
@@ -90,5 +105,5 @@ export const workCleanupReads = defineRepositoryOp(
   'work.cleanup.reads',
   'read',
   WorkCleanupRepository,
-  ['owners']
+  ['owners', 'liveBindings']
 );
