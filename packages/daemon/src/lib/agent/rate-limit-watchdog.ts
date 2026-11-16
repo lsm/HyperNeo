@@ -175,9 +175,12 @@ export class RateLimitWatchdog {
     retryAt: number,
     messageId?: string,
     onPersistedExpiry?: () => void,
-    exhaustedCycles = 0
+    exhaustedCycles = 0,
+    hold: { reason?: RateLimitHoldReason; since?: number } = {}
   ): void {
     if (this.cooldownTimer !== null) return;
+    this.holdSince = hold.since ?? null;
+    this.lastHint = hold.reason === 'overloaded' ? { hold: 'overloaded' } : null;
     const remaining = Math.max(0, retryAt - Date.now());
     this.currentRetryAt = retryAt;
     this.persistedCooldownArm = true;
@@ -262,6 +265,7 @@ export class RateLimitWatchdog {
       this.lastHint = hint ?? null;
       this.exhaustedRetryCycles = 0;
       this.retryFiredForEpisode = false;
+      this.holdSince = null;
     }
     if (this.retryFiredForEpisode) {
       this.exhaustedRetryCycles += 1;
