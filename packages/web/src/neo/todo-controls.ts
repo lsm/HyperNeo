@@ -35,7 +35,10 @@ export function neoTodoControlCall(
       name: 'neo.todo.hold',
       input: {
         todoId,
-        reason: todo.startedAt === null ? 'The human put it on hold.' : 'The human paused it.',
+        reason:
+          todo.startedAt === null
+            ? 'You put this on hold. Start it, or remove it?'
+            : 'You paused this. Resume it, or remove it?',
       },
     };
   return { name: 'neo.todo.edit', input: { todoId, priority: control.priority } };

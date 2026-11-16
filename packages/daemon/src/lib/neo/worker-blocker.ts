@@ -4,7 +4,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { isNeoTodoStalledCard, neoQuestionCoversTodo } from './todo-state.ts';
+import { isNeoTodoStalledCard } from './todo-state.ts';
 
 type Turn = { id: string; at: number; message: string };
 type Blocker = { kind: 'needs-human' | 'environment'; reason: string };
@@ -144,26 +144,3 @@ export const recordWorkerBlocker = (superpipe({})('neo.worker-final-blocker') as
   turn: Turn,
   now: number
 ) => NeoTodo | null;
-
-export function workerBlockerReminderDue(
-  store: NeoAskTodoRepository,
-  sessions: NeoTodoSessionRepository,
-  todoId: string,
-  now: number
-): NeoTodo | null {
-  const todo = store.getTodo(todoId),
-    prior = sessions.readNudge(todoId)?.blockerReport;
-  return prior &&
-    prior.remindedAt === undefined &&
-    todo?.state === 'blocked' &&
-    todo.blockedBy === 'needs-human' &&
-    store.getAsk(todo.askId)?.status === 'open' &&
-    prior.triagedAt === todo.updatedAt &&
-    now - prior.triagedAt >= 60 * 60_000 &&
-    sessions.readRef(todoId) &&
-    sessions.inputs.list(todoId).at(-1)?.id === prior.dispatchId &&
-    !store.questionAnswers.pending().some((route) => route.todoId === todoId) &&
-    !store.todoCards(todo).some((q) => neoQuestionCoversTodo(q, { id: todoId }))
-    ? todo
-    : null;
-}
