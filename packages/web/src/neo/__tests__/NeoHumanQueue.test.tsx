@@ -446,6 +446,19 @@ describe('NeoHumanQueue', () => {
     input.remove();
   });
 
+  it('offers no answer buttons for a card answered since the snapshot', () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        entries={[entry('trip', 'Plan the trip', [question('q1', 'trip', { state: 'answered' })])]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(view.queryByRole('button', { name: 'Agree' })).toBeNull();
+    expect(view.getByText('Question q1')).toBeTruthy();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
