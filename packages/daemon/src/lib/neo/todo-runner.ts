@@ -77,6 +77,7 @@ type Startable = {
   todo: NeoTodo;
   ask: NeoAsk;
   target: Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
+  moved?: string;
 };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -450,7 +451,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: blocked };
   };
 
-  const dispatch = async ({ todo, ask, target }: Startable) => {
+  const dispatch = async ({ todo, ask, target, moved }: Startable) => {
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
@@ -553,6 +554,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null,
     });
     sessions.clearRetries(todo.id);
+    if (moved) await note('todo.line_moved', todo, Date.now(), moved);
     if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
     deps.changed();
@@ -662,7 +664,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const chooseTarget = async (
     todoId: string,
     hold: string | null
-  ): Promise<Gate<NeoTodoTarget | null>> => {
+  ): Promise<Gate<NeoTodoTarget | null> & { note?: string }> => {
     const todo = store.getTodo(todoId);
     const ask = todo && store.getAsk(todo.askId);
     const target = sessions.get(todoId);
@@ -693,20 +695,26 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       deps.changed();
     }
     const chosen = decision.value;
-    if (decision.note) await note('todo.line_moved', todo, Date.now(), decision.note);
     if (
       chosen.verb === 'send' &&
       (target.verb !== 'send' || neoWorkerKey(target.ref) !== neoWorkerKey(chosen.ref))
     )
       await sessions.write('queueOn', todoId, chosen.ref, '');
-    return { value: chosen.verb === 'start' ? chosen : null };
+    return chosen.verb === 'start'
+      ? { value: chosen, ...(decision.note ? { note: decision.note } : {}) }
+      : { value: null };
   };
 
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
     .input(['todoId'])
     .pipe(async (todoId: string) => (await trackerHolds())[todoId] ?? null, 'todoId', 'hold')
     .pipe(chooseTarget, ['todoId', 'hold'], 'chosen')
-    .pipe((chosen: Gate<NeoTodoTarget | null>) => chosen, 'chosen', 'result:outcome')
+    .pipe(
+      (chosen: Gate<NeoTodoTarget | null>) =>
+        'reason' in chosen ? { reason: chosen.reason } : { value: chosen.value },
+      'chosen',
+      'result:outcome'
+    )
     .pipe(awaitFreeWorker, 'todoId', 'result:outcome')
     .pipe(
       (todoId: string, hold: string | null) =>
@@ -717,7 +725,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       async (
         receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>,
-        chosen: { value: NeoTodoTarget | null },
+        chosen: { value: NeoTodoTarget | null; note?: string },
         todoId: string
       ): Promise<Gate<Startable>> => {
         if (receipt.changed) deps.changed();
@@ -738,6 +746,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
                     receipt.target.verb === 'start' && chosen.value?.verb === 'start'
                       ? chosen.value
                       : receipt.target,
+                  ...(chosen.note ? { moved: chosen.note } : {}),
                 },
               }
             : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };

@@ -46,38 +46,42 @@ try {
         return result;
       };
       const plan = () => select({ repo, candidates: [standard, preferred] });
+      const choice = (target: unknown, fallback: string[] = []) => ({ target, fallback });
+      const missed = (field: string, wanted: string, used: string) => `Preferred ${field} ${JSON.stringify(wanted)} is unavailable for this selection; using ${JSON.stringify(used)}.`;
+      const toStandard = [missed('harness', preferred.adapter, standard.adapter), missed('effort', preferred.effort, 'default')];
       if (phase === 'initial') {
         assert.deepEqual(stagePreferences((await rpc('pack.preferences.list', {}) as {preferences:{key:string}[]}).preferences), []);
-        assert.deepEqual(await plan(), { ok: true, target: standard, fallback: [] });
-        assert.deepEqual(await rpc('pack.preferences.get', address('verify.model')), { preference: null });
+        assert.deepEqual(await plan(), { ok: true, choices: [choice(standard), choice(preferred)] });
+        assert.deepEqual(await rpc('pack.preferences.get', address('verify.effort')), { preference: null });
         for (const stage of ['write', 'review', 'verify']) {
-          for (const [field, value] of Object.entries({ harness: preferred.adapter, model: preferred.model, effort: preferred.effort }))
+          for (const [field, value] of Object.entries({ harness: preferred.adapter, effort: preferred.effort }))
             assert.deepEqual(await rpc('pack.preferences.set', { ...address(`${stage}.${field}`), value }), { ok: true });
+          assert.equal((await rpc('pack.preferences.set', { ...address(`${stage}.model`), value: preferred.model }) as { ok: boolean }).ok, false, 'model choices are routes, not coding preferences');
         }
-        assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
-        assert.equal(stagePreferences((await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: {key:string}[] }).preferences).length, 9);
+        assert.deepEqual(await plan(), { ok: true, choices: [choice(preferred), choice(standard, toStandard)] });
+        assert.equal(stagePreferences((await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: {key:string}[] }).preferences).length, 6);
         for (const value of [true, 'x'.repeat(201)])
-          assert.equal((await rpc('pack.preferences.set', { ...address('verify.model'), value }) as { ok: boolean }).ok, false);
-        assert.deepEqual(await rpc('pack.preferences.set', { ...address('verify.model'), value: 'unavailable-model' }), { ok: true });
-        assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: ['Preferred model "unavailable-model" is unavailable for this selection; using "gpt-6".'] });
-        assert.deepEqual(await rpc('pack.preferences.set', { ...address('verify.model'), value: preferred.model }), { ok: true });
+          assert.equal((await rpc('pack.preferences.set', { ...address('verify.effort'), value }) as { ok: boolean }).ok, false);
+        app.db.getDatabase().prepare("INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'verify.model', ?, 'human', 1)").run(repo, JSON.stringify('unavailable-model'));
+        assert.deepEqual(await plan(), { ok: true, choices: [choice(preferred, [missed('model', 'unavailable-model', preferred.model)]), choice(standard, [...toStandard.slice(0, 1), missed('model', 'unavailable-model', standard.model), ...toStandard.slice(1)])] });
       } else {
-        assert.deepEqual(await plan(), { ok: true, target: preferred, fallback: [] });
+        const legacy = [missed('model', 'unavailable-model', preferred.model)];
+        assert.deepEqual((await plan() as { choices: unknown[] }).choices[0], choice(preferred, legacy));
         const settings = await rpc('pack.preferences.list', { pack: 'coding' }) as { preferences: { key: string; setBy: string; value: unknown }[] };
-        settings.preferences=stagePreferences(settings.preferences);
-        assert.equal(settings.preferences.length, 9);
+        settings.preferences=stagePreferences(settings.preferences).filter(item => !item.key.endsWith('.model'));
+        assert.equal(settings.preferences.length, 6);
         assert(settings.preferences.every(item => item.setBy === 'human'));
-        assert.deepEqual(settings.preferences.filter(item => item.key.endsWith('.model')).map(item => item.value), [preferred.model, preferred.model, preferred.model]);
-        const fallback = await select({ repo, candidates: [standard] }) as { target: unknown; fallback: string[] };
-        assert.deepEqual(fallback.target, standard);
-        assert.equal(fallback.fallback.length, 3);
+        assert.deepEqual(settings.preferences.filter(item => item.key.endsWith('.effort')).map(item => item.value), [preferred.effort, preferred.effort, preferred.effort]);
+        const fallback = await select({ repo, candidates: [standard] }) as { choices: { target: unknown; fallback: string[] }[] };
+        assert.deepEqual(fallback.choices[0].target, standard);
+        assert.equal(fallback.choices[0].fallback.length, 3);
         const untouched = await select({ repo: 'synthetic/unanswered', candidates: [standard, preferred] });
-        assert.deepEqual(untouched, { ok: true, target: standard, fallback: [] });
+        assert.deepEqual(untouched, { ok: true, choices: [choice(standard), choice(preferred)] });
         evidence.push({ phase, settings, fallback });
       }
     } finally { ws?.close(); await app.cleanup(); }
   }
-  console.log(`PASS: preference RPC persists nine human settings across restart; retained Verify selector chooses defaults and preferences and explains fallbacks. Evidence: ${run}/evidence/stage-preferences.json`);
+  console.log(`PASS: preference RPC persists six human harness/effort settings across restart and refuses model keys; retained Verify selector orders defaults and preferences, reads a saved legacy model row and explains fallbacks. Evidence: ${run}/evidence/stage-preferences.json`);
 } finally {
   writeFileSync(join(run, 'evidence/stage-preferences.json'), JSON.stringify(evidence, null, 2));
   globalThis.fetch = network;

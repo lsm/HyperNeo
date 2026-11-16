@@ -25,6 +25,7 @@ import {
   routeFor,
   type UsageReading,
   USAGE_STALE_MS,
+  usageCurrent,
 } from './rank.ts';
 
 const PACK = 'model-routing';
@@ -199,24 +200,25 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     ...new Set(candidates.map((line) => line.provider)),
   ];
 
-  const inflight = new Map<string, Promise<void>>();
+  const inflight = new Map<string, { read: Promise<void>; since: number }>();
   const refresh = (id: string) => {
     const running = inflight.get(id);
-    if (running) return running;
-    const read = readProviderUsage({ providerId: id }, deps)
+    if (running && now() - running.since <= USAGE_STALE_MS) return running.read;
+    const entry = { read: Promise.resolve(), since: now() };
+    entry.read = readProviderUsage({ providerId: id }, deps)
       .then((result) => {
-        if (result) readings.set(id, { result, readAt: now() });
+        if (result && inflight.get(id) === entry) readings.set(id, { result, readAt: now() });
       })
       .catch(() => {})
-      .finally(() => inflight.delete(id));
-    inflight.set(id, read);
-    return read;
+      .finally(() => {
+        if (inflight.get(id) === entry) inflight.delete(id);
+      });
+    inflight.set(id, entry);
+    return entry.read;
   };
 
   const readUsage = async (candidates: readonly NeoLine[]) => {
-    const stale = providers(candidates).filter(
-      (id) => now() - (readings.get(id)?.readAt ?? Number.NEGATIVE_INFINITY) > USAGE_STALE_MS
-    );
+    const stale = providers(candidates).filter((id) => !usageCurrent(readings.get(id), now()));
     await Promise.all(stale.map((id) => within(refresh(id), deadline, undefined)));
     return Object.fromEntries(readings);
   };

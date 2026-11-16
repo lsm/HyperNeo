@@ -67,17 +67,22 @@ export function codingStartAlternatives<T extends Candidate>(
   models: readonly ModelInfo[]
 ): T[] {
   if (!rankedHere(target)) return [target];
-  const ids = [...new Set(usableModels(models).map((model) => model.id))];
+  const usable = usableModels(models);
+  const selectors = usable.map((model, index) =>
+    usable.findIndex((other) => other.id === model.id) === index ? model.id : model.name
+  );
   return [
     target,
-    ...ids.filter((id) => id !== target.model).map((model) => ({ ...target, model })),
+    ...[...new Set(selectors)]
+      .filter((model) => model !== target.model)
+      .map((model) => ({ ...target, model })),
   ];
 }
 
 const sameLine = (a: NeoLine, b: NeoLine) =>
   a.provider === b.provider && a.model === b.model && a.harness === b.harness;
 
-const lineText = (line: NeoLine) =>
+export const lineText = (line: NeoLine) =>
   `${[line.provider, line.model].filter(Boolean).join('/')} via ${line.harness}`;
 
 export async function rankCodingTargets<T extends Candidate>(

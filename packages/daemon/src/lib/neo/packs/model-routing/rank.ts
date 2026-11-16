@@ -42,9 +42,22 @@ function allowed(line: NeoLine, input: RankInput): boolean {
   return only.length === 0 || only.some((filter) => matches(filter, input.kind, input.scope));
 }
 
+const current = (window: { resetAt: string | null }, now: number) =>
+  !window.resetAt || !(Date.parse(window.resetAt) <= now);
+
+export function usageCurrent(reading: UsageReading | undefined, now: number): boolean {
+  return (
+    !!reading &&
+    now - reading.readAt <= USAGE_STALE_MS &&
+    (!reading.result.supported || reading.result.windows.every((window) => current(window, now)))
+  );
+}
+
 function usedPercent(reading: UsageReading | undefined, now: number): number | null {
   if (!reading?.result.supported || now - reading.readAt > USAGE_STALE_MS) return null;
-  const windows = reading.result.windows.filter((window) => window.limit > 0);
+  const windows = reading.result.windows.filter(
+    (window) => window.limit > 0 && current(window, now)
+  );
   return windows.length
     ? Math.max(...windows.map((window) => (window.used / window.limit) * 100))
     : null;

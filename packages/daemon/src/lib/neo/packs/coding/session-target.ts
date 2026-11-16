@@ -14,9 +14,11 @@ import { planCodingSessionDispatch } from './session-strategy.ts';
 import { codingStagePreference } from './stage-preferences.ts';
 import {
   type CodingLines,
+  codingCandidateLine,
   codingLineScope,
   codingStartAlternatives,
   rankCodingTargets,
+  lineText,
   rankedHere,
 } from './stage-lines.ts';
 
@@ -150,10 +152,16 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         codingLineScope(db, todo.id, facts?.repo)
       );
       if ('reason' in ranked) return { reason: { reason: ranked.reason } };
-      const note = ranked.skipped.length
-        ? `Started on another model line: ${ranked.skipped.join('; ')}.`
-        : undefined;
-      return { value: { target: ranked.value[0], ...(note ? { note } : {}) } };
+      const [chosen] = ranked.value;
+      if (ranked.sources[0] === start) return { value: { target: chosen } };
+      const [from, to] = await Promise.all(
+        [start, chosen].map(async (entry) =>
+          lineText((await codingCandidateLine(lines, entry)).line)
+        )
+      );
+      const why = ranked.skipped.find((text) => text.startsWith(`${from}: `));
+      const note = `Started on ${to} instead of ${why ?? `${from}: the route ranks it lower`}.`;
+      return { value: { target: chosen, note } };
     },
     ['db', 'lines', 'facts', 'plan', 'todo', 'target'],
     'result:decision'

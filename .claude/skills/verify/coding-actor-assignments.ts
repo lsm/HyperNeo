@@ -124,7 +124,7 @@ try {
         assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no read-only view yet/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a read view');
         const session = await seed('session', 8, 'synthetic/session');
         const readView = join(run, 'data/worktrees/synthetic/session/neo-read');
-        for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
+        for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
         const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, readView, 'Review starts in the repository read view'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
         const probeId = await createDriverSession(app.sessionManager, readView, 'Review place probe');
         const probe = app.sessionManager.getSessionFromDB(probeId)!; const actorCwd = probe.worktree?.worktreePath ?? probe.workspacePath!;
@@ -142,7 +142,7 @@ try {
         assert.equal((await assign({ ...missing, stage: 'review', candidates: [defaultTarget] })).ok, false);
         await setting('synthetic/missing', 'provenance', false);
         assert((await assign({ ...missing, stage: 'review', candidates: [authorModel] })).ok);
-        const fallback = await seed('fallback', 11, 'synthetic/fallback'); await setting('synthetic/fallback', 'review.model', preferredTarget.model); rejectPreferred = true;
+        const fallback = await seed('fallback', 11, 'synthetic/fallback'); await setting('synthetic/fallback', 'review.harness', preferredTarget.adapter); rejectPreferred = true;
         const fallbackResult = await assign({ ...fallback, stage: 'review', candidates: [defaultTarget, preferredTarget] }); assert(fallbackResult.ok); assert.equal(fallbackResult.assignment.actor.model, defaultTarget.model); assert(fallbackResult.assignment.fallback.some(text => text.includes('qualifying default'))); rejectPreferred = false;
         assert.equal((await assign({ ...session, acceptanceContract: 'changed', stage: 'review', candidates: [] })).ok, false);
         git(origin, 'checkout', 'candidate'); writeFileSync(join(origin, 'behavior.txt'), 'new-head'); git(origin, 'commit', '-am', 'new head'); head = git(origin, 'rev-parse', 'HEAD'); git(origin, 'update-ref', 'refs/pull/8/head', head); git(origin, 'checkout', 'dev');
