@@ -89,6 +89,26 @@ describe('owned clone removal', () => {
     expect(owned.clone('log', '-1', '--format=%s', 'feature')).toBe('feature work');
   });
 
+  test('keeps a clone that gains an untracked file while the fetch is in flight', async () => {
+    const owned = ownedClone();
+    const late = join(owned.folder, 'late.txt');
+    owned.git('remote', 'set-url', 'origin', `ssh://gate${owned.origin}`);
+    const prior = { command: process.env.GIT_SSH_COMMAND, variant: process.env.GIT_SSH_VARIANT };
+    process.env.GIT_SSH_COMMAND = `sleep 1; touch '${late}'; sh -c "$2" #`;
+    process.env.GIT_SSH_VARIANT = 'simple';
+    try {
+      await expectKept(owned);
+      expect(existsSync(late)).toBe(true);
+    } finally {
+      for (const [key, value] of [
+        ['GIT_SSH_COMMAND', prior.command],
+        ['GIT_SSH_VARIANT', prior.variant],
+      ] as const)
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    }
+  });
+
   test('keeps a clone when the fetch from the canonical origin fails', async () => {
     const owned = ownedClone();
     owned.git('remote', 'set-url', 'origin', join(owned.run, 'missing.git'));
