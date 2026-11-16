@@ -290,8 +290,40 @@ describe('codingGithubApi rate limits', () => {
         () => readCodingPostableReviews(db, ledger),
         (posted, marker) => ledger.write('recordPostedReview', posted.url, marker)
       );
-    return { db, comments, calls, sweep };
+    return { db, ledger, comments, calls, sweep };
   };
+  test('a comment-list 403 marked only by Retry-After stops the pass and holds until then', async () => {
+    const forbidden = (args: string[]) =>
+      args.includes('--include')
+        ? reply(
+            'HTTP/2.0 403 Forbidden\r\nRetry-After: 120\r\nContent-Type: application/json\r\n\r\n{"message":"Forbidden"}',
+            1,
+            'gh: Forbidden (HTTP 403)'
+          )
+        : reply('', 1, 'gh: Forbidden (HTTP 403)');
+    const { db, ledger, calls, sweep } = sweepWith(forbidden);
+    const second = 'https://github.com/synthetic/review/pull/4';
+    try {
+      db.prepare(
+        `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at)
+         VALUES ('synthetic/review', 4, 'Synthetic', 'branch-4', 'head-a', 'waiting_review', 1, NULL, 1)`
+      ).run();
+      ledger.stageFacts.observeHead(second, 'head-a', 1);
+      ledger.recordStage({ ...fact, url: second });
+      jest.setSystemTime(start);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + 60_000);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + 121_000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(1);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
   test('a 403 whose only rate-limit sign is Retry-After holds the poster until then', async () => {
     const { db, calls, sweep } = sweepWith((args) =>
       args.includes('POST')
