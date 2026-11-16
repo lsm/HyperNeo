@@ -20,7 +20,7 @@ MOCK_PID=$!
   "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 PID=$!
 trap 'kill "$PID" "$MOCK_PID" 2>/dev/null; wait "$PID" "$MOCK_PID" 2>/dev/null || true' EXIT
-rpc() { VERIFY_PORT=$PORT bun .claude/skills/verify/rpc.ts "$@"; }
+rpc() { VERIFY_PORT=$PORT HYPERNEO_DATA_DIR="$RUN/data" bun .claude/skills/verify/rpc.ts "$@"; }
 log_has() { grep -qE "$1" "$RUN/daemon.log"; }
 for _ in $(seq 1 120); do kill -0 "$PID"; log_has '\[SDK\] Downloading' && break; sleep 0.25; done
 log_has '\[SDK\] Downloading' || { echo 'FAIL: no first-start download (binary already cached?)'; exit 1; }

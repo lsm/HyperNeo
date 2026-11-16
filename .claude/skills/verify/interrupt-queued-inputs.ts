@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -63,7 +64,7 @@ const app = await createDaemonApp({
   verbose: false,
 });
 const hub = new MessageHub({ defaultSessionId: 'global' });
-const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
 async function until(check: () => boolean, label: string) {
   const deadline = Date.now() + 45000;

@@ -32,7 +32,7 @@ evidence/sdk-debug-<case>.log holds each SDK debug log. sdk.log
 contains the run result; the JSON names the isolated run and SDK debug log.
 This is an SDK/RPC user-surface proof, not a browser check or a real-provider test.
 
-Fresh dev uses `@anthropic-ai/claude-agent-sdk` 0.3.316 / Claude Code 2.1.316.
+Fresh dev uses `@anthropic-ai/claude-agent-sdk` 0.3.325 / Claude Code 2.1.325.
 Official references: [automatic compaction](https://code.claude.com/docs/en/agent-sdk/agent-loop#automatic-compaction),
 [environment variables](https://code.claude.com/docs/en/env-vars),
 [window configuration](https://code.claude.com/docs/en/model-config#set-the-auto-compact-window).
