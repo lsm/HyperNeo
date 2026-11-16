@@ -11,6 +11,28 @@ const done = {
 } as const;
 
 describe('sweepWorkCleanup', () => {
+  test('the first planning pass checks at most four folders at a time', async () => {
+    let active = 0;
+    let peak = 0;
+    let reads = 0;
+    await sweepWorkCleanup({
+      list: async () => Array.from({ length: 12 }, (_, index) => `/work/${index}`),
+      read: async () => {
+        reads++;
+        peak = Math.max(peak, ++active);
+        await new Promise<void>((done) => setImmediate(done));
+        active--;
+        return { ...done, owner: null };
+      },
+      release: async () => {
+        throw new Error('Unknown owners must stay');
+      },
+      tell: async () => {},
+    });
+    expect(reads).toBe(12);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
   test('a folder without an owner is retained and included in the digest', async () => {
     const removed: string[] = [];
     const digests: unknown[] = [];
