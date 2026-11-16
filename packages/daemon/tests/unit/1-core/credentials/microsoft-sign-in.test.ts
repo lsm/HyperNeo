@@ -93,6 +93,7 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 
+type Disconnect = { ok: boolean; reason?: string };
 type View = { state: string; loginId?: string; connectionId?: string; reason?: string };
 async function call<T = View>(name: string, input: unknown): Promise<T> {
   const outcome = await invokeOperation(registry, name, input, {
@@ -238,13 +239,15 @@ test('disconnect erases the Microsoft bundle and Google disconnect cannot touch 
   await consent(authorize);
   const done = await settle(start.loginId!);
   const [row] = await rows();
-  expect(await call('connections.google.disconnect', { connectionId: done.connectionId })).toEqual({
+  expect(
+    await call<Disconnect>('connections.google.disconnect', { connectionId: done.connectionId })
+  ).toEqual({
     ok: false,
     reason: 'unknown_connection',
   });
   expect(await bundle(row)).not.toBeNull();
   expect(
-    await call('connections.microsoft.disconnect', { connectionId: done.connectionId })
+    await call<Disconnect>('connections.microsoft.disconnect', { connectionId: done.connectionId })
   ).toEqual({ ok: true });
   expect((await rows())[0].health).toBe('disconnected');
   expect(await bundle(row)).toBeNull();
