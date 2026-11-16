@@ -682,7 +682,8 @@ export class NeoAskTodoRepository {
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
-      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
+      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
+        AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})
       AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('blocked', 'failed')))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
       .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
