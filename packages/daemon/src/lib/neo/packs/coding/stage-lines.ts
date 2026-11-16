@@ -65,6 +65,25 @@ export function codingStartAlternatives<T extends Candidate>(
   ];
 }
 
+async function effortOffers<T extends Candidate>(lines: CodingLines, source: T) {
+  const base = await codingCandidateLine(lines, source);
+  const levels =
+    lines
+      .models()
+      .find((model) => model.id === base.line.model && model.provider === base.line.provider)
+      ?.effortLevels?.filter((effort) => effort !== base.line.effort) ?? [];
+  const variants = await Promise.all(
+    levels.map((effort) => codingCandidateLine(lines, { ...base.target, effort }))
+  );
+  return [
+    base,
+    ...variants.filter(
+      (offer) =>
+        offer.line.provider === base.line.provider && offer.line.effort !== base.line.effort
+    ),
+  ].map((offer) => ({ ...offer, source }));
+}
+
 const lineText = (line: NeoLine) =>
   `${[line.provider, line.model].filter(Boolean).join('/')} via ${line.harness}`;
 
@@ -77,14 +96,18 @@ export async function rankCodingTargets<T extends Candidate>(
   const routed = targets.filter(rankedHere);
   if (!routed.length || !lines.active())
     return { value: [...targets], sources: [...targets], skipped: [] };
-  const resolved = await Promise.all(routed.map((target) => codingCandidateLine(lines, target)));
-  const candidates = resolved.map((entry) => entry.line);
+  const offers = (await Promise.all(routed.map((source) => effortOffers(lines, source)))).flat();
+  const candidates = offers.map((offer) => offer.line);
   const ranking = await lines.rank(kind, candidates, scope);
-  const skipped = ranking.skipped.map(({ line, reason }) => `${lineText(line)}: ${reason}`);
-  const ranked = ranking.ranked.flatMap(({ line }) => {
-    const index = candidates.indexOf(line);
-    return index === -1 ? [] : [{ value: resolved[index].target, source: routed[index] }];
-  });
+  const skipped = [
+    ...new Set(ranking.skipped.map(({ line, reason }) => `${lineText(line)}: ${reason}`)),
+  ];
+  const ranked = ranking.ranked
+    .flatMap(({ line }) => offers.filter((offer) => offer.line === line))
+    .filter(
+      (offer, index, all) => all.findIndex((other) => other.source === offer.source) === index
+    )
+    .map((offer) => ({ value: offer.target, source: offer.source }));
   let slot = 0;
   const order = targets.flatMap((target) =>
     !rankedHere(target)

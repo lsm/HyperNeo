@@ -11,6 +11,7 @@ import {
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
 import { planCodingSessionDispatch } from './session-strategy.ts';
+import { codingStagePreference } from './stage-preferences.ts';
 import {
   type CodingLines,
   codingLineScope,
@@ -126,13 +127,20 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       todo: NeoTodo,
       target: NeoTodoTarget
     ) => {
-      if (!lines || target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
+      if (target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
         return { value: target };
+      const saved = facts ? codingStagePreference(db, { repo: facts.repo, stage: 'write' }) : {};
+      const start = {
+        ...target,
+        ...(!target.model && saved.model ? { model: saved.model } : {}),
+        ...(!target.effort && saved.effort ? { effort: saved.effort } : {}),
+      };
+      if (!lines) return { value: start };
       const kind = todo.named?.workKind;
       const ranked = await rankCodingTargets(
         lines,
         typeof kind === 'string' ? kind : 'coding.write',
-        codingStartAlternatives(target, lines.models()),
+        codingStartAlternatives(start, lines.models()),
         codingLineScope(db, todo.id, facts?.repo)
       );
       return 'reason' in ranked

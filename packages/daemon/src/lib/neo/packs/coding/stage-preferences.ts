@@ -51,7 +51,10 @@ export const CODING_STAGE_PREFERENCES: Record<string, NeoPackPreferenceDeclarati
     )
   );
 
-function preferences(db: Database, input: Plan): Preference {
+export function codingStagePreference(
+  db: Database,
+  input: Pick<Plan, 'repo' | 'stage'>
+): Preference {
   return Object.fromEntries(
     (['harness', 'model', 'effort'] as const).map((field) => {
       const key = `${input.stage}.${field}`;
@@ -82,7 +85,7 @@ const score = (target: Target, preference: Preference) =>
 
 export const planCodingStageTarget = (superpipe({})('coding.stage-target') as PipelineAPI)
   .input(['db', 'input', 'provenance'])
-  .pipe(preferences, ['db', 'input'], 'preference')
+  .pipe(codingStagePreference, ['db', 'input'], 'preference')
   .pipe(
     (input: Plan, provenance: boolean) => {
       const eligible = input.candidates.map((target) => ({
