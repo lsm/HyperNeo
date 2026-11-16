@@ -75,9 +75,10 @@ request todo sends nothing more: the close reply already said nothing was added.
 
 Each slice is one PR from `dev` (the repository's default and target branch), failing tests
 first. `bun run system-map impact` on the touched files: `session-envelope.ts` has 6
-importers, and the attribute is optional, so they are unchanged. `request-todo.ts` has 3
-importers, which already pass the todo and the database. The settle reply is added where the
-ask is settled.
+importers, and the attribute is optional, so they are unchanged. `request-todo.ts` has 4
+importers: `service.ts` and `rpc-handlers/index.ts` deliver the reply, and
+`neo-ask-todo-repository.ts` and `neo-todo-mutation-commit.ts` queue it with the todo and the
+database. None of them changes. The settle reply is added where the ask is settled.
 
 1. **The ask on the envelope.** `service.ts` passes the request ask id to the envelope for a
    recorded request; `session-envelope.ts` writes the optional attribute; the `askId` text in
