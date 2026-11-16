@@ -47,9 +47,13 @@ state and nonce, five-minute timeout, code exchange only in the daemon.
   port when matching loopback redirects, so one registered URI covers every
   port ([redirect rules][reply-url]).
 - `prompt=select_account`, so Reconnect lets the human pick the same account.
-- ID token: verify RS256 against the tenant-independent key set, audience is the
-  client ID, nonce matches, and issuer equals
-  `https://login.microsoftonline.com/{tid}/v2.0` for the token's own `tid`.
+- ID token: verify RS256 against the tenant-independent key set
+  (`/common/discovery/v2.0/keys`); audience is the client ID and nonce matches.
+  `tid` must be a GUID and `iss` must equal
+  `https://login.microsoftonline.com/{tid}/v2.0` for that exact `tid`. The
+  selected key's own `issuer` field, with `{tenantid}` replaced by `tid`, must
+  equal `iss` too; a key restricted to another tenant is refused
+  ([signing key issuer][key-issuer]).
 - Account key: `tid` + `oid`, never email. The same person in two tenants is two
   accounts ([claims][claims]). Reconnect must return the same key, as with Google.
 - Display: `email` claim, else `preferred_username`. If neither is an email
@@ -94,7 +98,7 @@ which the existing 4xx rule turns into **Reconnect needed**.
 | Operation | Graph call | Behavior |
 | --- | --- | --- |
 | `microsoft.accounts` | none | This instance's Microsoft connections, scopes and health; no credentials. |
-| `outlook.search` | `GET /me/messages?$search=` | At most 10 results per page: ID, conversation ID, from, to, subject, received time, preview. Opaque cursor from `@odata.nextLink`. |
+| `outlook.search` | `GET /me/messages?$search=` | At most 10 results per page: ID, conversation ID, from, to, subject, received time, preview. Opaque cursor (see below). |
 | `outlook.read_thread` | `GET /me/messages?$filter=conversationId eq` | Headers and previews by default; text bodies only when asked, capped and marked truncated. |
 | `outlook.draft` | `POST /me/messages`, `PATCH /me/messages/{id}` | Create or update a draft in Drafts; returns its ID. Updating anything but a draft is refused. |
 | `outlook.calendar_list` | `GET /me/calendars`, `GET /me/calendarView` | Calendars, or events in a bounded window. Keep each event's own time zone and `isAllDay`. |
@@ -104,6 +108,21 @@ checks the connection is Microsoft and healthy, and checks the granted scope,
 exactly as the Google operations do. Bodies are untrusted content. Graph 429
 returns `rate_limited`; the agent retries later, the daemon does not loop.
 There is no send, move, delete or raw Graph proxy operation.
+
+Cursors never carry a URL the daemon fetches. Graph returns `@odata.nextLink`
+as a full URL, and the bounded HTTP client sends the bearer token to whatever
+URL it is given, so:
+
+- The daemon accepts a `nextLink` only if its origin is
+  `https://graph.microsoft.com`, its path is the exact `/v1.0/...` collection
+  the operation just called, and keeps only its query string.
+- The cursor holds that query string plus the connection ID, operation name
+  and a hash of the original query. A call whose connection, operation or
+  query differs from the cursor's is refused before any request.
+- The next request is rebuilt from the fixed origin and the operation's own
+  collection path; a cursor cannot choose the host, path or authority.
+  Redirects stay refused (`redirect: 'error'`, as today).
+  A cursor that passes can only page the caller's own collection.
 
 ## Later step: Teams chat read
 
@@ -146,8 +165,12 @@ test daemon (`NODE_ENV=test`, fresh home, data dir and DB, no provider keys).
 The fake must prove:
 
 - the authorize request has PKCE S256, the six scopes and a `127.0.0.1` redirect;
-- a wrong state, replayed code, wrong nonce, wrong issuer `tid` or wrong
-  audience is refused;
+- a wrong state, replayed code, wrong nonce, wrong issuer `tid`, non-GUID `tid`
+  or wrong audience is refused;
+- a token whose `iss` matches its `tid` but is signed by a key whose `issuer`
+  names another tenant is refused;
+- forged, foreign-origin, wrong-collection and other-connection cursors are
+  refused, and the fake records no request for them;
 - reconnect with a different `tid`/`oid` fails `account_mismatch`;
 - every refresh rotates the refresh token and the newest one survives a restart;
   `invalid_grant` shows Reconnect needed with no retry loop;
@@ -176,6 +199,7 @@ Teams chat read is a later issue after slice 7 and one real-account check.
 
 [reply-url]: https://learn.microsoft.com/en-us/entra/identity-platform/reply-url
 [claims]: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+[key-issuer]: https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-the-signing-key-issuer
 [refresh]: https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens
 [post-messages]: https://learn.microsoft.com/en-us/graph/api/user-post-messages
 [chat-messages]: https://learn.microsoft.com/en-us/graph/api/chat-list-messages
