@@ -49,13 +49,14 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
     latestOnly: true,
     render: carried,
     decide: ({ facts }) =>
-      ['failed', 'needs_you'].includes(String(facts.status))
+      ['failed', 'needs_you'].includes(String(facts.status)) ||
+      facts.question ||
+      facts.blocked ||
+      facts.todoState === 'blocked'
         ? 'wake'
         : facts.focused
           ? { drop: 'status only, focused' }
-          : facts.question || facts.blocked || facts.todoState === 'blocked'
-            ? 'wake'
-            : 'digest',
+          : 'digest',
   },
   {
     id: 'todo.done',

@@ -6,9 +6,10 @@ export type NeoStepFacts = {
   todo: Step & Pick<NeoTodo, 'createdAt' | 'approvedAt' | 'startedAt' | 'finishedAt'>;
   covered: boolean;
   held: boolean;
-  prerequisites: readonly (Step & Pick<NeoTodo, 'finishedAt'>)[];
+  prerequisites: readonly (Step & Pick<NeoTodo, 'finishedAt'> & { failedAt?: number | null })[];
   answerPending: boolean;
   cardClosedAt: number | null;
+  failedAt: number | null;
   worker: { status: 'running' | 'idle' | 'unknown'; since: number } | null;
   packWaiting: boolean;
   start: 'held' | 'ready' | null;
@@ -41,10 +42,13 @@ export function nextStepOwner(facts: NeoStepFacts): NeoStepOwner {
   });
   if (facts.covered) return { owner: 'human' };
   if (facts.held) return { owner: 'nobody' };
-  if (failed(todo)) return neo('failed', worker?.since ?? began);
+  if (failed(todo)) return neo('failed', facts.failedAt ?? latest(began, worker?.since));
   const gone = prerequisites.filter((item) => item.state === 'removed' || failed(item));
   if (gone.length)
-    return neo('prerequisite_gone', latest(began, ...gone.map((item) => item.finishedAt)));
+    return neo(
+      'prerequisite_gone',
+      latest(began, ...gone.map((item) => item.failedAt ?? item.finishedAt))
+    );
   if (prerequisites.some((item) => !finished(item))) return { owner: 'prerequisite' };
   if (todo.state === 'blocked' && ['question', 'needs-human'].includes(todo.blockedBy ?? ''))
     return facts.answerPending
