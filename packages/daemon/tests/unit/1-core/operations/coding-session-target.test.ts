@@ -26,7 +26,7 @@ function setup() {
   createTables(db);
   prepareCodingTodoStorage(db);
   const todos = new NeoAskTodoRepository(db);
-  for (const id of ['feature', 'other', 'third'])
+  for (const id of ['feature', 'other', 'third', 'fourth'])
     todos.openAsk({
       id,
       projectId: null,
@@ -183,6 +183,9 @@ describe('coding session target decision', () => {
     expect(await decide(todo('other'), { ...glm, effort: 'low' })).toEqual({
       value: { ...glm, effort: 'low' },
     });
+    expect(await decide(todo('third'), start('desktop'))).toEqual({ value: start('desktop') });
+    const remote = { ...bare, place: { machine: 'm', name: 'w', daemon: 'other-host' } };
+    expect(await decide(todo('fourth'), remote)).toEqual({ value: remote });
   });
 
   test('a send to an existing session is not ranked', async () => {
