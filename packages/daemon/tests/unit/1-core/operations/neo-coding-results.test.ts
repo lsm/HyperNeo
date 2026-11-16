@@ -51,7 +51,9 @@ function setup() {
     ledger = new CodingPrLedgerRepository(db);
   ledger.stageFacts.observeHead(url, 'head-a', 1);
   const comments: { host: string; path: string; body: string }[] = [];
+  const outage = { on: false };
   const github = async (host: string, args: string[]) => {
+    if (outage.on) throw new Error('gh response exceeded the buffer and was truncated');
     const path = args[0];
     if (args.includes('GET'))
       return [comments.filter((item) => item.path === path).map(({ body }) => ({ body }))];
@@ -65,7 +67,7 @@ function setup() {
   ]);
   const result = (input: unknown, role = 'neo' as const) =>
     invokeOperation(registry, 'neo.coding.result', input, { source: 'internal', role });
-  return { db, assignments, ledger, result, comments };
+  return { db, assignments, ledger, result, comments, outage };
 }
 
 describe('linked coding assignment results', () => {
@@ -291,6 +293,24 @@ describe('linked coding assignment results', () => {
       }
     }
   );
+  test('a GitHub outage keeps the recorded verdict and a later result posts it', async () => {
+    const { db, assignments, ledger, result, comments, outage } = setup();
+    try {
+      assignments.record('todo', 'review', assignment);
+      outage.on = true;
+      expect(await result({ todoId: 'todo', ref, fact })).toEqual({
+        kind: 'completed',
+        value: { ok: true },
+      });
+      expect(ledger.stageFacts.read(url)).toHaveLength(1);
+      expect(comments).toEqual([]);
+      outage.on = false;
+      await result({ todoId: 'todo', ref, fact });
+      expect(comments).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
   test('a recorded Verify result posts no Review comment', async () => {
     const { db, assignments, result, comments } = setup();
     try {
