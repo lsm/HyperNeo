@@ -1359,6 +1359,23 @@ describe('neoAskEntryGroup', () => {
       'held-newest',
     ]);
   });
+
+  it('orders asks holding only held cards by their newest held card', () => {
+    const heldOn = (id: string, askedAt: number, cardAt: number) =>
+      entry({
+        ask: { ...entry({}).ask, id, createdAt: askedAt },
+        state: 'waiting',
+        questions: [
+          question(`${id}-card`, { askId: id, state: 'open', createdAt: cardAt, heldAt: cardAt }),
+        ],
+      });
+    const older = heldOn('older-ask-newer-held-card', 10, 90);
+    const newer = heldOn('newer-ask-older-held-card', 20, 60);
+    expect(neoAskEntriesInOrder([newer, older]).map((item) => item.ask.id)).toEqual([
+      'older-ask-newer-held-card',
+      'newer-ask-older-held-card',
+    ]);
+  });
 });
 
 describe('neoDonePageMerge', () => {
