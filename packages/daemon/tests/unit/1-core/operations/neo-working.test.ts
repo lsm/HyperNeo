@@ -11,6 +11,7 @@ import {
   projectNeoWorking,
   readNeoWorking,
 } from '../../../../src/lib/neo/working.ts';
+import { frontSessionId } from '../../../../src/lib/neo/front-mode.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -129,7 +130,14 @@ describe('Neo working sessions', () => {
     await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
     expect(readNeoWorking(db.getDatabase())).toEqual([
-      { sessionId: main, projectId: null, title: 'Neo', status: 'processing', worker: mainWorker },
+      {
+        sessionId: main,
+        projectId: null,
+        title: 'Neo',
+        status: 'processing',
+        worker: mainWorker,
+        role: 'neo',
+      },
     ]);
   });
 
@@ -150,6 +158,7 @@ describe('Neo working sessions', () => {
         name: 'Renamed main',
         label: 'HyperNeo · Renamed main',
       },
+      role: 'neo',
     });
     expect(sent()).toHaveLength(2);
     expect(sent()[1].working[0].worker.label).toBe('HyperNeo · Renamed main');
@@ -170,16 +179,82 @@ describe('Neo working sessions', () => {
             title: 'Neo',
             status: 'processing',
             worker: mainWorker,
+            role: 'neo',
           },
         ],
       },
       {
         working: [
-          { sessionId: main, projectId: null, title: 'Neo', status: 'queued', worker: mainWorker },
+          {
+            sessionId: main,
+            projectId: null,
+            title: 'Neo',
+            status: 'queued',
+            worker: mainWorker,
+            role: 'neo',
+          },
         ],
       },
       { working: [] },
     ]);
     expect(readNeoWorking(db.getDatabase())).toEqual([]);
+  });
+
+  const provider = (sessionId: string) =>
+    db
+      .getDatabase()
+      .prepare(
+        "UPDATE sessions SET config = json_set(config, '$.provider', 'anthropic') WHERE id = ?"
+      )
+      .run(sessionId);
+  const held = (reason: string) => ({
+    status: 'rate_limit_cooldown',
+    retryCount: 0,
+    maxRetries: 0,
+    retryAt: 9_000,
+    reason,
+    since: 7_000,
+  });
+
+  test('a held Neo session carries its role and model hold', async () => {
+    provider(main);
+    await state(main, held('login'));
+    expect(readNeoWorking(db.getDatabase())).toEqual([
+      {
+        sessionId: main,
+        projectId: null,
+        title: 'Neo',
+        status: 'rate_limit_cooldown',
+        worker: mainWorker,
+        role: 'neo',
+        modelHold: { provider: 'anthropic', reason: 'login', since: 7_000 },
+      },
+    ]);
+  });
+
+  test('the front session is listed only while it is held', async () => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const front = frontSessionId(conversation);
+    await db.createSession({ ...createTestSession(front), title: 'Neo fast replies' });
+    provider(front);
+
+    await state(front, { status: 'processing', messageId: 'f1', phase: 'thinking' });
+    expect(readNeoWorking(db.getDatabase())).toEqual([]);
+
+    await state(front, held('limit'));
+    expect(readNeoWorking(db.getDatabase())).toEqual([
+      expect.objectContaining({
+        sessionId: front,
+        status: 'rate_limit_cooldown',
+        role: 'front',
+        modelHold: { provider: 'anthropic', reason: 'limit', since: 7_000, resetAt: 9_000 },
+      }),
+    ]);
+    expect(
+      sent()
+        .at(-1)
+        ?.working.map((entry: { role?: string }) => entry.role)
+    ).toEqual(['front']);
   });
 });
