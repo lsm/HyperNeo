@@ -23,7 +23,7 @@ Nothing new is built where the Google connection already has it:
   backoff, and `reconnect_needed` on a 4xx refresh. Only the refresh request
   differs per provider.
 - **Bounded HTTP.** The Google HTTP client's scope check, 401/429 mapping,
-  64 KiB body cap, token redaction and per-connection abort are provider-neutral.
+  64 KiB response cap, token redaction and per-connection abort are provider-neutral.
 - **Operations and MCP.** New operations register in the same catalog entry and
   reach every harness through the operations MCP. Management operations stay
   `human_only` for the local user.
@@ -35,21 +35,26 @@ The first slice makes these seams take a provider instead of assuming Google.
 listing and refresh loop read every row as Google. Token access checks only a
 connection's health, not its provider, so a Google operation given a Microsoft
 connection ID would try a Google refresh and mark that connection Reconnect
-needed. Each provider's token access must refuse another provider's
-connection (`unknown_connection`) before reading the vault or refreshing.
+needed. Management has the same gap: reconnect reads the vault for any
+connection ID, and disconnect cancels refresh and erases the bundle of
+whatever row it is given. Each provider's token access, connect (reconnect)
+and disconnect must refuse another provider's connection
+(`unknown_connection`) before any cancel, vault read or write, or status change.
 
 ## Sign-in
 
-Same flow as Google: system browser, a one-use loopback listener on
-`127.0.0.1` with an ephemeral port, authorization code with PKCE S256, random
-state and nonce, five-minute timeout, code exchange only in the daemon.
+Same flow as Google: system browser, a one-use loopback listener with an
+ephemeral port, authorization code with PKCE S256, random state and nonce,
+five-minute timeout, code exchange only in the daemon.
 
 - Authority: `https://login.microsoftonline.com/common/oauth2/v2.0/` so both
   work/school and personal accounts can sign in.
 - Public client: the human's own app registration's client ID, no client secret.
-- Redirect: `http://127.0.0.1:<port>/oauth/microsoft/callback`. Entra ignores the
-  port when matching loopback redirects, so one registered URI covers every
-  port ([redirect rules][reply-url]).
+- Redirect: `http://localhost:<port>/oauth/microsoft/callback`, registered once
+  as `http://localhost/oauth/microsoft/callback`. Entra ignores the port only
+  for `localhost` redirects; other loopback URIs must match the port exactly
+  ([redirect rules][reply-url]). The listener binds `127.0.0.1`, as Google's
+  does, and checks the callback's `Host` is `localhost:<port>`.
 - `prompt=select_account`, so Reconnect lets the human pick the same account.
 - ID token: verify RS256 against the tenant-independent key set
   (`/common/discovery/v2.0/keys`); audience is the client ID and nonce matches.
@@ -103,7 +108,7 @@ which the existing 4xx rule turns into **Reconnect needed**.
 | --- | --- | --- |
 | `microsoft.accounts` | none | This instance's Microsoft connections, scopes and health; no credentials. |
 | `outlook.search` | `GET /me/messages?$search=` | At most 10 results per page: ID, conversation ID, from, to, subject, received time, preview. Opaque cursor (see below). |
-| `outlook.read_thread` | `GET /me/messages?$filter=conversationId eq` | Headers and previews by default; text bodies only when asked, capped and marked truncated. |
+| `outlook.read_thread` | `GET /me/messages?$filter=conversationId eq` | Headers and previews by default; text bodies only when asked (see below). |
 | `outlook.draft` | `POST /me/messages`, `PATCH /me/messages/{id}` | Create or update a draft in Drafts; returns its ID. Updating anything but a draft is refused. |
 | `outlook.calendar_list` | `GET /me/calendars`, `GET /me/calendarView` | Calendars, or events in a bounded window. Keep each event's own time zone and `isAllDay`. |
 
@@ -113,6 +118,14 @@ the same order the Google operations use plus the provider check from slice 1.
 Bodies are untrusted content. Graph 429
 returns `rate_limited`; the agent retries later, the daemon does not loop.
 There is no send, move, delete or raw Graph proxy operation.
+
+Bodies: the reused JSON reader refuses any response over 64 KiB, so one large
+message would fail the whole read. Every list call (search, thread listing,
+calendar view) uses `$select` for the fields in the table above and never
+selects `body`, which Graph otherwise returns by default. When bodies are asked for, each message's
+text body (`Prefer: outlook.body-content-type="text"`) is fetched on its own
+with the same 64 KiB cap; a message over the cap returns its preview with
+`truncated: true` instead of failing the thread.
 
 Cursors never carry a URL the daemon fetches. Graph returns `@odata.nextLink`
 as a full URL, and the bounded HTTP client sends the bearer token to whatever
@@ -146,10 +159,8 @@ or changes cloud resources; fake-Graph proofs do not need a real registration.
 1. In the Microsoft Entra admin center, create an app registration with
    supported account types **Accounts in any organizational directory and
    personal Microsoft accounts**.
-2. Add the **Mobile and desktop applications** platform. Add the redirect
-   `http://127.0.0.1/oauth/microsoft/callback` by editing `replyUrlsWithType` in
-   the manifest; the portal box does not accept `http` loopback URIs
-   ([redirect rules][reply-url]).
+2. Add the **Mobile and desktop applications** platform with the one redirect
+   `http://localhost/oauth/microsoft/callback`, with no port.
 3. Create no client secret or certificate.
 4. Under API permissions, add delegated Microsoft Graph `openid`, `profile`,
    `email`, `offline_access`, `Mail.ReadWrite` and `Calendars.Read`. Add nothing else.
@@ -169,7 +180,9 @@ test daemon (`NODE_ENV=test`, fresh home, data dir and DB, no provider keys).
 
 The fake must prove:
 
-- the authorize request has PKCE S256, the six scopes and a `127.0.0.1` redirect;
+- the authorize request has PKCE S256, the six scopes and a
+  `http://localhost:<port>/oauth/microsoft/callback` redirect, and a callback
+  with any other host is refused;
 - a wrong state, replayed code, wrong nonce, wrong issuer `tid`, non-GUID `tid`
   or wrong audience is refused;
 - a token whose `iss` matches its `tid` but is signed by a key whose `issuer`
@@ -181,12 +194,16 @@ The fake must prove:
   `invalid_grant` shows Reconnect needed with no retry loop;
 - search, thread read and calendar pages are bounded and redacted, and all-day
   and time-zoned events round-trip;
+- a thread holding one 80 KiB message returns the other bodies and that
+  message's preview marked truncated;
 - drafts create and update, and the fake records zero send, move or delete
   requests;
 - Google and Microsoft connections on one daemon never use each other's tokens:
   a Google operation given a Microsoft connection ID (and the reverse) returns
   `unknown_connection`, sends no token or refresh request, and leaves that
-  connection healthy.
+  connection healthy; `connections.google.connect` or `.disconnect` with a
+  Microsoft ID (and the reverse) returns `unknown_connection` and leaves its
+  row, bundle and refresh untouched.
 
 Each slice adds unit tests next to the Google ones and extends the verify
 skill with a Microsoft script beside the Google ones.
@@ -195,7 +212,7 @@ skill with a Microsoft script beside the Google ones.
 
 | Slice | Change | Proof |
 | --- | --- | --- |
-| 1. Provider-neutral base | Widen `provider` to `google` or `microsoft`; Google accounts listing and refresh loop skip Microsoft rows; Google token access refuses a non-Google connection. No Microsoft code yet. | Existing Google tests unchanged; a Microsoft row is ignored by Google reads and refresh, and `gmail.search` with its ID returns `unknown_connection` with no request and the row stays healthy. |
+| 1. Provider-neutral base | Widen `provider` to `google` or `microsoft`; Google accounts listing and refresh loop skip Microsoft rows; Google token access, connect and disconnect refuse a non-Google connection. No Microsoft code yet. | Existing Google tests unchanged; a Microsoft row is ignored by Google reads and refresh; `gmail.search`, `connections.google.connect` and `connections.google.disconnect` with its ID return `unknown_connection` and the row, bundle and health are unchanged. |
 | 2. Microsoft sign-in | Login, code exchange, ID-token checks, connect/login/disconnect operations. | Fake Graph sign-in, refusal cases, account mismatch, disconnect erases the bundle. |
 | 3. Microsoft refresh | Microsoft refresh request behind the existing token access. | Rotation, restart, `invalid_grant`, single flight on a fake clock. |
 | 4. Settings button | Connect Microsoft in the Connections panel. | Isolated browser connects through the fake, with screenshots. |
