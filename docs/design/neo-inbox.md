@@ -41,6 +41,7 @@ Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/human-queue.ts`):
 ## Held cards
 
 A held card is an open card the human put aside. It is a state, not a timer: it stays held until the human answers it or takes it back. Old readers still see it as open, and no state value is added. One new nullable column on `neo_questions`: `held_at`.
+A second nullable column, `hold_requests`, records the request ids a card already applied, so a delayed replay is a no-op.
 
 `neo.question.hold {questionId, held, requestId}` is one superpipe operation, and the inbox calls it from one button with no confirmation:
 1. read the card; refuse unless it is open;

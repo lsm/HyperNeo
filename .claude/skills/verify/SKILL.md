@@ -28,6 +28,9 @@ require this Vitest entry point when running the home operation contracts.
 - No provider key in the environment, real or fake. `launch.sh` starts from
   `env -i` with `NODE_ENV=test`, a temp `HOME`, and its own data dir and DB, so
   credential discovery is off and keys stay in that DB, never the keychain.
+- In-process WebSocket proofs authenticate with `readLocalCredential()` only
+  after asserting that `HYPERNEO_DATA_DIR` points inside their fresh synthetic run.
+  Never print that disposable credential or use the human's data directory.
 - Model turns go to a local mock of the Anthropic API (`mock-api.ts`, the same
   server CI's dev-proxy mode uses) on the mock port (8000 unless VERIFY_MOCK_PORT
   overrides it). Give the isolated daemon the

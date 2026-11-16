@@ -368,7 +368,10 @@ export class ProcessingStateManager {
       ...(state.messageId !== undefined ? { messageId: state.messageId } : {}),
       ...(state.manualRetry ? { manualRetry: true } : {}),
       ...(state.reason ? { reason: state.reason } : {}),
-      ...(state.since !== undefined ? { since: state.since } : {}),
+      since:
+        state.since ??
+        (previousState.status === 'rate_limit_cooldown' ? previousState.since : undefined) ??
+        Date.now(),
     };
     let writeError: unknown;
     try {
