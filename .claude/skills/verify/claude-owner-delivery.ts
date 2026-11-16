@@ -6,6 +6,7 @@ const repo = resolve(import.meta.dir, '../../..');
 const installed = process.argv[2] === 'desktop';
 const { createDaemonApp } = await import(join(repo, 'packages/daemon/src/app.ts'));
 const { getConfig } = await import(join(repo, 'packages/daemon/src/config.ts'));
+const { createLocalSocket } = await import(join(repo, 'packages/daemon/src/lib/pairing/local-credential.ts'));
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -67,12 +68,14 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket 
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 try {
   assert(!existsSync(projects) && !existsSync(join(run, 'home/Library/Application Support/Claude/claude-code-sessions')));
+  // A failed refresh reuses the last good listing (also primed at startup), so fail discovery from the start.
+  if (!installed) writeFileSync(stateFile, 'invalid discovery output');
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
   mkdirSync(projects, { recursive: true }); writeFileSync(transcript, ''); if (installed) { mkdirSync(records, { recursive: true }); writeFileSync(join(records, `local_${id}.json`), JSON.stringify({ sessionId: `local_${id}`, cliSessionId: id, cwd, title: 'Synthetic target', permissionMode: 'auto' })); }
   await app.jobProcessor.stop();
   await app.db.createSession({ id: 'synthetic-origin', title: 'Synthetic origin', workspacePath: cwd, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const send = (label: string, adapter = 'claude-code', target = id) => new Promise<import('../../../packages/daemon/src/lib/drivers/types.ts').Result<import('../../../packages/daemon/src/lib/drivers/types.ts').WorkDelivery>>((done, fail) => {
     const requestId = crypto.randomUUID();
@@ -85,6 +88,9 @@ try {
     ws!.addEventListener('message', receive);
     ws!.send(JSON.stringify({ id: requestId, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'work.send', input: { ref: { adapter, id: target }, from: 'session:synthetic-origin', message: label } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  if (!installed) {
+    const failedProbe = await send('LIVE_PROBE_FAILURE'); assert(!failedProbe.ok && failedProbe.reason === 'unreachable', JSON.stringify(failedProbe)); assert.equal(frames.length, 0); saveState();
+  }
   const modes = installed ? ['auto'] : ['default', 'auto', 'plan', 'bypassPermissions'];
   for (const receiverMode of modes) {
     mode = receiverMode === 'bypassPermissions' ? 'bypass' : 'prompting';
@@ -132,7 +138,6 @@ try {
     assert.match(unknownMode.detail, /receiver.*mode.*unknown/i);
     assert.equal(frames.length, before);
     writeFileSync(join(evidence, 'process-mode'), 'auto');
-    writeFileSync(stateFile, 'invalid discovery output'); const failedProbe = await send('LIVE_PROBE_FAILURE'); assert(!failedProbe.ok && failedProbe.reason === 'unreachable', JSON.stringify(failedProbe)); assert.equal(frames.length, before); saveState();
   }
   saveRegistration({ ...registration, entrypoint: 'unknown-host' });
   const beforeRejected = frames.length;

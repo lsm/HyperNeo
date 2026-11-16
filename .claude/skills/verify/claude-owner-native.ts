@@ -7,6 +7,7 @@ const receiverMode = process.argv[2] ?? 'default';
 assert(['default', 'auto', 'plan', 'bypassPermissions'].includes(receiverMode));
 const { createDaemonApp } = await import(join(repo, 'packages/daemon/src/app.ts'));
 const { getConfig } = await import(join(repo, 'packages/daemon/src/config.ts'));
+const { createLocalSocket } = await import(join(repo, 'packages/daemon/src/lib/pairing/local-credential.ts'));
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -79,7 +80,7 @@ try {
   assert.notEqual(app.server.port, 8399);
   await app.jobProcessor.stop();
   await app.db.createSession({ id: 'synthetic-origin', title: 'Synthetic origin', workspacePath: join(run, 'workspace'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   child.stdin.write(JSON.stringify({ type: 'user', session_id: sessionId, message: { role: 'user', content: 'ACTIVE_SYNTHETIC' }, parent_tool_use_id: null }) + '\n');
   await until(() => active, 'model active');
