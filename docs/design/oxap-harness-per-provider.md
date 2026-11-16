@@ -58,6 +58,11 @@ without changing this shape.
   chat to another engine. The values are `sdk` or a harness id. Today's
   `'codex'` value becomes `oxap-codex`. Only raw-RPC test sessions ever used
   it, and no migration code is written for them.
+- At create, `harness` changes from a creation-only client field to a derived
+  one, like `provider` and `model`. A `session.create` that still sends
+  `harness` is refused with the existing unsupported-field error, so a session
+  can never be created with a harness its provider does not use. The verify
+  skill's OXAP scripts choose the provider instead, in PR 2.
 - An OXAP session's adapter is its `config.provider`, which is already
   stored. Neither field changes after creation. An OXAP chat may switch models
   only within its own provider, so a cached open session can never carry
@@ -72,8 +77,13 @@ without changing this shape.
 
 HyperNeo pins one OXAP version. The daemon downloads that version's build for
 its platform from the OXAP project's own GitHub release, for example
-`oxap-0.1.0-alpha.33-macos-arm64.tar.gz`. It then checks the file against
-`SHA256SUMS.txt` from that same release, and uses it only if the hash matches.
+`oxap-0.1.0-alpha.33-macos-arm64.tar.gz`. It uses the file only if two hashes
+match:
+
+- the SHA-256 for that version and platform, recorded in HyperNeo's own code
+  next to the pinned version, so it is reviewed in a HyperNeo PR;
+- the entry in `SHA256SUMS.txt` from that same release.
+
 The install writes the binary's path, version and hash into global settings.
 
 There is no package-manager path. OXAP is not published on npm, PyPI or
@@ -81,8 +91,10 @@ crates.io, so the GitHub release is the only source.
 
 This closes a gap the old path had. Before, the human picked a file and its
 hash was read on save. That only noticed a binary swapped later; it could not
-prove the first file was genuine. Now the first download must match the hash
-the release itself published.
+prove the first file was genuine. Now the first download must match a hash
+pinned in HyperNeo's source. That pin is independent of the release, so a
+release republished with a new tarball and a new `SHA256SUMS.txt` together
+is still refused.
 
 ### Adding a harness
 
@@ -300,10 +312,10 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
 | 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex` | daemon | ~100 |
-| 2 | `engineForProvider`, session create copies `harness`, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
-| 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
+| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
+| 3 | Hub from settings: pinned download checked against the hash pinned in HyperNeo and the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
-| 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`, the `oap` state directory. Moves and renames only, no behavior change | daemon | rename |
+| 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory keeps its name, so existing hub state stays in place. Moves and renames only, no behavior change | daemon | rename |
 | OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction | OXAP repo | upstream |
 | 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME` | daemon | ~60 |
 | 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
