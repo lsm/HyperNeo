@@ -10,6 +10,7 @@ export function neoEnabledPacks(settings?: { packs?: string[] }): string[] {
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
 import { DELEGATION_PACK_BRIEF } from './delegation/pack.ts';
+import { MODEL_ROUTING_PACK_BRIEF } from './model-routing/pack.ts';
 import type { NeoPack, NeoPackBrief } from '../pack-contract.ts';
 
 let fileBriefs: readonly NeoPackBrief[] = [];
@@ -22,6 +23,7 @@ export const NEO_BUILTIN_PACK_BRIEFS: readonly NeoPackBrief[] = [
   CODING_PACK_BRIEF,
   LIFE_ADMIN_PACK_BRIEF,
   DELEGATION_PACK_BRIEF,
+  MODEL_ROUTING_PACK_BRIEF,
 ];
 
 export function adoptNeoFilePacks(packs: readonly NeoPack[]): readonly NeoPack[] {
