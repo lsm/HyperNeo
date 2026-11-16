@@ -10,6 +10,8 @@ import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/ne
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 import type { NeoPack } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
+import { recordWorkTurns } from '../../../packages/daemon/src/storage/repositories/work-turn-repository.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -89,8 +91,25 @@ try {
       assert(await assignments.recordLater(todo.id, 'review', { ...base, bot: 'review-bot' }));
       assert(await assignments.recordLater(todo.id, 'qa', { ...base, ref: { adapter: 'test', id: 'qa' }, actor: { kind: 'agent', id: 'qa', harness: 'test', model: 'synthetic' } }));
     }
+    if (item.id === 'merged-delivery') {
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      const other = 'https://github.com/synthetic/facts/pull/101';
+      db.prepare(`INSERT INTO work_delivery_inputs
+        (id,todo_id,origin_session_id,target,message,accepted_at,deadline_at,outcome)
+        VALUES ('named-pr-input',?,?,'{}','work',1,2,?)`).run(
+        todo.id, root, JSON.stringify({ ref, receipt: { inputId: 'named-pr-receipt' } })
+      );
+      const created = Date.parse('2026-10-20T00:00:00Z');
+      recordWorkTurns.run(db, { ref, turns: [{
+        id: 'named-pr-turn', startedAt: created - 1000, endedAt: created + 1000,
+        ended: 'success', inputs: ['named-pr-receipt'], urls: [url, other],
+        finalUrls: [url], complete: true, cursor: '{}',
+      }] }, undefined as never);
+    }
   }
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, {
+    headers: { authorization: `Bearer ${await readLocalCredential()}` },
+  } as unknown as string[]);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket open failed')); });
   const rpc = (name: string, input: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timeout = setTimeout(() => fail(new Error(name+' timeout')), 15000);
