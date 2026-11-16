@@ -619,6 +619,28 @@ describe('NeoHumanQueue', () => {
     expect(trip.getByText('Book hotel')).toBeTruthy();
   });
 
+  it('leaves the full ask to the scene card a reference already shows', () => {
+    const props = {
+      queue,
+      entries,
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+      renderAsk: (entry: NeoAskEntry) => <p>Full ask {entry.ask.title}</p>,
+    };
+    const view = render(<NeoHumanQueue {...props} />);
+    fireEvent.click(
+      within(view.getByRole('region', { name: 'Plan the trip' })).getByRole('button', {
+        name: 'Open the ask',
+      })
+    );
+    expect(view.getByText('Full ask Plan the trip')).toBeTruthy();
+    view.rerender(<NeoHumanQueue {...props} focus={{ askId: 'trip', todoId: 'unqueued-step' }} />);
+    const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
+    expect(trip.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+    expect(view.queryByText('Full ask Plan the trip')).toBeNull();
+    expect(trip.getByText('Book hotel')).toBeTruthy();
+  });
+
   it('has no header button when the full ask cannot be shown', () => {
     const { view } = show();
     expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
