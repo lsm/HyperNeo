@@ -262,6 +262,26 @@ describe('the Neo attention sweep', () => {
     );
   });
 
+  test('an overdue check whose pull request is still open wakes Neo, not the pack', async () => {
+    packs = [
+      {
+        id: 'coding',
+        todos: { waiting: async (todos: NeoTodo[]) => new Set(todos.map((todo) => todo.id)) },
+      } as never,
+    ];
+    add('todo-1', {
+      instruction: null,
+      check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://x/pull/1'] } },
+    });
+    const sent: number[] = [];
+    for (let minutes = 0; minutes <= 49 * 60; minutes += 30) {
+      const before = wakes().length;
+      await sweep(T0 + minutes * 60_000);
+      if (wakes().length > before) sent.push(minutes / 60);
+    }
+    expect(sent).toEqual([24, 25, 28, 48]);
+  });
+
   test('a second failure starts its own ladder', async () => {
     const todo = failed(started(add('todo-1'), 'done'));
     await sweep(T0 + 5 * HOUR);
