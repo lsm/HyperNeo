@@ -429,7 +429,7 @@ describe('voice transcribe pipeline', () => {
         seen.url = url.toString();
         seen.authorization = (init?.headers as Record<string, string>)?.Authorization;
         return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
-      }) as typeof fetch;
+      }) as unknown as typeof fetch;
       return seen;
     };
 
