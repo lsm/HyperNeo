@@ -1,3 +1,4 @@
+import { WorkDeliveryInputRepository } from '../../../packages/daemon/src/storage/repositories/work-delivery-input-repository.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { CodingStageFactsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/stage-facts.ts';
@@ -198,9 +199,21 @@ try{
    }, { source: 'internal', role: 'neo', sessionId: root });
    evidence.handoffDelivery = delivered;
    assert.equal(delivered.kind, 'completed');
-   const delivery = (delivered as { value: { ok: boolean; value: { delivered: boolean; receipt: unknown } } }).value;
-   assert(delivery.ok && delivery.value.delivered, JSON.stringify(delivered));
-   assert((await assignReview({ state: 'pending', ref, receipt: delivery.value.receipt })).ok);
+   const waitDelivery = async (message: string) => {
+     app!.jobProcessor.start();
+     let accepted: ReturnType<WorkDeliveryInputRepository['list']>[number]['outcome'];
+     try {
+       const deadline = Date.now() + 15_000;
+       do {
+         accepted = new WorkDeliveryInputRepository(db).list(ref).find(input => input.todoId === todo.id && input.message === message)?.outcome;
+         if (accepted && 'ref' in accepted && accepted.delivery?.delivered) return accepted;
+         await new Promise(resolve => setTimeout(resolve, 50));
+       } while (Date.now() < deadline);
+       throw new Error(`Synthetic delivery did not settle: ${JSON.stringify(accepted)}`);
+     } finally { await app!.jobProcessor.stop(); }
+   };
+   const accepted = await waitDelivery('Review the synthetic change');
+   assert((await assignReview({ state: 'pending', ref, receipt: accepted.receipt })).ok);
    const beforeCovered = held().length;
    await runSweep();
    await runSweep();
@@ -229,7 +242,7 @@ try{
    publish();
    stages.observeHead(url, pr.headRefOid, tick);
    assert((await assignReview()).ok);
-   assert(!(await assignReview({ state: 'pending', ref, receipt: delivery.value.receipt })).ok);
+   assert(!(await assignReview({ state: 'pending', ref, receipt: accepted.receipt })).ok);
    const beforeNewHead = held().length;
    await runSweep();
    assert.equal(held().length, beforeNewHead + 1, 'An old receipt must not silence a new head');
@@ -238,9 +251,8 @@ try{
      todoId: todo.id, ref, from: root, message: 'Review the revised synthetic change',
    }, { source: 'internal', role: 'neo', sessionId: root });
    assert.equal(freshDelivery.kind, 'completed');
-   const fresh = (freshDelivery as { value: { ok: boolean; value: { delivered: boolean; receipt: unknown } } }).value;
-   assert(fresh.ok && fresh.value.delivered, JSON.stringify(freshDelivery));
-   assert((await assignReview({ state: 'pending', ref, receipt: fresh.value.receipt })).ok);
+   const fresh = await waitDelivery('Review the revised synthetic change');
+   assert((await assignReview({ state: 'pending', ref, receipt: fresh.receipt })).ok);
    await runSweep();
    assert.equal(held().length, beforeNewHead + 1, 'A fresh accepted handoff covers only the new head');
    evidence.newHeadWithFreshReceiptWakes = 0;

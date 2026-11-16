@@ -205,10 +205,24 @@ export function createCodingDaemonMergeSweep(
       rows.map(async (row) => {
         const { repo, number, head, state, stateSince } = row;
         const { policy, health } = await ledger.pollContextCurrent(repo);
+        const url =
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase();
+        const reviewHolds = await new CodingAssignmentsRepository(database())
+          .reviewHoldsCurrent(url, head)
+          .catch(() => []);
         return {
-          url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
+          reviewHolds,
+          url,
           head,
-          holdKey: JSON.stringify([head, state, stateSince, row.ci, row.replyAt, policy]),
+          holdKey: JSON.stringify([
+            head,
+            state,
+            stateSince,
+            row.ci,
+            row.replyAt,
+            policy,
+            reviewHolds,
+          ]),
           ledgerState: state,
           stateSince,
           policy,
@@ -303,9 +317,7 @@ export function createCodingDaemonMergeSweep(
           current,
           candidate.policy,
           candidate.head,
-          await new CodingAssignmentsRepository(database())
-            .reviewHoldsCurrent(candidate.url, candidate.head)
-            .catch(() => [])
+          candidate.reviewHolds
         )
       ) {
         const notified = await delivery
@@ -318,5 +330,9 @@ export function createCodingDaemonMergeSweep(
       }
     }
   };
-  return (now: number) => events.exclusive(() => sweep(now));
+  return Object.assign((now: number) => events.exclusive(() => sweep(now)), {
+    invalidate: (url: string) => {
+      signoffHolds.delete(url.toLowerCase());
+    },
+  });
 }
