@@ -647,6 +647,86 @@ describe('SDK Session File Manager', () => {
       expect(repaired[3].parentUuid).toBe('r1');
     });
 
+    test('restores a parallel tool_use message once when one line holds both results', async () => {
+      const lines = [
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: 'h1',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'one_a', name: 'Bash', input: {} },
+              { type: 'tool_use', id: 'one_b', name: 'Bash', input: {} },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r1',
+          parentUuid: 'lost-assistant',
+          message: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'one_a' },
+              { type: 'tool_result', tool_use_id: 'one_b' },
+            ],
+          },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      const repaired = readFileSync(testSessionFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(repaired.map((line) => line.type)).toEqual(['api-request-blob', 'assistant', 'user']);
+      expect(repaired[2].parentUuid).toBe(repaired[1].uuid);
+    });
+
+    test('fails and names the tool_use it could not restore when only some come back', async () => {
+      const lines = [
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: 'h1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'mix_a', name: 'Bash', input: {} }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r1',
+          parentUuid: 'lost-assistant',
+          message: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'mix_a' },
+              { type: 'tool_result', tool_use_id: 'mix_b' },
+            ],
+          },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      const check = await validateAndRepairSDKSession(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      expect(check.valid).toBe(false);
+      expect(check.repairError).toContain('Could not find tool_use message for mix_b');
+      expect((await validateSDKSessionFile(testWorkspacePath, testSdkSessionId)).valid).toBe(false);
+    });
+
     test('keeps only the newest two backups of the repaired session', async () => {
       writeFileSync(
         testSessionFile,
