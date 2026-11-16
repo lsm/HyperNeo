@@ -117,6 +117,12 @@ confirmation, and retain the original CLI error in the hold log. `coding-daemon-
 also checks the durable failure budget through a real daemon restart; its synthetic
 writer records are distinct from the sweep's CLI execution proof.
 
+Add `closed-reopen` to seed an unconfirmed receipt on a pull request that then
+closes. Neo must be told once that the merge was never confirmed and the pull
+request is no longer open, with no mention of a receipt, and the receipt must be
+gone. Reopening the pull request on the same head must then pass fresh gates and
+merge exactly once, with one confirmation and unchanged preferences.
+
 Add `legacy-open` to seed an unfinished receipt from the previous build. With
 fresh facts confirming OPEN, the full sweep must release that attempt, consume
 one failure from the durable budget and merge through current admission without
@@ -129,8 +135,10 @@ without issuing another merge. A separate regression recovers OPEN after an
 unreadable third command and requires the original CLI error in Neo's limit notice.
 
 Add `limit-gone` to exhaust retries while Neo delivery is unavailable, close the
-PR and switch its policy to owner, then restore delivery. The stopped budget of
-a closed pull request is no longer told: the report retires with its subject. Add `external-owned` to fail one
+PR and switch its policy to owner, then restore delivery while the repository
+read fails. The ledger still shows the old open row, and the stopped report must
+not be sent on that stale row. After a complete read closes the row it is still
+not told: the report retires with its subject. Add `external-owned` to fail one
 attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions
 are suppressed for daemon execution. Terminal fixtures must contain the PR
