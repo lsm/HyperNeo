@@ -9,7 +9,7 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 Through the real daemon, the agent MCP door and public RPC:
 
 - `neo.ask.open` with a three-step chain and no start flag opens no card. The first step dispatches; the others stay `todo`.
-- A held check-only step and an unapproved todo stay held after an unrelated card on the same ask is answered.
-- Each finished step dispatches the next one once, and no card is left open.
+- Holding a check-only step opens its Start/Remove card. That step and an unapproved todo stay held after an unrelated card on the same ask is answered.
+- Each finished step dispatches the next one once, and only the held step's card stays open.
 
 Evidence is `observed.json` and `proof.log`. The unit test `neo-todo-auto-start.test.ts` pins that a fill overlapping a stop admits nothing over a limit.
