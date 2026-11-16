@@ -205,6 +205,17 @@ describe('the attention sweep with model-routing on', () => {
       `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
        VALUES ('model-routing', 'global', '', 'routes', ?, 'human', 1)`
     ).run(JSON.stringify([{ kind: 'general', lines: [HELD, OTHER] }]));
+    sweep = boot();
+  });
+  afterEach(() => db.close());
+
+  const boot = (
+    wake?: (uuid: string, text: string) => Promise<boolean>,
+    read: () => { covered: boolean; latestReportAt: null } = () => ({
+      covered,
+      latestReportAt: null,
+    })
+  ) => {
     const pack = createModelRoutingPack({
       database: () => db,
       provider: () =>
@@ -218,27 +229,28 @@ describe('the attention sweep with model-routing on', () => {
         }) as unknown as Provider,
       now: () => NOW,
     });
-    sweep = createNeoAttentionSweep({
+    const delivery = neoAttentionDelivery(
+      db,
+      () => neo,
+      () => false
+    );
+    return createNeoAttentionSweep({
       sessions: new NeoTodoSessionRepository(db),
       packs: () => [pack],
       limits: () => ({ running: 6, perGroup: 3 }),
       scan: (now) => pack.attention!.scan!(now),
       tell: createNeoAttention({
         kinds: () => [...NEO_ATTENTION_KINDS, ...pack.attention!.kinds],
-        read: () => ({ covered, latestReportAt: null }),
-        ...neoAttentionDelivery(
-          db,
-          () => neo,
-          () => false
-        ),
+        read,
+        ...delivery,
+        wake: wake ?? delivery.wake,
         dropped: () => {},
       }),
       failed: (_event, error) => {
         throw error;
       },
     });
-  });
-  afterEach(() => db.close());
+  };
 
   test('a short limit hold on a todo’s worker tells Neo nothing', async () => {
     heldTodo(10);
@@ -315,6 +327,33 @@ describe('the attention sweep with model-routing on', () => {
     neo = 'neo:root';
     await sweep(NOW + 5 * MINUTE);
     await sweep(NOW + 10 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a daemon stopped before the notice is queued still tells the hold after it restarts', async () => {
+    heldTodo(31);
+    let reached = () => {};
+    const stopped = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    void boot(() => {
+      reached();
+      return new Promise<boolean>(() => {});
+    })(NOW);
+    await stopped;
+    expect(wakes()).toEqual([]);
+    await boot()(NOW + 5 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a hold whose attention read fails is told on a later sweep', async () => {
+    heldTodo(31);
+    await expect(
+      boot(undefined, () => {
+        throw new Error('read failed');
+      })(NOW)
+    ).rejects.toThrow('read failed');
+    await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toHaveLength(1);
   });
 
