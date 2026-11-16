@@ -1,4 +1,5 @@
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -10,22 +11,28 @@ import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 
 const entered = vi.hoisted(() => [] as string[]);
-const storedPlan = vi.hoisted(() => ({ value: undefined as unknown }));
+const github = vi.hoisted(() => ({ responses: new Map<string, unknown>(), pr: null as unknown }));
 
 vi.mock('superpipe', async (importOriginal) => {
   const { recordPipelineEntries } = await import('../../../helpers/pipeline-entries');
   return recordPipelineEntries(await importOriginal<typeof import('superpipe')>(), entered);
 });
 
-vi.mock('../../../../src/lib/artifacts/reference-plan', async (importOriginal) => {
-  const real =
-    await importOriginal<typeof import('../../../../src/lib/artifacts/reference-plan')>();
+vi.mock('../../../../src/lib/runtime-spawn/index', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../../src/lib/runtime-spawn/index')>();
   return {
     ...real,
-    planStoredReference: (...args: Parameters<typeof real.planStoredReference>) =>
-      storedPlan.value === undefined
-        ? real.planStoredReference(...args)
-        : Promise.resolve(storedPlan.value),
+    spawnProcess: (args: string[]) => {
+      const endpoint = args.find((arg) => arg.startsWith('repos/'));
+      const body = endpoint ? github.responses.get(endpoint) : github.pr;
+      return {
+        stdout: new Response(body ? JSON.stringify(body) : '').body,
+        stderr: new Response('').body,
+        exited: Promise.resolve(body ? 0 : 1),
+        exitCode: body ? 0 : 1,
+        kill() {},
+      };
+    },
   };
 });
 
@@ -71,70 +78,121 @@ describe('artifact operations', () => {
 });
 
 describe('artifact.reference.resolve for the local human', () => {
+  const sha = 'a'.repeat(40);
+  const tree = 'b'.repeat(40);
+  const bytes = Buffer.from('# Report\n');
+  const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  const git = 'repos/example/demo/git';
   let main: Database;
-  let worker: Database;
   let gateway: DbGateway;
   let root: string;
-  const input = {
-    requestId: '11111111-1111-4111-8111-111111111111',
-    sourceMessageOrCard: { kind: 'todo' as const, id: 'synthetic' },
-    reference: 'report.md',
-  };
+
+  const resolve = (reference: string) =>
+    createArtifactReferenceResolve(() => main, join(root, 'data'), join(root, 'home')).execute(
+      {
+        requestId: '11111111-1111-4111-8111-111111111111',
+        sourceMessageOrCard: { kind: 'todo', id: 'todo-1' },
+        reference,
+      },
+      human
+    );
 
   beforeEach(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-pipeline-names-')));
+    mkdirSync(join(root, 'home'));
     main = new Database(':memory:');
-    worker = new Database(':memory:');
     runMigrations(main, () => {});
     createTables(main);
-    worker.exec(
-      'CREATE TABLE artifact_file_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1), daemon_id TEXT NOT NULL)'
-    );
-    gateway = new DbGateway(':memory:', worker);
+    gateway = new DbGateway(':memory:', main);
     bindGateway(main, gateway);
+    const now = Date.now();
+    main
+      .prepare(
+        `INSERT INTO neo_asks (id, session_id, title, request, status, repo, created_at, updated_at)
+         VALUES ('ask-1', 'neo:root', 'Report', 'Report', 'open', 'github.com/example/demo', ?, ?)`
+      )
+      .run(now, now);
+    main
+      .prepare(
+        `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, state, report, created_at, updated_at)
+         VALUES ('todo-1', 'ask-1', 1, 'Report', 'PR merged', ?, 'doing', ?, ?, ?)`
+      )
+      .run(
+        JSON.stringify({
+          pack: 'coding',
+          kind: 'pr_merged',
+          params: { urls: ['https://github.com/example/demo/pull/8'] },
+        }),
+        `See https://github.com/example/demo/pull/8 and https://github.com/example/demo/blob/${sha}/report.md`,
+        now,
+        now
+      );
+    main
+      .prepare(
+        `INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo-1', 'github.com/example/demo')`
+      )
+      .run();
+    github.responses = new Map<string, unknown>([
+      [
+        `${git}/commits/${sha}`,
+        { url: `https://api.github.com/${git}/commits/${sha}`, sha, tree: { sha: tree } },
+      ],
+      [
+        `${git}/trees/${tree}`,
+        {
+          url: `https://api.github.com/${git}/trees/${tree}`,
+          sha: tree,
+          truncated: false,
+          tree: [
+            { path: 'report.md', mode: '100644', type: 'blob', sha: blob, size: bytes.length },
+          ],
+        },
+      ],
+      [
+        `${git}/blobs/${blob}`,
+        {
+          url: `https://api.github.com/${git}/blobs/${blob}`,
+          sha: blob,
+          encoding: 'base64',
+          size: bytes.length,
+          content: bytes.toString('base64'),
+        },
+      ],
+    ]);
+    github.pr = {
+      url: 'https://github.com/example/demo/pull/8',
+      title: 'Report',
+      body: '',
+      state: 'OPEN',
+      headRefOid: sha,
+      reviews: [],
+      statusCheckRollup: [],
+      changedFiles: 1,
+      files: [{ path: 'report.md', additions: 1, deletions: 0 }],
+    };
     entered.length = 0;
-    storedPlan.value = undefined;
   });
 
   afterEach(async () => {
-    storedPlan.value = undefined;
     await gateway.close();
     main.close();
-    worker.close();
     rmSync(root, { recursive: true, force: true });
   });
 
-  test('plans the stored reference in a step of the operation', async () => {
-    const operation = createArtifactReferenceResolve(() => main, root, join(root, 'home'));
-    expect(await operation.execute(input, human)).toEqual({
-      accepted: false,
-      reason: 'unavailable',
+  test('reads a bound PR summary in a step of the operation', async () => {
+    expect(await resolve('https://github.com/example/demo/pull/8')).toMatchObject({
+      accepted: true,
+      pr: { headSha: sha },
     });
     expect(entered).toContain('artifact.reference.resolve.plan');
+    expect(entered).toContain('artifact.reference.resolve.pr');
     expectNamedFor('artifact.reference.resolve');
   });
 
-  test('captures a Git file in a step of the operation', async () => {
-    storedPlan.value = {
-      accepted: true,
-      kind: 'git-blob',
-      context: { kind: 'todo', id: 'synthetic' },
-      repository: 'github.com/example/demo',
-      sha: 'a'.repeat(40),
-      path: 'docs/report.md',
-    };
-    const operation = createArtifactReferenceResolve(
-      () => main,
-      root,
-      join(root, 'home'),
-      undefined,
-      async () => ({ accepted: false, reason: 'unavailable' })
-    );
-    expect(await operation.execute(input, human)).toEqual({
-      accepted: false,
-      reason: 'unavailable',
-    });
-    expect(entered).toContain('artifact.reference.resolve.capture');
+  test('reads and admits a bound Git file in steps of the operation', async () => {
+    await resolve(`https://github.com/example/demo/blob/${sha}/report.md`);
+    for (const step of ['plan', 'capture', 'blob', 'admission'])
+      expect(entered).toContain(`artifact.reference.resolve.${step}`);
     expectNamedFor('artifact.reference.resolve');
   });
 });
