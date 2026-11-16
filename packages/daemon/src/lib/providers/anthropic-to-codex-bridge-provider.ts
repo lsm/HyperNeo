@@ -543,8 +543,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       accountId,
       isFedrampAccount:
         credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
-      refreshAuthTokens: async () => {
-        const refreshed = await this.refreshStoredOauthCredentials();
+      refreshAuthTokens: async (rejectedAccessToken) => {
+        const refreshed = await this.refreshStoredOauthCredentials(rejectedAccessToken);
         if (typeof refreshed !== 'object' || !refreshed.access) return null;
         const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
         if (!refreshedAccountId) return null;
@@ -598,19 +598,27 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return codexModels;
   }
 
-  private refreshStoredOauthCredentials(): Promise<StoredRefreshAttempt> {
+  private refreshStoredOauthCredentials(
+    rejectedAccessToken?: string
+  ): Promise<StoredRefreshAttempt> {
     if (this.credentialRefreshInFlight) return this.credentialRefreshInFlight;
-    const attempt = this.refreshStoredOauthCredentialsUncached().finally(() => {
+    const attempt = this.refreshStoredOauthCredentialsUncached(rejectedAccessToken).finally(() => {
       if (this.credentialRefreshInFlight === attempt) this.credentialRefreshInFlight = null;
     }) as Promise<StoredRefreshAttempt>;
     this.credentialRefreshInFlight = attempt;
     return attempt;
   }
 
-  private async refreshStoredOauthCredentialsUncached(): Promise<StoredRefreshAttempt> {
+  private async refreshStoredOauthCredentialsUncached(
+    rejectedAccessToken?: string
+  ): Promise<StoredRefreshAttempt> {
     const credentials = await this.loadCredentials();
     if (!credentials || credentials.type !== 'oauth') return 'definitive';
-    if (!credentials.refresh) {
+    if (rejectedAccessToken && credentials.access && credentials.access !== rejectedAccessToken) {
+      return credentials;
+    }
+    const codexRefresh = (await this.readCodexAuth())?.tokens?.refresh_token;
+    if (!credentials.refresh || credentials.refresh === codexRefresh) {
       await this.importFromCodexAuth();
       const reread = await this.loadCredentials();
       return reread?.access && reread.access !== credentials.access ? reread : 'definitive';
@@ -1222,14 +1230,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
   }
 
-  private async importFromCodexAuth(): Promise<void> {
-    let codexData: CodexAuthFile;
+  private async readCodexAuth(): Promise<CodexAuthFile | null> {
     try {
-      const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
-      codexData = JSON.parse(raw) as CodexAuthFile;
+      return JSON.parse(await fs.readFile(this.codexAuthPath, 'utf-8')) as CodexAuthFile;
     } catch {
-      return;
+      return null;
     }
+  }
+
+  private async importFromCodexAuth(): Promise<void> {
+    const codexData = await this.readCodexAuth();
+    if (!codexData) return;
 
     if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
       const creds: StoredCredentials = {
