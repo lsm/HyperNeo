@@ -21,10 +21,14 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
 The helper boots an isolated in-process daemon on an ephemeral port with a synthetic Git
 folder and a synthetic open ask naming a repository. It calls `work.start` on the
 `hyperneo` adapter through the daemon's operation registry: as Neo, as the human, and as
-Neo again. Then it binds both workers to open todos and calls it as Neo once more. No
-model turn or provider key is needed.
+Neo again. Then it binds both workers to open todos and calls it as Neo once more.
+Last, it leases that new worker too, opens a session in the folder the way a human
+does, binds it to a finished review todo, and calls `work.start` as Neo for a build
+todo. No model turn or provider key is needed.
 
 End state, from `evidence/work-start-reuse.json`:
 - `humanStart.newSession` is true.
 - `neoSecond.reused` is true; its ref is an existing worker, and the session count is unchanged.
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.
+- `neoBuildBesideFreeHumanReviewer.gotReviewer` is false: the free human-opened
+  session is never reused, so the build gets a new session and the count grows by one.
