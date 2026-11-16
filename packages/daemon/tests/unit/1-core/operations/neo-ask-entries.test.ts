@@ -16,6 +16,7 @@ import {
   neoTodoStatusLine,
   neoWorkCounts,
   projectNeoAskEntries,
+  summarizeNeoAskEntry,
 } from '../../../../src/lib/neo/ask-entries.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import {
@@ -452,6 +453,26 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     const settledAsks = [store.getAsk('ask')!];
     const settled = projectNeoAskEntries(settledAsks, facts(store, sessions, settledAsks), []);
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
+  });
+
+  test('the snapshot summary keeps the request marker on a request todo only', () => {
+    const { store, sessions, opened } = seed(['todo']);
+    const draft = { doneWhen: 'Answered', check: null, instruction: null };
+    store.addTodo('req', 'ask', { ...draft, title: 'Q', named: { requestFrom: 'worker-1' } }, 1);
+    store.addTodo('repo', 'ask', { ...draft, title: 'R', named: { repository: 'o/r' } }, 1);
+    store.addTodo('flag', 'ask', { ...draft, title: 'F', named: { requestFrom: true } }, 1);
+    store.addTodo('obj', 'ask', { ...draft, title: 'O', named: { requestFrom: { id: 'x' } } }, 1);
+    const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
+    const named = Object.fromEntries(
+      summarizeNeoAskEntry(entry).todos.map((todo) => [todo.id, todo.named])
+    );
+    expect(named).toEqual({
+      t0: null,
+      req: { requestFrom: 'worker-1' },
+      repo: null,
+      flag: null,
+      obj: null,
+    });
   });
 
   test('neo.ask.read returns an exact card and refuses missing or denied reads', async () => {

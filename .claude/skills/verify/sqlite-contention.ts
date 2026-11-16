@@ -36,7 +36,7 @@ const db = new Database(path, { queryObservability: observed });
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
 CREATE TABLE contention(value TEXT);
 CREATE TABLE neo_project_workspaces(alias TEXT PRIMARY KEY, project_id TEXT);
-CREATE TABLE work_started_sessions(adapter TEXT, id TEXT, started_at INTEGER, unusable_at INTEGER, released_at INTEGER, claimed_by TEXT, PRIMARY KEY(adapter, id));
+CREATE TABLE work_started_sessions(adapter TEXT, id TEXT, started_at INTEGER, unusable_at INTEGER, released_at INTEGER, claimed_by TEXT, role TEXT, PRIMARY KEY(adapter, id));
 CREATE TABLE neo_todo_sessions(todo_id TEXT, ref TEXT);
 CREATE TABLE neo_todos(id TEXT, ask_id TEXT, state TEXT);
 CREATE TABLE neo_asks(id TEXT, status TEXT);

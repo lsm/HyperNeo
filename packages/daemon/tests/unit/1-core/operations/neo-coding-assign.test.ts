@@ -4,7 +4,8 @@ import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts'
 import { afterEach, describe, test, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { hostname, tmpdir } from 'node:os';
 import { z } from 'zod';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -20,14 +21,19 @@ import type { NeoLine, NeoLineScope } from '../../../../src/lib/neo/pack-contrac
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
 import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
+import { neoStartPlace } from '../../../../src/lib/neo/start-place.ts';
+import { createCodingStartPlacePolicy } from '../../../../src/lib/neo/packs/coding/start-place.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, type OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
 const initialPath = process.env.PATH;
+const initialDataDir = process.env.HYPERNEO_DATA_DIR;
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   process.env.PATH = initialPath;
+  if (initialDataDir === undefined) delete process.env.HYPERNEO_DATA_DIR;
+  else process.env.HYPERNEO_DATA_DIR = initialDataDir;
   configureWorkerSandbox(() => 'off');
 });
 const url = 'https://github.com/synthetic/actors/pull/7';
@@ -43,6 +49,10 @@ function fixture(
   lines?: CodingLines
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
+  process.env.HYPERNEO_DATA_DIR = join(root, 'data');
+  const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
+  execFileSync('git', ['init', '-q', view]);
+  execFileSync('git', ['-C', view, 'read-tree', '--empty']);
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -94,6 +104,11 @@ function fixture(
       },
     },
   });
+  const admitPlace = neoStartPlace({
+    db,
+    machine: hostname(),
+    policy: createCodingStartPlacePolicy(db),
+  });
   const registry = createOperationRegistry([
     createCodingAssignmentOperation({
       db,
@@ -108,6 +123,8 @@ function fixture(
         }
         expect(name).toBe('work.start');
         const request = StartWorkInputSchema.parse(input);
+        const admitted = admitPlace(request, { source: 'internal', role: 'neo' });
+        if (!('value' in admitted)) return { kind: 'completed', value: admitted.reason };
         starts.push(request);
         return simulate ? simulate(request, starts.length) : success(request, starts.length);
       },
@@ -142,7 +159,20 @@ function fixture(
     (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/actors',?,?,'human',1)
     ON CONFLICT DO UPDATE SET value_json=excluded.value_json`)
       .run(key, JSON.stringify(value));
-  return { db, ledger, assignments, sessions, assign, starts, stops, pr, publish, set, success };
+  return {
+    db,
+    ledger,
+    assignments,
+    sessions,
+    assign,
+    starts,
+    stops,
+    pr,
+    publish,
+    set,
+    success,
+    view,
+  };
 }
 
 describe('coding actor assignments', () => {
@@ -598,6 +628,53 @@ describe('coding actor assignments', () => {
     release();
     expect((await first).ok).toBe(true);
     expect(f.starts).toHaveLength(1);
+  });
+});
+
+describe('review place', () => {
+  const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
+  const remote = { ...reviewer, place: { ...place, daemon: 'remote-daemon' } };
+  test('the reviewer starts in the read view and passes start-place admission', async () => {
+    const f = fixture();
+    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(f.starts[0].place).toEqual({
+      machine: hostname(),
+      folder: f.view,
+      name: 'synthetic/actors',
+    });
+  });
+  test('without a read view assignment refuses and starts nobody', async () => {
+    const f = fixture();
+    rmSync(join(f.view, '.git', 'index'));
+    const notReady = { ok: false, reason: expect.stringContaining('has no read-only view yet') };
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
+    expect(f.starts).toHaveLength(0);
+    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
+    rmSync(join(f.view, '.git', 'HEAD'));
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
+    expect(f.starts).toHaveLength(0);
+    rmSync(f.view, { recursive: true, force: true });
+    execFileSync('git', ['init', '-q', f.view]);
+    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
+    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    rmSync(f.view, { recursive: true, force: true });
+    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(notReady);
+    expect(f.starts).toHaveLength(1);
+  });
+  test('a candidate on another daemon is never routed to', async () => {
+    const f = fixture();
+    expect(await f.assign({ candidates: [remote] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('on this daemon'),
+    });
+    expect(f.starts).toHaveLength(0);
+    expect(await f.assign({ candidates: [remote, reviewer] })).toMatchObject({
+      ok: true,
+      assignment: {
+        fallback: expect.arrayContaining([expect.stringContaining('another daemon were skipped')]),
+      },
+    });
+    expect(f.starts[0].place?.daemon).toBeUndefined();
   });
 });
 

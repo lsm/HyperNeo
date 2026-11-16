@@ -83,16 +83,11 @@ function fixture(saved = true) {
         },
       },
     }),
-    attend: async () => true,
+    attend: async (event) => {
+      woken.push({ key: event.kind, text: String(event.facts.text) });
+      return true;
+    },
     prSweepDeps: {
-      delivery: {
-        recipient: () => 'neo',
-        status: async () => 'absent',
-        send: async (_recipient, key, text) => {
-          woken.push({ key, text });
-          return true;
-        },
-      },
       tell: async (_ref, key, text) => {
         told.push({ key, text });
         return state.accepted;

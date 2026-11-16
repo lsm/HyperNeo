@@ -784,7 +784,11 @@ test('daemon execution suppresses owner merge events and reminders', async () =>
   };
   const delivery = { host: 'github.com', tell: receive, wake: receive };
   await deliverCodingPrEvents(new CodingPrEventRepository(db), [], delivery);
-  await sweepCodingPrs(new CodingPrSweepRepository(db), delivery, 20 * 60_000);
+  await sweepCodingPrs(
+    new CodingPrSweepRepository(db),
+    { ...delivery, attend: receive },
+    20 * 60_000
+  );
   expect(messages).toEqual([]);
   await sweep(spawn, delivery)(20 * 60_000);
   expect(messages).toHaveLength(1);

@@ -8,7 +8,8 @@ import {
 } from '@hyperneo/prompts';
 import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
+import { getNeoReadCheckoutPath, isReadyNeoReadCheckout } from './read-checkout-path.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -125,7 +126,16 @@ export function createCodingAssignmentOperation(deps: Deps) {
           ref: { adapter: 'human', id: input.human },
         },
       };
-    if (!input.candidates.length) return refuse('Configure an available independent actor.');
+    const candidates = input.candidates.filter((target) => !target.place?.daemon);
+    if (!candidates.length)
+      return refuse('Configure an available independent actor on this daemon.');
+    const { owner, repo } = parsePrUrl(input.url)!;
+    const view = getNeoReadCheckoutPath(owner, repo);
+    if (!isReadyNeoReadCheckout(view))
+      return refuse(
+        `${owner}/${repo} has no read-only view yet, so no actor was started; assign again after the view syncs.`
+      );
+    const place = { machine: hostname(), folder: view, name: `${owner}/${repo}` };
     const select = async (candidates: Input['candidates']) => {
       const plan = await assignments.planTargetCurrent({
         repo: repoName(input),
@@ -149,8 +159,12 @@ export function createCodingAssignmentOperation(deps: Deps) {
         fallback: [...choice.fallback, ...ranked.skipped.map((line) => `Skipped ${line}.`)],
       };
     };
-    const plan = await select(input.candidates);
+    const plan = await select(candidates);
     if (!plan.ok) return refuse(plan.reason);
+    if (candidates.length < input.candidates.length)
+      plan.fallback.unshift(
+        'Candidates on another daemon were skipped: the read checkout is resolved on this daemon.'
+      );
     const stage = input.stage === 'verify' ? 'Verify' : 'Review';
     const contract = input.stage === 'verify' ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT;
     const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
@@ -160,6 +174,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
         'work.start',
         {
           ...target,
+          place,
           todoId: input.todoId,
           title: `${input.stage === 'verify' ? 'Verify' : 'Review'}: ${input.todoId}`,
           message,
@@ -192,9 +207,9 @@ export function createCodingAssignmentOperation(deps: Deps) {
         'unsupported_preparation',
         'unknown_adapter',
       ].includes(started.reason) &&
-      !isDeepStrictEqual(plan.target, input.candidates[0])
+      !isDeepStrictEqual(plan.target, candidates[0])
     ) {
-      const fallback = await select([input.candidates[0]]);
+      const fallback = await select([candidates[0]]);
       if (!fallback.ok) return refuse(fallback.reason);
       plan.fallback.push(
         `${started.reason}: preferred configuration unavailable; using the qualifying default.`,

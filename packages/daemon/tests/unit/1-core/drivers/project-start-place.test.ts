@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { vi } from 'vitest';
 import { selectLocalStartFolder } from '../../../../src/lib/drivers/start-folder.ts';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations.ts';
@@ -293,6 +294,52 @@ describe('shared non-coding work.start home', () => {
   });
 });
 
+describe('read checkout placement', () => {
+  const view = () => join(root, 'data', 'worktrees', 'synthetic', 'repo', 'neo-read');
+  test('a ready read checkout is accepted as an explicit place', async () => {
+    execFileSync('git', ['init', '-q', view()]);
+    execFileSync('git', ['-C', view(), 'read-tree', '--empty']);
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: true,
+      value: { place: { folder: view() } },
+    });
+  });
+  test('a ready local read checkout does not admit a remote or other-machine place', async () => {
+    execFileSync('git', ['init', '-q', view()]);
+    execFileSync('git', ['-C', view(), 'read-tree', '--empty']);
+    for (const place of [
+      { machine: 'local', daemon: 'remote', folder: view(), name: 'Folder' },
+      { machine: 'elsewhere', folder: view(), name: 'Folder' },
+    ])
+      expect(await start(undefined, { place, createFolder: false })).toMatchObject({
+        ok: false,
+        reason: 'invalid_place',
+      });
+  });
+  test('a symlinked or unready read checkout path is not admitted', async () => {
+    const elsewhere = join(root, 'not-a-repository');
+    mkdirSync(join(elsewhere, '.git'), { recursive: true });
+    writeFileSync(join(elsewhere, '.git', 'index'), '');
+    mkdirSync(dirname(view()), { recursive: true });
+    symlinkSync(elsewhere, view());
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: false,
+      reason: 'invalid_place',
+    });
+    rmSync(view());
+    mkdirSync(join(view(), '.git'), { recursive: true });
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: false,
+      reason: 'invalid_place',
+    });
+    writeFileSync(join(view(), '.git', 'index'), '');
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: false,
+      reason: 'invalid_place',
+    });
+  });
+});
+
 describe('pack-selected start placement', () => {
   const input = { todoId: 'todo', adapter: 'synthetic', title: 'Task', message: 'Synthetic work' };
 
@@ -301,7 +348,7 @@ describe('pack-selected start placement', () => {
     const decide = vi.fn(() => 'explicit' as const);
     const resolve = neoStartPlace({ db, machine: 'local', policy: decide });
     expect(await resolve({ ...input, place }, caller)).toEqual({ value: { ...input, place } });
-    expect(decide).toHaveBeenCalledWith(store.getTodo('todo'), store.getAsk('ask'));
+    expect(decide).toHaveBeenCalledWith(store.getTodo('todo'), store.getAsk('ask'), place.folder);
   });
 
   test('an explicit-place policy refuses an omitted place', async () => {

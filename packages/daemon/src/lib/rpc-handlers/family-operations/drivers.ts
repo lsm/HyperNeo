@@ -42,7 +42,7 @@ import {
   markWorkUnusable,
   readReusableWorkers,
   forgetWorkGone,
-  recordStartedWork,
+  recordWorkerStarted,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
 import { resolveCopilotRuntime } from '../../providers/anthropic-copilot/copilot-cli-resolver.ts';
@@ -679,7 +679,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
         ),
     } satisfies WorkVerbDeps['workInputs'],
     recordStarted: (ref: StartedWork, directory?: string) => {
-      recordStartedWork(db(), ref);
+      recordWorkerStarted(db(), ref);
       if (directory) forgetWorkGone(db(), directory);
     },
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>

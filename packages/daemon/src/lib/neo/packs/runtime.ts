@@ -137,14 +137,6 @@ export function createNeoService(...args: NeoServiceArgs) {
             ),
           tell: (ref, key, text, todoId) => configured.sendToRef(ref, key, text, todoId),
           wake: (key, text) => configured.wakeNeo(key, text),
-          delivery: {
-            recipient: () => configured.defaultSessionId() ?? null,
-            status: async (recipient, key) => configured.deliveryStatus(recipient, key),
-            send: async (recipient, key, text) => {
-              await configured.deliverForward(recipient, key, text, recipient, 'event');
-              return true;
-            },
-          },
         },
         attend: async (event) =>
           !!configured.defaultSessionId() && 'told' in (await configured.attend(event)),
