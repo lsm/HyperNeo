@@ -677,7 +677,7 @@ describe('refreshDriverWork', () => {
     await service.refreshDriverWork();
     expect(holdNotices()).toHaveLength(1);
     expect(service.sessionNotices).toHaveLength(1);
-    modelState({ status: 'processing', phase: 'thinking' });
+    modelState({ status: 'idle' });
     await service.refreshDriverWork();
     expect(service.sessionNotices).toHaveLength(0);
   });
@@ -711,6 +711,19 @@ describe('refreshDriverWork', () => {
     state({ status: 'processing', phase: 'thinking' });
     await service.refreshDriverWork();
     expect(service.sessionNotices).toHaveLength(1);
+    const sessions = service.sessions;
+    await service.dispose();
+    service = createNeoService(
+      db,
+      sessions,
+      {
+        event: mock((name: string, payload: unknown) => events.push([name, payload])),
+      } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(1);
+    expect(holdNotices()).toHaveLength(1);
     state(held);
     await service.refreshDriverWork();
     expect(holdNotices()).toHaveLength(1);

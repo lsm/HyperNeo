@@ -22,6 +22,20 @@ export function planModelHoldNotices(
     group.push(session);
     groups.set(key, group);
   }
+  for (const [key, receipt] of previous) {
+    for (const episode of JSON.parse(receipt.listed) as string[]) {
+      const [conversation, id, since] = JSON.parse(episode) as [string, string, number];
+      const retrying = working.find(
+        (entry) => entry.role && entry.sessionId === id && !entry.modelHold
+      );
+      if (conversation !== root || !retrying) continue;
+      const reason = key.endsWith(':login') ? 'login' : 'limit';
+      const provider = key.slice(MODEL_HOLD_NOTICE_PREFIX.length, -reason.length - 1);
+      const group = groups.get(key) ?? [];
+      group.push({ ...retrying, modelHold: { provider, reason, since } });
+      groups.set(key, group);
+    }
+  }
   for (const [key, group] of groups) {
     const session = group.find((entry) => entry.role === 'neo') ?? group[0];
     const holds = group.map((entry) => entry.modelHold!);

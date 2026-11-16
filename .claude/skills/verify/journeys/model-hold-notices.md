@@ -14,7 +14,8 @@ the existing phone-alert event.
 
 Observe one `needs_you` event for a login hold shared by Neo and its front,
 including when the front recovers first, and one for a limit whose reset is over
-30 minutes after its start, no duplicate event on repeated refresh, and no
+30 minutes after its start. The limit notice stays listed during processing
+and after the same cooldown returns, with no second alert. Observe no
 current notice after recovery. A five-minute limit sends no alert. The helper
 prints explicit counts and saves `model-hold-notices.json`. Unit contracts also
 cover receipt restoration after restart, short-limit boundaries, and quiet

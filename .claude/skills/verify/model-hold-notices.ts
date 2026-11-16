@@ -133,6 +133,11 @@ try {
   assert.equal((await refresh('long limit')).length, 1);
   assert.equal(notices.length, 2);
   state({ status: 'processing', phase: 'thinking' });
+  assert.equal((await refresh('limit retrying')).length, 1);
+  state({ status: 'rate_limit_cooldown', reason: 'limit', since, retryAt: since + 31 * 60000 });
+  assert.equal((await refresh('same limit after retry')).length, 1);
+  assert.equal(notices.length, 2);
+  state({ status: 'idle' });
   assert.equal((await refresh('limit recovered')).length, 0);
   state({
     status: 'rate_limit_cooldown',

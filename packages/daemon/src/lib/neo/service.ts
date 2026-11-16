@@ -210,7 +210,7 @@ export class NeoService {
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       defaultSessionId: () => this.defaultSessionId(),
-      working: () => readNeoWorking(this.db.getDatabase(), this.repo.readConversationId()),
+      working: () => readNeoWorking(this.db.getDatabase(), this.repo.readConversationId(), true),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
