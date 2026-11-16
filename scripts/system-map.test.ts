@@ -117,7 +117,7 @@ test('where sees a handler registered with long type arguments', () => {
         HANDLER,
         [
           'export const setup = (messageHub) =>',
-          '  messageHub.onRequest<TodoMetricSnapshotListRequest, Map<string, (id: string) => TodoMetricSnapshotListResponse>>(',
+          '  messageHub.onRequest <TodoMetricSnapshotListRequest, Map<string, (id: string) => TodoMetricSnapshotListResponse>>(',
           "    'todo.metricSnapshot.list',",
           '    async () => []',
           '  );',

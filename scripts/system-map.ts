@@ -75,6 +75,7 @@ function contextBefore(source: string, index: number): string {
     }
     if (at < limit) return '';
     at--;
+    while (at >= 0 && /\s/.test(source[at])) at--;
   }
   const end = at + 1;
   while (at >= 0 && /\w/.test(source[at])) at--;
