@@ -414,11 +414,12 @@ describe('coding todo pack waiting', async () => {
   test('a todo with an open PR of its own is waiting on that PR, not idle', async () => {
     const { db, pack, repo, todo } = setup(async () => []);
     const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
-    expect(await pack.waiting!(row)).toBe(false);
+    const other = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
+    expect([...(await pack.waiting!([row, other]))]).toEqual([]);
     repo.record(row.id, [pr(1, 'OPEN')], 2);
-    expect(await pack.waiting!(row)).toBe(true);
+    expect([...(await pack.waiting!([row, other]))]).toEqual([row.id]);
     repo.record(row.id, [pr(1, 'MERGED')], 3);
-    expect(await pack.waiting!(row)).toBe(false);
+    expect([...(await pack.waiting!([row, other]))]).toEqual([]);
     db.close();
   });
 });
