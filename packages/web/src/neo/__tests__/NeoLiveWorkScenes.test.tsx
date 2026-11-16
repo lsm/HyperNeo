@@ -849,9 +849,13 @@ describe('card reply notice navigation', () => {
     );
   });
 
-  it.each([null, 'Money'])(
-    'opens a child todo quote on the parent card that covers it, topic %s',
-    async (topic) => {
+  it.each([
+    [null, false],
+    ['Money', false],
+    [null, true],
+  ])(
+    'opens a child todo quote on its own full todo, topic %s, parent opened %s',
+    async (topic, parentOpened) => {
       const { model } = mount();
       const card = {
         id: 'qp',
@@ -929,9 +933,19 @@ describe('card reply notice navigation', () => {
         };
       });
       if (topic) fireEvent.click(screen.getByRole('button', { name: `${topic} 1` }));
+      if (parentOpened)
+        fireEvent.click(
+          within(screen.getByRole('region', { name: 'Fictional trip' })).getByRole('button', {
+            name: 'Open the ask',
+          })
+        );
+      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
+      expect(
+        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+      ).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
       await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
-      expect(document.activeElement?.closest('[data-human-queue]')).toBeTruthy();
+      expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
       expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
     }
   );

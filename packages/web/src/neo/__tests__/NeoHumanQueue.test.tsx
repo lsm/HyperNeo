@@ -596,6 +596,38 @@ describe('NeoHumanQueue', () => {
     expect(box.checked).toBe(true);
   });
 
+  it('says when an in-progress step failed to load and retries it', async () => {
+    const garage = testTodo('t4', { title: 'Call the garage', state: 'doing' });
+    const summarised = {
+      ...entry('car', 'Service the car'),
+      todos: [garage],
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ ...entry('car', 'Service the car'), todos: [garage] } as NeoAskEntry);
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={onLoadDetails}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
+    fireEvent.click(view.getByRole('button', { name: 'Show details: Call the garage' }));
+    expect((await view.findByRole('alert')).textContent).toContain('Couldn’t load this step.');
+    const box = view.getByRole('checkbox', { name: 'Let the agent use this computer' });
+    expect((box as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect((box as HTMLInputElement).disabled).toBe(false));
+    expect(onLoadDetails).toHaveBeenCalledTimes(2);
+    expect(view.queryByRole('alert')).toBeNull();
+  });
+
   it('opens the full ask from its group header and goes back to the queue', () => {
     const view = render(
       <NeoHumanQueue
