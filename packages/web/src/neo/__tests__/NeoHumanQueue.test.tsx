@@ -709,49 +709,77 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByText('Summary ask')).toBeNull();
   });
 
-  it('keeps the open full ask and its unsent choice while a newer revision loads', async () => {
-    const choice = question('q1', 'trip', {
-      kind: 'choice',
-      options: ['iPhone', 'iPad'],
-      multiple: true,
-    });
-    const at = (updatedAt: number, summary: boolean) => {
-      const shown = testAskEntry('trip', 'Plan the trip', {
-        state: 'waiting',
-        questions: [choice],
+  it.each([false, true])(
+    'keeps the open full ask, its unsent choice and its disabled controls while a newer revision loads, read failing first %s',
+    async (failing) => {
+      const choice = question('q1', 'trip', {
+        kind: 'choice',
+        options: ['iPhone', 'iPad'],
+        multiple: true,
       });
-      return {
-        ...shown,
-        ask: { ...shown.ask, updatedAt },
-        ...(summary ? { summary: {} } : {}),
-      } as unknown as NeoAskEntry;
-    };
-    const reads: ((value: NeoAskEntry) => void)[] = [];
-    const props = {
-      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
-      onHold: vi.fn(),
-      onAnswer: vi.fn(),
-      onLoadDetails: () => new Promise<NeoAskEntry>((resolve) => reads.push(resolve)),
-      renderAsk: (shown: NeoAskEntry, refreshing?: boolean) => (
-        <NeoAskTodos entry={shown} disabled={refreshing} onAnswer={vi.fn()} />
-      ),
-    };
-    const view = render(<NeoHumanQueue {...props} entries={[at(1, true)]} />);
-    await waitFor(() => expect(reads).toHaveLength(1));
-    reads[0](at(1, false));
-    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
-    const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
-    fireEvent.click(pick());
-    expect(pick().checked).toBe(true);
-    view.rerender(<NeoHumanQueue {...props} entries={[at(2, true)]} />);
-    await waitFor(() => expect(reads).toHaveLength(2));
-    const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
-    expect(pick().checked).toBe(true);
-    expect(confirm().disabled).toBe(true);
-    reads[1](at(2, false));
-    await waitFor(() => expect(confirm().disabled).toBe(false));
-    expect(pick().checked).toBe(true);
-  });
+      const at = (updatedAt: number, summary: boolean) => {
+        const shown = testAskEntry('trip', 'Plan the trip', {
+          state: 'waiting',
+          questions: [choice],
+          todos: [testTodo('t9', { askId: 'trip', title: 'Call the garage', state: 'doing' })],
+        });
+        return {
+          ...shown,
+          ask: { ...shown.ask, updatedAt },
+          ...(summary ? { summary: {} } : {}),
+        } as unknown as NeoAskEntry;
+      };
+      const reads: { resolve: (value: NeoAskEntry) => void; reject: (cause: Error) => void }[] = [];
+      const props = {
+        queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+        onHold: vi.fn(),
+        onAnswer: vi.fn(),
+        onLoadDetails: () =>
+          new Promise<NeoAskEntry>((resolve, reject) => reads.push({ resolve, reject })),
+        renderAsk: (shown: NeoAskEntry, refreshing?: boolean) => (
+          <NeoAskTodos
+            entry={shown}
+            disabled={refreshing}
+            onAnswer={vi.fn()}
+            onDesktopControl={vi.fn()}
+          />
+        ),
+      };
+      const view = render(<NeoHumanQueue {...props} entries={[at(1, true)]} />);
+      await waitFor(() => expect(reads).toHaveLength(1));
+      reads[0].resolve(at(1, false));
+      fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
+      const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
+      const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
+      const desktop = () =>
+        view.getByRole('checkbox', { name: 'Let the agent use this computer' }) as HTMLInputElement;
+      fireEvent.click(pick());
+      const details = view.queryByRole('button', { name: 'Show details: Call the garage' });
+      if (details) fireEvent.click(details);
+      expect(desktop().disabled).toBe(false);
+      view.rerender(<NeoHumanQueue {...props} entries={[at(2, true)]} />);
+      await waitFor(() => expect(reads).toHaveLength(2));
+      expect(pick().checked).toBe(true);
+      expect(confirm().disabled).toBe(true);
+      expect(desktop().disabled).toBe(true);
+      if (failing) {
+        reads[1].reject(new Error('offline'));
+        const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
+        expect((await trip.findByRole('alert')).textContent).toContain(
+          'Couldn’t load the full card.'
+        );
+        expect(pick().checked).toBe(true);
+        expect(confirm().disabled).toBe(true);
+        fireEvent.click(trip.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(reads).toHaveLength(3));
+      }
+      reads.at(-1)!.resolve(at(2, false));
+      await waitFor(() => expect(confirm().disabled).toBe(false));
+      expect(desktop().disabled).toBe(false);
+      expect(pick().checked).toBe(true);
+      expect(view.queryByRole('alert')).toBeNull();
+    }
+  );
 
   it.each([
     [
