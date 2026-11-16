@@ -68,9 +68,10 @@ export class SessionScheduleRepository {
     firedAt: number
   ): void {
     this.db
-      .prepare(`INSERT INTO session_schedule_runs
-      (schedule_id, due_at, fired_at, outcome, message_id) VALUES (?, ?, ?, ?, ?)`)
-      .run(schedule.id, schedule.nextRunAt, firedAt, outcome, messageId);
+      .prepare(`INSERT OR IGNORE INTO session_schedule_runs
+      (schedule_id, due_at, fired_at, outcome, message_id)
+      SELECT id, ?, ?, ?, ? FROM session_schedules WHERE id = ?`)
+      .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
   }
 
   listRuns(scheduleId: string): SessionScheduleRun[] {

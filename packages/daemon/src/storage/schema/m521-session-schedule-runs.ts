@@ -9,6 +9,6 @@ export function runMigration521(db: Database): void {
     outcome TEXT NOT NULL,
     message_id TEXT
   );
-  CREATE INDEX IF NOT EXISTS idx_session_schedule_runs_schedule
-    ON session_schedule_runs(schedule_id, id)`);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_session_schedule_runs_occurrence
+    ON session_schedule_runs(schedule_id, due_at)`);
 }
