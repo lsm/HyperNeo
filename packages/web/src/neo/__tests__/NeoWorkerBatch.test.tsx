@@ -44,17 +44,17 @@ const synthetic = (size: string): Page => ({
         kind: 'worker-batch',
       },
     },
-    {
-      role: 'human',
+    ...(size === 'large' ? ['small', 'large'] : ['small']).map((each, index) => ({
+      role: 'human' as const,
       ask: {
         conversationId: id,
-        requestId: 'human',
-        askOrigin: { sessionId: `neo:${id}`, messageId: 'human' },
-        sequence: 1,
-        createdAt: '2026-10-25T12:00:00.001Z',
-        content: `  Human ${size}: keep these exact words inline.\n第二行。  `,
+        requestId: `human-${each}`,
+        askOrigin: { sessionId: `neo:${id}`, messageId: `human-${each}` },
+        sequence: index + 1,
+        createdAt: `2026-10-25T12:00:0${index}.001Z`,
+        content: `  Human ${each}: keep these exact words inline.\n第二行。  `,
       },
-    },
+    })),
   ],
 });
 afterEach(cleanup);

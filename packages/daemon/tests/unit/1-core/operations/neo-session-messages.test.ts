@@ -133,3 +133,29 @@ describe('NeoConversationReader session rows', () => {
     db.close();
   });
 });
+
+describe('NeoConversationReader human history plan', () => {
+  test('reads worker batches by their own history index, not by skipping hidden rows', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const plans: string[] = [];
+    const prepare = db.prepare.bind(db);
+    const reader = new NeoConversationReader(
+      Object.assign(Object.create(db), {
+        prepare: (sql: string) => {
+          if (sql.includes('UNION ALL'))
+            plans.push(
+              ...(prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map(
+                (row) => row.detail
+              )
+            );
+          return prepare(sql);
+        },
+      })
+    );
+    await reader.read({ conversationId: root.conversationId, limit: 10 }, true);
+    expect(plans.join('\n')).toContain('idx_neo_session_messages_worker_batch');
+    db.close();
+  });
+});
