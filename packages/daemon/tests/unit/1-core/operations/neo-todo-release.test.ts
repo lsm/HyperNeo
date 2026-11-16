@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { releaseNeoTodoWorkers } from '../../../../src/lib/neo/todo-release.ts';
 import { admitSessionArchive } from '../../../../src/lib/neo/session-archive-operation.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -60,39 +62,45 @@ function setup() {
     createdAt: 1,
   });
   const archived: unknown[] = [];
-  let archive: () => unknown = () => ({ ok: true, value: { archived: true } });
+  let archive: (caller: OperationCaller) => unknown = () => ({
+    ok: true,
+    value: { archived: true },
+  });
+  let onStatus = () => {};
   const folder = pushedCheckout();
+  const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
+    if (name === 'work.start')
+      return completed({
+        ok: true,
+        value: {
+          ref: worker,
+          receipt: { executionId: worker.id, inputId: 'i' },
+          lastActivityAt: 1,
+        },
+      });
+    if (name === 'work.send')
+      return completed({
+        ok: true,
+        value: { delivered: true, receipt: { executionId: worker.id, inputId: 'i' } },
+      });
+    if (name === 'neo.session.archive') {
+      archived.push(input.ref);
+      return completed(archive(caller));
+    }
+    if (name === 'work.status') onStatus();
+    if (name === 'work.status')
+      return completed({
+        ok: true,
+        value: { ref: worker, execution: { directory: folder, machine: 'laptop' } },
+      });
+    return completed(null);
+  });
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
     store,
     sessions,
-    invoke: recordedWorkInvoke(sessions.inputs, async (_caller, name, input) => {
-      if (name === 'work.start')
-        return completed({
-          ok: true,
-          value: {
-            ref: worker,
-            receipt: { executionId: worker.id, inputId: 'i' },
-            lastActivityAt: 1,
-          },
-        });
-      if (name === 'work.send')
-        return completed({
-          ok: true,
-          value: { delivered: true, receipt: { executionId: worker.id, inputId: 'i' } },
-        });
-      if (name === 'neo.session.archive') {
-        archived.push(input.ref);
-        return completed(archive());
-      }
-      if (name === 'work.status')
-        return completed({
-          ok: true,
-          value: { ref: worker, execution: { directory: folder, machine: 'laptop' } },
-        });
-      return completed(null);
-    }),
+    invoke,
     packs: () => [],
     tell: async () => {},
     attend: async () => {},
@@ -131,9 +139,15 @@ function setup() {
     finishTodo,
     refresh,
     archived,
-    setArchive: (next: () => unknown) => {
+    setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
     },
+    setOnStatus: (next: () => void) => {
+      onStatus = next;
+    },
+    release: () => releaseNeoTodoWorkers(sessions, invoke, () => {}),
+    released: () =>
+      db.prepare("SELECT todo_id FROM pack_facts WHERE pack = 'core' AND key = 'released'").all(),
     queueOn: (todoId: string) => sessions.queueOn(todoId, worker, 'Next step.'),
     folder: () => folder,
   };
@@ -267,6 +281,26 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
       rmSync(h.folder(), { recursive: true, force: true });
       await h.refresh();
       expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('releaseNeoTodoWorkers', () => {
+  test('keeps a worker another todo queues onto while the folder is checked', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const next = h.add(started);
+      const db = { getDatabase: () => h.db } as never;
+      h.setOnStatus(() => h.queueOn(next.id));
+      h.setArchive(
+        (caller) =>
+          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+      );
+      await h.release();
+      expect(h.released()).toEqual([]);
     } finally {
       h.db.close();
     }
