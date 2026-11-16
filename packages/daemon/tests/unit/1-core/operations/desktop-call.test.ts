@@ -8,6 +8,8 @@ import {
   createDesktopCallOperation,
   decideDesktopCall,
 } from '../../../../src/lib/desktop/call-operation.ts';
+import catalog from '../../../../src/lib/desktop/tool-catalog.json' with { type: 'json' };
+import { describeOperationDefinition } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import {
@@ -29,7 +31,7 @@ let mismatchedReply: boolean;
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
-  role: 'direct_task_worker',
+  role: 'universal_read',
 };
 const input = { tool: 'click', args: { pid: 123 } };
 beforeEach(async () => {
@@ -111,44 +113,45 @@ const audit = () =>
     timestamp: number;
   }>;
 
-test('in-process MCP dispatch uses only the caller session and daemon workspace', async () => {
-  const handler = createOperationMcpHandler(registry(), () => ({
-    sessionId: 'worker-a',
-    role: 'direct_task_worker',
-  }));
-  const response = await handler({ name: 'desktop.call', input });
-  expect(JSON.parse(response.content[0].text)).toMatchObject({
-    dispatched: true,
-    decision: 'allowed',
-  });
-  expect(requests).toEqual([
-    expect.objectContaining({
-      action: 'dispatch',
-      worker: 'worker-a',
-      workDir: root,
+test.each(['universal_read', 'direct_task_worker'] as const)(
+  'in-process MCP dispatch from a %s todo worker uses only its session and workspace',
+  async (role) => {
+    const handler = createOperationMcpHandler(registry(), () => ({ sessionId: 'worker-a', role }));
+    const response = await handler({ name: 'desktop.call', input });
+    expect(JSON.parse(response.content[0].text)).toMatchObject({
+      dispatched: true,
+      decision: 'allowed',
+    });
+    expect(requests).toEqual([
+      expect.objectContaining({
+        action: 'dispatch',
+        worker: 'worker-a',
+        workDir: root,
+        tool: 'click',
+        arguments: { pid: 123 },
+      }),
+    ]);
+    expect(audit()).toHaveLength(1);
+    expect(JSON.parse(audit()[0].params_summary)).toEqual({
+      todo: 'todo',
+      session: 'worker-a',
       tool: 'click',
-      arguments: { pid: 123 },
-    }),
-  ]);
-  expect(audit()).toHaveLength(1);
-  expect(JSON.parse(audit()[0].params_summary)).toEqual({
-    todo: 'todo',
-    session: 'worker-a',
-    tool: 'click',
-    app: 'org.example.app',
-    class: 'pointer',
-    decision: 'allowed',
-    reason: null,
-    dispatched: true,
-  });
-  expect(audit()[0].timestamp).toBeGreaterThan(0);
-});
+      app: 'org.example.app',
+      class: 'pointer',
+      decision: 'allowed',
+      reason: null,
+      dispatched: true,
+    });
+    expect(audit()[0].timestamp).toBeGreaterThan(0);
+  }
+);
 
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'mcp', principal: 'session-door', sessionId: 'worker-a', role: 'direct_task_worker' },
-  { source: 'mcp', sessionId: 'worker-a', role: 'universal_read' },
+  { source: 'mcp', principal: 'session-door', sessionId: 'worker-a', role: 'universal_read' },
+  { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'universal_read' },
   { source: 'mcp', sessionId: 'worker-a' },
   { source: 'mcp', role: 'direct_task_worker' },
 ] as OperationCaller[])(
@@ -186,11 +189,24 @@ test('missing workspace and unlisted tools cannot reach resolve or a grant dialo
     value: { reason: 'desktop_not_enabled' },
   });
   workspace = root;
-  expect(await call(caller, { tool: 'kill_app', args: {} })).toMatchObject({
-    kind: 'completed',
-    value: { reason: 'tool_not_allowed' },
-  });
+  for (const args of [
+    { tool: 'kill_app', args: {} },
+    { tool: 'click', args: { pid: 'not-a-pid' } },
+    { tool: 'type_text', args: {} },
+  ]) {
+    expect(await call(caller, args)).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+  }
   expect(requests).toHaveLength(0);
+});
+
+test('operations.describe lists every catalog tool with its arguments', () => {
+  const operation = registry().get('desktop.call')!;
+  const described = JSON.stringify(describeOperationDefinition(operation).inputSchema);
+  for (const tool of catalog) {
+    expect(described).toContain(`"const":"${tool.name}"`);
+    expect(described).toContain(tool.description);
+  }
+  expect(described).toContain('"window_id"');
 });
 
 test('input cannot impersonate a different worker or choose a workspace', async () => {
@@ -220,9 +236,9 @@ test('host refusal and a sent driver error each produce one truthful audit row',
   expect(audit().every((row) => !row.params_summary.includes('123'))).toBe(true);
 });
 
-test('the pure decision refuses missing bindings and unlisted tools', () => {
+test('the pure decision refuses a missing binding or workspace', () => {
   const todo = { id: 'todo', worker: 'worker-a', title: 'Synthetic', named: '{}', active: 1 };
-  const facts = { todo, worker: 'worker-a', workDir: root, toolAllowed: true };
+  const facts = { todo, worker: 'worker-a', workDir: root };
   expect(decideDesktopCall(facts)).toEqual({
     value: { todo: 'todo', worker: 'worker-a', workDir: root },
   });
@@ -230,9 +246,9 @@ test('the pure decision refuses missing bindings and unlisted tools', () => {
     'reason.reason',
     'desktop_not_enabled'
   );
-  expect(decideDesktopCall({ ...facts, toolAllowed: false })).toHaveProperty(
+  expect(decideDesktopCall({ ...facts, workDir: null })).toHaveProperty(
     'reason.reason',
-    'tool_not_allowed'
+    'desktop_not_enabled'
   );
 });
 
