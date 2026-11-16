@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
-    "vitest": "5.1.0"
+    "vitest": "5.0.0"
   },
   "dependencies": {
     "remark-gfm": "4.0.1",

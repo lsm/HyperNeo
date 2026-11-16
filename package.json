@@ -67,10 +67,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
-    "knip": "6.45.1",
-    "oxlint": "1.94.0",
+    "knip": "6.35.1",
+    "oxlint": "1.82.0",
     "typescript": "6.0.3",
     "typescript7": "npm:typescript@7.0.2",
-    "tsx": "4.23.15"
+    "tsx": "4.23.13"
   }
 }
