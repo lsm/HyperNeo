@@ -186,6 +186,13 @@ export class SessionScheduler {
     commit?: () => void
   ): boolean {
     return this.db.transaction(() => {
+      if (outcome !== 'progress')
+        this.repo.recordRun(
+          schedule,
+          outcome,
+          outcome === 'fired' || outcome === 'skipped_delivery_unconfirmed' ? messageId : null,
+          now
+        );
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
       if (outcome === 'fired' || outcome === 'skipped_unchanged') commit?.();
       const next =
