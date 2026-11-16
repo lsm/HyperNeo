@@ -146,7 +146,7 @@ try {
     id: 'coding', describe: 'Synthetic coding outcome; production worker checkout hooks', instructions: () => null,
     workerRules: NEO_PACK_CODING_WORKER_RULES, workerStartBrief: withCodingWorkerStartBrief,
     prepareExecution: prepareCodingExecution,
-    todos: { schema: createCodingPackTables, check: async () => null, statusLine: () => null, waiting: async () => false },
+    todos: { schema: createCodingPackTables, check: async () => null, statusLine: () => null, waiting: async () => new Set<string>() },
   };
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)), store, sessions,
