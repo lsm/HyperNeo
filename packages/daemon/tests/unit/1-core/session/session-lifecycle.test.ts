@@ -9,6 +9,7 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
+import { workerWorkLocations } from '../../../../src/lib/work-locations';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -188,6 +189,32 @@ afterEach(() => {
   rmSync(workerDataDir, { recursive: true, force: true });
   delete process.env.HYPERNEO_DATA_DIR;
 });
+
+function sessionWithRemovableWorktree(id: string) {
+  const worktreePath = mkdtempSync(join(tmpdir(), 'worker-session-tree-'));
+  const places = workerWorkLocations(worktreePath);
+  for (const place of [places.builds, places.scratch, places.ghConfig, places.evidence]) {
+    mkdirSync(place, { recursive: true });
+    writeFileSync(join(place, 'synthetic'), 'synthetic');
+  }
+  return {
+    places,
+    session: {
+      id,
+      workspacePath: worktreePath,
+      metadata: {},
+      worktree: { worktreePath, branch: 'session/synthetic', mainRepoPath: '/test/main' },
+    },
+    removeWorktree: async () => rmSync(worktreePath, { recursive: true, force: true }),
+  };
+}
+
+function expectWorkFoldersReleased(places: ReturnType<typeof workerWorkLocations>) {
+  expect(existsSync(places.builds)).toBe(false);
+  expect(existsSync(places.scratch)).toBe(false);
+  expect(existsSync(places.ghConfig)).toBe(false);
+  expect(existsSync(join(places.evidence, 'synthetic'))).toBe(true);
+}
 
 describe('SessionLifecycle', () => {
   let lifecycle: SessionLifecycle;
@@ -1249,6 +1276,18 @@ describe('SessionLifecycle', () => {
       expect(mockAgentSession.cleanup).toHaveBeenCalled();
     });
 
+    it('removes the work folders of a deleted worktree session', async () => {
+      const fixture = sessionWithRemovableWorktree('test-id');
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(fixture.session);
+      (mockWorktreeManager.removeWorktree as ReturnType<typeof mock>).mockImplementation(
+        fixture.removeWorktree
+      );
+
+      await lifecycle.deleteResources('test-id', 'ui_session_delete');
+
+      expectWorkFoldersReleased(fixture.places);
+    });
+
     it('should delete worktree if present', async () => {
       const sessionWithWorktree = {
         id: 'test-id',
@@ -1384,6 +1423,18 @@ describe('SessionLifecycle', () => {
   });
 
   describe('archiveResources (UI-only: session.archive + task.archive)', () => {
+    it('removes the work folders of an archived worktree session', async () => {
+      const fixture = sessionWithRemovableWorktree('archive-id');
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(fixture.session);
+      (mockWorktreeManager.removeWorktree as ReturnType<typeof mock>).mockImplementation(
+        fixture.removeWorktree
+      );
+
+      await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+      expectWorkFoldersReleased(fixture.places);
+    });
+
     it('should NOT delete the DB row — archive preserves conversation history', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
         id: 'archive-id',
