@@ -13,6 +13,8 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
+import { planCodingPrEvent } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import { SendWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
 
 const MIN = 60_000;
 const owner = { adapter: 'claude-desktop', id: 'worker-1' };
@@ -359,5 +361,81 @@ describe('sweepCodingPrs failed cross-model review', () => {
     ]);
     expect(woken).toEqual([]);
     db.close();
+  });
+});
+
+describe('PR delivery keys', () => {
+  test('a long repository name still gives keys the send accepts, one per head, state, review and rung', async () => {
+    const { db, told, at } = setup();
+    const repo = `${'o'.repeat(39)}/${'r'.repeat(78)}`;
+    const head = 'f'.repeat(40);
+    const url = `https://github.com/${repo}/pull/123`;
+    db.prepare(
+      `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, owner, read_at)
+       VALUES (?, 123, 'Fix login', 'b', ?, 'changes_requested', 0, ?, 0)`
+    ).run(repo, head, JSON.stringify(owner));
+    db.prepare('INSERT INTO pack_coding_stage_heads (url, head, observed_at) VALUES (?, ?, 0)').run(
+      url,
+      head
+    );
+    db.prepare(
+      'INSERT INTO pack_coding_stage_facts (url, head, stage, fact_json) VALUES (?, ?, ?, ?)'
+    ).run(
+      url,
+      head,
+      'review',
+      JSON.stringify({
+        url,
+        head,
+        stage: 'review',
+        actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+        verdict: 'fail',
+        acceptanceContract: 'contract',
+        evidence: ['P1 the retry loop never stops.'],
+      })
+    );
+    await at(20);
+    await at(40);
+    const row = {
+      repo,
+      number: 123,
+      title: 'Fix login',
+      branch: 'b',
+      head,
+      closedAt: null,
+      from: 'waiting_cross_review' as const,
+    };
+    const keys = [
+      ...told.map((item) => item.key),
+      planCodingPrEvent({ ...row, state: 'changes_requested', findings: ['P1'] })!.key,
+      planCodingPrEvent({ ...row, state: 'changes_requested' })!.key,
+      planCodingPrEvent({ ...row, head: 'e'.repeat(40), state: 'changes_requested' })!.key,
+      planCodingPrEvent({ ...row, state: 'failing' })!.key,
+    ];
+    expect(told).toHaveLength(2);
+    for (const key of keys)
+      expect(SendWorkInputSchema.shape.idempotencyKey.safeParse(key).success).toBe(true);
+    expect(new Set(keys).size).toBe(keys.length);
+    db.close();
+  });
+
+  test('a merged or closed PR is announced without review findings', () => {
+    for (const state of ['merged', 'closed'] as const) {
+      const event = planCodingPrEvent({
+        repo: 'lsm/hyperneo',
+        number: 1,
+        title: 'Fix login',
+        branch: 'b',
+        head: 'abc1234def',
+        state,
+        closedAt: 1,
+        findings: ['P1 the retry loop never stops.'],
+        from: 'changes_requested',
+      });
+      expect(event).toEqual({
+        key: `neo-pr-event:lsm/hyperneo#1:abc1234def:${state}`,
+        text: expect.stringMatching(/^lsm\/hyperneo#1 "Fix login" was /),
+      });
+    }
   });
 });
