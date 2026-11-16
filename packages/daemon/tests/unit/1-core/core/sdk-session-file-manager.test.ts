@@ -597,6 +597,94 @@ describe('SDK Session File Manager', () => {
       expect(inserted.parentUuid).toBe('u0');
     });
 
+    test('chains two restored assistant lines that feed one result line', async () => {
+      const blob = (id: string) =>
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: id,
+          message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash' }] },
+        });
+      const lines = [
+        JSON.stringify({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'go' } }),
+        blob('two_a'),
+        blob('two_b'),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r1',
+          parentUuid: 'lost-assistant',
+          message: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'two_a' },
+              { type: 'tool_result', tool_use_id: 'two_b' },
+            ],
+          },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      const repaired = readFileSync(testSessionFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const [restoredA, restoredB, result] = repaired.slice(3);
+      expect(restoredA.message.content[0].id).toBe('two_a');
+      expect(restoredB.message.content[0].id).toBe('two_b');
+      expect(restoredA.parentUuid).toBe('u0');
+      expect(restoredB.parentUuid).toBe(restoredA.uuid);
+      expect(result.parentUuid).toBe(restoredB.uuid);
+    });
+
+    test('links a restored assistant line past a sidechain entry', async () => {
+      const lines = [
+        JSON.stringify({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'go' } }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'side1',
+          parentUuid: null,
+          isSidechain: true,
+          message: { role: 'user', content: 'subagent' },
+        }),
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: 'h1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'side_t1', name: 'Bash' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r1',
+          parentUuid: 'lost-assistant',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'side_t1' }] },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      const repaired = readFileSync(testSessionFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(repaired[3].type).toBe('assistant');
+      expect(repaired[3].parentUuid).toBe('u0');
+    });
+
     test('restores a parallel tool_use message once for all of its results', async () => {
       const lines = [
         JSON.stringify({
