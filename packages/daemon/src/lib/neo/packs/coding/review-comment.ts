@@ -5,10 +5,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { Logger } from '../../../logger.ts';
-import {
-  isRateLimitError,
-  RATE_LIMIT_MIN_BACKOFF_MS,
-} from '../../../session/rate-limit-detector.ts';
+import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../session/rate-limit-detector.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { codingLedgerReads, type CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -25,11 +22,16 @@ export const codingGithubApi = async (
 ) => {
   const result = await runGhJson(['gh', 'api', '--hostname', host, ...args], homedir(), spawn, {
     stripGHRepo: true,
+    hostHint: host,
+    resourceHint: 'core',
     timeoutMs: 60_000,
     maxBufferBytes: 64 * 1024 * 1024,
   });
   if (!result.ok)
-    throw Object.assign(new Error(result.error), { retryAfterMs: result.retryAfterMs });
+    throw Object.assign(new Error(result.error), {
+      retryAfterMs: result.retryAfterMs,
+      rateLimited: result.rateLimited === true,
+    });
   return result.data;
 };
 
@@ -75,10 +77,13 @@ export async function postCodingReviewComment(api: CodingGithubApi, fact: Coding
   return true;
 }
 
-const retryAfterMs = (error: unknown) =>
-  error instanceof Error && 'retryAfterMs' in error && typeof error.retryAfterMs === 'number'
+const rateLimitHoldMs = (error: unknown) => {
+  if (!(error instanceof Error) || !('rateLimited' in error) || error.rateLimited !== true)
+    return null;
+  return 'retryAfterMs' in error && typeof error.retryAfterMs === 'number'
     ? error.retryAfterMs
     : RATE_LIMIT_MIN_BACKOFF_MS;
+};
 
 type CodingPostedReview = (fact: CodingStageFact, marker: string) => Promise<void>;
 
@@ -95,8 +100,9 @@ export function createCodingReviewComments(api: CodingGithubApi) {
         await postCodingReviewComment(api, fact);
       } catch (error) {
         log.warn('review comment not posted', { url: fact.url, error: String(error) });
-        if (!isRateLimitError(String(error))) continue;
-        heldUntil = Date.now() + retryAfterMs(error);
+        const holdMs = rateLimitHoldMs(error);
+        if (holdMs === null) continue;
+        heldUntil = Date.now() + holdMs;
         return;
       }
       await posted(fact, planCodingReviewComment(fact).marker);

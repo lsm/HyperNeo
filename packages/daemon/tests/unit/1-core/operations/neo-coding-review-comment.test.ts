@@ -146,6 +146,7 @@ describe('createCodingReviewComments', () => {
       outage.error = Object.assign(
         new Error('gh: API rate limit exceeded for user ID 1 (HTTP 403)'),
         {
+          rateLimited: true,
           retryAfterMs: 10 * 60_000,
         }
       );

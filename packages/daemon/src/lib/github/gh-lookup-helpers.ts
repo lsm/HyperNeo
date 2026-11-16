@@ -259,6 +259,7 @@ export async function runGhJson(
           error: errorText,
           retryable: true,
           retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+          rateLimited: true,
         };
       }
       const resetEpoch = response
@@ -277,6 +278,7 @@ export async function runGhJson(
         error: errorText,
         retryable: true,
         retryAfterMs: computeRateLimitRetryMs(resetEpoch),
+        rateLimited: true,
       };
     }
     if (timedOut || isTransientGhError(errorText)) {
