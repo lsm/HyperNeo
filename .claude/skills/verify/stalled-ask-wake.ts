@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createCleanupHandler } from '../../../packages/daemon/src/lib/job-handlers/cleanup.handler.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 
@@ -74,12 +75,16 @@ try {
   clock = at + 72 * hour;
   await refresh(); check('no repeat after the last rung', 2);
   assert.equal(new Set(told('neo_notes').map((input) => input.messageUuid)).size, 2);
+  clock = at + 30 * 24 * hour;
+  evidence.cleaned = (await createCleanupHandler(app!.db.getJobQueueRepo())({} as never)).deletedJobs;
+  check('queue cleanup removes the delivered lines', 0);
+  await refresh(); check('a cleaned-up line is not told again', 0);
   service!.todos.openAsk({ id: 'finished', sessionId: root, projectId: null, originMessageId: null, title: 'finished', request: 'Synthetic work', createdAt: clock });
   service!.todos.updateTodo(service!.todos.addTodo('finished-step', 'finished', { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, clock), { state: 'done' }, clock);
-  await Promise.all([refresh(), refresh()]); check('a finished ask wakes at once', 2, 1);
+  await Promise.all([refresh(), refresh()]); check('a finished ask wakes at once', 0, 1);
   clock += 60_000;
   service!.todos.recordAskOutcome('finished', 'Shipped', clock);
-  await refresh(); check('writing the outcome does not wake again', 2, 1);
+  await refresh(); check('writing the outcome does not wake again', 0, 1);
   evidence.askColumns = (app!.db.getDatabase().prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map((column) => column.name);
   assert(!(evidence.askColumns as string[]).includes('stalled_wake_at'));
   evidence.passed = true;

@@ -10,7 +10,8 @@ synthetic Neo session. It seeds open, settled, questioned and blocked asks,
 then invokes the production one-minute refresh handler with a fake clock. An
 open ask with no todo left is one digest line (`neo_notes`) at two hours, not
 before; overlapping refreshes and a daemon restart add nothing; it repeats
-once, a day after the ask last changed, and never again. Settled and
+once, a day after the ask last changed, and never again, also after the
+queue cleanup has deleted both delivered lines a month later. Settled and
 questioned asks are not told, and neither is an ask with a blocked todo: that
 todo raises its own step. The line names its ask and says:
 “This ask has nothing in progress. Add the next todo, or settle it.”
