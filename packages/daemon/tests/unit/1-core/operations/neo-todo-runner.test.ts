@@ -3335,23 +3335,35 @@ describe('stopped worker ladder', () => {
     }
   });
 
-  test('stall redispatch refuses a stop whose worker is still live', async () => {
-    const h = await stopped(null, 'Build the rows.', async (name) => {
-      if (name === 'work.stop')
-        h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
-    });
-    try {
-      for (const minutes of [20, 40, 60]) await h.at(minutes);
-      expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(1);
-      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
-      expect(h.sessions.readRef(h.todo.id)).toEqual(ref);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
-      expect(h.told.join('\n')).toContain('stop_unconfirmed');
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
+  test.each(['still_live', 'unsupported'])(
+    'stall redispatch refuses an unconfirmed stop (%s)',
+    async (mode) => {
+      const h = await stopped(null, 'Build the rows.', async (name) => {
+        if (name === 'work.stop')
+          h.setStatus(
+            mode === 'unsupported'
+              ? { ok: false, reason: 'unsupported' }
+              : { ok: true, value: { status: 'running', lastActivityAt: 2_000 } }
+          );
+      });
+      try {
+        for (const minutes of [20, 40, 60]) await h.at(minutes);
+        expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(1);
+        expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+        expect(h.sessions.readRef(h.todo.id)).toEqual(ref);
+        expect(h.store.getTodo(h.todo.id)).toMatchObject({
+          state: 'blocked',
+          blockedBy: 'stalled',
+        });
+        expect(h.told.join('\n')).toContain(
+          mode === 'unsupported' ? 'stop_failed: unsupported' : 'stop_unconfirmed'
+        );
+      } finally {
+        h.clock.mockRestore();
+        h.db.close();
+      }
     }
-  });
+  );
 
   test.each([
     ['unreachable', 'remote send timed out'],

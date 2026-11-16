@@ -176,6 +176,7 @@ describe('neo.todo.retarget', () => {
     'still_live',
     'unreadable',
     'adopted',
+    'send',
     'shared',
     'reserved_send',
     'outstanding',
@@ -184,10 +185,10 @@ describe('neo.todo.retarget', () => {
     if (mode === 'unsupported') h.refuse({ ok: false, reason: 'unsupported' });
     if (mode === 'still_live') h.keepLive();
     if (mode === 'unreadable') h.unreadable();
-    if (mode === 'adopted')
+    if (mode === 'adopted' || mode === 'send')
       h.db
         .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
-        .run(JSON.stringify({ verb: 'adopt', ref: old }), 'todo');
+        .run(JSON.stringify({ verb: mode === 'adopted' ? 'adopt' : 'send', ref: old }), 'todo');
     if (mode === 'shared') {
       const sibling = h.store.addTodo(
         'sibling',
@@ -219,6 +220,8 @@ describe('neo.todo.retarget', () => {
     expect(h.sessions.readRef('todo')).toEqual(old);
     expect(h.pending()).toBeNull();
     expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
+    if (mode === 'adopted' || mode === 'send')
+      expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(0);
     if (mode === 'unsupported' || mode === 'still_live') expect(h.notices).toHaveLength(1);
   });
 

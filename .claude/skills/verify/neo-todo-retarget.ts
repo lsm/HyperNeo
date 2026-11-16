@@ -86,6 +86,20 @@ for (const phase of ['request', 'recovery']) {
       const read = await handler({ name: 'neo.todo.read', input: { todoId: 'interrupted' } });
       assert.equal(read.isError ?? false, false, JSON.stringify(read));
       evidence.push({ phase, publicRead: read.content, target: todoSessions.get('interrupted'), starts });
+      const peer = await app.sessionManager.getSessionForControl(oldId);
+      assert(peer);
+      await peer.stateManager.setRateLimitCooldown({ reason: 'limit', since: 1, retryAt: Date.now() + 7_200_000, retryCount: 0, maxRetries: 0, heldPrompt: { uuid: 'peer-input', content: 'Keep this peer work' } });
+      const sent = todos.addTodo('sent-peer', 'ask', { title: 'Peer work', doneWhen: 'Done', instruction: 'Message the peer', check: null, named: null, approvedAt: 1 }, 1);
+      todoSessions.create(sent.id, { verb: 'send', ref: { adapter: 'hyperneo', id: oldId } });
+      todoSessions.recordRef(sent.id, { adapter: 'hyperneo', id: oldId }, 1);
+      todos.updateTodo(sent, { state: 'doing', startedAt: 1 }, 1);
+      const beforePeer = app.db.getSession(oldId)!.processingState;
+      const refused = await handler({ name: 'neo.todo.retarget', input: { todoId: sent.id, fromRef: { adapter: 'hyperneo', id: oldId } } });
+      assert.equal(JSON.parse(refused.content[0]!.text).ok, false, JSON.stringify(refused));
+      assert.equal(todos.getTodo(sent.id)?.state, 'doing');
+      assert.equal(app.db.getSession(oldId)!.processingState, beforePeer);
+      assert.equal(starts, 2);
+      evidence.push({ phase, sentPeerRefused: refused.content, peerUnchanged: true });
       for (const mode of ['adopted', 'unsupported']) {
         const todo = todos.addTodo(mode, 'ask', { title: mode, doneWhen: 'Removed', instruction: 'Synthetic work', check: null, named: null, approvedAt: 1 }, 1);
         if (mode === 'adopted') todoSessions.bind(mode, { adapter: 'hyperneo', id: oldId }, 1);
@@ -108,4 +122,4 @@ for (const phase of ['request', 'recovery']) {
     writeFileSync(join(run, 'evidence/retarget.json'), JSON.stringify(evidence, null, 2));
   }
 }
-console.log(`PASS starts=${starts}, removals=2: MCP retarget clears a real held HyperNeo prompt; restart admits one unfinished move; ordinary adopted and unsupported workers remain removable.`);
+console.log(`PASS starts=${starts}, removals=2, peerStops=0: MCP retarget recovers held work; sent peer work stays untouched; ordinary adopted and unsupported workers remain removable.`);
