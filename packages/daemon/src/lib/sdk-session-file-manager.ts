@@ -496,8 +496,8 @@ function survivingParentUuid(
   }
   for (let i = lineIndex - 1; i >= 0; i--) {
     try {
-      const uuid = (JSON.parse(lines[i]) as SDKFileMessage).uuid;
-      if (uuid) return uuid;
+      const line = JSON.parse(lines[i]) as SDKFileMessage;
+      if (line.uuid && !line.isSidechain) return line.uuid;
     } catch {}
   }
   return undefined;
@@ -535,6 +535,7 @@ export async function repairSDKSessionFile(
 
     const insertions: Array<{ lineIndex: number; message: string }> = [];
     const recoveredToolUseIds = new Set<string>();
+    const restoredTail = new Map<number, string>();
 
     for (const orphan of validation.orphanedToolResults) {
       if (recoveredToolUseIds.has(orphan.toolUseId)) {
@@ -580,7 +581,9 @@ export async function repairSDKSessionFile(
       const orphanedLine = JSON.parse(lines[orphan.lineIndex]) as SDKFileMessage;
 
       const repairedMsg: SDKFileMessage = {
-        parentUuid: survivingParentUuid(lines, orphan.lineIndex, orphanedLine.parentUuid),
+        parentUuid:
+          restoredTail.get(orphan.lineIndex) ??
+          survivingParentUuid(lines, orphan.lineIndex, orphanedLine.parentUuid),
         isSidechain: false,
         userType: 'external',
         cwd: orphanedLine.cwd || workspacePath,
@@ -601,6 +604,7 @@ export async function repairSDKSessionFile(
       });
 
       if (missingAssistantMsg.uuid) {
+        restoredTail.set(orphan.lineIndex, missingAssistantMsg.uuid);
         const updatedOrphan = {
           ...orphanedLine,
           parentUuid: missingAssistantMsg.uuid,
@@ -624,8 +628,10 @@ export async function repairSDKSessionFile(
       return result;
     }
 
-    insertions.sort((a, b) => b.lineIndex - a.lineIndex);
-    for (const insertion of insertions) {
+    const ordered = insertions
+      .map((insertion, order) => ({ ...insertion, order }))
+      .sort((a, b) => b.lineIndex - a.lineIndex || b.order - a.order);
+    for (const insertion of ordered) {
       lines.splice(insertion.lineIndex, 0, insertion.message);
     }
 
