@@ -246,6 +246,8 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         if (insideFolder(evidenceRoot, folder)) {
           await insideEvidence(folder);
           await rm(folder, { recursive: true, force: true });
+          if (worktrees.has(basename(folder)))
+            await db.gateway.call(workCleanupWrites, 'forgetGone', [basename(folder)]);
           return true;
         }
         const ref = refs.get(folder);
