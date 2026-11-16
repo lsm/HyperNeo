@@ -17,6 +17,7 @@ import {
   codingLineScope,
   codingStartAlternatives,
   rankCodingTargets,
+  rankedHere,
 } from './stage-lines.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
@@ -129,7 +130,10 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     ) => {
       if (target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
         return { value: target };
-      const saved = facts ? codingStagePreference(db, { repo: facts.repo, stage: 'write' }) : {};
+      const saved =
+        facts && rankedHere(target)
+          ? codingStagePreference(db, { repo: facts.repo, stage: 'write' })
+          : {};
       const start = {
         ...target,
         ...(!target.model && saved.model ? { model: saved.model } : {}),

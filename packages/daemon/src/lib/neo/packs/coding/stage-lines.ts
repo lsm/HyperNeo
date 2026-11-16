@@ -55,7 +55,8 @@ export async function codingCandidateLine<T extends Candidate>(
   };
 }
 
-const rankedHere = (target: Candidate) => target.adapter === 'hyperneo' && !target.place?.daemon;
+export const rankedHere = (target: Candidate) =>
+  target.adapter === 'hyperneo' && !target.place?.daemon;
 
 export function codingStartAlternatives<T extends Candidate>(
   target: T,
