@@ -90,6 +90,9 @@ describe('the Neo attention sweep', () => {
         ),
         dropped: () => {},
       }),
+      failed: (_event, error) => {
+        throw error;
+      },
     });
   });
   afterEach(() => db.close());
@@ -205,6 +208,7 @@ describe('the Neo attention sweep', () => {
 
   test('a finished todo that produces follow-up work with nothing after it wakes Neo on the ladder', async () => {
     const plan = add('todo-plan', { title: 'Write the plan', producesFollowUp: true });
+    sessions.create(plan.id, { verb: 'start', adapter: 'hyperneo' } as never);
     await sweep(T0);
     expect(wakes()).toEqual([]);
     store.updateTodo(plan, { state: 'done', finishedAt: T0 }, T0);
@@ -218,6 +222,12 @@ describe('the Neo attention sweep', () => {
     add('todo-build', { title: 'Build it', approvedAt: null, dependsOn: ['todo-plan'] });
     await sweep(T0 + 4 * HOUR);
     expect(wakes()).toHaveLength(2);
+  });
+
+  test('a finished last todo without the marker raises nothing', async () => {
+    store.updateTodo(add('todo-1'), { state: 'done', finishedAt: T0 }, T0);
+    await sweep(T0);
+    expect(wakes()).toEqual([]);
   });
 
   test('a settled ask raises nothing', async () => {

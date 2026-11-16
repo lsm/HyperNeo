@@ -12,7 +12,7 @@ import {
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 
 const run = resolve(process.argv[2]);
-assert(run.startsWith('/private/tmp/'));
+assert(/^\/(private\/)?tmp\//.test(run));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -144,7 +144,8 @@ try {
           `SELECT json_extract(payload, '$.messageUuid') AS key,
                   json_extract(payload, '$.message.message.content') AS text
              FROM job_queue WHERE queue = 'mailbox'
-              AND json_extract(payload, '$.messageUuid') LIKE 'neo-follow-up-missing:%'`
+              AND json_extract(payload, '$.message.message.content')
+                LIKE '%finished and produces follow-up work%'`
         )
         .all() as { key: string; text: string }[]
     ).map((row) => ({ key: row.key, text: String(row.text) }));

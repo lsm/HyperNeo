@@ -20,6 +20,5 @@ events. Observe `neo-attention-entry.json` and the job queue it was read from:
 - the same step under an open card is dropped, logged as `covered by card`, and
   adds nothing to either queue.
 
-Nothing calls the entry in production yet, so this does not show a wake in
-Neo's conversation, the 5-minute sweep, or any producer; those need their own
-wiring slices and journeys.
+The 5-minute sweep is the entry's first caller; see `neo-attention-sweep.md`.
+The other producers still write to Neo directly until their own wiring slices.
