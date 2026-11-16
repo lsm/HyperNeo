@@ -21,7 +21,7 @@ if (args[0] !== 'api' || !path) {
   process.exit(1);
 }
 if (args.includes('GET')) {
-  console.log(JSON.stringify([comments.filter((item) => item.path === path).map(({ body }) => ({ body }))]));
+  console.log(JSON.stringify(comments.filter((item) => item.path === path).map(({ body }) => ({ body }))));
   process.exit(0);
 }
 const body = args.find((arg) => arg.startsWith('body='))?.slice('body='.length);

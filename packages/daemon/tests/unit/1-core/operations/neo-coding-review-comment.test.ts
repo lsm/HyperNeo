@@ -7,6 +7,7 @@ import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 import {
   codingGithubApi,
   createCodingReviewComments,
+  planCodingReviewComment,
   readCodingPostableReviews,
 } from '../../../../src/lib/neo/packs/coding/review-comment.ts';
 import type { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
@@ -48,7 +49,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
     if (outage.on) throw outage.error ?? new Error('gh lookup timed out');
     const path = args[0];
     if (args.includes('GET'))
-      return [comments.filter((item) => item.path === path).map(({ body }) => ({ body }))];
+      return comments.filter((item) => item.path === path).map(({ body }) => ({ body }));
     const body = args.find((arg) => arg.startsWith('body='));
     if (!body) throw new Error('unexpected GitHub call');
     comments.push({ host, path, body: body.slice('body='.length) });
@@ -292,6 +293,27 @@ describe('codingGithubApi rate limits', () => {
       );
     return { db, ledger, comments, calls, sweep };
   };
+  test('a marker on the second page of comments is found and nothing is posted', async () => {
+    let marker = '';
+    const { db, ledger, calls, sweep } = sweepWith((args) =>
+      args.includes('page=1')
+        ? reply(JSON.stringify(Array.from({ length: 100 }, () => ({ body: 'chatter' }))), 0)
+        : args.includes('page=2')
+          ? reply(JSON.stringify([{ body: marker }]), 0)
+          : reply('', 1, 'gh: unexpected call')
+    );
+    try {
+      const [stored] = await readCodingPostableReviews(db, ledger);
+      marker = planCodingReviewComment(stored).marker;
+      await sweep();
+      expect(calls.map((args) => args.find((arg) => arg.startsWith('page=')))).toEqual([
+        'page=1',
+        'page=2',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
   test('a comment-list 403 marked only by Retry-After stops the pass and holds until then', async () => {
     const forbidden = (args: string[]) =>
       args.includes('--include')
@@ -332,7 +354,7 @@ describe('codingGithubApi rate limits', () => {
             1,
             'gh: Forbidden (HTTP 403)'
           )
-        : reply(JSON.stringify([[]]), 0)
+        : reply(JSON.stringify([]), 0)
     );
     try {
       jest.setSystemTime(start);

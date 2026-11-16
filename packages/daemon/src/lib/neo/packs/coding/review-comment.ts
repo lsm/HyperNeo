@@ -58,18 +58,31 @@ export function planCodingReviewComment(fact: CodingStageFact) {
   };
 }
 
-const Pages = z.array(z.array(z.object({ body: z.string().nullable().optional() })));
+const Page = z.array(z.object({ body: z.string().nullable().optional() }));
+const PER_PAGE = 100;
 
 export async function postCodingReviewComment(api: CodingGithubApi, fact: CodingStageFact) {
   const pr = parsePrUrl(fact.url);
   if (!pr) return false;
   const path = `repos/${pr.owner}/${pr.repo}/issues/${pr.number}/comments`;
   const { marker, body } = planCodingReviewComment(fact);
-  const pages = Pages.parse(
-    await api(pr.host, [path, '--paginate', '--slurp', '-f', 'per_page=100', '--method', 'GET'])
-  );
-  const newest = pages
-    .flat()
+  const comments: z.infer<typeof Page> = [];
+  for (let page = 1; ; page++) {
+    const batch = Page.parse(
+      await api(pr.host, [
+        path,
+        '-f',
+        `per_page=${PER_PAGE}`,
+        '-f',
+        `page=${page}`,
+        '--method',
+        'GET',
+      ])
+    );
+    comments.push(...batch);
+    if (batch.length < PER_PAGE) break;
+  }
+  const newest = comments
     .flatMap((comment) => /<!-- hyperneo-review:[0-9a-f]{16} -->/.exec(comment.body ?? '') ?? [])
     .at(-1);
   if (newest === marker) return false;
