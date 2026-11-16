@@ -1920,6 +1920,30 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2l: a supplied login that cannot be saved is rejected and not kept', async () => {
+      const blocked = path.join(tmpDir, 'not-a-directory');
+      writeFileSync(blocked, 'regular file');
+      const p = makeProvider({}, path.join(blocked, 'hyperneo'), path.join(tmpDir, 'codex'));
+
+      await expect(
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account',
+          refreshToken: 'unsaved-refresh',
+        } as ProviderCredentials)
+      ).rejects.toThrow();
+      expect(await p.getCredentials()).toBeNull();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2m: the default Codex login path stays inside the test temp directory', () => {
+      const p = new AnthropicToCodexBridgeProvider();
+      const codexAuthPath = (p as unknown as { codexAuthPath: string }).codexAuthPath;
+      expect(codexAuthPath.startsWith(os.tmpdir())).toBe(true);
+      expect(codexAuthPath.startsWith(path.join(os.userInfo().homedir, '.codex'))).toBe(false);
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2k: a delayed earlier save does not overwrite a newer supplied login', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
