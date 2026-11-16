@@ -149,4 +149,18 @@ describe('coding.idle_with_open_pr through the Neo attention sweep', () => {
     await sweep(T0 + 4 * HOUR);
     expect(told('neo_notes')).toEqual([]);
   });
+
+  test('a pull request on another host never borrows the ledger state of the same number', async () => {
+    const other = 'https://git.example.com/acme/app/pull/7';
+    ledger('failing', T0);
+    new CodingTodoPrRepository(db).record(
+      'todo-1',
+      [{ url: URL, state: 'OPEN' } as never, { url: other, state: 'OPEN' } as never],
+      T0
+    );
+    await sweep(T0);
+    expect(told('neo_notes')).toEqual([
+      `Todo "Ship it" (todo-1) has an idle worker and open pull requests: ${URL} (failing CI), ${other} (open). Continue its worker if one needs work; otherwise it waits on review, CI or the merge.`,
+    ]);
+  });
 });
