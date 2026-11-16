@@ -1,8 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { createCodingReviewComments } from '../../../../src/lib/neo/packs/coding/review-comment.ts';
+import {
+  createCodingReviewComments,
+  readCodingOpenReviews,
+} from '../../../../src/lib/neo/packs/coding/review-comment.ts';
 import type { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
 
 const url = 'https://github.com/synthetic/review/pull/3';
@@ -25,6 +29,8 @@ const fact: CodingStageFact = {
 
 function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
   const db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
   createCodingPackTables(db);
   const ledger = new CodingPrLedgerRepository(db);
   ledger.stageFacts.observeHead(url, 'head-a', 1);
@@ -45,7 +51,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
     return {};
   };
   const sweep = (post = createCodingReviewComments(github)) =>
-    post(ledger.stageFacts.openReviews());
+    readCodingOpenReviews(db, ledger).then(post);
   return { db, ledger, comments, outage, github, sweep };
 }
 

@@ -14,11 +14,12 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/coding-review-comment.ts "$RUN"
 ```
 
-Real WebSocket RPC `neo.coding.result` records an assigned Review pass on an open
-ledger PR and must not call GitHub. Two coding pack sweeps follow, then a fail at
+The helper watches `synthetic/review-comment` and seeds one open ledger row.
+Real WebSocket RPC `neo.coding.result` records an assigned Review pass on that
+PR and must not call GitHub. Two coding pack sweeps follow, then a fail at
 the same head and two more sweeps. The sweep spawns `gh` itself. Exactly two
 comments must exist: one per stored verdict, none from the repeat sweeps. The
-sweep's own cleanup drops facts for the unwatched synthetic repo, so the helper
+synthetic stage facts do not survive the sweep, so the helper
 re-observes the head before the second result. Each starts with `**HyperNeo recorded review: <VERDICT>**` and
 names the reviewer model and harness, the verdict and the head. The reviewer
 session id never appears. The helper prints the first comment as a sample.

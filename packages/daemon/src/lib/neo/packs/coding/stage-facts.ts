@@ -97,16 +97,6 @@ export class CodingStageFactsRepository {
       .all(githubUrlKey(url)) as { fact: string }[];
     return rows.map((row) => CodingStageFact.parse(JSON.parse(row.fact)));
   }
-
-  openReviews(): CodingStageFact[] {
-    const rows = this.db
-      .prepare(`SELECT f.fact_json AS fact FROM pack_coding_stage_facts f
-      JOIN pack_coding_pr_ledger l
-        ON f.url = 'https://github.com/' || l.repo || '/pull/' || l.number AND f.head = l.head
-      WHERE f.stage = 'review' AND l.closed_at IS NULL`)
-      .all() as { fact: string }[];
-    return rows.map((row) => CodingStageFact.parse(JSON.parse(row.fact)));
-  }
 }
 
 const normalize = (identity: string) => identity.trim().replace(/\s+/g, ' ').toLowerCase();

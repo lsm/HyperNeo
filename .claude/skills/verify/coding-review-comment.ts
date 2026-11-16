@@ -50,6 +50,7 @@ try {
   db.exec("INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','synthetic','Review comment','Review comment',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Review comment','Merged','doing',1,1)");
   ledger.stageFacts.observeHead(url, 'head-a', 1);
   assert(await assignments.recordLater('todo', 'review', assignment));
+  db.prepare("INSERT OR REPLACE INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'global', '', 'watchedRepos', '[\"synthetic/review-comment\"]', 'human', ?)").run(Date.now());
   db.prepare("INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at) VALUES ('synthetic/review-comment', 7, 'Synthetic', 'branch', 'head-a', 'waiting_review', ?, NULL, ?)").run(Date.now(), Date.now());
   const neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });

@@ -5,6 +5,13 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { Logger } from '../../../logger.ts';
+import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import {
+  codingLedgerPrUrl,
+  codingLedgerReads,
+  type CodingPrLedgerRepository,
+} from './pr-ledger.ts';
 import type { CodingStageFact } from './stage-facts.ts';
 
 const log = new Logger('NeoCodingReviewComment');
@@ -73,4 +80,16 @@ export function createCodingReviewComments(api: CodingGithubApi) {
       );
     }
   };
+}
+
+export async function readCodingOpenReviews(db: Database, ledger: CodingPrLedgerRepository) {
+  const open = (await ledger.read('list')).filter((row) => row.closedAt === null);
+  const facts = await Promise.all(
+    open.map(async (row) =>
+      (
+        await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', codingLedgerPrUrl(row))
+      ).filter((fact) => fact.stage === 'review' && fact.head === row.head)
+    )
+  );
+  return facts.flat();
 }
