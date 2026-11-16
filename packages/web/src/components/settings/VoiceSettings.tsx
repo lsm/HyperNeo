@@ -264,9 +264,9 @@ export function VoiceSettings() {
             {draft.hasApiKey &&
               !draft.apiKey &&
               (() => {
-                const normalizeEndpoint = (url: string) => {
+                const hostOf = (url: string) => {
                   try {
-                    return new URL(url.trim()).toString();
+                    return new URL(url.trim()).host;
                   } catch {
                     return url.trim();
                   }
@@ -274,14 +274,14 @@ export function VoiceSettings() {
                 const keyScopedElsewhere =
                   draft.apiKeyEndpoint &&
                   draft.endpoint.trim() &&
-                  normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
+                  hostOf(draft.apiKeyEndpoint) !== hostOf(draft.endpoint);
                 return (
                   <div class="flex items-center justify-between gap-3">
                     <div
                       class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}
                     >
                       {keyScopedElsewhere
-                        ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
+                        ? 'Saved key is scoped to a different host. Re-enter it for this endpoint.'
                         : 'Key saved. Enter a new key to replace it.'}
                     </div>
                     <button
