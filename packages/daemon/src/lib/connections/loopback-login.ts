@@ -69,7 +69,6 @@ export async function startLoopbackLogin(options: {
         settled ||
         used ||
         request.method !== 'GET' ||
-        url.origin !== expected.origin ||
         url.pathname !== expected.pathname ||
         request.headers.get('host') !== expected.host ||
         url.searchParams.getAll('state').length !== 1 ||
