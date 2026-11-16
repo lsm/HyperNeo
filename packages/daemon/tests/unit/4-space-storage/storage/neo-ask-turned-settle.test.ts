@@ -343,6 +343,23 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await sweep()).toEqual(['ask']);
   });
 
+  test('a reminder still being read in Neo’s session keeps the ask open', async () => {
+    coordinator();
+    session('earlier');
+    add('removed', 'removed', { reason: 'Not needed' });
+    held(wakeUuid('ask', 2), 'earlier');
+    queue().attach('earlier', [], undefined, 'earlier-batch');
+    sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
+    sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
+    held(wakeUuid('ask', 3), 'coordinator');
+    queue().attach('coordinator', [], undefined, 'repeat-batch');
+    sdk('user', 'repeat-batch', 30, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'repeat-result', 31, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
   test('an unfinished turn in Neo’s session keeps the ask open', async () => {
     coordinator();
     add('finished', 'done');

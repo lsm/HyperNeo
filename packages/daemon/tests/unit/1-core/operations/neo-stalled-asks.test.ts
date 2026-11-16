@@ -64,7 +64,7 @@ function ask(id: string, at = clock - 2 * hour, sessionId = root) {
     createdAt: at,
   });
 }
-function todo(askId: string, state: 'todo' | 'doing' | 'blocked' | 'done') {
+function todo(askId: string, state: 'todo' | 'doing' | 'blocked' | 'done' | 'removed') {
   const item = service.todos.addTodo(
     'todo-' + askId,
     askId,
@@ -85,6 +85,15 @@ const told = (queue: 'mailbox' | 'neo_notes') =>
     .map((row) => String(row.text))
     .filter((text) => text.startsWith('Ask: '))
     .sort();
+const mailed = () =>
+  (
+    db
+      .getDatabase()
+      .prepare(
+        "SELECT json_extract(payload, '$.message.message.content') AS text FROM job_queue WHERE queue = 'mailbox'"
+      )
+      .all() as { text: string | null }[]
+  ).map((row) => String(row.text));
 const wakes = () => told('mailbox');
 const digests = () => told('neo_notes');
 const idle = (id: string) => `Ask: ${id} (${id})\n${note}`;
@@ -172,16 +181,77 @@ test('writing the outcome does not wake Neo about the same finish again', async 
 });
 
 test('an unfinished ask still waits two hours', async () => {
-  ask('failed', clock);
-  todo('failed', 'doing');
-  service.todos.updateTodo(service.todos.getTodo('todo-failed')!, { state: 'failed' }, clock);
+  ask('removed', clock);
+  todo('removed', 'doing');
+  service.todos.updateTodo(service.todos.getTodo('todo-removed')!, { state: 'removed' }, clock);
   ask('empty-recent', clock);
   await service.refreshDriverWork();
   expect([...wakes(), ...digests()]).toEqual([]);
   clock += 2 * hour;
   await service.refreshDriverWork();
   expect(wakes()).toEqual([]);
-  expect(digests()).toEqual([idle('empty-recent'), idle('failed')]);
+  expect(digests()).toEqual([idle('empty-recent'), idle('removed')]);
+});
+
+test('an ask with a failed todo is the todo’s own step, not an idle ask', async () => {
+  ask('failed', clock);
+  const item = service.todos.addTodo(
+    'todo-failed',
+    'failed',
+    {
+      title: 'Step',
+      doneWhen: 'Done',
+      check: null,
+      instruction: 'Do it.',
+      named: null,
+      approvedAt: clock,
+    },
+    clock
+  );
+  service.todos.updateTodo(item, { state: 'failed', reason: 'No network' }, clock);
+  clock += 2 * hour;
+  await service.sweepPacks();
+  await service.refreshDriverWork();
+  expect(digests()).toEqual([]);
+  expect(
+    mailed().filter((text) => text.includes('(todo-failed) needs your next step'))
+  ).toHaveLength(1);
+});
+
+test('an idle ask is told again after a card is answered, with no todo change', async () => {
+  ask('quiet', clock - 2 * hour);
+  todo('quiet', 'removed');
+  await service.refreshDriverWork();
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  clock += 24 * hour;
+  await service.refreshDriverWork();
+  expect(digests()).toEqual([idle('quiet'), idle('quiet')]);
+  const card = service.todos.askQuestion(
+    'card',
+    'quiet',
+    {
+      text: 'Choose',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: 'No',
+      yesLabel: 'Yes',
+      confirm: null,
+      document: null,
+      replyTo: [],
+      todoId: null,
+      artifacts: [],
+    },
+    clock
+  );
+  service.todos.answerQuestion(card, true as never, 'button', clock);
+  clock += 2 * hour - 1;
+  await service.refreshDriverWork();
+  expect(digests()).toHaveLength(2);
+  clock += 1;
+  await service.refreshDriverWork();
+  expect(digests()).toEqual([idle('quiet'), idle('quiet'), idle('quiet')]);
 });
 
 test('a parent with an open child is not finished', async () => {
