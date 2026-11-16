@@ -22,7 +22,7 @@ try {
   const origin = { sessionId: root, messageId: pub };
   assert(publications.append({ conversationId, publicationId: pub, askOrigin: origin, producerInput: origin, shortText: 'Synthetic original reply', fullText: 'Synthetic original history detail', links: [] }).accepted);
   assert(publications.append({ conversationId, publicationId: '50000000-0000-4000-8000-000000008099', askOrigin: origin, producerInput: origin, shortText: 'Synthetic latest reply', fullText: 'Synthetic latest reply', links: [] }).accepted);
-  new NeoSessionMessageRepository(db).record({ conversationId, messageId: 'synthetic-session-message', fromSession: root, fromName: 'Neo', toSession: 'synthetic-worker', toName: 'Synthetic worker', text: 'Synthetic session preview\nSynthetic session detail. '.repeat(15), createdAt: new Date().toISOString() });
+  await new NeoSessionMessageRepository(db).record({ conversationId, messageId: 'synthetic-session-message', fromSession: root, fromName: 'Neo', toSession: 'synthetic-worker', toName: 'Synthetic worker', text: 'Synthetic session preview\nSynthetic session detail. '.repeat(15), createdAt: new Date().toISOString(), kind: 'session' });
   const failed = '60000000-0000-4000-8000-000000008098';
   assert(new NeoConversationAskRepository(db).append({ conversationId, requestId: failed, askOrigin: { sessionId: root, messageId: failed }, content: 'Synthetic stored delivery failure' }).accepted);
   new SDKMessageRepository(db).saveUserMessage(root, { type: 'user', uuid: failed, session_id: root, message: { role: 'user', content: 'Synthetic stored delivery failure' } } as SDKMessage, 'failed', 'human');
