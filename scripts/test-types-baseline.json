@@ -156,7 +156,6 @@
     "packages/daemon/tests/unit/1-core/operations/neo-coding-policy.test.ts": 3,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-pr-events.test.ts": 11,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-pr-ledger.test.ts": 2,
-    "packages/daemon/tests/unit/1-core/operations/neo-coding-pr-sweep.test.ts": 3,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-results.test.ts": 3,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-todo-prs.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts": 2,

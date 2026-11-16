@@ -1,8 +1,4 @@
-import {
-  readCodingPendingDelivery,
-  releaseCodingClaimedHistory,
-  readCodingUnownedClaims,
-} from './unowned-claims-worker.ts';
+import { readCodingUnownedClaims } from './unowned-claims-worker.ts';
 import { codingPrEventReads } from './pr-event-routing-db.ts';
 import { codingRepoWatched } from './watched-repos.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
@@ -10,7 +6,6 @@ import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { callCodingBranchDb } from './branch-facts-db.ts';
-import { codingUnownedWrites } from './unowned-db.ts';
 import {
   codingLedgerPrUrl,
   CodingPrLedgerRepository,
@@ -21,9 +16,6 @@ import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from
 import {
   codingPrMayBeInRunningTurn,
   planCodingUnclaimedPrs,
-  codingUnownedPrKey,
-  planCodingUnownedNotice,
-  type CodingUnownedNotice,
   type CodingUnownedPr,
 } from './pr-unowned.ts';
 import { CodingTurnPrRepository } from './turn-prs.ts';
@@ -111,133 +103,32 @@ export class CodingPrEventRepository {
     }
   }
 
-  pendingDelivery() {
-    return readCodingPendingDelivery(this.db);
-  }
-
-  pendingDeliveryLater() {
-    return callCodingBranchDb(
-      () => gatewayFor(this.db).call(codingUnownedWrites, 'delivery'),
-      'coding.unowned.db'
-    );
-  }
-
-  pendingUnowned(
-    now: number,
-    receipt?: {
-      key: string | null;
-      status: 'admitted' | 'absent' | 'in-flight' | 'unknown' | 'recipient_gone';
-      recipient: string | null;
-    }
-  ): CodingUnownedNotice | null {
-    let retired: { key: string; reason: string } | undefined;
-    const notice = this.db.transaction(() => {
-      const pending = this.db
-        .prepare(
-          'SELECT pending_key AS key, pending_text AS text, pending_rows AS rows FROM pack_coding_pr_unowned_state WHERE id = 1'
-        )
-        .get() as CodingUnownedNotice & { rows: string | null };
-      if (receipt && pending.key !== receipt.key) return null;
-      if (pending.key) {
-        const saved = pending.rows ? JSON.parse(pending.rows) : null;
-        if (!saved?.recipient || receipt?.status === 'recipient_gone') {
-          this.unownedDelivered(pending.key);
-          retired = {
-            key: pending.key,
-            reason: saved?.recipient ? 'recipient_gone' : 'recipient_unknown',
-          };
-          return null;
-        }
-        const original: CodingUnownedPr[] = saved.rows;
-        if (receipt?.status === 'admitted') {
-          this.unownedDelivered(pending.key);
-          return null;
-        }
-        if (receipt?.status !== 'absent') return null;
-        const unclaimed = this.unclaimed(original);
-        releaseCodingClaimedHistory(this.db, original, unclaimed);
-        const remaining = unclaimed.filter((row) => codingRepoWatched(this.db, row.repo));
-        const notice = planCodingUnownedNotice(remaining, pending.key);
-        const retained = notice ?? planCodingUnownedNotice(unclaimed, pending.key);
-        if (retained) {
-          this.db
-            .prepare(
-              'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1 AND pending_key = ?'
-            )
-            .run(
-              retained.key,
-              retained.text,
-              JSON.stringify({ recipient: saved.recipient, rows: notice ? remaining : unclaimed }),
-              pending.key
-            );
-          if (notice) return notice;
-        } else this.unownedDelivered(pending.key);
-      }
-      if (!receipt?.recipient) return null;
-      const rows = this.db
-        .prepare(
-          `SELECT l.repo, l.number, l.title, l.created_at AS createdAt FROM pack_coding_pr_ledger l
+  unowned(now: number) {
+    const rows = this.db
+      .prepare(
+        `SELECT l.repo, l.number, l.title, l.created_at AS createdAt FROM pack_coding_pr_ledger l
            JOIN pack_coding_pr_unowned_state s ON s.id = 1
           WHERE l.owner IS NULL AND l.closed_at IS NULL AND l.state NOT IN ('draft', 'merged', 'closed')
             AND l.author_is_bot = 0 AND l.created_at > s.activated_at AND l.read_at = ?
-            AND NOT EXISTS (SELECT 1 FROM pack_coding_pr_unowned n
-              WHERE n.key = 'neo-pr-unowned:' || l.repo || '#' || l.number)
           ORDER BY l.repo, l.number`
-        )
-        .all(now) as (CodingUnownedPr & { createdAt: number | null })[];
-      const watched = this.unclaimed(rows.filter((row) => codingRepoWatched(this.db, row.repo)));
-      const reads = new CodingTurnPrRepository(this.db);
-      const mentions = reads.mentions(watched.map(codingLedgerPrUrl));
-      const lastTurnEnds = reads.lastTurnEndsOfRunningWorkers();
-      const watchedRows = watched.filter(
-        (row) =>
-          !codingPrMayBeInRunningTurn(row.createdAt, lastTurnEnds) &&
-          planCodingLedgerTurnOwner(row, mentions).state === 'none'
-      );
-      const notice = planCodingUnownedNotice(watchedRows);
-      if (!notice) return null;
-      const insert = this.db.prepare(
-        'INSERT INTO pack_coding_pr_unowned (key, listed_at) VALUES (?, ?)'
-      );
-      for (const row of watchedRows) insert.run(codingUnownedPrKey(row), now);
-      this.db
-        .prepare(
-          'UPDATE pack_coding_pr_unowned_state SET pending_key = ?, pending_text = ?, pending_rows = ? WHERE id = 1'
-        )
-        .run(
-          notice.key,
-          notice.text,
-          JSON.stringify({ recipient: receipt.recipient, rows: watchedRows })
-        );
-      return notice;
-    })();
-    if (retired) log.warn('Unowned PR pending slot retired without delivery', retired);
-    return notice;
-  }
-
-  pendingUnownedLater(
-    now: number,
-    receipt?: Parameters<CodingPrEventRepository['pendingUnowned']>[1]
-  ): Promise<CodingUnownedNotice | null> {
-    return callCodingBranchDb(
-      () => gatewayFor(this.db).call(codingUnownedWrites, 'pending', now, receipt),
-      'coding.unowned.db'
-    );
-  }
-
-  unownedDeliveredLater(key: string): Promise<void> {
-    return callCodingBranchDb(
-      () => gatewayFor(this.db).call(codingUnownedWrites, 'acknowledge', key),
-      'coding.unowned.db'
-    );
-  }
-
-  unownedDelivered(key: string): void {
-    this.db
-      .prepare(
-        'UPDATE pack_coding_pr_unowned_state SET pending_key = NULL, pending_text = NULL WHERE id = 1 AND pending_key = ?'
       )
-      .run(key);
+      .all(now) as (CodingUnownedPr & { createdAt: number })[];
+    const watched = this.unclaimed(rows.filter((row) => codingRepoWatched(this.db, row.repo)));
+    const reads = new CodingTurnPrRepository(this.db);
+    const mentions = reads.mentions(watched.map(codingLedgerPrUrl));
+    const lastTurnEnds = reads.lastTurnEndsOfRunningWorkers();
+    return watched.filter(
+      (row) =>
+        !codingPrMayBeInRunningTurn(row.createdAt, lastTurnEnds) &&
+        planCodingLedgerTurnOwner(row, mentions).state === 'none'
+    );
+  }
+
+  unownedLater(now: number) {
+    return callCodingBranchDb(
+      () => gatewayFor(this.db).call(codingPrEventReads, 'unowned', now),
+      'coding.unowned.db'
+    );
   }
 
   route(row: Pick<CodingPrTransition, 'repo' | 'number'>) {

@@ -77,11 +77,6 @@ export function createCodingPack(deps: {
     withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
   const prSweepDeps: CodingSweepDeps = {
     host: process.env.GH_HOST ?? 'github.com',
-    delivery: deps.prSweepDeps?.delivery && {
-      ...deps.prSweepDeps.delivery,
-      send: async (recipient, key, text) =>
-        deps.prSweepDeps.delivery!.send(recipient, key, await notificationContext(text)),
-    },
     tell: async (ref, key, text, pr) =>
       deps.prSweepDeps.tell(
         ref,
@@ -92,13 +87,14 @@ export function createCodingPack(deps: {
     human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
     wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
   };
+  const attend: CodingAttend = async (event) =>
+    deps.attend({
+      ...event,
+      facts: { text: await notificationContext(String(event.facts.text)) },
+    });
   const mergeSweep = createCodingDaemonMergeSweep(deps.database, deps.prLedger, deps.prEvents, {
     ...prSweepDeps,
-    attend: async (event) =>
-      deps.attend({
-        ...event,
-        facts: { text: await notificationContext(String(event.facts.text)) },
-      }),
+    attend,
   });
   const todos = createCodingTodoPack(
     deps.todoPrs,
@@ -277,8 +273,8 @@ export function createCodingPack(deps: {
         prSweepDeps.wake,
         now
       );
-      await wakeCodingUnownedPrs(deps.prEvents, prSweepDeps.wake, now, prSweepDeps.delivery);
-      await sweepCodingPrs(deps.prSweep, prSweepDeps, now);
+      await wakeCodingUnownedPrs(deps.prEvents, attend, now);
+      await sweepCodingPrs(deps.prSweep, { ...prSweepDeps, attend }, now);
     },
     stats: async (now) => ({
       'ready to merge >1h': (await deps.prLedger.read('list')).filter(
