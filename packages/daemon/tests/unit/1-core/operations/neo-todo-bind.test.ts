@@ -31,6 +31,7 @@ function setup() {
     sessions,
     packs: () => packs,
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
     invoke: async (_caller, name) => {
       calls.push(name);

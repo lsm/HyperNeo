@@ -73,6 +73,9 @@ function setup(stop: () => Promise<string | null> = async () => null, judged = f
     tell: async (_ask, _todo, note) => {
       told.push(note);
     },
+    attend: async (event) => {
+      told.push(String(event.facts.text));
+    },
     changed: () => {},
   });
   const ops = Object.fromEntries(

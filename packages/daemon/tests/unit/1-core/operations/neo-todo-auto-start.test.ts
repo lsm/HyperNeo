@@ -38,6 +38,7 @@ function setup(
     sessions,
     packs: () => packs,
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
     invoke: async (_caller, name, input) => {
       if (name === 'work.send') {

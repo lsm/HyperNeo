@@ -67,7 +67,7 @@ try {
     try { const result = await call(op, method, ...args); claimCalls.push({ roundTripMs: performance.now() - start, failed: false }); return result; }
     catch (error) { claimCalls.push({ roundTripMs: performance.now() - start, failed: true }); throw error; }
   }) as typeof app.db.gateway.call;
-  const notes = () => (prepare("SELECT count(*) AS n FROM job_queue WHERE queue='neo_notes' AND json_extract(payload,'$.messageUuid') LIKE ?").get(`neo-todo-remind:${id}:%`) as { n: number }).n;
+  const notes = () => (prepare("SELECT count(*) AS n FROM job_queue WHERE queue='mailbox' AND json_extract(payload,'$.message.message.content') LIKE ?").get('%could not be reached%') as { n: number }).n;
   const refresh = async () => {
     prepare("UPDATE job_queue SET run_at=0 WHERE queue='neo.work.driver.refresh' AND status='pending'").run();
     const job = prepare("SELECT id FROM job_queue WHERE queue='neo.work.driver.refresh' AND status='pending' LIMIT 1").get() as { id: string } | null;

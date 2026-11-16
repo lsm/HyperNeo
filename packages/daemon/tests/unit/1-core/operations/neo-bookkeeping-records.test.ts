@@ -54,6 +54,7 @@ function setup() {
       throw new Error('Unexpected worker call');
     },
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
   });
   const registry = createOperationRegistry([

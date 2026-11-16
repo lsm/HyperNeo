@@ -10,6 +10,8 @@ import type { ProviderCredentialManager } from '../credentials/provider-credenti
 import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
 import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
+import type { NeoPack } from '../neo/pack-contract.ts';
+import { refuseSecondLineRanker } from '../neo/pack-selection.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -68,13 +70,17 @@ export function registerSettingsHandlers(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  credentialManager?: ProviderCredentialManager
+  credentialManager?: ProviderCredentialManager,
+  installedPacks: () => readonly NeoPack[] = () => []
 ) {
   configureWorkerSandbox(() => settingsManager.getGlobalSettings().workerSandbox ?? 'off');
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
       assertNoToolSelectionDefaults(data.updates);
+      const packs = data.updates.neo?.packs;
+      const refusal = packs ? refuseSecondLineRanker(packs, installedPacks()) : null;
+      if (refusal) throw new Error(refusal);
       const touchesCustomEndpoints = data.updates.customEndpoints !== undefined;
       const run = async () => {
         if (touchesCustomEndpoints) {

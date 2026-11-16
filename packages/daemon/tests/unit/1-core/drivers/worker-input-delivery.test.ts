@@ -147,6 +147,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
         invoke: (caller, name, input) => invokeOperation(registry, name, input, caller),
         packs: () => [],
         tell: async () => {},
+        attend: async () => {},
         changed: () => {},
         limits: () => ({ running: 1, perGroup: 1 }),
         queueFollowUp: (todoId, message, origin, ref) =>

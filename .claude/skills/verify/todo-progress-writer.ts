@@ -96,7 +96,7 @@ try {
   db.exec('DROP TRIGGER reject_progress_check');
   prepare('UPDATE sessions SET status=? WHERE id=?').run('pending_worktree_choice', worker);
   report.sameIncident = await refresh();
-  const repeated = prepare("SELECT count(*) AS n FROM job_queue WHERE queue='neo_notes' AND json_extract(payload,'$.messageUuid') LIKE ?").get('neo-todo:progress-todo:%') as { n: number };
+  const repeated = prepare("SELECT count(*) AS n FROM job_queue WHERE queue='neo_notes' AND json_extract(payload,'$.message.message.content') LIKE ?").get('%is waiting on the human%') as { n: number };
   report.repeatedNeedsYouNotes = repeated.n;
   assert.equal(repeated.n, mode === 'before' ? 1 : 0, 'the same incident must not queue another ask-the-human note');
   prepare('UPDATE sessions SET status=? WHERE id=?').run('active', worker);

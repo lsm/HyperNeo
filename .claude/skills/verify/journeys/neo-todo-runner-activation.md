@@ -42,6 +42,6 @@ The helper closes its transport and daemon in finally, writes
 its synthetic HOME/database. This proof makes no latency-target claim.
 
 The capacity fixture holds an approved todo with a total worker limit of zero.
-The public reader must keep it queued and the runner's delivered note must give
-its running worker count and total limit. The capacity unit contracts also cover
-the per-project limit and an idle but occupied assigned worker.
+The public reader must keep it queued and the runner must send Neo no note
+about it: the daemon starts it when a slot opens. The capacity unit contracts
+also cover the per-project limit and an idle but occupied assigned worker.

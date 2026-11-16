@@ -312,6 +312,9 @@ describe('owned Copilot lifecycle', () => {
         tell: async (_ask, _todo, note) => {
           told.push(note);
         },
+        attend: async (event) => {
+          told.push(String(event.facts.text));
+        },
       });
       await runner.refresh(() => {});
       await runner.refresh(() => {});

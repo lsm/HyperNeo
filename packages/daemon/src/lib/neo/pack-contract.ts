@@ -91,11 +91,23 @@ export interface NeoPackPreferenceDeclaration {
     | { kind: 'globs' }
     | { kind: 'repositories' }
     | { kind: 'text' }
-    | { kind: 'login' };
+    | { kind: 'login' }
+    | { kind: 'routes' }
+    | { kind: 'lineRules' }
+    | { kind: 'holdRules' };
   default: unknown;
   ask: string;
   askWhen?: { key: string; equals: unknown };
 }
+
+export type NeoLine = { provider: string; model: string; harness?: string; effort?: string };
+export type NeoLineScope = { repo?: string; projectId?: string };
+export type NeoLineRanking = {
+  ranked: readonly { line: NeoLine; reason?: string }[];
+  skipped: readonly { line: NeoLine; reason: string }[];
+  exhausted: boolean;
+};
+export type NeoWorkKind = { id: string; label: NeoPackPreferenceLabel };
 
 export type NeoTrackerOwner = { kind: 'ask' | 'todo'; ask: NeoAsk; todo?: NeoTodo };
 export type NeoTrackerItem = { home: string; title: string; body: string; marker: string };
@@ -113,6 +125,12 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   forgetRepositories?(repos: readonly string[]): void;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
+  workKinds?: readonly NeoWorkKind[];
+  rankLines?(
+    kind: string,
+    candidates: readonly NeoLine[],
+    scope: NeoLineScope
+  ): NeoLineRanking | Promise<NeoLineRanking>;
   todos?: NeoTodoPack;
   matter?(ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>): string | null;
   tracker?: NeoTrackerAdapter;
