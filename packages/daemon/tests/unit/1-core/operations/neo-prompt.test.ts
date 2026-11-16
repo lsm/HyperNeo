@@ -57,12 +57,17 @@ describe('root Neo system prompt', () => {
       'Run a step the human already authorized',
       'Ask with neo.question.ask only when the step needs new authority from the human or you cannot tell',
       'name the decision, why it needs them and what each answer does',
-      'options are the decision ("Merge", "Not yet"), not todo operations',
+      'options are the decision ("Merge", "Close it"), not todo operations',
+      'When the human says a step must wait, hold it with neo.todo.hold',
       'For an overdue check, ask whoever it waits on, mark it done or remove it; if the wait is still right, do nothing',
     ])
       expect(NEO_ROOT_TURN_END).toContain(line);
     expect(NEO_ROOT_TURN_END).not.toContain(
       'Act on it, ask the human, or hold it with neo.todo.hold'
+    );
+    expect(NEO_ROOT_TURN_END).not.toContain('Not yet');
+    expect(neoToolDescription('neo.question.ask')).toContain(
+      'no option may mean later or not now: when the human decides a step must wait, record that with neo.todo.hold'
     );
   });
 
