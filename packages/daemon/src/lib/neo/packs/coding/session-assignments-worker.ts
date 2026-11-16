@@ -20,15 +20,27 @@ const RELEASED = (row: string) =>
 class CodingSessionAssignments {
   constructor(private readonly db: Database) {}
 
-  reserveFeature(input: { repo: string; featureKey: string; todoId: string; now: number }): Owner {
+  reserveFeature(input: {
+    repo: string;
+    featureKey: string;
+    todoId: string;
+    now: number;
+    replace?: boolean;
+  }): Owner {
     this.db
       .prepare(
         `INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at)
-         VALUES (?, ?, ?, ?) ON CONFLICT (repo, feature_key) DO UPDATE
+         VALUES (?1, ?2, ?3, ?4) ON CONFLICT (repo, feature_key) DO UPDATE
          SET todo_id = excluded.todo_id, reserved_at = excluded.reserved_at
-         WHERE ${RELEASED('pack_coding_feature_sessions')}`
+         WHERE ?5 = 1 OR ${RELEASED('pack_coding_feature_sessions')}`
       )
-      .run(input.repo.toLowerCase(), input.featureKey, input.todoId, input.now);
+      .run(
+        input.repo.toLowerCase(),
+        input.featureKey,
+        input.todoId,
+        input.now,
+        input.replace ? 1 : 0
+      );
     return this.feature(input.repo, input.featureKey)!;
   }
 

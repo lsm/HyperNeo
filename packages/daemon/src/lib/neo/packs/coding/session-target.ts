@@ -20,7 +20,9 @@ type Facts = {
   owner: { todoId: string; session: Pooled | null } | null;
   pool: Pooled[];
 } | null;
-type Plan = ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' };
+type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
+  ownerArchived?: boolean;
+};
 
 const WAIT = 'session_unknown: the session for this work is starting or unreachable; wait.';
 const LIVE_BUSY = new Set(['queued', 'running', 'needs_you']);
@@ -69,19 +71,23 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       if (!facts) return { verb: 'keep' };
       const { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-      const assigned =
-        (owner?.session && (await sessionState(owner.session, status))) || undefined;
+      const ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
+      const assigned = ownerState ?? undefined;
       const pool = assigned
         ? []
         : (await Promise.all(facts.pool.map((s) => sessionState(s, status)))).filter(
             (s) => s !== null
           );
-      return planCodingSessionDispatch({
-        strategy: facts.strategy,
-        workType: (target.verb === 'start' && target.name) || 'dev',
-        assigned,
-        pool,
-      });
+      return {
+        ...planCodingSessionDispatch({
+          strategy: facts.strategy,
+          workType: (target.verb === 'start' && target.name) || 'dev',
+          assigned,
+          pool,
+        }),
+        // An archived owner can never run the feature again; this dispatch takes it over.
+        ownerArchived: ownerState === null,
+      };
     },
     ['facts', 'todo', 'target', 'status'],
     'plan'
@@ -90,13 +96,14 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
       const binds =
         (plan.verb === 'send' && plan.bind) ||
-        (plan.verb === 'start' && !facts?.owner && target.verb === 'start');
+        (plan.verb === 'start' && (!facts?.owner || plan.ownerArchived) && target.verb === 'start');
       if (!facts || facts.strategy !== 'long_lived' || !binds) return true;
       const owner = await gatewayFor(db).call(codingSessionAssignmentWrites, 'reserveFeature', {
         repo: facts.repo,
         featureKey: todo.askId,
         todoId: todo.id,
         now: Date.now(),
+        replace: plan.ownerArchived,
       });
       return owner.todoId === todo.id;
     },
