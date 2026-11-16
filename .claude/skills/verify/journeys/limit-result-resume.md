@@ -18,7 +18,8 @@ on the SDK subprocess, so the real Claude CLI reports that at once as an error
 result. The CLI process stays alive after the result.
 
 The daemon holds the turn in `rate_limit_cooldown` with `retryAt` about
-90 seconds ahead, without charging the failure episode. The helper then lets the
+90 seconds ahead, `reason: 'limit'` and a `since` between the send and the
+hold, without charging the failure episode. The helper then lets the
 proxy answer and waits for the watchdog's retry to send the held prompt to the
 live CLI and finish it with a successful result, with no session error. The run
 takes about two minutes. `evidence/observed.json` records the 429 count, the
