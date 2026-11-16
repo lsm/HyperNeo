@@ -65,6 +65,16 @@ describe('owned clone removal', () => {
     await expectKept(owned);
   });
 
+  test('keeps a clone with a commit only a local tag holds', async () => {
+    const owned = ownedClone();
+    owned.clone('switch', '--quiet', '-c', 'tagged');
+    owned.clone('commit', '--allow-empty', '-m', 'tagged only');
+    owned.clone('tag', 'keep-me');
+    owned.clone('switch', '--quiet', 'dev');
+    owned.clone('branch', '-D', 'tagged');
+    await expectKept(owned);
+  });
+
   test('keeps a clone whose remote now points at a mirror that has the commit', async () => {
     const owned = ownedClone();
     const mirror = join(owned.run, 'mirror.git');
