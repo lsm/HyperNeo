@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
+import { frontSessionId } from '../../../../src/lib/neo/front-mode.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   keepNeoSessionNoticeGroups,
@@ -585,6 +586,188 @@ describe('refreshDriverWork', () => {
     await service.dispose();
     await db.close();
   });
+
+  const modelState = (state: Record<string, unknown>) => {
+    db.getDatabase()
+      .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+      .run(JSON.stringify(state), 'neo:root');
+  };
+  const holdNotices = () =>
+    events.filter(([name]) => name === 'neo.session.notice').map(([, notice]) => notice);
+
+  test('a Neo login hold alerts once across restart and clears when it ends', async () => {
+    const held = { status: 'rate_limit_cooldown', reason: 'login', since: now };
+    modelState(held);
+    await service.refreshDriverWork();
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(holdNotices()[0]).toMatchObject({
+      kind: 'needs_you',
+      ref: { adapter: 'hyperneo', id: 'neo:root' },
+    });
+    expect(service.sessionNotices).toHaveLength(1);
+    const sessions = service.sessions;
+    await service.dispose();
+    events.length = 0;
+    service = createNeoService(
+      db,
+      sessions,
+      {
+        event: mock((name: string, payload: unknown) => events.push([name, payload])),
+      } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(0);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+    modelState({ ...held, since: now + 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(
+      JSON.parse(
+        (
+          db
+            .getDatabase()
+            .prepare('SELECT processing_state FROM sessions WHERE id = ?')
+            .get('neo:root') as { processing_state: string }
+        ).processing_state
+      )
+    ).toEqual({ ...held, since: now + 1 });
+  });
+
+  test('root and front sharing a login hold send one alert until both recover', async () => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const front = frontSessionId(conversation);
+    await db.createSession(createTestSession(front));
+    const setFront = (state: Record<string, unknown>) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify(state), front);
+    modelState({ status: 'rate_limit_cooldown', reason: 'login', since: now });
+    setFront({ status: 'rate_limit_cooldown', reason: 'login', since: now - 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(holdNotices()[0]).toMatchObject({ at: now - 1, kind: 'needs_you' });
+    expect(service.sessionNotices).toHaveLength(1);
+    setFront({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+  });
+
+  test('a long Neo limit hold alerts once even when its reset moves nearer', async () => {
+    const held = {
+      status: 'rate_limit_cooldown',
+      reason: 'limit',
+      since: Date.now(),
+      retryAt: Date.now() + 31 * 60_000,
+    };
+    modelState(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    modelState({ ...held, retryAt: held.since + 5 * 60_000 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+  });
+
+  test('an elapsed long limit with an unknown reset alerts', async () => {
+    modelState({ status: 'rate_limit_cooldown', reason: 'limit', since: Date.now() - 31 * 60_000 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+  });
+
+  test.each(['neo', 'front'])('a %s limit retry keeps its notice and alerts once', async (role) => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const id = role === 'neo' ? 'neo:root' : frontSessionId(conversation);
+    if (role === 'front') await db.createSession(createTestSession(id));
+    const state = (value: Record<string, unknown>) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify(value), id);
+    const since = Date.now();
+    const held = {
+      status: 'rate_limit_cooldown',
+      reason: 'limit',
+      since,
+      retryAt: since + 31 * 60_000,
+    };
+    state(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    state({ status: 'processing', phase: 'thinking' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(1);
+    const sessions = service.sessions;
+    await service.dispose();
+    service = createNeoService(
+      db,
+      sessions,
+      {
+        event: mock((name: string, payload: unknown) => events.push([name, payload])),
+      } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(1);
+    expect(holdNotices()).toHaveLength(1);
+    state(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    state({ ...held, since: since + 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(2);
+    state({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+  });
+
+  test('a model hold notice keeps the public notice list within its existing limit', async () => {
+    service.sessionWatcher.sessionNotices = Array.from(
+      { length: NEO_SESSION_NOTICES_MAX },
+      (_, index) => ({
+        key: `worker-${index}`,
+        ref: { adapter: 'hyperneo', id: `worker-${index}` },
+        title: 'Worker',
+        kind: 'finished',
+        at: index,
+      })
+    );
+    modelState({ status: 'rate_limit_cooldown', reason: 'login', since: Date.now() });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(NEO_SESSION_NOTICES_MAX);
+    expect(service.sessionNotices.at(-1)?.kind).toBe('needs_you');
+  });
+
+  test.each(['network', 'overloaded', 'limit'])(
+    'a %s hold outside the alert policy stays quiet',
+    async (reason) => {
+      const since = Date.now();
+      modelState({
+        status: 'rate_limit_cooldown',
+        reason,
+        since,
+        retryAt: since + (reason === 'limit' ? 30 : 60) * 60_000,
+      });
+      await service.refreshDriverWork();
+      expect(holdNotices()).toHaveLength(0);
+      expect(service.sessionNotices).toHaveLength(0);
+    }
+  );
 
   test('keeps what it saw when a listing comes back partial', async () => {
     let clock = Date.now();
