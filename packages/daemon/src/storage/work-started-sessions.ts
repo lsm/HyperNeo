@@ -10,12 +10,15 @@ export function recordStartedWork(
   db: BunDatabase,
   ref: StartedWork,
   at = Date.now(),
-  unusable = false
+  unusable = false,
+  released = false
 ): void {
   db.prepare(
-    `INSERT INTO work_started_sessions (adapter, id, started_at, unusable_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT (adapter, id) DO UPDATE SET unusable_at = COALESCE(excluded.unusable_at, unusable_at)`
-  ).run(ref.adapter, ref.id, at, unusable ? at : null);
+    `INSERT INTO work_started_sessions (adapter, id, started_at, unusable_at, released_at)
+     VALUES (?, ?, ?, ?, ?) ON CONFLICT (adapter, id) DO UPDATE SET
+       unusable_at = COALESCE(excluded.unusable_at, unusable_at),
+       released_at = COALESCE(released_at, excluded.released_at)`
+  ).run(ref.adapter, ref.id, at, unusable ? at : null, released ? at : null);
 }
 
 export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
@@ -23,51 +26,6 @@ export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
 }
 
 const UNUSABLE_FOR_MS = 60 * 60_000;
-
-export function claimStartedWork(
-  db: BunDatabase,
-  ref: StartedWork,
-  todoId?: string
-): (() => void) | null {
-  const claim = () => {
-    if (
-      db
-        .prepare(
-          'SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND released_at IS NOT NULL'
-        )
-        .get(ref.adapter, ref.id)
-    )
-      return null;
-    if (!todoId)
-      return db
-        .prepare(
-          `SELECT 1 FROM neo_todo_sessions WHERE json_extract(ref, '$.adapter') = ?
-             AND json_extract(ref, '$.id') = ? AND json_extract(ref, '$.daemon') IS NULL`
-        )
-        .get(ref.adapter, ref.id)
-        ? null
-        : () => {};
-    const previous =
-      (
-        db.prepare('SELECT ref FROM neo_todo_sessions WHERE todo_id = ?').get(todoId) as
-          | { ref: string | null }
-          | undefined
-      )?.ref ?? null;
-    const claimed = JSON.stringify({ adapter: ref.adapter, id: ref.id });
-    const bound = db
-      .prepare(
-        `UPDATE neo_todo_sessions SET ref = ?1 WHERE todo_id = ?2 AND EXISTS (SELECT 1 FROM neo_todos
-           WHERE id = ?2 AND state IN ('todo', 'doing', 'blocked', 'failed'))`
-      )
-      .run(claimed, todoId);
-    if (!bound.changes) return null;
-    return () =>
-      void db
-        .prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ? AND ref = ?')
-        .run(previous, todoId, claimed);
-  };
-  return db.transaction(claim, 'immediate')();
-}
 
 export function readStartedWork(
   db: BunDatabase,

@@ -6,7 +6,10 @@ import type {
   WorkStatus,
   WorkTurnQuestion,
 } from '../../../../src/lib/drivers/types';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import {
+  createWorkVerbOperations,
+  type WorkVerbDeps,
+} from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import {
   createOperationRegistry,
@@ -36,7 +39,7 @@ function harness(
     unresolvedDefault?: boolean;
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
-  claim?: (ref: WorkRef, todoId?: string) => (() => void) | null
+  claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
@@ -136,7 +139,7 @@ function harness(
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
-      ...(claim ? { claimWorker: claim } : {}),
+      ...claim,
     })
   );
   const start = async (
@@ -172,9 +175,11 @@ describe('work.start against a worker release', () => {
       ['fence-idle'],
       undefined,
       undefined,
-      (ref) => {
-        order.push(`claim ${ref.id} after ${sent.length} sends`);
-        return () => {};
+      {
+        claimWorker: async (ref) => {
+          order.push(`claim ${ref.id} after ${sent.length} sends`);
+          return { previous: null };
+        },
       }
     );
     sent = run.sent;
@@ -183,13 +188,9 @@ describe('work.start against a worker release', () => {
   });
 
   test('starts fresh when the release won the worker first', async () => {
-    const run = harness(
-      [{ id: 'released', status: 'done' }],
-      ['released'],
-      undefined,
-      undefined,
-      () => null
-    );
+    const run = harness([{ id: 'released', status: 'done' }], ['released'], undefined, undefined, {
+      claimWorker: async () => null,
+    });
     expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
     expect(run.sent).toEqual([]);
     expect(run.started).toEqual(['loader']);
@@ -202,7 +203,10 @@ describe('work.start against a worker release', () => {
       ['closed'],
       undefined,
       undefined,
-      (ref) => () => void undone.push(ref.id)
+      {
+        claimWorker: async () => ({ previous: null }),
+        unclaimWorker: async (_todoId, ref) => void undone.push(ref.id),
+      }
     );
     expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
     expect(undone).toEqual(['closed']);

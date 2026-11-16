@@ -7,10 +7,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import {
-  claimStartedWork,
-  readReusableWorkers,
-} from '../../../../src/storage/work-started-sessions';
+import { readReusableWorkers } from '../../../../src/storage/work-started-sessions';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 
@@ -89,7 +86,8 @@ function setup() {
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
-      claimWorker: (ref, todoId) => claimStartedWork(db, ref, todoId),
+      claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
+      unclaimWorker: async (todoId, ref, previous) => sessions.unclaimWorker(todoId, ref, previous),
       isOpenTodo: (todoId, sessionId) => {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;

@@ -88,7 +88,8 @@ export interface WorkVerbDeps {
     sessionId?: string
   ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
   markUnusable?: (ref: WorkRef) => void;
-  claimWorker?: (ref: WorkRef, todoId?: string) => (() => void) | null;
+  claimWorker?: (ref: WorkRef, todoId?: string) => Promise<{ previous: WorkRef | null } | null>;
+  unclaimWorker?: (todoId: string, ref: WorkRef, previous: WorkRef | null) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
@@ -691,18 +692,22 @@ export async function reuseIdleWorker(
           harness: adapter.id,
         })
       : input.message;
-    const unclaim = deps.claimWorker
-      ? deps.claimWorker(work.ref, ownedTodoId(input, caller, deps))
-      : () => {};
-    if (!unclaim) {
+    const todoId = ownedTodoId(input, caller, deps);
+    const claim = deps.claimWorker ? await deps.claimWorker(work.ref, todoId) : { previous: null };
+    if (!claim) {
       reuseHolds.delete(key);
       continue;
     }
-    const sent = await adapter.send(work.ref, message, { from, caller }).catch((error: unknown) => {
-      reuseHolds.delete(key);
-      unclaim();
-      throw error;
-    });
+    const unclaim = async () => {
+      if (todoId) await deps.unclaimWorker?.(todoId, work.ref, claim.previous);
+    };
+    const sent = await adapter
+      .send(work.ref, message, { from, caller })
+      .catch(async (error: unknown) => {
+        reuseHolds.delete(key);
+        await unclaim();
+        throw error;
+      });
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {
@@ -718,7 +723,7 @@ export async function reuseIdleWorker(
       };
     }
     reuseHolds.delete(key);
-    unclaim();
+    await unclaim();
     deps.markUnusable?.(work.ref);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);

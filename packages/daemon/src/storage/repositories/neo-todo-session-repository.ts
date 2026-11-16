@@ -9,7 +9,7 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { markWorkUnusable } from '../work-started-sessions.ts';
+import { markWorkUnusable, readFreeWorkers, recordStartedWork } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -64,6 +64,8 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 
 export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
   ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
+
+const LIVE_TODO_STATES = ['todo', 'doing', 'blocked', 'failed'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
@@ -688,16 +690,27 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   fenceRelease(ref: WorkRef, now: number): boolean {
-    const fence = () => {
-      if (this.doingTodoOn(ref, null, ['todo', 'doing', 'blocked', 'failed'])) return false;
-      this.db
-        .prepare(`INSERT INTO work_started_sessions (adapter, id, started_at, released_at)
-          VALUES (?1, ?2, ?3, ?3) ON CONFLICT (adapter, id)
-          DO UPDATE SET released_at = COALESCE(released_at, excluded.released_at)`)
-        .run(ref.adapter, ref.id, now);
-      return true;
-    };
-    return this.db.transaction(fence, 'immediate')();
+    if (this.doingTodoOn(ref, null, LIVE_TODO_STATES)) return false;
+    recordStartedWork(this.db, ref, now, false, true);
+    return true;
+  }
+
+  claimWorker(ref: WorkRef, todoId: string | null): { previous: WorkRef | null } | null {
+    if (!todoId)
+      return this.doingTodoOn(ref, null, [...LIVE_TODO_STATES, 'done', 'removed'])
+        ? null
+        : { previous: null };
+    const todo = new NeoAskTodoRepository(this.db).getTodo(todoId);
+    if (!todo || !LIVE_TODO_STATES.includes(todo.state)) return null;
+    if (!readFreeWorkers(this.db, ref.adapter).has(ref.id)) return null;
+    const previous = this.readRef(todoId);
+    this.recordRef(todoId, { adapter: ref.adapter, id: ref.id });
+    return { previous };
+  }
+
+  unclaimWorker(todoId: string, ref: WorkRef, previous: WorkRef | null): void {
+    const current = this.readRef(todoId);
+    if (current?.adapter === ref.adapter && current.id === ref.id) this.recordRef(todoId, previous);
   }
 
   recordReleased(todoId: string, released: unknown): void {
@@ -753,6 +766,8 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'markWorkerUnusable',
     'queueOn',
     'fenceRelease',
+    'claimWorker',
+    'unclaimWorker',
     'recordReleased',
   ]
 );

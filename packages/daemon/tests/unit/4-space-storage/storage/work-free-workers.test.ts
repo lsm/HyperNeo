@@ -4,7 +4,6 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
-  claimStartedWork,
   markWorkUnusable,
   readFreeWorkers,
   readReusableWorkers,
@@ -104,7 +103,7 @@ describe('readFreeWorkers', () => {
     test('a start that binds the worker first makes the release refuse', () => {
       bind('finished', 'w-done', 'done');
       nextTodo();
-      expect(claimStartedWork(db, ref, 'next')).not.toBeNull();
+      expect(sessions.claimWorker(ref, 'next')).not.toBeNull();
       expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
       expect(sessions.readRef('next')).toMatchObject(ref);
     });
@@ -113,26 +112,26 @@ describe('readFreeWorkers', () => {
       bind('finished', 'w-done', 'done');
       nextTodo();
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
-      expect(claimStartedWork(db, ref, 'next')).toBeNull();
+      expect(sessions.claimWorker(ref, 'next')).toBeNull();
       expect(sessions.readRef('next')).toBeNull();
     });
 
     test('a start without a todo cannot claim a worker a finished todo may release', () => {
       bind('finished', 'w-done', 'done');
-      expect(claimStartedWork(db, ref)).toBeNull();
+      expect(sessions.claimWorker(ref, null)).toBeNull();
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
     });
 
     test('a start without a todo claims a worker no todo was ever bound to', () => {
       recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' });
-      expect(claimStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' })).not.toBeNull();
+      expect(sessions.claimWorker({ adapter: 'claude-desktop', id: 'w-new' }, null)).not.toBeNull();
     });
 
     test('a claim for a todo that is not live binds nothing and fences nothing', () => {
       bind('finished', 'w-done', 'done');
       bind('closed', 'w-other', 'done');
-      expect(claimStartedWork(db, ref, 'closed')).toBeNull();
-      expect(claimStartedWork(db, ref, 'missing')).toBeNull();
+      expect(sessions.claimWorker(ref, 'closed')).toBeNull();
+      expect(sessions.claimWorker(ref, 'missing')).toBeNull();
       expect(sessions.readRef('closed')).toMatchObject({ id: 'w-other' });
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
     });
@@ -140,7 +139,7 @@ describe('readFreeWorkers', () => {
     test('a start whose first message fails gives the binding back', () => {
       bind('finished', 'w-done', 'done');
       nextTodo();
-      claimStartedWork(db, ref, 'next')!();
+      sessions.unclaimWorker('next', ref, sessions.claimWorker(ref, 'next')!.previous);
       expect(sessions.readRef('next')).toBeNull();
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
     });
