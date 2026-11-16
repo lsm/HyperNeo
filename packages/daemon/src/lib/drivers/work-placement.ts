@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { readdir, readFile, readlink } from 'node:fs/promises';
+import { readdir, readFile, readlink, rm } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { simpleGit } from 'simple-git';
+import { type SimpleGit, simpleGit } from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -111,6 +111,10 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   )
   .end('ready') as (facts: Facts) => true | { reason: string };
 
+export const WORKTREE_UNVERIFIED = 'Could not verify or remove the worktree; kept';
+export const worktreeUnverified = (error: unknown) =>
+  `${WORKTREE_UNVERIFIED}: ${error instanceof Error ? error.message : String(error)}`;
+
 export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
 
@@ -174,6 +178,47 @@ async function folderInUse(directory: string): Promise<boolean> {
   return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
 }
 
+export function branchesHeldElsewhere(porcelain: string, own: string): string[] {
+  return porcelain
+    .split('\n\n')
+    .map((block) => block.split('\n'))
+    .filter((lines) => {
+      const path = lines.find((line) => line.startsWith('worktree '))?.slice(9);
+      return !!path && existsSync(path) && realpathSync(path) !== own;
+    })
+    .flatMap((lines) =>
+      lines.filter((line) => line.startsWith('branch ')).map((line) => line.slice(7))
+    );
+}
+
+async function fetchCanonicalBranches(git: SimpleGit, own: string): Promise<void> {
+  const source = (await readFile(join(own, 'hyperneo-source-checkout'), 'utf8')).trim();
+  if (!isAbsolute(source)) throw new Error('The clone names no source checkout.');
+  const url = (await simpleGit(source).raw(['remote', 'get-url', 'origin'])).trim();
+  const checked = await git.raw(['for-each-ref', '--format=%(refname)', 'refs/hyperneo-check/']);
+  for (const ref of checked.split('\n').filter(Boolean)) await git.raw(['update-ref', '-d', ref]);
+  await git.raw([
+    'fetch',
+    '--quiet',
+    '--prune',
+    '--no-tags',
+    url,
+    '+refs/heads/*:refs/hyperneo-check/*',
+  ]);
+}
+
+async function cloneState(git: SimpleGit): Promise<string> {
+  return JSON.stringify(
+    await Promise.all([
+      git.raw(['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']),
+      git.raw(['stash', 'list']),
+      git.raw(['worktree', 'list', '--porcelain']),
+      git.raw(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/tags']),
+      git.raw(['rev-parse', 'HEAD']),
+    ])
+  );
+}
+
 export async function cleanupOwnedWorktree(
   directory: string,
   roots: readonly string[]
@@ -199,29 +244,73 @@ export async function cleanupOwnedWorktree(
     const git = simpleGit(directory);
     const common = (await git.revparse(['--path-format=absolute', '--git-common-dir'])).trim();
     const own = (await git.revparse(['--path-format=absolute', '--git-dir'])).trim();
-    if (common === own)
+    const clone = common === own;
+    if (clone && !existsSync(join(own, 'hyperneo-source-checkout')))
       return {
         directory,
         removed: false,
         reason: 'The folder is not a linked worker worktree; kept.',
       };
-    const [status, unpushed, submodules] = await Promise.all([
+    if (clone) await fetchCanonicalBranches(git, own);
+    const state = clone ? await cloneState(git) : '';
+    const [status, unpushed, submodules, stash, worktrees] = await Promise.all([
       git.status(['--ignore-submodules=none']),
-      git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']),
+      git.raw(
+        clone
+          ? [
+              'rev-list',
+              '--count',
+              'HEAD',
+              '--branches',
+              '--tags',
+              '--not',
+              '--glob=refs/hyperneo-check/*',
+            ]
+          : [
+              'rev-list',
+              '--count',
+              'HEAD',
+              '--not',
+              '--remotes',
+              '--tags',
+              ...branchesHeldElsewhere(
+                await git.raw(['worktree', 'list', '--porcelain']),
+                realpathSync(directory)
+              ),
+            ]
+      ),
       workerWorktreeHasSubmodules(directory),
+      clone ? git.raw(['stash', 'list']) : '',
+      clone ? git.raw(['worktree', 'list', '--porcelain']) : '',
     ]);
+    if (stash.trim() || (worktrees.match(/^worktree /gm)?.length ?? 0) > 1)
+      return {
+        directory,
+        removed: false,
+        reason: 'The clone has a stash or another worktree; kept.',
+      };
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
     if (await folderInUse(directory).catch(() => true))
       return { directory, removed: false, reason: WORKTREE_IN_USE };
-    await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
+    if (clone && (await cloneState(git)) !== state)
+      return { directory, removed: false, reason: 'The clone changed while it was checked; kept.' };
+    if (clone) await rm(directory, { recursive: true, force: true });
+    else
+      await simpleGit(dirname(directory)).raw([
+        '--git-dir',
+        common,
+        'worktree',
+        'remove',
+        directory,
+      ]);
     await releaseRemovedWorkerFolders(directory);
     return { directory, removed: true };
   } catch (error) {
     return {
       directory,
       removed: false,
-      reason: `Could not verify or remove the worktree; kept: ${error instanceof Error ? error.message : String(error)}`,
+      reason: worktreeUnverified(error),
     };
   }
 }

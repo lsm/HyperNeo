@@ -1903,7 +1903,7 @@ async function archiveClaudeSession(
           cwd,
           basename(dirname(cwd)) === 'worktrees' && basename(dirname(dirname(cwd))) === '.claude'
             ? [dirname(cwd)]
-            : []
+            : [join(getDataDir(), 'claude-worktrees')]
         )
       : Promise.resolve(undefined);
   if (record.isArchived) {

@@ -795,10 +795,11 @@ export class SessionManager {
     return this.sessionLifecycle.markOutputRemoved(sessionId, messageUuid);
   }
 
-  async archiveSessionResources(
-    sessionId: string,
-    trigger: ArchiveResourcesTrigger
-  ): Promise<void> {
+  cleanupArchivedWorktree(sessionId: string) {
+    return this.sessionLifecycle.cleanupArchivedWorktree(sessionId);
+  }
+
+  async archiveSessionResources(sessionId: string, trigger: ArchiveResourcesTrigger) {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
       await this.sessionLifecycle.update(sessionId, { status: 'archived' });

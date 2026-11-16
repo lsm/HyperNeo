@@ -224,6 +224,40 @@ describe('hyperneoSessionControl archive', () => {
     }
   });
 
+  test('an archive retry cleans the worktree an earlier archive kept', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'archived-kept-'));
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    const cleaned: string[] = [];
+    const controls = hyperneoSessionControl({
+      deps: {
+        db: { listChildSessions: () => [] },
+        sessionManager: {
+          getSessionFromDB: () => ({
+            id: 'owned',
+            workspacePath: root,
+            status: 'archived',
+            worktree: { branch: 'work', worktreePath: root, mainRepoPath: root },
+          }),
+          getWorktreeManager: () => ({ getCommitsAhead: async () => ({ hasCommitsAhead: false }) }),
+          getCachedSession: () => undefined,
+          cleanupArchivedWorktree: async (id: string) => {
+            cleaned.push(id);
+            return { directory: root, removed: true };
+          },
+        },
+      },
+    } as never);
+    try {
+      expect(await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => null)).toEqual({
+        ok: true,
+        value: { archived: false, worktree: { directory: root, removed: true } },
+      });
+      expect(cleaned).toEqual(['owned']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',
     async (state) => {
@@ -247,7 +281,7 @@ describe('hyperneoSessionControl archive', () => {
         state === 'late_refusal' ? { ok: false, reason: 'busy', detail: 'new' } : null
       );
       expect(result.ok).toBe(state === 'idle' || state === 'archived');
-      expect(archived).toEqual(state === 'idle' ? ['session:ui_session_archive'] : []);
+      expect(archived).toEqual(state === 'idle' ? ['session:work_archive'] : []);
       if (state === 'archived') expect(result).toMatchObject({ value: { archived: false } });
     }
   );
