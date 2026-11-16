@@ -118,7 +118,9 @@ function setup() {
       return { kind: 'completed' as const, value };
     });
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
-  return { db, todos, todo, worked, live, decide, questions, asks };
+  const agentAsk = (input: Record<string, unknown>) =>
+    askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
+  return { db, todos, todo, worked, live, decide, questions, asks, agentAsk };
 }
 
 describe('coding session target decision', () => {
@@ -255,6 +257,28 @@ describe('coding session target decision', () => {
     expect(await decide(todo('other'), start('dev'))).toEqual({ value: start('dev') });
     expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
     expect(asks).toHaveLength(1);
+  });
+
+  test('a proposal that only borrows the strategy request id is not taken for the strategy question', async () => {
+    const { todo, decide, questions, asks, agentAsk } = setup();
+    const borrowed = (await agentAsk({
+      askId: 'other',
+      requestId: `coding.sessionStrategy:${repo}:1`,
+      values: [
+        {
+          pack: 'coding',
+          scope: { kind: 'repo', key: repo },
+          key: 'sessionStrategy',
+          value: 'per_pr',
+        },
+      ],
+      hold: false,
+    })) as { questionId: string };
+    await decide(todo(), start('dev'));
+    const [asked] = questions('feature');
+    expect(asked).toMatchObject({ state: 'open', kind: 'choice' });
+    expect(asked!.id).not.toBe(borrowed.questionId);
+    expect(asks).toEqual([{ ok: true, questionId: asked!.id }]);
   });
 
   test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
