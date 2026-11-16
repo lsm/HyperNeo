@@ -117,7 +117,7 @@ describe('neoHumanQueue', () => {
     const queue = neoHumanQueue({
       questions: [],
       todos: [request],
-      owners: new Map([['t1', { owner: 'neo' }]]),
+      owners: none,
     });
     expect(queue).toEqual({ items: [], counts: {} });
   });
