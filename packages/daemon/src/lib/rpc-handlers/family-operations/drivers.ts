@@ -9,7 +9,8 @@ import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
-import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
+import { cleanupOwnedWorktree, workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
+import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
@@ -248,14 +249,21 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
       if (processing && !['idle', 'interrupted'].includes(processing))
         return reject('busy', 'The HyperNeo session still has a live turn.');
+      const project = session.worktree ? undefined : session.metadata?.executionProjectPath;
+      const cleanupPrepared = async () =>
+        project && session.workspacePath
+          ? cleanupOwnedWorktree(session.workspacePath, [getWorktreeBaseDir(project)])
+          : undefined;
       if (session.status === 'archived') {
         await releaseWorkerSandbox(sessionSdkPath(session));
         const worktree = session.worktree
           ? await sessionManager.cleanupArchivedWorktree(ref.id)
-          : undefined;
+          : await cleanupPrepared();
         return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      const worktree = await sessionManager.archiveSessionResources(ref.id, 'work_archive');
+      const worktree =
+        (await sessionManager.archiveSessionResources(ref.id, 'work_archive')) ??
+        (await cleanupPrepared());
       return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
