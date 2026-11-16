@@ -93,10 +93,10 @@ describe('createCodingReviewComments', () => {
     ['a closed PR', 'head-a', 5],
     ['a PR whose head moved on', 'head-b', null],
   ] as const)('%s gets no comment', async (_label, head, closedAt) => {
-    const { db, ledger, comments, sweep } = setup(head, closedAt);
+    const { db, ledger, comments, sweep, github } = setup(head, closedAt);
     try {
       ledger.recordStage(fact);
-      await sweep();
+      await sweep(createCodingReviewComments(github));
       expect(comments).toEqual([]);
     } finally {
       db.close();
