@@ -112,7 +112,13 @@ class CodingSessionAssignments {
       repo,
       strategy,
       owner: pooled(this.owner({ ...input, repo, strategy })),
-      feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
+      feature: pooled(
+        strategy === 'long_lived'
+          ? this.feature(repo, input.featureKey)
+          : input.prUrl
+            ? this.prHolder(input.prUrl, true)
+            : null
+      ),
       pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
     };
   }
@@ -135,14 +141,14 @@ class CodingSessionAssignments {
     return row?.ref ? { todoId, ref: JSON.parse(row.ref) } : null;
   }
 
-  private prHolder(url: string): Owner | null {
+  private prHolder(url: string, latest = false): Owner | null {
     const key = codingPrKey(url);
     if (!key) return null;
     const rows = this.db
       .prepare(
         `SELECT p.todo_id AS todoId, p.prs_json AS prs FROM pack_coding_todo_prs p
          JOIN neo_todos t ON t.id = p.todo_id AND t.state <> 'removed'
-         ORDER BY t.created_at, t.position`
+         ORDER BY t.created_at ${latest ? 'DESC' : 'ASC'}, t.position ${latest ? 'DESC' : 'ASC'}`
       )
       .all() as { todoId: string; prs: string }[];
     for (const row of rows) {
