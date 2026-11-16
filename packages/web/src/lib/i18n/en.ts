@@ -238,8 +238,6 @@ export const en = {
   'chat.wakeLabel': 'Scheduled check-in: {title}',
   'chat.wakeFinished': 'Completed',
   'chat.wakeRunning': 'Running',
-  'chat.sessionMessage': '{from} → {to}',
-  'chat.sessionMessageLabel': 'Message from {from} to {to}',
   'chat.unmute': 'Unmute',
   'chat.muteNamed': 'Mute {name}',
   'chat.unmuteNamed': 'Unmute {name}',

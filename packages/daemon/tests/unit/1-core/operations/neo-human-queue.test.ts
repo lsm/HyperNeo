@@ -8,6 +8,7 @@ const todo = (id: string, state: NeoTodo['state'] = 'todo', askId = 'ask-a') => 
   askId,
   title: `Todo ${id}`,
   state,
+  named: null,
 });
 const card = (
   id: string,
@@ -133,6 +134,16 @@ describe('neoHumanQueue', () => {
     });
     expect(queue.items).toMatchObject([{ state: 'held', questionId: 'q1' }]);
     expect(queue.items).toHaveLength(1);
+  });
+
+  test('an open worker request todo is not in the human queue', () => {
+    const request = { ...todo('t1', 'doing'), named: { requestFrom: 'session-w' } };
+    const queue = neoHumanQueue({
+      questions: [],
+      todos: [request],
+      owners: none,
+    });
+    expect(queue).toEqual({ items: [], counts: {} });
   });
 
   test('counts are a state by ask table', () => {

@@ -1338,12 +1338,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:admission'
     )
     .pipe(
-      async (context: NudgeContext) => {
+      async (context: NudgeContext, now: number) => {
         const live = await workerLive(context.ask, context.ref);
-        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown');
+        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown', now);
         return live;
       },
-      ['admission'],
+      ['admission', 'now'],
       'live'
     )
     .pipe(

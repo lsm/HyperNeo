@@ -237,8 +237,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.wakeLabel': '定时查看：{title}',
   'chat.wakeFinished': '已完成',
   'chat.wakeRunning': '运行中',
-  'chat.sessionMessage': '{from} → {to}',
-  'chat.sessionMessageLabel': '{from} 发给 {to} 的消息',
   'chat.unmute': '取消静音',
   'chat.muteNamed': '静音 {name}',
   'chat.unmuteNamed': '取消静音 {name}',

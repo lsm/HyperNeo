@@ -8,7 +8,6 @@ import type {
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoCardReply } from '@hyperneo/shared/types/neo-publication';
-import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
@@ -16,7 +15,6 @@ import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.t
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
-import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
 import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -291,43 +289,6 @@ export type NeoSessionMute = {
   muted: ReadonlySet<string>;
   onMute: (key: string, muted: boolean) => void;
 };
-
-function SessionMessageRow({
-  entryKey,
-  message,
-}: {
-  entryKey: string;
-  message: NeoSessionMessage;
-}) {
-  const from = message.fromName ?? message.fromSession;
-  const to = message.toName ?? message.toSession;
-  const time = messageTime(message.createdAt);
-  return (
-    <NativeContentDisclosure
-      data-public-entry={entryKey}
-      label={t('chat.sessionMessageLabel', { from, to })}
-      class="neo-arrive mx-auto max-w-[94%] text-xs text-fg-muted"
-      summary={
-        <span class="inline-flex max-w-full flex-wrap items-center gap-2">
-          {time && (
-            <time dateTime={time.iso} title={time.full} class="text-[11px] text-fg-faint">
-              {time.label}
-            </time>
-          )}
-          <span class="shrink-0 font-medium text-fg">{t('chat.sessionMessage', { from, to })}</span>
-          <span class="min-w-0 truncate">{message.text.split('\n')[0]}</span>
-        </span>
-      }
-    >
-      {(control) => (
-        <p class="flow-root whitespace-pre-wrap break-words px-3 pb-2 pt-1 text-fg">
-          {message.text}
-          {control}
-        </p>
-      )}
-    </NativeContentDisclosure>
-  );
-}
 
 function NoticeRow({
   entryKey,
@@ -1025,8 +986,6 @@ export function NeoPublicConversation({
       {conversation.entries.map((entry) =>
         entry.kind === 'wake' ? null : entry.kind === 'notices' ? (
           <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
-        ) : entry.kind === 'session' ? (
-          <SessionMessageRow key={entry.key} entryKey={entry.key} message={entry.message} />
         ) : (
           <PublicEntry
             key={entry.key}

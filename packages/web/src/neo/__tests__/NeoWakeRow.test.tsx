@@ -57,7 +57,7 @@ const conversation = (wakes = [wake], publications = [publication]) => {
     },
     wakes,
   };
-  return projectNeoPublicConversation(root, sources.asks, sources.publications, [], [], wakes);
+  return projectNeoPublicConversation(root, sources.asks, sources.publications, [], wakes);
 };
 const originalLocale = locale.value;
 afterEach(() => {

@@ -11,8 +11,6 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
   const wake = page.locator(`#neo-preview-work-panel [data-wake="${seed.wake}"]`);
   await wake.waitFor();
-  const message = page.locator('details[aria-label="Message from Neo to Synthetic worker"]');
-  await message.waitFor();
   const failed = page.locator(`[data-message-ref="${seed.failed}"]`);
   const toggle = row => row.getByRole('button', { name: /(?:more|less).*./ });
   const result = { phase, width, controls: [] };
@@ -41,32 +39,6 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   } else await wake.locator('summary').click();
   assert.equal(await wake.getAttribute('open'), null);
   if (width < 1120) await page.getByRole('button', { name: 'Close work list', exact: true }).click();
-  await message.getByText('Synthetic session preview', { exact: true }).click();
-  result.sessionBodyOpens = await message.getAttribute('open') !== null;
-  if (after) { assert.equal(result.sessionBodyOpens, false); await toggle(message).click(); }
-  const body = message.locator('p');
-  assert.equal(await body.isVisible(), true);
-  if (after) {
-    await body.click();
-    assert.equal(await toggle(message).getAttribute('aria-expanded'), 'true');
-    const box = await body.evaluate(el => {const node=el.firstChild, at=node.textContent.indexOf('Synthetic session detail'); const range=document.createRange();range.setStart(node,at);range.setEnd(node,at+9);const r=range.getBoundingClientRect();return {x:r.x,y:r.y,height:r.height};});
-    await page.mouse.move(box.x+1,box.y+box.height/2); await page.mouse.down(); await page.mouse.move(box.x+85,box.y+box.height/2,{steps:10});await page.mouse.up();
-    result.selectedText = await page.evaluate(() => window.getSelection()?.toString());
-    assert.match(result.selectedText, /^Synthetic/);
-    result.controls.push(await controlBounds(toggle(message)));
-    result.sessionFinalLine = await toggle(message).evaluate(b => {
-      const p=b.parentElement,node=p.firstChild,range=document.createRange();
-      const end=node.textContent.trimEnd().length;
-      range.setStart(node,end-1); range.setEnd(node,end);
-      const last=range.getBoundingClientRect(), button=b.getBoundingClientRect(), parent=p.getBoundingClientRect();
-      return {lastRight:last.right,lastBottom:last.bottom,buttonWidth:button.width,buttonBottom:button.bottom,available:parent.right-12-last.right};
-    });
-    if (result.sessionFinalLine.available >= result.sessionFinalLine.buttonWidth+12) assert(Math.abs(result.sessionFinalLine.buttonBottom-result.sessionFinalLine.lastBottom)<8);
-  }
-  await message.scrollIntoViewIfNeeded();
-  await settle(page);
-  await page.screenshot({ path: `${dir}/session-expanded-${width}.png`, scale: 'css' });
-  if (after) await toggle(message).click(); else await message.locator('summary').click();
   const reasonToggle = () => failed.getByRole('button', { name: /Not delivered/ });
   if (after) {
     await failed.getByRole('img', { name: /Not delivered/ }).click();
@@ -74,6 +46,10 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   }
   await reasonToggle().click();
   await failed.getByText('Not delivered: Neo never got this message.', { exact: true }).waitFor();
+  result.sessionRows = await page.locator('details[aria-label^="Message from "]').count();
+  result.sessionTextShown = await page.getByText('Synthetic session preview').count();
+  assert.equal(result.sessionRows, 0);
+  assert.equal(result.sessionTextShown, 0);
   if (after) result.controls.push(await controlBounds(reasonToggle()));
   await failed.scrollIntoViewIfNeeded();
   await settle(page);
@@ -81,6 +57,7 @@ export async function verifyWakeConversation(page, { port, run, width, phase }) 
   await reasonToggle().click();
   if (after) {
     for (const c of result.controls) {assert.match(c.name,/less/); assert(Math.abs(c.parentRight-c.right)<18);}
+    if (width < 1120) await page.getByRole('button', { name: /^Your work(?:,.*)?$/ }).click();
     await toggle(wake).click();
     await wake.getByRole('link', { name: 'Which language?', exact: true }).click();
     const question = seed.additions.find(a => a.kind === 'question');

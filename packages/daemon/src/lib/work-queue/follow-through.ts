@@ -30,6 +30,7 @@ export type FollowThroughIncident = {
   at?: number;
   redispatched?: boolean;
   live?: string;
+  liveSince?: number;
 };
 
 export function mayRedispatch(running: number, lastMovedAt: number, now: number, limit: number) {

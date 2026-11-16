@@ -30588,68 +30588,6 @@
                   "null"
                 ]
               },
-              "sessionMessages": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "conversationId": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "fromName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "fromSession": {
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "session",
-                        "worker-batch"
-                      ],
-                      "type": "string"
-                    },
-                    "messageId": {
-                      "type": "string"
-                    },
-                    "sequence": {
-                      "type": "number"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "toName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "toSession": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "messageId",
-                    "conversationId",
-                    "sequence",
-                    "fromSession",
-                    "fromName",
-                    "toSession",
-                    "toName",
-                    "text",
-                    "createdAt",
-                    "kind"
-                  ],
-                  "type": "object"
-                },
-                "maxItems": 30,
-                "type": "array"
-              },
               "sessionNoticeGroups": {
                 "items": {
                   "additionalProperties": false,
@@ -38964,68 +38902,6 @@
                   "string",
                   "null"
                 ]
-              },
-              "sessionMessages": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "conversationId": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "fromName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "fromSession": {
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "session",
-                        "worker-batch"
-                      ],
-                      "type": "string"
-                    },
-                    "messageId": {
-                      "type": "string"
-                    },
-                    "sequence": {
-                      "type": "number"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "toName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "toSession": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "messageId",
-                    "conversationId",
-                    "sequence",
-                    "fromSession",
-                    "fromName",
-                    "toSession",
-                    "toName",
-                    "text",
-                    "createdAt",
-                    "kind"
-                  ],
-                  "type": "object"
-                },
-                "maxItems": 30,
-                "type": "array"
               },
               "sessionNoticeGroups": {
                 "items": {

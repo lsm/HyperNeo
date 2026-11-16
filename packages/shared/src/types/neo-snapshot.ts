@@ -1,7 +1,6 @@
 import type { ModelHold } from './model-hold.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
-import type { NeoSessionMessage } from './neo-session-message.ts';
 import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoRuleSource } from './settings';
 import type { NeoModelPreference } from './settings.ts';
@@ -192,7 +191,6 @@ export interface NeoSnapshot {
   projectRedirects?: { sourceId: string; targetId: string }[];
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
-  sessionMessages?: NeoSessionMessage[];
   wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];

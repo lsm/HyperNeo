@@ -35,7 +35,7 @@ export type CodingSweepDeps = {
   wake(key: string, text: string): Promise<boolean>;
 };
 
-const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
+export const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   approved_green: 'approved and green',
   dirty: 'in conflict with its base',
   failing: 'failing CI',
