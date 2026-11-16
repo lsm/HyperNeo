@@ -34,6 +34,28 @@ const hold = (
 });
 
 describe('onLineHeld', () => {
+  test('a hold already told waits, and a new hold on the same line tells again', () => {
+    const held = hold(31, 5);
+    expect(
+      onLineHeld({
+        hold: held,
+        rules: DEFAULT_ON_HOLD,
+        ranking: usable,
+        now: NOW,
+        told: held.since,
+      })
+    ).toEqual({ action: 'wait' });
+    expect(
+      onLineHeld({
+        hold: held,
+        rules: DEFAULT_ON_HOLD,
+        ranking: usable,
+        now: NOW,
+        told: held.since - 60 * MINUTE,
+      })
+    ).toEqual({ action: 'tellNeo', exhausted: false });
+  });
+
   test('a short limit hold waits', () => {
     expect(
       onLineHeld({ hold: hold(10, 10), rules: DEFAULT_ON_HOLD, ranking: usable, now: NOW })
@@ -220,12 +242,12 @@ describe('the attention sweep with model-routing on', () => {
     expect(wakes()).toEqual([]);
   });
 
-  test('a long limit hold tells Neo once, with the other lines on its route', async () => {
+  test('a long limit hold tells Neo once, with the usable lines', async () => {
     heldTodo(31);
     await sweep(NOW);
     await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
     ]);
   });
 
@@ -234,7 +256,7 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW);
     await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
     ]);
   });
 
@@ -256,16 +278,27 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW);
     await sweep(NOW + MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (overloaded) since 2026-11-16T11:59:00.000Z. No other line is listed for it. Decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (overloaded) since 2026-11-16T11:59:00.000Z. No other line is usable for it. Decide whether it waits or moves.',
     ]);
   });
 
-  test('a hold is told once even when its other lines stop being usable', async () => {
+  test('a hold is told once even when its usable lines change', async () => {
     heldTodo(31);
     await sweep(NOW);
     signedIn = false;
     await sweep(NOW + 5 * MINUTE);
+    signedIn = true;
+    await sweep(NOW + 10 * MINUTE);
     expect(wakes()).toHaveLength(1);
+  });
+
+  test('a line whose provider is signed out is named as not signed in', async () => {
+    signedIn = false;
+    heldTodo(31);
+    await sweep(NOW);
+    expect(wakes()).toEqual([
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. No other line is usable for it. Not usable: kimi k2 via hyperneo (not signed in). Decide whether it waits or moves.',
+    ]);
   });
 
   test('a hold whose reset has passed is stale and tells Neo nothing', async () => {
@@ -279,7 +312,7 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW);
     await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (login) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (login) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
     ]);
   });
 
