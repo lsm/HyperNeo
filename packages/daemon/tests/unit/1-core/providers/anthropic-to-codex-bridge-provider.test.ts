@@ -1920,6 +1920,42 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2k: a delayed earlier save does not overwrite a newer supplied login', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      const realWrite = fsPromiseMocks.writeFile.getMockImplementation()!;
+      let releaseFirst!: () => void;
+      const firstHeld = new Promise<void>((release) => {
+        releaseFirst = release;
+      });
+      fsPromiseMocks.writeFile.mockImplementationOnce(async (...args: unknown[]) => {
+        await firstHeld;
+        return realWrite(...args);
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      const saveA = p.setCredentials({
+        type: 'oauth',
+        accessToken: 'supplied-account-a',
+        refreshToken: 'supplied-refresh-a',
+      } as ProviderCredentials);
+      const saveB = p.setCredentials({
+        type: 'oauth',
+        accessToken: 'supplied-account-b',
+        refreshToken: 'supplied-refresh-b',
+      } as ProviderCredentials);
+      await new Promise((settle) => setTimeout(settle, 20));
+      releaseFirst();
+      await Promise.all([saveA, saveB]);
+      p.stopAllBridgeServers();
+
+      const restarted = makeProvider({}, hyperneoDir, codexDir);
+      expect(await restarted.getCredentials()).toMatchObject({
+        accessToken: 'supplied-account-b',
+      });
+      restarted.stopAllBridgeServers();
+    });
+
     it('Test 2j: an explicitly supplied login survives a restart instead of the Codex login', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
