@@ -201,7 +201,7 @@ test('missing workspace and unlisted tools cannot reach resolve or a grant dialo
 
 test('operations.describe lists every catalog tool with its arguments', () => {
   const operation = registry().get('desktop.call')!;
-  const described = JSON.stringify(describeOperationDefinition(operation).inputSchema);
+  const described = JSON.stringify(describeOperationDefinition(operation));
   for (const tool of catalog) {
     expect(described).toContain(`"const":"${tool.name}"`);
     expect(described).toContain(tool.description);
