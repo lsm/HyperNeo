@@ -5820,7 +5820,9 @@
                   "type": "string"
                 },
                 "provider": {
-                  "const": "google",
+                  "enum": [
+                    "google"
+                  ],
                   "type": "string"
                 },
                 "scopes": {
