@@ -156,4 +156,32 @@ describe('createCodingReviewComments', () => {
       db.close();
     }
   });
+  test('a failed read does not stop later sweeps', async () => {
+    const { db, ledger, comments, sweep, github } = setup();
+    try {
+      ledger.recordStage(fact);
+      const post = createCodingReviewComments(github);
+      await expect(post(() => Promise.reject(new Error('gateway busy')))).resolves.toBeUndefined();
+      await sweep(post);
+      expect(comments).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+  test('a GitHub Enterprise host reads facts and posts on that host', async () => {
+    const host = process.env.GH_HOST;
+    process.env.GH_HOST = 'git.example.com';
+    const enterprise = 'https://git.example.com/synthetic/review/pull/3';
+    const { db, ledger, comments, sweep, github } = setup();
+    try {
+      ledger.stageFacts.observeHead(enterprise, 'head-a', 1);
+      ledger.recordStage({ ...fact, url: enterprise });
+      await sweep(createCodingReviewComments(github));
+      expect(comments.map((item) => item.host)).toEqual(['git.example.com']);
+    } finally {
+      if (host === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = host;
+      db.close();
+    }
+  });
 });
