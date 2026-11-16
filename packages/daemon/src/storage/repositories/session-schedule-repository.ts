@@ -182,11 +182,29 @@ export class SessionScheduleRepository {
   reserveExternalDelivery(schedule: SessionSchedule, messageId: string): boolean {
     return (
       this.db
-        .prepare(`UPDATE session_schedules SET last_message_id = ?,
+        .prepare(`UPDATE session_schedules SET last_message_id = ?, delivery_receipt = NULL,
       last_outcome = 'sending', updated_at = ? WHERE id = ? AND status = 'active'
       AND pending_job_id IS ? AND last_message_id IS NOT ?`)
         .run(messageId, Date.now(), schedule.id, schedule.pendingJobId, messageId).changes > 0
     );
+  }
+
+  saveDeliveryReceipt(id: string, messageId: string, receipt: unknown): void {
+    this.db.run(
+      'UPDATE session_schedules SET delivery_receipt = ? WHERE id = ? AND last_message_id = ?',
+      JSON.stringify(receipt),
+      id,
+      messageId
+    );
+  }
+
+  deliveryReceipt(id: string, messageId: string): unknown {
+    const row = this.db
+      .prepare(
+        'SELECT delivery_receipt FROM session_schedules WHERE id = ? AND last_message_id = ?'
+      )
+      .get(id, messageId) as { delivery_receipt: string | null } | null;
+    return row?.delivery_receipt ? JSON.parse(row.delivery_receipt) : null;
   }
 
   countDue(id: string, jobId: string, dueAt: number, now: number): SessionSchedule | null {
@@ -244,12 +262,15 @@ export class SessionScheduleRepository {
 
   setPending(id: string, expectedJobId: string | null, jobId: string, nextRunAt: number): boolean {
     return (
-      this.db
-        .prepare(
-          `UPDATE session_schedules SET pending_job_id = ?, next_run_at = ?, updated_at = ?
-           WHERE id = ? AND pending_job_id IS ?`
-        )
-        .run(jobId, nextRunAt, Date.now(), id, expectedJobId).changes > 0
+      this.db.run(
+        `UPDATE session_schedules SET pending_job_id = ?, next_run_at = ?, updated_at = ?
+         WHERE id = ? AND pending_job_id IS ?`,
+        jobId,
+        nextRunAt,
+        Date.now(),
+        id,
+        expectedJobId
+      ).changes > 0
     );
   }
 

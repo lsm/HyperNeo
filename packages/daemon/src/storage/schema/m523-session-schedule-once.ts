@@ -23,6 +23,7 @@ export function runMigration523(db: Database): void {
       last_outcome TEXT,
       last_skip_reason TEXT,
       last_message_id TEXT,
+      delivery_receipt TEXT,
       created_by_session TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,

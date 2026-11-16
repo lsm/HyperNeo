@@ -14,7 +14,7 @@ closes the daemon in finally.
 
 It first creates a repeating reminder, then reruns the schedule-table rebuild
 (migration 523). That reminder's row must come back unchanged apart from a null
-`once_at`, with both schedule indexes present.
+`once_at` and `delivery_receipt`, with both schedule indexes present.
 
 Over RPC, `schedule.session.create` with `cadence: { kind: 'once', at }` refuses
 a past time with `invalid_cadence`, and accepts a future one with `nextRunAt`
@@ -24,7 +24,8 @@ it twice:
 - At `at` the target is queued: `skipped_busy`, the schedule stays active and
   retries one minute later, and nothing is delivered.
 - At the retry the target is idle: `fired`, one mailbox wake carrying the note,
-  and the schedule is `done` with no next run or job.
+  and the schedule is `done` with no next run or job. The wake's message ID is
+  built from `at`, not the retry time, so every retry is the same occurrence.
 
 `schedule.session.list` returns the `once` cadence with its time. Inspect
 `schedule-once.json` for the upgrade rows, each wake and the list reply. The

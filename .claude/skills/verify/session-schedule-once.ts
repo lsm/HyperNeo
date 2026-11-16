@@ -48,7 +48,7 @@ try {
   const after = db.prepare('SELECT * FROM session_schedules WHERE id = ?').get(repeating.schedule.id) as Record<string, unknown>;
   const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'session_schedules' AND name LIKE 'idx_%' ORDER BY name").all() as { name: string }[]).map(row => row.name);
   evidence.upgrade = { before, after, indexes };
-  assert.deepEqual(after, { ...(before as object), once_at: null }, 'The rebuild changed an existing schedule');
+  assert.deepEqual(after, { ...(before as object), once_at: null, delivery_receipt: null }, 'The rebuild changed an existing schedule');
   assert.deepEqual(indexes, ['idx_session_schedules_due', 'idx_session_schedules_target']);
   const past = await call('schedule.session.create', { target: { adapter: 'hyperneo', id: target }, cadence: { kind: 'once', at: now - 1000 }, note: 'Too late' });
   assert.deepEqual(past, { ok: false, reason: 'invalid_cadence: a one-shot time must be in the future.' });
@@ -63,7 +63,7 @@ try {
   const wake = async () => {
     const current = row(); now = current.next_run_at!;
     await fire!(app!.jobQueue.getJob(current.pending_job_id!)!);
-    const result = { due: current.next_run_at!, ...row(), delivered: mailbox(current.next_run_at!) !== null };
+    const result = { due: current.next_run_at!, ...row(), delivered: mailbox(at) !== null };
     (evidence.wakes as unknown[]).push(result);
     return result;
   };
@@ -75,7 +75,7 @@ try {
   await live.stateManager.setIdle();
   const fired = await wake();
   assert.deepEqual([fired.last_outcome, fired.status, fired.delivered, fired.next_run_at, fired.pending_job_id], ['fired', 'done', true, null, null]);
-  assert(String(mailbox(fired.due)).includes('Call the venue'));
+  assert(String(mailbox(at)).includes('Call the venue'));
   const deliveries = (db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') LIKE ?").get(`schedule:${id}:%`) as { n: number }).n;
   assert.equal(deliveries, 1, 'A one-shot reminder delivered more than once');
   const listed = await call('schedule.session.list', { target: { adapter: 'hyperneo', id: target } });
