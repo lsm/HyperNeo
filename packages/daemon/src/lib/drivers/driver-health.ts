@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { DriverHealth } from '@hyperneo/shared/types/settings';
+import type { NeoAttentionEvent } from '../neo/attention/decide.ts';
 
 type Observation = Pick<DriverHealth, 'status' | 'reason' | 'clientVersions'>;
 const UNVERIFIED_GUIDANCE =
@@ -11,8 +11,31 @@ type Dependencies = {
   read(): Promise<Record<string, DriverHealth>>;
   save(id: string, health: DriverHealth): Promise<void>;
   probe(id: string): Promise<Observation>;
-  notify(id: string, text: string): Promise<boolean>;
 };
+
+const incident = (health: Omit<DriverHealth, 'checkedAt'>) =>
+  JSON.stringify([
+    health.status,
+    health.reason,
+    health.unverifiedVersion ? health.clientVersions : null,
+  ]);
+
+export function driverHealthEvents(health: Record<string, DriverHealth>): NeoAttentionEvent[] {
+  return Object.entries(health).flatMap(([id, item]) =>
+    item.status !== 'ok' || item.unverifiedVersion
+      ? [
+          {
+            kind: 'driver.health',
+            subject: { type: 'driver', id },
+            since: item.since ?? item.checkedAt,
+            facts: {
+              text: `Driver health: ${id} ${item.status}. ${item.reason} Client versions: ${JSON.stringify(item.clientVersions)}. Since ${new Date(item.since ?? item.checkedAt).toISOString()}.${item.unverifiedVersion ? UNVERIFIED_GUIDANCE : ''}`,
+            },
+          },
+        ]
+      : []
+  );
+}
 
 function newer(installed: string, verified?: string): boolean {
   if (!verified) return true;
@@ -39,17 +62,8 @@ export function createDriverHealthMonitor(deps: Dependencies) {
     );
     return next;
   };
-  const flush = async (id: string, health: DriverHealth) => {
-    for (const notice of [...(health.pendingNotices ?? [])]) {
-      if (!(await deps.notify(notice.id, notice.text))) return;
-      health.notifiedSignature = notice.signature;
-      health.pendingNotices!.shift();
-      await deps.save(id, health);
-    }
-  };
   const checkDriver = async (id: string, force: boolean) => {
     const previous = (await deps.read())[id];
-    if (previous) await flush(id, previous);
     if (!force && previous && deps.now() - previous.checkedAt < 86_400_000) return;
     const observation = await deps.probe(id).catch(
       (error: unknown): Observation => ({
@@ -66,33 +80,11 @@ export function createDriverHealthMonitor(deps: Dependencies) {
         newer(version, previous?.verifiedVersions?.[name])
       ),
     };
-    const signature = JSON.stringify([
-      health.status,
-      health.reason,
-      health.unverifiedVersion ? health.clientVersions : null,
-    ]);
-    if (
-      signature !== (health.pendingNotices?.at(-1)?.signature ?? health.notifiedSignature) &&
-      (health.status !== 'ok' ||
-        health.unverifiedVersion ||
-        (previous?.status !== undefined && previous.status !== 'ok'))
-    ) {
-      const state =
-        health.status === 'ok' && previous && previous.status !== 'ok'
-          ? 'recovered'
-          : health.status;
-      health.pendingNotices = [
-        ...(health.pendingNotices ?? []),
-        {
-          id: randomUUID(),
-          kind: health.status === 'ok' && state !== 'recovered' ? 'version' : 'health',
-          signature,
-          text: `Driver health: ${id} ${state}. ${health.reason} Client versions: ${JSON.stringify(health.clientVersions)}. Checked ${new Date(health.checkedAt).toISOString()}.${health.unverifiedVersion ? UNVERIFIED_GUIDANCE : ''}`,
-        },
-      ];
-    }
+    health.since =
+      previous && incident(previous) === incident(health)
+        ? (previous.since ?? previous.checkedAt)
+        : health.checkedAt;
     await deps.save(id, health);
-    await flush(id, health);
   };
   const run = (superpipe({})('local-driver-health') as PipelineAPI)
     .input('force')
@@ -111,7 +103,7 @@ export function createDriverHealthMonitor(deps: Dependencies) {
   return {
     async nextCheckAt(): Promise<number> {
       const results = Object.values(await deps.read());
-      return results.length && !results.some((result) => result.pendingNotices?.length)
+      return results.length
         ? Math.min(...results.map((result) => result.checkedAt + 86_400_000))
         : deps.now() + 60_000;
     },
@@ -150,10 +142,7 @@ export function createDriverHealthMonitor(deps: Dependencies) {
           verifiedAt: deps.now(),
           verifiedJourney: journey,
           unverifiedVersion: false,
-          pendingNotices: health.pendingNotices
-            ?.filter((notice) => notice.kind !== 'version')
-            .map((notice) => ({ ...notice, text: notice.text.replace(UNVERIFIED_GUIDANCE, '') })),
-          notifiedSignature: JSON.stringify([observed.status, observed.reason, null]),
+          since: deps.now(),
         };
         await deps.save(id, verified);
         return verified;

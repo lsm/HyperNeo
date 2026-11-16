@@ -39,7 +39,6 @@ export function createDriverHealthRuntime(
       await db.gateway.call(globalSettingsWrites, 'driverHealth', id, health);
     },
     probe: createDriverHealthProbe({ home: homedir(), adapters }),
-    notify: (id, text) => context.driverHealthNotice?.(id, text) ?? Promise.resolve(false),
   });
   const check = (superpipe({})('scheduled-driver-health') as PipelineAPI)
     .input('startup')

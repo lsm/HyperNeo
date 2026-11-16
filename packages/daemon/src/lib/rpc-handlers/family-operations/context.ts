@@ -23,7 +23,6 @@ export interface SessionSpacePort {
 
 export interface FamilyOperationContext {
   readonly workerNameSource?: (read: NeoWorkerNameSource) => void;
-  readonly driverHealthNotice?: (id: string, text: string) => Promise<boolean>;
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
