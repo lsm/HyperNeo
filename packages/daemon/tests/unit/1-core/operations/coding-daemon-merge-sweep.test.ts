@@ -23,6 +23,7 @@ import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/c
 import { Logger } from '../../../../src/lib/logger.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 
 let warnings: unknown[][], restoreWarnings: () => void;
 const head = 'a'.repeat(40),
@@ -517,6 +518,63 @@ describe('daemon merge sweep behavior', () => {
     await run(10);
     expect(merges()).toEqual([]);
     mergeable = 'MERGEABLE';
+    await run(11);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+  });
+  test('a cached PR whose local lookup fails holds only itself', async () => {
+    reviewHead = 'b'.repeat(40);
+    const rows = await ledger.read('list');
+    await ledger.write('replace', 'synthetic/merge', [...rows, { ...rows[0], number: 2 }], 2);
+    const second = url.replace('/1', '/2');
+    const run = sweep();
+    await run(10);
+    expect(merges()).toEqual([]);
+    const original = CodingTodoPrRepository.prototype.linkedIssues;
+    let failFirst = true;
+    const lookup = spyOn(CodingTodoPrRepository.prototype, 'linkedIssues').mockImplementation(
+      function (this: CodingTodoPrRepository, prUrl: string, todoId?: string) {
+        if (failFirst && prUrl.toLowerCase() === url) throw new Error('Read queue full');
+        return original.call(this, prUrl, todoId);
+      }
+    );
+    try {
+      reviewHead = head;
+      db.prepare(
+        "UPDATE pack_coding_pr_ledger SET updated_at = '2026-11-16T12:00:00Z' WHERE number = 2"
+      ).run();
+      await expect(run(11)).resolves.toBeUndefined();
+      expect(merges()).toEqual([
+        ['gh', 'pr', 'merge', second, '--squash', '--match-head-commit', head],
+      ]);
+      failFirst = false;
+      db.prepare(
+        "UPDATE pack_coding_pr_ledger SET updated_at = '2026-11-16T12:00:00Z' WHERE number = 1"
+      ).run();
+      await run(12);
+      expect(merges()).toEqual([
+        ['gh', 'pr', 'merge', second, '--squash', '--match-head-commit', head],
+        ['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head],
+      ]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+  test('a read with an incomplete file list is not reused', async () => {
+    let fileReads = 0;
+    const flaky: SpawnFn = (args, options) => {
+      if (!args.some((arg) => arg.includes('CodingMergeFiles')) || fileReads++ > 0)
+        return spawn(args, options);
+      const saved = files;
+      files = [];
+      try {
+        return spawn(args, options);
+      } finally {
+        files = saved;
+      }
+    };
+    const run = sweep(flaky);
+    await run(10);
+    expect(merges()).toEqual([]);
     await run(11);
     expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
   });
