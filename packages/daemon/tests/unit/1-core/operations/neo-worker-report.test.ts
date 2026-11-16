@@ -20,6 +20,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { recordNeoRequestTodo } from '../../../../src/lib/neo/request-todo.ts';
 import { NEO_ATTENTION_KINDS } from '../../../../src/lib/neo/attention/decide.ts';
 import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
 import {
@@ -853,6 +854,30 @@ test('a request todo names its sender, and a repeat after Neo closes it records 
     expect(records()).toEqual(before);
   } finally {
     clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a request todo that fails to record leaves no ask behind', async () => {
+  const { db, service } = await setup();
+  const add = vi.spyOn(service.todos, 'addTodo').mockImplementation(() => {
+    throw new Error('synthetic todo write failure');
+  });
+  try {
+    expect(() =>
+      recordNeoRequestTodo(service.todos, {
+        incident: 'synthetic-incident',
+        neoSession: 'neo',
+        sender: 'stranger',
+        text: 'Close the merged todo',
+        messageId: 'synthetic-message',
+        now: 1,
+      })
+    ).toThrow('synthetic todo write failure');
+    expect(service.todos.listOpenAsks().map((ask) => ask.id)).toEqual(['ask']);
+  } finally {
+    add.mockRestore();
     service.dispose();
     db.close();
   }
