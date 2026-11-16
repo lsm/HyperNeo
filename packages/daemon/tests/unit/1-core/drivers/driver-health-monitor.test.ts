@@ -58,17 +58,20 @@ test('daily checks persist status and keep the incident start across unchanged c
   expect(f.stored['codex-desktop'].since).toBe(1);
   await createDriverHealthMonitor(f.deps).check();
   expect(f.probes()).toBe(2);
-  f.setNow(86_400_002);
+  f.setNow(86_400_006);
   f.setStatus('unavailable');
   await createDriverHealthMonitor(f.deps).check();
+  expect(f.probes()).toBe(3);
   f.setNow(86_400_010);
   await createDriverHealthMonitor(f.deps).check(true);
   expect(f.events()).toEqual([
     {
       kind: 'driver.health',
       subject: { type: 'driver', id: 'codex-desktop' },
-      since: 86_400_002,
-      facts: { text: expect.stringContaining('codex-desktop unavailable. State database is missing.') },
+      since: 86_400_006,
+      facts: {
+        text: expect.stringContaining('codex-desktop unavailable. State database is missing.'),
+      },
     },
   ]);
 });

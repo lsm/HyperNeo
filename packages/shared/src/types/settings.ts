@@ -183,8 +183,7 @@ export interface DriverHealth {
   verifiedVersions?: Record<string, string>;
   verifiedAt?: number;
   verifiedJourney?: string;
-  notifiedSignature?: string;
-  pendingNotices?: { id: string; kind: 'health' | 'version'; signature: string; text: string }[];
+  since?: number;
 }
 
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
