@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { verifyOpenControls } from './neo-open-controls-web.mjs';
+import { revealAsk } from './queue-ask.mjs';
 
 const fixture = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const { phase, run, url, artifactId } = fixture;
@@ -18,12 +19,12 @@ const scene = async (width, height, touch, drive) => {
 };
 const shot = (page, name) => page.screenshot({ path: `${evidence}/${phase}-${name}.png`, animations: 'disabled' });
 const tabNames = page => page.getByRole('tab').allInnerTexts();
-const opener = page => page.locator('[data-ask="open-local-worker"]:visible [data-ask-todo] button[aria-label^="Open "]');
+const opener = async page => (await revealAsk(page, 'open-local-worker')).locator('[data-ask-todo] button[aria-label^="Open "]');
 const openWorker = async (page, touch = false) => {
   const work = page.getByRole('tab', { name: /^Your work/ });
   if (await work.count()) await work.click();
   else if (touch) await page.getByRole('button', { name: /^Your work/ }).tap();
-  await opener(page).click();
+  await (await opener(page)).click();
   await page.locator('.neo-session-pane:visible').waitFor();
 };
 const preview = async page => {
@@ -56,7 +57,7 @@ const after = async () => {
   for (const [width, height] of [[1280, 900], [1600, 1000]])
     await scene(width, height, false, async page => {
       await page.goto(url);
-      await page.locator('[data-ask="open-local-worker"]').first().waitFor();
+      await revealAsk(page, 'open-local-worker');
       assert.deepEqual(await tabNames(page), []);
       await shot(page, `${width}-work-only`);
 
@@ -72,8 +73,8 @@ const after = async () => {
 
       await page.locator('.neo-session-pane textarea').fill('Draft kept across tabs');
       await page.getByRole('tab', { name: /^Your work/ }).click();
-      assert(await opener(page).isVisible());
-      await opener(page).click();
+      assert(await (await opener(page)).isVisible());
+      await (await opener(page)).click();
       assert.equal((await tabNames(page)).length, 2);
       assert.equal(await page.locator('.neo-session-pane textarea').inputValue(), 'Draft kept across tabs');
 
@@ -120,7 +121,7 @@ const after = async () => {
     observed.push({ resize: 'tab to overlay and back' });
 
     await page.getByRole('tab', { name: /^Your work/ }).click();
-    await page.locator('[data-ask="open-second-worker"]:visible [data-ask-todo] button[aria-label^="Open "]').click();
+    await (await revealAsk(page, 'open-second-worker')).locator('[data-ask-todo] button[aria-label^="Open "]').click();
     await page.getByRole('tab', { name: /second.worker/i }).waitFor();
     assert.equal((await tabNames(page)).length, 3);
     await page.setViewportSize({ width: 390, height: 844 });

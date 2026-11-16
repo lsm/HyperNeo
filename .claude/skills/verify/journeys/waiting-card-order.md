@@ -27,10 +27,12 @@ The browser helper opens the mobile work sheet, records card IDs in rendered
 order, screenshots each viewport, and uses the seed's guarded update mode to
 change only an older fixture card's outcome/activity time. It reloads the actual
 snapshot and records the resulting order. No model runs or production DB writes.
-Before proves in-progress blocked work precedes some waiting cards. After requires
-all waiting cards first, creation time descending, ID ascending for equal times,
-and the previous order for everything else. The unrelated outcome update and
-reload must leave the order unchanged. Neither viewport may overflow horizontally.
+Before proves in-progress blocked work precedes some waiting cards. After reads the
+inbox queue instead: the three waiting asks are the groups under Waiting on you, the
+blocked, running and queued work are the groups under In progress, and only the
+finished ask remains a card. The unrelated outcome update and reload must leave
+every list's order unchanged. Neither viewport may overflow horizontally. The
+browser pairs through the real `/pair` page with a synthetic code first.
 
 Inspect evidence/{before,after}/waiting-order-{1280,390}.png and waiting-order.json.
 Component coverage also changes snapshot input order and moves a waiting card back

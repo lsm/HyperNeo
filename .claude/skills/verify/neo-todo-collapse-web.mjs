@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { revealAsk } from './queue-ask.mjs';
+import { pairPage } from './pair-page.mjs';
 
 export async function verifyTodoCollapse(page, { port, run, width }) {
   assert.notEqual(String(port), '8399');
@@ -71,7 +72,9 @@ if (typeof process !== 'undefined' && process.argv[1] && import.meta.url === pat
   try {
     for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US', isMobile: width < 800, hasTouch: width < 800 });
-      await verifyTodoCollapse(await context.newPage(), { port, run, width });
+      const page = await context.newPage();
+      await pairPage(page, port, run);
+      await verifyTodoCollapse(page, { port, run, width });
       await context.close();
     }
   } finally { await browser.close(); }
