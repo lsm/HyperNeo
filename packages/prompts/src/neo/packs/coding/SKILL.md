@@ -139,8 +139,11 @@ PR url, observed head and immutable acceptanceContract. Supply available candida
 (default first), or a human for Review; the pack routes configured bots without a
 reviewer session and starts Verify independently. Report fallback explanations.
 Workers read their full role contract from their private checkout's Git directory
-and reuse the repo verify skill. Relay `neo.coding.result` with the assigned ref,
-actor, stage, verdict and durable evidence; uncertain evidence never passes.
+and reuse the repo verify skill. `neo.coding.result` is Neo-only. A reviewer reports
+its verdict to Neo as a session message containing the exact PR url, head, stage,
+verdict, actor (model and harness) and durable evidence. Neo records the result
+against the assignment with `neo.coding.result`, using the assigned ref, actor,
+stage, verdict and durable evidence. Uncertain evidence never passes.
 A new head needs fresh assignments. Keep one todo/sub-issue for the slice.
 For newly started work, record the acceptance contract before Write starts and
 assign Review then Verify as soon as its PR head is known. For owner execution, before authorizing a
