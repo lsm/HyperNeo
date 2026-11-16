@@ -85,24 +85,28 @@ function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
   return asked;
 }
 
+const readFacts = (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
+  gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
+    todoId: todo.id,
+    featureKey: todo.askId,
+    adapter: target.verb === 'start' ? target.adapter : target.ref.adapter,
+    prUrl: prUrl(todo),
+  });
+
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
   .input(['db', 'todo', 'target', 'status', 'askSetting'])
+  .pipe(readFacts, ['db', 'todo', 'target'], 'asked')
   .pipe(
-    (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
-      gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
-        todoId: todo.id,
-        featureKey: todo.askId,
-        adapter: target.verb === 'start' ? target.adapter : target.ref.adapter,
-        prUrl: prUrl(todo),
-      }),
-    ['db', 'todo', 'target'],
-    'facts'
+    (db: Database, asked: Facts, askSetting: AskSetting) =>
+      asked && !asked.strategySaved ? askStrategyOnce(db, asked.repo, askSetting) : null,
+    ['db', 'asked', 'askSetting'],
+    'strategyQuestion'
   )
   .pipe(
-    (db: Database, facts: Facts, askSetting: AskSetting) =>
-      facts && !facts.strategySaved ? askStrategyOnce(db, facts.repo, askSetting) : null,
-    ['db', 'facts', 'askSetting'],
-    'strategyQuestion'
+    (db: Database, todo: NeoTodo, target: NeoTodoTarget, asked: Facts) =>
+      asked && !asked.strategySaved ? readFacts(db, todo, target) : asked,
+    ['db', 'todo', 'target', 'asked', 'strategyQuestion'],
+    'facts'
   )
   .pipe(
     async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {

@@ -162,6 +162,10 @@ export type NeoQuestionDraft = Pick<
 > &
   Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
 
+export const NEO_ADVISORY_QUESTION = (question: string) =>
+  `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
+    AND json_extract(p.values_json, '$.hold') = 0)`;
+
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
@@ -1025,6 +1029,16 @@ export class NeoAskTodoRepository {
 
   markCardActionsApplied(id: string, now: number): void {
     this.changeQuestion(id, { actions_applied_at: now }, 'answered');
+  }
+
+  listBlockingQuestions(askId: string): NeoQuestion[] {
+    return (
+      this.db
+        .prepare(
+          `${QUESTION_SELECT} WHERE ask_id = ? AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')} ORDER BY created_at, rowid`
+        )
+        .all(askId) as QuestionRow[]
+    ).map(toQuestion);
   }
 
   listQuestions(askId: string): NeoQuestion[] {
