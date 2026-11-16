@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { ARTIFACT_DEFAULT_LIMITS } from '@hyperneo/shared/types/artifact-file';
 import {
-  admitArtifactStorage,
   gateArtifactSize,
   gateArtifactQuota,
 } from '../../../../src/lib/artifacts/capture-admission.ts';
 import { createArtifactCaptureStore } from '../../../../src/lib/artifacts/capture-store.ts';
+import { resolveStorageAdmission as admitArtifactStorage } from '../../../../src/lib/artifacts/resolve-operation.ts';
 
 const limits = { ...ARTIFACT_DEFAULT_LIMITS, artifactBytes: 100, retainedBytes: 200 };
 describe('artifact capture storage', () => {
@@ -64,9 +64,9 @@ describe('artifact capture storage', () => {
     );
     try {
       const store = await createArtifactCaptureStore(join(root, 'artifacts'));
-      await expect(store.capture(Buffer.from('Synthetic immutable bytes'))).rejects.toThrow(
-        'unsupported directory sync'
-      );
+      await expect(
+        store.capture(Buffer.from('Synthetic immutable bytes'), admitArtifactStorage)
+      ).rejects.toThrow('unsupported directory sync');
       expect((await store.inspect()).entries).toEqual([]);
       expect((await store.inspect()).reservedBytes).toBe(0);
     } finally {
