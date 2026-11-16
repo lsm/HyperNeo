@@ -21,8 +21,9 @@ export type CodingTurnProducer =
 
 const ABORTED = /abort|interrupt/;
 
-const namedPrKeys = (todo: Pick<NeoTodo, 'check'>) => {
-  const urls = todo.check?.params.urls;
+export const codingNamedPrKeys = (todo: Pick<NeoTodo, 'check'>) => {
+  const urls =
+    todo.check?.kind === 'pr_approved' ? [todo.check.params.url] : todo.check?.params.urls;
   return (Array.isArray(urls) ? urls : []).flatMap((url) =>
     typeof url === 'string' ? (codingPrKey(url) ?? []) : []
   );
@@ -108,7 +109,10 @@ export function planCodingTurnUrls(
   own: readonly Pick<CodingTurn, 'urls' | 'finalUrls'>[]
 ) {
   const keys = (urls: readonly string[]) => urls.flatMap((url) => codingPrKey(url) ?? []);
-  const reported = new Set([...namedPrKeys(todo), ...keys(own.flatMap((turn) => turn.finalUrls))]);
+  const reported = new Set([
+    ...codingNamedPrKeys(todo),
+    ...keys(own.flatMap((turn) => turn.finalUrls)),
+  ]);
   const shown = [...new Set(keys(own.flatMap((turn) => turn.urls)))].filter(
     (url) => !reported.has(url)
   );
@@ -120,7 +124,7 @@ export function planCodingTurnOwned(
   prs: readonly { url: string; createdAt?: number }[],
   mentions: CodingTurnMentions
 ) {
-  const named = new Set(namedPrKeys(todo));
+  const named = new Set(codingNamedPrKeys(todo));
   return prs.flatMap(({ url, createdAt }) => {
     const owner = planCodingTurnOwner({ url, createdAt }, mentions.turns, mentions.todos);
     return named.has(url) || (owner.state === 'placed' && owner.todo === todo.id) ? url : [];
@@ -137,15 +141,18 @@ export function planCodingTurnFacts(
 ): { prs: readonly NeoWorkPr[]; observedAt: number; incomplete?: true } {
   const unknown = { prs: [], observedAt, incomplete: true as const };
   const found = (url: string) => read?.find((pr) => codingPrKey(pr.url) === url);
-  const named = new Set(namedPrKeys(todo));
+  const named = new Set(codingNamedPrKeys(todo));
+  const explicit = named.size > 0 && ['pr_merged', 'pr_approved'].includes(todo.check?.kind ?? '');
   const reported = own.flatMap((turn) => turn.finalUrls.flatMap((url) => codingPrKey(url) ?? []));
-  if (own.some((turn) => !turn.complete) || !read) return unknown;
-  if ([...named, ...reported].some((url) => !found(url))) return unknown;
+  if (!read || [...named].some((url) => !found(url))) return unknown;
+  if (!explicit && (own.some((turn) => !turn.complete) || reported.some((url) => !found(url))))
+    return unknown;
   const owners = urls.filter(found).map((url) => ({
     url,
     owner: planCodingTurnOwner(found(url)!, mentions.turns, mentions.todos),
   }));
-  if (owners.some(({ url, owner }) => !named.has(url) && owner.state === 'unknown')) return unknown;
+  if (!explicit && owners.some(({ url, owner }) => !named.has(url) && owner.state === 'unknown'))
+    return unknown;
   return {
     prs: owners.flatMap(({ url, owner }) =>
       named.has(url) || (owner.state === 'placed' && owner.todo === todo.id) ? found(url)! : []
