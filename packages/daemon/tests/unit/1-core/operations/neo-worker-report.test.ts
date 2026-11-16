@@ -1107,3 +1107,50 @@ test('seven answers to one sender within a minute all arrive; the rate-limited o
     db.close();
   }
 });
+
+test('a lost answer wakes Neo even under an open ask card, and a replayed job wakes it once', async () => {
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  const { db, service, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    recordNeoRequestTodo(service.todos, {
+      incident: 'gone',
+      neoSession: 'neo',
+      sender: 'gone',
+      text: 'Close the merged todo',
+      messageId: 'request-message',
+      now: 1,
+    });
+    const [ask] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(ask.id);
+    service.todos.askQuestion(
+      'shared',
+      ask.id,
+      {
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        text: 'Which release?',
+      },
+      2
+    );
+    await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+      input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+      now: Date.now(),
+    });
+    expect(service.todos.getQuestion('shared')?.state).toBe('open');
+    const [job] = db.getJobQueueRepo().dequeue(NEO_REQUEST_REPLY, 1);
+    expect(await service.deliverRequestReply(job)).toEqual({ kind: 'rejected' });
+    clock.mockReturnValue(start + 3_600_000);
+    expect(await service.deliverRequestReply(job)).toEqual({ kind: 'rejected' });
+    expect(wakes('did not reach session gone')).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
