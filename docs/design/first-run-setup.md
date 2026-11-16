@@ -59,9 +59,14 @@ OpenAI sign-ins); pair a phone (the existing QR flow); then Neo.
 
 **4. The desktop app asks one question on first launch.** With no local HyperNeo data it
 asks: "Run HyperNeo on this computer" (start the bundled daemon, then step 2) or "Connect to
-a HyperNeo on another computer" (type its address or pick one on the tailnet; that server's
-owner allows the request, which is today's later-device pairing). The app remembers each
-server it has joined and switches between them from its menu.
+a HyperNeo on another computer". Connecting is today's later-device pairing, started from
+the paired side: on a device already paired with that server, the owner makes a pairing
+link or code (the existing flow in `web/src/components/settings/PairPhoneFlow.tsx`, which
+calls `/pair2/request` as a signed-in human). The desktop app takes that link or code, binds
+with its ticket (`/pair2/bind`), and waits for the owner's Allow. An address alone cannot
+start pairing, because `/pair2/request` admits only a paired human
+(`daemon/src/lib/pairing/pair2-route.ts`). The app remembers each server it has joined and
+switches between them from its menu.
 
 **5. Pairing stays for joining.** A browser that reaches a daemon that already has an owner
 still sees the pairing page, worded for that case: "This HyperNeo already has an owner. Ask
@@ -98,7 +103,8 @@ Acceptance, one integration case per row:
 | `hyperneo devices reset-human`, then a restart | a new setup link is printed and grants the first device |
 | New desktop install | the window opens the setup steps with no code typed |
 | `setup-token` file | readable only by its owner |
-| Desktop "Connect to another computer" | sends a pairing request the other owner allows; the app lists that server |
+| Desktop "Connect to another computer" with a link or code made on the other server's paired device | binds, waits for that owner's Allow, then lists that server |
+| The same with only the server's address | no pairing starts; the app asks for a link or code from a paired device |
 | Second browser on a daemon with an owner | pairing page, as today |
 
 ## Out of scope
