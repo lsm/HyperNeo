@@ -115,6 +115,8 @@ jobs:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
 
     steps:
       # Shallow checkout: nothing in this job walks history except the
@@ -238,7 +240,7 @@ jobs:
   # PR-only. Tree-diffs the PR merge commit against the dev tip and emits three
   # booleans (daemon unit, online, web) so daemon-only PRs skip web tests,
   # web-only PRs skip daemon unit+online, prompt or daemon-unit-test PRs skip
-  # online, and docs-only PRs run check alone. Everything outside
+  # online, and docs-only PRs (scripts/lib/inert-docs.sh) skip check too. Everything outside
   # packages/web (resp. the daemon-side packages) counts as daemon (resp.
   # web) work, so unknown/infra paths (scripts/, .github/, lockfiles) run
   # BOTH suites — the safe default. Push/workflow_dispatch events skip this
@@ -255,6 +257,7 @@ jobs:
       online: ${{ steps.filter.outputs.online }}
       web: ${{ steps.filter.outputs.web }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      code: ${{ steps.filter.outputs.code }}
 
     steps:
       - uses: actions/checkout@v6
@@ -280,24 +283,18 @@ jobs:
             echo "online=true" >> "$GITHUB_OUTPUT"
             echo "web=true" >> "$GITHUB_OUTPUT"
             echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          . scripts/lib/inert-docs.sh
+          code=false
           daemon=false
           online=false
           web=false
           desktop=false
           while IFS= read -r f; do
-            # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
-            # match across '/', so a bare *.md would also swallow nested
-            # functional assets (e.g. packages/skills/*/SKILL.md feeds the
-            # bundled skill registry); those must fall through to the package
-            # rules below.
-            doc=false
-            case "$f" in
-              docs/*) doc=true ;;
-              *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
-            esac
-            if [ "$doc" = true ]; then continue; fi
+            if is_inert_doc "$f"; then continue; fi
+            code=true
             case "$f" in
               packages/desktop/*|packages/daemon/src/lib/runtime-process-identity.ts|.github/workflows/main.yml|.github/workflows/release.yml) desktop=true ;;
             esac
@@ -325,6 +322,7 @@ jobs:
           echo "online=$online" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
   # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
