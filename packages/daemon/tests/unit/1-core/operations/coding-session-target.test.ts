@@ -15,7 +15,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable';
+type Live = 'idle' | 'running' | 'needs_you' | 'stopped' | 'unreachable';
 
 function setup() {
   const db = new Database(':memory:');
@@ -117,6 +117,20 @@ describe('coding session target decision', () => {
       value: start('frontend-2'),
     });
   });
+
+  test.each([true, false])(
+    'skips an archived Claude Desktop worker (live alternative: %s)',
+    async (hasLive) => {
+      const { todo, worked, live, decide } = setup();
+      worked(todo('other'), 'archived', 'backend', 'done');
+      live.archived = 'stopped';
+      if (hasLive) worked(todo('other'), 'idle', 'frontend', 'done');
+
+      expect(await decide(todo(), start('backend'))).toEqual({
+        value: hasLive ? { verb: 'send', ref: ref('idle') } : start('backend'),
+      });
+    }
+  );
 
   test('a session held by unfinished work is busy even when its turn is idle', async () => {
     const { todo, worked, decide } = setup();
