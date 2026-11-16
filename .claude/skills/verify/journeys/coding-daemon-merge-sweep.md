@@ -34,7 +34,14 @@ confirmation read failed. Build-slice proof covers durable receipts across daemo
 restart. Unreadable confirmation retains the receipt and CLI error, even when the command
 exits nonzero. Only a readable OPEN result releases/counts the attempt; retries
 recheck every gate.
-Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
+A readable held warning is told once and its terminal attempt is released; confirmation stays distinct.
+
+Merge wakes for Neo go through the attention entry as `coding.merge_held`,
+`coding.merge_failing` and `coding.merge_confirmed`; the pack keeps no record of
+what it told. The helper routes `attend` through a real `neo.attention.tell`
+pipeline with the pack's kinds: `notices` holds what the entry delivered, and the
+sign-off coverage cases count what the sweep raised, because the entry tells one
+head once. A direct `wake` from the merge sweep fails the run.
 
 Add `ci-startup-queued` and `ci-startup-running` for the #9623/#9625 failure:
 the required aggregate check has not appeared, so the CLI returns exit 1, empty
@@ -50,7 +57,7 @@ head, pending CI, a human label and unreadable reviews must not reopen the budge
 The exact ready head may be acknowledged once through neo.coding.merge.retry;
 historical failures remain unchanged and the daemon, not that operation, merges.
 A per-head retry acknowledgement is stored independently of transient merge
-receipts, whose notice rows have a cascading foreign key. It survives receipt
+receipts. It survives receipt
 release. Unit coverage verifies that the next episode still stops at three,
 including timestamp zero and an acknowledgement made after a clock rollback.
 The retry-budget helper uses the real Neo mailbox with its processor stopped:
@@ -122,8 +129,8 @@ without issuing another merge. A separate regression recovers OPEN after an
 unreadable third command and requires the original CLI error in Neo's limit notice.
 
 Add `limit-gone` to exhaust retries while Neo delivery is unavailable, close the
-PR and switch its policy to owner, then restore delivery. The pending limit
-report must still reach Neo exactly once. Add `external-owned` to fail one
+PR and switch its policy to owner, then restore delivery. The stopped budget of
+a closed pull request is no longer told: the report retires with its subject. Add `external-owned` to fail one
 attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions
 are suppressed for daemon execution. Terminal fixtures must contain the PR

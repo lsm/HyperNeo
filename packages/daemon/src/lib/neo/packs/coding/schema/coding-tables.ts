@@ -18,14 +18,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_failures (
     url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
-    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0, notified_at INTEGER,
+    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (url, head, started_at)
   );
-  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (
-    url TEXT NOT NULL, head TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
-    PRIMARY KEY (url, head, kind),
-    FOREIGN KEY (url, head) REFERENCES pack_coding_daemon_merges(url, head) ON DELETE CASCADE
-  );
+  DROP TABLE IF EXISTS pack_coding_daemon_merge_notices;
   CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
@@ -197,6 +193,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
     );
+  const failures = db.prepare('PRAGMA table_info(pack_coding_daemon_merge_failures)').all() as {
+    name: string;
+  }[];
+  if (failures.some((column) => column.name === 'notified_at'))
+    db.exec('ALTER TABLE pack_coding_daemon_merge_failures DROP COLUMN notified_at');
   const unowned = db.prepare('PRAGMA table_info(pack_coding_pr_unowned_state)').all() as {
     name: string;
   }[];

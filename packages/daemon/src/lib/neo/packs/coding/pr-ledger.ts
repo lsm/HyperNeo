@@ -378,33 +378,27 @@ export class CodingPrLedgerRepository {
       | { kind: 'list' }
       | { kind: 'limits' }
       | { kind: 'failures'; url: string; head: string }
-      | { kind: 'limitNotified' | 'retry'; url: string; head: string; at: number }
+      | { kind: 'retry'; url: string; head: string; at: number }
       | ({ kind: 'failed' | 'uncertain'; error: string } & CodingDaemonMergeAttempt)
       | { kind: 'begin' | 'void'; url: string; head: string; actor: string; at: number }
       | { kind: 'finish'; url: string; head: string; commit: string; at: number }
-      | { kind: 'notified' | 'held' | 'retired'; url: string; head: string; at: number }
+      | { kind: 'notified'; url: string; head: string; at: number }
   ) {
     const target = 'url' in change ? [change.url, change.head] : [];
     const attempt = 'actor' in change ? [...target, change.actor, change.at] : [];
-    const columns = `url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt, (SELECT at FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='held') AS heldNotifiedAt, (SELECT error FROM pack_coding_daemon_merge_failures f WHERE f.url=pack_coding_daemon_merges.url AND f.head=pack_coding_daemon_merges.head AND f.started_at=pack_coding_daemon_merges.started_at) AS error`;
+    const columns = `url, head, actor, started_at AS startedAt, merge_commit AS mergeCommit, merged_at AS mergedAt, notified_at AS notifiedAt, (SELECT error FROM pack_coding_daemon_merge_failures f WHERE f.url=pack_coding_daemon_merges.url AND f.head=pack_coding_daemon_merges.head AND f.started_at=pack_coding_daemon_merges.started_at) AS error`;
     const failureWindow =
       'confirmed_open=1 AND started_at>COALESCE((SELECT at FROM pack_coding_daemon_merge_retries n WHERE n.url=pack_coding_daemon_merge_failures.url AND n.head=pack_coding_daemon_merge_failures.head),-1)';
     const statement =
       change.kind === 'list'
         ? {
-            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL AND NOT EXISTS (SELECT 1 FROM pack_coding_daemon_merge_notices n WHERE n.url=pack_coding_daemon_merges.url AND n.head=pack_coding_daemon_merges.head AND n.kind='retired') ORDER BY started_at`,
+            sql: `SELECT ${columns} FROM pack_coding_daemon_merges WHERE notified_at IS NULL ORDER BY started_at`,
             args: [],
           }
-        : change.kind === 'held' || change.kind === 'retired' || change.kind === 'retry'
+        : change.kind === 'retry'
           ? {
-              sql:
-                change.kind === 'retry'
-                  ? `INSERT INTO pack_coding_daemon_merge_retries(url,head,at) SELECT ?,?,MAX(?,COALESCE((SELECT MAX(started_at) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=?),0)) WHERE (SELECT count(*) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=? AND ${failureWindow})>=? ON CONFLICT(url,head) DO UPDATE SET at=excluded.at`
-                  : 'INSERT OR IGNORE INTO pack_coding_daemon_merge_notices(url,head,kind,at) VALUES(?,?,?,?)',
-              args:
-                change.kind === 'retry'
-                  ? [...target, change.at, ...target, ...target, CODING_DAEMON_MERGE_MAX_ATTEMPTS]
-                  : [change.url, change.head, change.kind, change.at],
+              sql: `INSERT INTO pack_coding_daemon_merge_retries(url,head,at) SELECT ?,?,MAX(?,COALESCE((SELECT MAX(started_at) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=?),0)) WHERE (SELECT count(*) FROM pack_coding_daemon_merge_failures WHERE url=? AND head=? AND ${failureWindow})>=? ON CONFLICT(url,head) DO UPDATE SET at=excluded.at`,
+              args: [...target, change.at, ...target, ...target, CODING_DAEMON_MERGE_MAX_ATTEMPTS],
             }
           : change.kind === 'void'
             ? {
@@ -429,7 +423,7 @@ export class CodingPrLedgerRepository {
                   }
                 : change.kind === 'failures' || change.kind === 'limits'
                   ? {
-                      sql: `SELECT * FROM (SELECT url, head, actor, started_at AS startedAt, NULL AS mergeCommit, NULL AS mergedAt, notified_at AS notifiedAt, NULL AS heldNotifiedAt, error, count(*) OVER (PARTITION BY url,head) AS failures, row_number() OVER (PARTITION BY url,head ORDER BY started_at DESC) AS latest FROM pack_coding_daemon_merge_failures WHERE ${failureWindow} ${change.kind === 'failures' ? 'AND url=? AND head=?' : ''}) WHERE latest=1 ${change.kind === 'limits' ? 'AND failures>=? AND notifiedAt IS NULL' : ''}`,
+                      sql: `SELECT * FROM (SELECT url, head, actor, started_at AS startedAt, NULL AS mergeCommit, NULL AS mergedAt, NULL AS notifiedAt, error, count(*) OVER (PARTITION BY url,head) AS failures, row_number() OVER (PARTITION BY url,head ORDER BY started_at DESC) AS latest FROM pack_coding_daemon_merge_failures WHERE ${failureWindow} ${change.kind === 'failures' ? 'AND url=? AND head=?' : ''}) WHERE latest=1 ${change.kind === 'limits' ? 'AND failures>=?' : ''}`,
                       args:
                         change.kind === 'failures' ? target : [CODING_DAEMON_MERGE_MAX_ATTEMPTS],
                     }
@@ -438,15 +432,10 @@ export class CodingPrLedgerRepository {
                         sql: 'INSERT INTO pack_coding_daemon_merge_failures(url,head,actor,started_at,error,confirmed_open) VALUES(?,?,?,?,?,?) ON CONFLICT(url,head,started_at) DO UPDATE SET confirmed_open=MAX(confirmed_open,excluded.confirmed_open),error=excluded.error',
                         args: [...attempt, change.error, Number(change.kind === 'failed')],
                       }
-                    : change.kind === 'limitNotified'
-                      ? {
-                          sql: `UPDATE pack_coding_daemon_merge_failures SET notified_at=? WHERE url=? AND head=? AND ${failureWindow}`,
-                          args: [change.at, ...target],
-                        }
-                      : {
-                          sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
-                          args: [change.at, change.url, change.head],
-                        };
+                    : {
+                        sql: `UPDATE pack_coding_daemon_merges SET notified_at=? WHERE url=? AND head=? AND merge_commit IS NOT NULL AND notified_at IS NULL RETURNING ${columns}`,
+                        args: [change.at, change.url, change.head],
+                      };
     return this.db.prepare(statement.sql).all(...statement.args) as {
       url: string;
       head: string;
@@ -455,7 +444,6 @@ export class CodingPrLedgerRepository {
       mergeCommit: string | null;
       mergedAt: number | null;
       notifiedAt: number | null;
-      heldNotifiedAt: number | null;
       failures?: number;
       error?: string | null;
     }[];

@@ -1210,16 +1210,15 @@ test('an unreadable failed third attempt keeps its error until OPEN recovery sur
 
 test('an undelivered retry-limit notice survives removal from the candidate set', async () => {
   mergeFailed = true;
-  deliver = false;
-  for (const at of [10, 11, 12]) await sweep()(at);
+  const { run, wakes } = entry();
+  for (const at of [10, 11, 12]) await sweep(spawn, { attend: async () => false })(at);
   expect(merges()).toHaveLength(3);
   policy('mergeBy', 'owner');
-  deliver = true;
-  await sweep()(14);
-  await sweep()(15);
+  await run(14);
+  await run(15);
   expect(merges()).toHaveLength(3);
-  expect(notices).toEqual([expect.stringContaining('3 failed attempts')]);
-  expect(notices[0]).toContain('Required check still settling');
+  expect(wakes()).toEqual([expect.stringContaining('3 failed attempts')]);
+  expect(wakes()[0]).toContain('Required check still settling');
 });
 
 test('an external merge after a failed attempt still notifies its owner through ledger events', async () => {
@@ -1328,6 +1327,27 @@ test('gates passing again after a stopped budget tell Neo once per time they pas
   ready(30);
   await run(31);
   expect(wakes()).toHaveLength(3);
+  expect(merges()).toHaveLength(3);
+});
+
+test('a stopped budget whose gates pass again is reminded as ready, not as stopped', async () => {
+  mergeFailed = true;
+  const { run, wakes } = entry();
+  for (const at of [10, 11, 12]) await run(at);
+  db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_green', state_since=20").run();
+  fail = '/reviews';
+  await run(21);
+  expect(wakes()).toHaveLength(1);
+  fail = '';
+  await run(22);
+  await run(12 + FOUR_HOURS);
+  expect(wakes()).toHaveLength(2);
+  await run(20 + FOUR_HOURS);
+  expect(wakes().map((text) => text.includes('Fresh merge gates now pass'))).toEqual([
+    false,
+    true,
+    true,
+  ]);
   expect(merges()).toHaveLength(3);
 });
 
