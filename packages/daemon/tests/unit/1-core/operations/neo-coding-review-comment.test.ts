@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, setSystemTime } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -39,9 +39,11 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
      VALUES ('synthetic/review', 3, 'Synthetic', 'branch', ?, ?, 1, ?, 1)`
   ).run(ledgerHead, state, closedAt);
   const comments: { host: string; path: string; body: string }[] = [];
-  const outage = { on: false };
+  const outage: { on: boolean; error?: Error } = { on: false };
+  const calls: string[][] = [];
   const github = async (host: string, args: string[]) => {
-    if (outage.on) throw new Error('gh lookup timed out');
+    calls.push(args);
+    if (outage.on) throw outage.error ?? new Error('gh lookup timed out');
     const path = args[0];
     if (args.includes('GET'))
       return [comments.filter((item) => item.path === path).map(({ body }) => ({ body }))];
@@ -52,7 +54,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
   };
   const sweep = (post = createCodingReviewComments(github)) =>
     post(() => readCodingPostableReviews(db, ledger));
-  return { db, ledger, comments, outage, github, sweep };
+  return { db, ledger, comments, outage, calls, github, sweep };
 }
 
 describe('createCodingReviewComments', () => {
@@ -96,18 +98,66 @@ describe('createCodingReviewComments', () => {
       db.close();
     }
   });
-  test('a PR merged while GitHub failed gets its comment on a later sweep', async () => {
-    const { db, ledger, comments, outage, sweep, github } = setup();
+  test('a restarted daemon with the same review record makes no GitHub calls', async () => {
+    const { db, ledger, comments, calls, sweep, github } = setup();
     try {
       ledger.recordStage(fact);
+      await sweep(createCodingReviewComments(github));
+      expect(comments).toHaveLength(1);
+      calls.length = 0;
+      await sweep(createCodingReviewComments(github));
+      await sweep(createCodingReviewComments(github));
+      expect(calls).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+  test('a merged PR makes no GitHub calls', async () => {
+    const { db, ledger, comments, calls, sweep, github } = setup('head-a', 5, 'merged');
+    try {
+      ledger.recordStage(fact);
+      await sweep(createCodingReviewComments(github));
+      expect(calls).toEqual([]);
+      expect(comments).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+  test('a rate-limit error stops GitHub calls until the reset time', async () => {
+    const { db, ledger, comments, outage, calls, sweep, github } = setup();
+    const second = 'https://github.com/synthetic/review/pull/4';
+    const start = Date.parse('2026-11-16T12:00:00Z');
+    try {
+      setSystemTime(start);
+      db.prepare(
+        `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at)
+         VALUES ('synthetic/review', 4, 'Synthetic', 'branch-4', 'head-a', 'waiting_review', 1, NULL, 1)`
+      ).run();
+      ledger.stageFacts.observeHead(second, 'head-a', 1);
+      ledger.recordStage(fact);
+      ledger.recordStage({ ...fact, url: second });
       const post = createCodingReviewComments(github);
       outage.on = true;
+      outage.error = Object.assign(
+        new Error('gh: API rate limit exceeded for user ID 1 (HTTP 403)'),
+        {
+          retryAfterMs: 10 * 60_000,
+        }
+      );
       await sweep(post);
-      db.prepare("UPDATE pack_coding_pr_ledger SET state = 'merged', closed_at = 5").run();
+      expect(calls).toHaveLength(1);
       outage.on = false;
+      setSystemTime(start + 9 * 60_000);
       await sweep(post);
-      expect(comments).toHaveLength(1);
+      expect(calls).toHaveLength(1);
+      setSystemTime(start + 11 * 60_000);
+      await sweep(post);
+      expect(comments.map((item) => item.path)).toEqual([
+        'repos/synthetic/review/issues/3/comments',
+        'repos/synthetic/review/issues/4/comments',
+      ]);
     } finally {
+      setSystemTime();
       db.close();
     }
   });
