@@ -249,7 +249,7 @@ export const neoHumanStepDue = (
   humanStep(todo, family) &&
   !cards.some(
     (card) =>
-      card.cause === NEO_CHECK_OVERDUE &&
+      (card.cause === NEO_CHECK_OVERDUE || card.cause === NEO_HUMAN_STEP) &&
       card.state === 'answered' &&
       card.todos.includes(todo.id) &&
       now - (card.answeredAt ?? 0) < NEO_CHECK_DEADLINE_MS
