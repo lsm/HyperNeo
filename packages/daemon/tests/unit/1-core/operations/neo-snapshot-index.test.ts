@@ -354,10 +354,25 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
   expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
 });
 
-test('an unapproved todo in the human queue is Neo’s step to review', async () => {
+test('unapproved pending work and a tracked session both have an owner in the human queue', async () => {
   seed(1);
+  const ref = { adapter: 'codex-desktop', id: 'tracked-thread' };
+  const tracked = service.todos.addTodo(
+    'tracked',
+    'index-0',
+    { title: 'Tracked', doneWhen: 'Done', check: null, instruction: null, named: null },
+    1
+  );
+  service.todoSessions.create(tracked.id, { verb: 'adopt', ref });
+  service.todoSessions.recordRef(tracked.id, ref, 1);
+  service.todos.commitState(tracked.id, { state: 'doing', startedAt: 1 }, 1, {
+    state: 'no_opinion',
+  });
   const { humanQueue } = await snapshot(rpc);
-  expect(humanQueue?.items).toMatchObject([{ state: 'progress', todoId: 'todo-0', owner: 'neo' }]);
+  expect(humanQueue?.items).toEqual([
+    expect.objectContaining({ todoId: 'todo-0', owner: 'neo' }),
+    expect.objectContaining({ todoId: 'tracked', owner: 'daemon' }),
+  ]);
 });
 
 test('a card written during the snapshot does not leave its todo owned by the human', async () => {
