@@ -6,18 +6,21 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
-import { applyOrKeepCard, openHumanCard } from './human-card.ts';
+import { choiceCard, openHumanCard } from './human-card.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
-import { formatPreferenceProposal } from './preference-proposal.ts';
+import { formatPreferenceChoice, formatPreferenceProposal } from './preference-proposal.ts';
 import type { NeoPack } from './pack-contract.ts';
 
+const Values = z.array(PackPreferenceInput).min(1).max(20);
 const Ask = z
   .object({
     askId: z.string().min(1),
     requestId: z.string().min(1),
-    values: z.array(PackPreferenceInput).min(1).max(20),
+    values: Values.optional(),
+    alternatives: z.array(Values).min(2).max(5).optional(),
   })
-  .strict();
+  .strict()
+  .refine((input) => !input.values !== !input.alternatives, 'values_or_alternatives');
 const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({ ok: z.literal(true), questionId: z.string().optional() }),
@@ -37,12 +40,18 @@ export function createPackPreferenceQuestions(
     .pipe(
       (input: z.infer<typeof Ask>) => {
         if (store.getAsk(input.askId)?.status !== 'open') return fail('open_ask_required');
-        for (const value of input.values) {
-          const valid = validatePackPreference(value, packs());
-          if ('reason' in valid) return { reason: valid.reason };
+        for (const values of input.alternatives ?? [input.values!]) {
+          for (const value of values) {
+            const valid = validatePackPreference(value, packs());
+            if ('reason' in valid) return { reason: valid.reason };
+          }
+          const keys = values.map((v) => JSON.stringify([v.pack, v.scope, v.key]));
+          if (new Set(keys).size !== keys.length) return fail('duplicate_setting');
         }
-        const keys = input.values.map((v) => JSON.stringify([v.pack, v.scope, v.key]));
-        return new Set(keys).size === keys.length ? { value: input } : fail('duplicate_setting');
+        const options = input.alternatives?.map((values) => JSON.stringify(values)) ?? [];
+        return new Set(options).size === options.length
+          ? { value: input }
+          : fail('duplicate_alternative');
       },
       'input',
       'result:proposal'
@@ -50,7 +59,9 @@ export function createPackPreferenceQuestions(
     .pipe(
       (input: z.infer<typeof Ask>) =>
         db.transaction(() => {
-          const json = JSON.stringify(input.values);
+          const json = JSON.stringify(
+            input.alternatives ? { alternatives: input.alternatives } : input.values
+          );
           const prior = db
             .prepare(`SELECT p.question_id, p.values_json, q.ask_id, q.state FROM neo_pack_preference_proposals p
         JOIN neo_questions q ON q.id=p.question_id WHERE p.request_id=?`)
@@ -65,14 +76,15 @@ export function createPackPreferenceQuestions(
               : { ok: false as const, reason: 'question_closed' };
           }
           const questionId = crypto.randomUUID();
-          const { text, apply, keep } = formatPreferenceProposal(input.values, packs(), language());
-          openHumanCard(
-            store,
-            questionId,
-            input.askId,
-            applyOrKeepCard(text, apply, keep),
-            Date.now()
-          );
+          const card = input.alternatives
+            ? formatPreferenceChoice(input.alternatives, packs(), language())
+            : formatPreferenceProposal(input.values!, packs(), language());
+          const options =
+            'options' in card ? [...card.options, card.keep] : [card.apply, card.keep];
+          if (new Set(options).size !== options.length)
+            return { ok: false as const, reason: 'duplicate_alternative' };
+          const { text } = card;
+          openHumanCard(store, questionId, input.askId, choiceCard(text, options), Date.now());
           db.prepare(`INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text)
         VALUES (?, ?, ?, ?)`).run(questionId, input.requestId, json, text);
           return { ok: true as const, questionId };

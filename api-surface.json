@@ -42848,6 +42848,56 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "alternatives": {
+            "items": {
+              "items": {
+                "properties": {
+                  "key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "pack": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "global",
+                          "repo",
+                          "project"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "key"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "pack",
+                  "scope",
+                  "key",
+                  "value"
+                ],
+                "type": "object"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxItems": 5,
+            "minItems": 2,
+            "type": "array"
+          },
           "askId": {
             "minLength": 1,
             "type": "string"
@@ -42904,8 +42954,7 @@
         },
         "required": [
           "askId",
-          "requestId",
-          "values"
+          "requestId"
         ],
         "type": "object"
       },
