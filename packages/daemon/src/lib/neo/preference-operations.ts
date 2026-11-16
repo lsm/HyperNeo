@@ -2,6 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
+import type { RateLimitHoldReason } from '@hyperneo/shared';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getNeoPackPreference } from './preferences.ts';
@@ -23,6 +24,42 @@ const Result = z.union([
 ]);
 type Input = z.infer<typeof PackPreferenceInput>;
 
+const Repositories = z.array(z.string().regex(/^[a-z\d](?:[a-z\d-]*[a-z\d])?\/[a-z\d_.-]+$/i));
+const Names = z.array(z.string().min(1));
+const Line = z
+  .object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    harness: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+  })
+  .strict();
+const LineFilter = z
+  .object({ kinds: Names.optional(), repos: Repositories.optional(), projects: Names.optional() })
+  .strict();
+const Routes = z.array(
+  z
+    .object({
+      kind: z.string().min(1),
+      repos: Repositories.optional(),
+      lines: z.array(Line.extend({ stopAtPercent: z.number().min(0).max(100).optional() })).min(1),
+    })
+    .strict()
+);
+const LineRules = z.array(
+  z.object({ line: Line, only: LineFilter.optional(), never: LineFilter.optional() }).strict()
+);
+const HoldRules = z.array(
+  z
+    .object({
+      reason: z.enum(['network', 'login', 'limit', 'overloaded'] satisfies RateLimitHoldReason[]),
+      line: Line.optional(),
+      action: z.enum(['wait', 'move']),
+      afterMinutes: z.number().finite().min(0),
+    })
+    .strict()
+);
+
 function valueSchema(type: NeoPackPreferenceDeclaration['type']): z.ZodType {
   switch (type.kind) {
     case 'enum':
@@ -38,13 +75,19 @@ function valueSchema(type: NeoPackPreferenceDeclaration['type']): z.ZodType {
             (type.min === undefined || n >= type.min) && (type.max === undefined || n <= type.max)
         );
     case 'repositories':
-      return z.array(z.string().regex(/^[a-z\d](?:[a-z\d-]*[a-z\d])?\/[a-z\d_.-]+$/i));
+      return Repositories;
     case 'globs':
-      return z.array(z.string().min(1));
+      return Names;
     case 'text':
       return z.string().max(200);
     case 'login':
       return z.string().regex(/^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i);
+    case 'routes':
+      return Routes;
+    case 'lineRules':
+      return LineRules;
+    case 'holdRules':
+      return HoldRules;
   }
 }
 
