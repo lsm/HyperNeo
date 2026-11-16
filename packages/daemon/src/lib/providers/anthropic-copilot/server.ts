@@ -17,7 +17,7 @@ import {
   extractSystemText,
   extractToolResultIds,
 } from './prompt.js';
-import { createVisionGate } from './vision.js';
+import { createVisionGate, omittedImageText } from './vision.js';
 import { ConversationManager } from './conversation.js';
 import {
   createReasoningSupport,
@@ -280,11 +280,19 @@ async function handleMessages(
         return;
       }
       const deliveredImages = toolResults.flatMap((r) => r.images ?? []);
-      const visionError = await visionGate(body.model, deliveredImages);
-      if (visionError) {
-        sendJsonError(out, 400, 'invalid_request_error', visionError);
+      const fit = await visionGate(body.model, deliveredImages);
+      if ('error' in fit) {
+        sendJsonError(out, 400, 'invalid_request_error', fit.error);
         return;
       }
+      let skip = fit.keepFrom;
+      const fittedResults = toolResults.map((r) => {
+        const drop = Math.min(skip, r.images?.length ?? 0);
+        if (drop === 0) return r;
+        skip -= drop;
+        const notes = Array.from({ length: drop }, () => omittedImageText(fit.limit));
+        return { ...r, result: [r.result, ...notes].join('\n'), images: r.images?.slice(drop) };
+      });
       const usageKey = requestUsageKey(req, cwd, body.model);
       manager.acknowledgeContinuation(
         conv,
@@ -297,7 +305,7 @@ async function handleMessages(
           req,
           out,
           conv.registry,
-          toolResults,
+          fittedResults,
           () => {},
           (extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages),
           {
@@ -332,18 +340,22 @@ async function handleMessages(
     );
     return;
   }
-  const visionError = await visionGate(body.model, images);
-  if (visionError) {
-    sendJsonError(out, 400, 'invalid_request_error', visionError);
+  const fit = await visionGate(body.model, images);
+  if ('error' in fit) {
+    sendJsonError(out, 400, 'invalid_request_error', fit.error);
     return;
   }
-  const attachments: MessageOptions['attachments'] | undefined = images.length
-    ? images.map((i) => ({ type: 'blob' as const, data: i.data, mimeType: i.mediaType }))
+  const kept = images.slice(fit.keepFrom);
+  const attachments: MessageOptions['attachments'] | undefined = kept.length
+    ? kept.map((i) => ({ type: 'blob' as const, data: i.data, mimeType: i.mediaType }))
     : undefined;
 
   let prompt: string;
   try {
-    prompt = formatAnthropicPrompt(body.messages);
+    prompt = formatAnthropicPrompt(body.messages, {
+      left: fit.keepFrom,
+      text: omittedImageText(fit.limit),
+    });
   } catch (err) {
     sendJsonError(
       out,

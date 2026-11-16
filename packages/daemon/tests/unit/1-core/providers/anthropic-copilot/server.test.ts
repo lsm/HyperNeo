@@ -463,11 +463,29 @@ describe('startEmbeddedServer', () => {
       model: 'gpt-6.1-terra',
       max_tokens: 100,
       messages: [
-        { role: 'user', content: [{ type: 'text', text: 'first shot' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUFB' } }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'first shot' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUFB' } },
+          ],
+        },
         { role: 'assistant', content: [{ type: 'text', text: 'seen' }] },
-        { role: 'user', content: [{ type: 'text', text: 'second shot' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QkJC' } }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'second shot' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QkJC' } },
+          ],
+        },
         { role: 'assistant', content: [{ type: 'text', text: 'seen again' }] },
-        { role: 'user', content: [{ type: 'text', text: 'summarize the conversation' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'Q0ND' } }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'summarize the conversation' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'Q0ND' } },
+          ],
+        },
       ],
     });
 
