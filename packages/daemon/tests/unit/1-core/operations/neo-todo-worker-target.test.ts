@@ -53,6 +53,8 @@ function world(coding = false) {
     refuse: null as string | null,
     start: false,
     setting: false,
+    askInTarget: false,
+    attend: false,
     status: null as (() => unknown) | null,
   };
   const pack = {
@@ -62,6 +64,13 @@ function world(coding = false) {
     workerTarget: async (todo, target, status, askSetting) => {
       asked.push({ todo: todo.id, target, status: await status(backend) });
       setting = askSetting;
+      if (failing.askInTarget)
+        await askSetting({
+          requestId: `synthetic-${todo.id}`,
+          alternatives: [
+            [{ pack: 'synthetic', scope: { kind: 'global', key: '' }, key: 'k', value: 1 }],
+          ],
+        });
       return decide(target);
     },
   } satisfies NeoPack;
@@ -95,6 +104,7 @@ function world(coding = false) {
     packs: () => [coding ? real : pack],
     tell: async () => {},
     attend: async (event) => {
+      if (failing.attend) throw new Error('synthetic_attention_failure');
       told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
     },
     changed: () => {},
@@ -202,6 +212,20 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.told.filter((told) => told.note.includes('settings question'))).toEqual([
       { id, key: 'todo.unworked', note: expect.stringContaining('synthetic_failure') },
     ]);
+  });
+
+  test('a failed settings question whose note cannot be delivered still dispatches every todo', async () => {
+    const w = (current = world());
+    w.failing.setting = true;
+    w.failing.askInTarget = true;
+    w.failing.attend = true;
+    const first = w.add(undefined, 'first');
+    const second = w.add(undefined, 'second');
+    await w.runner.start(first);
+    await w.runner.start(second);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start', 'work.start']);
+    expect([first, second].map((id) => w.store.getTodo(id)?.state)).toEqual(['doing', 'doing']);
+    expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toHaveLength(2);
   });
 
   test('a reuse decision sends to the chosen session and records that send target', async () => {
