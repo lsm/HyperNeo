@@ -137,4 +137,36 @@ describe('GitHub health reaches Neo through the attention entry', () => {
       await sweep(T0 + 25 * MIN + DAY);
       expect(digests().filter((text) => text === pending)).toHaveLength(1);
     }));
+
+  test('a readiness read stalled for over a week is still told and kept until a complete read', () =>
+    using(async ({ db, sweep, digests }) => {
+      new CodingPrLedgerRepository(db).replace(
+        repo,
+        [
+          {
+            repo,
+            number: 1,
+            title: 'Ready after CI',
+            branch: 'topic',
+            head: 'approved-head',
+            state: 'approved_pending',
+            closedAt: null,
+          },
+        ],
+        T0
+      );
+      const open = () =>
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM pack_coding_pr_ledger WHERE number = 1 AND closed_at IS NULL AND state = 'approved_pending'"
+          )
+          .get() as { count: number };
+      await sweep(T0 + 8 * DAY);
+      expect(digests().filter((text) => text.startsWith('GitHub readiness'))).toEqual([
+        `GitHub readiness observation stalled for ${repo}#1 (approved_pending, head approve) since ${new Date(T0).toISOString()}. Current CI is unverified; check polling before acting.`,
+      ]);
+      expect(open().count).toBe(1);
+      await sweep(T0 + 8 * DAY + 5 * MIN, true);
+      expect(open().count).toBe(0);
+    }));
 });
