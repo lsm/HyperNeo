@@ -135,7 +135,7 @@ export function pickReferenceAgent(
     : asGate(picked);
 }
 
-const runResolveAgentReference = (superpipe({})('resolve-agent-reference') as PipelineAPI)
+const runResolveAgentReference = (superpipe({})('agent.resolve.reference') as PipelineAPI)
   .input(['ref', 'lookups'])
   .pipe(listReferenceSpaces, 'lookups', 'spaces')
   .pipe(pickReferenceSpace, ['ref', 'spaces'], 'result:resolution')
@@ -181,6 +181,21 @@ const ResolvedAgentSchema = z.object({
   displayName: z.string(),
 });
 
+function reportResolution(outcome: Resolution<ResolvedAgent>) {
+  return 'value' in outcome
+    ? { resolved: true as const, agent: outcome.value }
+    : { resolved: false as const, reason: outcome.reason };
+}
+
+const runResolveAgent = (superpipe({})('agent.resolve') as PipelineAPI)
+  .input(['ref', 'lookups'])
+  .pipe(resolveAgentReference, ['ref', 'lookups'], 'outcome')
+  .pipe(reportResolution, 'outcome', 'report')
+  .end('report') as (
+  ref: AgentReference,
+  lookups: AgentReferenceLookups
+) => ReturnType<typeof reportResolution>;
+
 export function createResolveAgentOperation(lookups: AgentReferenceLookups) {
   return defineOperation({
     name: 'agent.resolve',
@@ -191,12 +206,7 @@ export function createResolveAgentOperation(lookups: AgentReferenceLookups) {
       z.object({ resolved: z.literal(true), agent: ResolvedAgentSchema }),
       z.object({ resolved: z.literal(false), reason: z.string() }),
     ]),
-    execute: async (input) => {
-      const outcome = resolveAgentReference(input, lookups);
-      return 'value' in outcome
-        ? { resolved: true as const, agent: outcome.value }
-        : { resolved: false as const, reason: outcome.reason };
-    },
+    execute: async (input) => runResolveAgent(input, lookups),
   });
 }
 
