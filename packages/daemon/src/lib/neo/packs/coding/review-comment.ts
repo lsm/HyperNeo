@@ -7,11 +7,7 @@ import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
-import {
-  codingLedgerPrUrl,
-  codingLedgerReads,
-  type CodingPrLedgerRepository,
-} from './pr-ledger.ts';
+import { codingLedgerReads, type CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingStageFact } from './stage-facts.ts';
 
 const log = new Logger('NeoCodingReviewComment');
@@ -86,7 +82,9 @@ export function createCodingReviewComments(api: CodingGithubApi) {
     }
   };
   return (read: () => Promise<readonly CodingStageFact[]>) =>
-    (queue = queue.then(() => post(read)));
+    (queue = queue
+      .then(() => post(read))
+      .catch((error: unknown) => log.warn('review comments not read', { error: String(error) })));
 }
 
 export async function readCodingPostableReviews(db: Database, ledger: CodingPrLedgerRepository) {
@@ -94,7 +92,11 @@ export async function readCodingPostableReviews(db: Database, ledger: CodingPrLe
   const facts = await Promise.all(
     open.map(async (row) =>
       (
-        await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', codingLedgerPrUrl(row))
+        await gatewayFor(db).call(
+          codingLedgerReads,
+          'readStageFacts',
+          `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+        )
       ).filter((fact) => fact.stage === 'review' && fact.head === row.head)
     )
   );
