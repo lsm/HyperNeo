@@ -124,6 +124,7 @@ import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts'
 import { createNeoPublisher } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
+  keepNeoSessionNotices,
   type NeoSessionNotice,
   type NeoSessionNoticeGroup,
 } from './session-watch.ts';
@@ -152,7 +153,10 @@ export class NeoService {
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
-    return this.sessionWatcher.sessionNotices;
+    return keepNeoSessionNotices(
+      this.sessionWatcher.sessionNotices,
+      this.sessionWatcher.modelHoldNotices
+    );
   }
 
   get sessionNoticeGroups(): NeoSessionNoticeGroup[] {
@@ -208,6 +212,7 @@ export class NeoService {
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       defaultSessionId: () => this.defaultSessionId(),
+      working: () => readNeoWorking(this.db.getDatabase(), this.repo.readConversationId(), true),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
