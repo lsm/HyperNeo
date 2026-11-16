@@ -199,7 +199,14 @@ export function createNeoQuestionAnswerDelivery(
         : outcome.kind === 'failed'
           ? outcome.message
           : null;
-      if (reason && neoDaemonCardCovers(card.cause, store.getTodo(todo.id) ?? todo))
+      if (
+        reason &&
+        neoDaemonCardCovers(
+          card.cause,
+          store.getTodo(todo.id) ?? todo,
+          store.listFamilyTodos(todo.askId)
+        )
+      )
         await tell(
           ask.sessionId,
           `neo-card-refused:${card.id}:${action.todoId}`,
