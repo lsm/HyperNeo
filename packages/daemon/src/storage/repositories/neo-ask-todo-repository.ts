@@ -553,10 +553,16 @@ export class NeoAskTodoRepository {
   }
 
   listChildAsks(parentId: string): NeoAsk[] {
+    return this.listChildAsksOf([parentId]);
+  }
+
+  listChildAsksOf(parentIds: readonly string[]): NeoAsk[] {
     return (
       this.db
-        .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
-        .all(parentId) as AskRow[]
+        .prepare(
+          `${ASK_SELECT} WHERE parent_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, rowid`
+        )
+        .all(JSON.stringify(parentIds)) as AskRow[]
     ).map(toAsk);
   }
 

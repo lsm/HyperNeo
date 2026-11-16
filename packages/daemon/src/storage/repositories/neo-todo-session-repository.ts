@@ -247,11 +247,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const store = new NeoAskTodoRepository(this.db);
     const asks = store.listOpenAsks();
     const roots = [...new Set(asks.map((ask) => ask.parentId ?? ask.id))];
-    const children = this.db
-      .prepare(
-        'SELECT id, parent_id AS parentId FROM neo_asks WHERE parent_id IN (SELECT value FROM json_each(?))'
-      )
-      .all(JSON.stringify(roots)) as { id: string; parentId: string }[];
+    const children = store.listChildAsksOf(roots);
     const members = (root: string) => [
       root,
       ...children.filter((child) => child.parentId === root).map((child) => child.id),
@@ -260,16 +256,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const todos = store.listTodosForAsks(ids);
     const questions = store.listQuestionsForAsks(ids);
     const sessions = this.readMany(todos.map((todo) => todo.id));
-    const nudges = new Map(
-      (
-        this.db
-          .prepare(
-            `SELECT todo_id AS id, value_json FROM pack_facts
-             WHERE pack = 'core' AND key = 'nudge' AND todo_id IN (SELECT value FROM json_each(?))`
-          )
-          .all(JSON.stringify(todos.map((todo) => todo.id))) as { id: string; value_json: string }[]
-      ).map((row) => [row.id, JSON.parse(row.value_json) as FollowThroughIncident])
-    );
+    const nudges = this.readNudges(todos.map((todo) => todo.id));
     const nudge = (id: string) => nudges.get(id) ?? null;
     return {
       store,
@@ -484,12 +471,20 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   readNudge(todoId: string): FollowThroughIncident | null {
-    const row = this.db
-      .prepare(
-        "SELECT value_json FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'nudge'"
-      )
-      .get(todoId) as { value_json: string } | null;
-    return row ? JSON.parse(row.value_json) : null;
+    return this.readNudges([todoId]).get(todoId) ?? null;
+  }
+
+  private readNudges(todoIds: readonly string[]) {
+    return new Map(
+      (
+        this.db
+          .prepare(
+            `SELECT todo_id AS id, value_json FROM pack_facts
+             WHERE pack = 'core' AND key = 'nudge' AND todo_id IN (SELECT value FROM json_each(?))`
+          )
+          .all(JSON.stringify(todoIds)) as { id: string; value_json: string }[]
+      ).map((row) => [row.id, JSON.parse(row.value_json) as FollowThroughIncident])
+    );
   }
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {

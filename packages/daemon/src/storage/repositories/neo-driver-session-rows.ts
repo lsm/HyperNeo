@@ -57,11 +57,7 @@ export class NeoDriverSessionRows {
   ) {}
 
   get(id: string): NeoDriverTarget | null {
-    const row = this.db.prepare(`SELECT target FROM ${this.table} WHERE ${this.key} = ?`).get(id) as
-      | { target: string }
-      | null
-      | undefined;
-    return row ? parseTarget(row.target) : null;
+    return this.readMany([id]).get(id)?.target ?? null;
   }
 
   readMany(ids: readonly string[]) {
@@ -125,10 +121,7 @@ export class NeoDriverSessionRows {
   }
 
   readRef(id: string): WorkRef | null {
-    const row = this.db
-      .prepare(`SELECT ref FROM ${this.table} WHERE ${this.key} = ? AND ref IS NOT NULL`)
-      .get(id) as { ref: string } | null | undefined;
-    return row ? (JSON.parse(row.ref) as WorkRef) : null;
+    return this.readMany([id]).get(id)?.ref ?? null;
   }
 
   readFollowAnchor(id: string): number | null {
