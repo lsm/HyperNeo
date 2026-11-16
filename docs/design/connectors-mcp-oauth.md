@@ -92,7 +92,7 @@ call was attempted.
 | Server | `https://mcp.atlassian.com/v2/mcp`, official ([docs][atl]) | `https://mcp.slack.com/mcp`, official ([docs][slack]) | `https://mcp.basecamp.com/mcp`, served from the vendor's own domain |
 | Resource metadata | `/.well-known/oauth-protected-resource/v2/mcp` | root `/.well-known/oauth-protected-resource` (the path form returns 404) | `/.well-known/oauth-protected-resource/mcp` |
 | Registration | DCR endpoint and `client_id_metadata_document_supported: true` | No DCR (per docs). Needs our own Slack app's ID and secret, `client_secret_post`. Only directory-published or internal apps may use MCP | DCR endpoint and `client_id_metadata_document_supported: true` |
-| PKCE | S256 (also `plain`) | S256 | S256 |
+| PKCE | S256 | S256 | S256 |
 | Read-only scopes | `read:jira:agent-interface`, `search:jira:agent-interface` (+ `offline_access`) | `search:read.*`, `channels:history`, `users:read` and other `*:read` | `read` (also `mcp`, `full`) |
 | Notes | v1 and v2 endpoints coexist | User token; workspace admins may need to approve the app | Advertises DPoP (ES256); the 401 asks for `scope="mcp full"` |
 
