@@ -121,6 +121,7 @@ import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
 import { createNeoAttentionSweep } from './attention/sweep.ts';
+import { driverHealthEvents } from '../drivers/driver-health.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
 import { neoTodoCovered } from './todo-state.ts';
@@ -360,8 +361,9 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      scan: async (now) =>
-        (
+      scan: async (now) => [
+        ...driverHealthEvents(this.db.getGlobalSettings?.().driverHealth ?? {}),
+        ...(
           await Promise.all(
             this.packs().map((pack) =>
               (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
@@ -371,6 +373,7 @@ export class NeoService {
             )
           )
         ).flat(),
+      ],
       tell: (this.attention = createNeoAttention({
         kinds: () => [
           ...NEO_ATTENTION_KINDS,
@@ -1304,6 +1307,9 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await this.todoRunner
+      .recoverMoves()
+      .catch((error) => this.log.warn('Todo move recovery pending', error));
     await sweepNeoTrackerMirrors(
       this.db.getDatabase(),
       this.packs().flatMap((pack) => pack.tracker ?? [])
@@ -1375,7 +1381,7 @@ export class NeoService {
           ids: settleIds,
           versions,
         }).catch((error) => this.log.warn('Ask auto-settle pending', error));
-      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+      await wakeStalledAsks(this.todos, this.attention, Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
       );
       await this.sessionWatcher.watchSessions(Date.now());

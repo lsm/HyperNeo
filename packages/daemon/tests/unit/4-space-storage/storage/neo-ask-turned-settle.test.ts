@@ -1,13 +1,20 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler.ts';
+import { createMailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
+import {
+  type Job,
+  JobQueueRepository,
+} from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo-wake-queue-repository.ts';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
+import { neoFinishedAskUuids } from '../../../../src/lib/neo/stalled-asks.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { neoAskTodosVersion } from '../../../../src/storage/repositories/neo-ask-settlement.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-const NOTE = 'neo-stalled-ask';
 describe('Auto-settle after a consumed stalled-ask turn', () => {
   let db: Database, store: NeoAskTodoRepository, gateway: DbGateway, changes: string[];
   beforeEach(() => {
@@ -45,15 +52,17 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     consumedSeq: number | null,
     sendStatus = 'consumed',
     recoveryIntercepted = 0,
-    recoveryBillingTerminal = 0
+    recoveryBillingTerminal = 0,
+    session = 'neo'
   ) => {
     seq += 1;
     db.prepare(`INSERT INTO sdk_messages
       (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
        is_terminal, send_status, recovery_intercepted, recovery_billing_terminal)
-      VALUES (?, ?, 'neo', ?, ?, '2026-01-01', ?, ?, ?, ?, ?, ?)`).run(
+      VALUES (?, ?, ?, ?, ?, '2026-01-01', ?, ?, ?, ?, ?, ?)`).run(
       seq,
       `m${seq}`,
+      session,
       kind,
       JSON.stringify({ type: kind }),
       uuid,
@@ -64,24 +73,39 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
       recoveryBillingTerminal
     );
   };
-  const wakeNote = (askId: string, options: { batch?: string; status?: string } = {}) => {
-    const payload = {
-      to: { kind: 'session', sessionId: 'neo' },
-      origin: 'session:neo',
-      messageUuid: `${NOTE}:${askId}:1:0`,
-      message: { type: 'user', message: { content: 'reminder' } },
-      ...(options.batch ? { neoBatchUuid: options.batch } : {}),
-    };
-    db.prepare(`INSERT INTO job_queue
-      (id, queue, status, payload, run_at, created_at, completed_at)
-      VALUES (?, 'neo_notes', ?, ?, 0, 0, 0)`).run(
-      `note-${askId}-${++seq}`,
-      options.status ?? 'completed',
-      JSON.stringify(payload)
+  const wakeUuid = (askId: string, which = 0) => {
+    const row = db
+      .prepare(`SELECT title, (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id)
+        AS since FROM neo_asks WHERE id = ?`)
+      .get(askId) as { title: string; since: number | null } | undefined;
+    return neoFinishedAskUuids({
+      id: askId,
+      title: row?.title ?? askId,
+      since: row?.since ?? 1,
+    })[which]!;
+  };
+  const queue = () => new NeoWakeQueueRepository(db);
+  const held = (messageUuid: string, sessionId = 'neo', askId = 'ask') =>
+    queue().holdOnce(
+      createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        origin: `session:${sessionId}`,
+        messageUuid,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'reminder' },
+          inputKind: 'system',
+        },
+      }),
+      `ask.idle:${askId}`
     );
+  const wakeNote = (askId: string, batch?: string) => {
+    held(`idle-${askId}`, 'neo', askId);
+    if (batch) queue().attach('neo', [], undefined, batch);
   };
   const consumedWake = (askId: string, turnEnds = true) => {
-    wakeNote(askId, { batch: `batch-${askId}` });
+    wakeNote(askId, `batch-${askId}`);
     sdk('user', `batch-${askId}`, 10);
     if (turnEnds) sdk('result', `result-${askId}`, 11);
   };
@@ -124,7 +148,8 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
   test('skips an ask whose todos changed after the caller checked them', async () => {
     add('design', 'done');
     add('build', 'done');
-    consumedWake('ask');
+    sdk('user', wakeUuid('ask'), 10);
+    sdk('result', 'first-result', 11);
     const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
       { now: number; ids: string[]; versions?: Record<string, string> },
       string[]
@@ -134,6 +159,9 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: checked })).toEqual([]);
     expect(store.getAsk('ask')?.status).toBe('open');
     const fresh = { ask: neoAskTodosVersion(store.listTodos('ask')) };
+    expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: fresh })).toEqual([]);
+    sdk('user', wakeUuid('ask'), 12);
+    sdk('result', 'second-result', 13);
     expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: fresh })).toEqual(['ask']);
   });
 
@@ -203,11 +231,45 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(changes).toEqual([]);
   });
 
+  test('a card answered after the wake turn settles the ask once the turn that reads the answer ends', async () => {
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20);
+    sdk('result', 'wake-result', 21);
+    const answeredAt = new Date('2026-01-02').getTime();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        kind: 'yesno',
+        text: 'Go?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        confirm: null,
+        document: null,
+        replyTo: [],
+        todoId: null,
+        artifacts: [],
+      },
+      answeredAt - 1
+    );
+    store.answerQuestion(card, true as never, 'button', answeredAt);
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('user', 'neo-question:card', 30);
+    expect(await sweep()).toEqual([]);
+    sdk('result', 'answer-result', 31);
+    db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid IN ('neo-question:card', 'answer-result')`).run();
+    expect(await sweep()).toEqual(['ask']);
+  });
+
   test('an undelivered or unconsumed wake does not settle the ask', async () => {
     add('finished', 'done');
     wakeNote('ask');
     expect(await sweep()).toEqual([]);
-    wakeNote('ask', { batch: 'unconsumed-batch', status: 'completed' });
+    wakeNote('ask', 'unconsumed-batch');
     sdk('user', 'unconsumed-batch', null, 'enqueued');
     expect(await sweep()).toEqual([]);
     expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
@@ -235,9 +297,222 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
 
   test('a directly delivered wake also counts once its turn ends', async () => {
     add('finished', 'done');
-    sdk('user', `${NOTE}:ask:1:0`, 20);
+    sdk('user', wakeUuid('ask'), 20);
     sdk('result', 'direct-result', 21);
     expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('the repeat of the finished wake also counts once its turn ends', async () => {
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask', 1), 20);
+    sdk('result', 'direct-result', 21);
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a digest read before the last todo change does not settle the ask', async () => {
+    add('removed', 'removed', { reason: 'Not needed' });
+    consumedWake('ask');
+    db.prepare('UPDATE neo_todos SET updated_at = ? WHERE ask_id = ?').run(
+      new Date('2026-01-02').getTime(),
+      'ask'
+    );
+    sdk('user', 'later-turn', 30);
+    sdk('result', 'later-result', 31);
+    db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid IN ('later-turn', 'later-result')`).run();
+    expect(await sweep()).toEqual([]);
+  });
+
+  test('a wake told before the last todo change does not settle the ask', async () => {
+    add('finished', 'done');
+    const earlier = wakeUuid('ask');
+    db.prepare('UPDATE neo_todos SET updated_at = 2 WHERE ask_id = ?').run('ask');
+    sdk('user', earlier, 20);
+    sdk('result', 'direct-result', 21);
+    expect(await sweep()).toEqual([]);
+  });
+
+  const session = (id: string) =>
+    db
+      .prepare(`INSERT INTO sessions
+      (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata)
+      VALUES (?,'Neo','general','/synthetic','2026-01-01','2026-01-01','active','{}','{}')`)
+      .run(id);
+  const coordinator = () => {
+    session('coordinator');
+    db.prepare(
+      "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES ('coordinator', NULL, 'neo')"
+    ).run();
+  };
+
+  test('a wake read in Neo’s session settles an ask recorded on another session', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'coordinator-result', 21, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a digest read in the session it was held for settles the ask', async () => {
+    coordinator();
+    session('earlier');
+    add('removed', 'removed', { reason: 'Not needed' });
+    held('idle-first', 'earlier');
+    queue().attach('earlier', [], undefined, 'earlier-batch');
+    sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
+    sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a digest read before the queue cleanup settles the ask once its child settles', async () => {
+    add('removed', 'removed', { reason: 'Not needed' });
+    held('idle-first');
+    queue().attach('neo', [], undefined, 'digest-batch');
+    sdk('user', 'digest-batch', 10);
+    sdk('result', 'digest-result', 11);
+    store.openAsk({
+      id: 'child',
+      parentId: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Child',
+      request: 'Child work',
+      createdAt: 2,
+    });
+    expect(await sweep()).toEqual([]);
+    const later = Date.now() + 8 * 24 * 3_600_000;
+    const now = spyOn(Date, 'now').mockReturnValue(later);
+    const cleaned = await createCleanupHandler(new JobQueueRepository(db))({} as Job);
+    now.mockRestore();
+    expect(cleaned.deletedJobs).toBe(1);
+    store.settleAsk(store.getAsk('child')!, 'done', 'Child done', 3);
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a reminder still being read in Neo’s session keeps the ask open', async () => {
+    coordinator();
+    session('earlier');
+    add('removed', 'removed', { reason: 'Not needed' });
+    held('idle-first', 'earlier');
+    queue().attach('earlier', [], undefined, 'earlier-batch');
+    sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
+    sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
+    held('idle-repeat', 'coordinator');
+    queue().attach('coordinator', [], undefined, 'repeat-batch');
+    sdk('user', 'repeat-batch', 30, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'repeat-result', 31, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a card answer still being read in the ask’s own session keeps the ask open', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'reminder-result', 21, 'consumed', 0, 0, 'coordinator');
+    const answeredAt = new Date('2026-01-02').getTime();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        kind: 'yesno',
+        text: 'Go?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        confirm: null,
+        document: null,
+        replyTo: [],
+        todoId: null,
+        artifacts: [],
+      },
+      answeredAt - 1
+    );
+    store.answerQuestion(card, true as never, 'button', answeredAt);
+    sdk('user', 'neo-question:card', 30);
+    sdk('user', 'unrelated', 40, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'unrelated-result', 41, 'consumed', 0, 0, 'coordinator');
+    const later = db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid = ?`);
+    for (const uuid of ['neo-question:card', 'unrelated', 'unrelated-result']) later.run(uuid);
+    const reads = DB_OPS.get('neo.turnedAskSettleReads') as DbOp<Record<string, never>, string[]>;
+    const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
+      { now: number; ids: string[] },
+      string[]
+    >;
+    expect(await gateway.run(reads, {})).toEqual([]);
+    expect(await gateway.run(write, { now: 100, ids: ['ask'] })).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'answer-result', 31);
+    later.run('answer-result');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test.each([
+    ['a button answer', 'button', undefined, 'neo-question:card'],
+    ['a relayed answer', 'chat', { viaName: 'Sam' }, 'neo-relay-answer:card'],
+  ] as const)('%s Neo has not read yet keeps the ask open', async (_name, by, provenance, note) => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', 'old-turn', 1);
+    sdk('result', 'old-result', 2);
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'reminder-result', 21, 'consumed', 0, 0, 'coordinator');
+    const answeredAt = new Date('2026-01-02').getTime();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        kind: 'yesno',
+        text: 'Go?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        confirm: null,
+        document: null,
+        replyTo: [],
+        todoId: null,
+        artifacts: [],
+      },
+      answeredAt - 1
+    );
+    store.answerQuestion(card, true as never, by, answeredAt, undefined, provenance as never);
+    sdk('user', 'unrelated', 40, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'unrelated-result', 41, 'consumed', 0, 0, 'coordinator');
+    const later = db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid = ?`);
+    for (const uuid of ['unrelated', 'unrelated-result']) later.run(uuid);
+    const reads = DB_OPS.get('neo.turnedAskSettleReads') as DbOp<Record<string, never>, string[]>;
+    const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
+      { now: number; ids: string[] },
+      string[]
+    >;
+    const open = async () => {
+      expect(await gateway.run(reads, {})).toEqual([]);
+      expect(await gateway.run(write, { now: 100, ids: ['ask'] })).toEqual([]);
+      expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    };
+    await open();
+    sdk('user', note, null, 'enqueued');
+    later.run(note);
+    await open();
+    db.prepare(`UPDATE sdk_messages SET consumed_seq = 30, send_status = 'consumed'
+      WHERE sdk_uuid = ?`).run(note);
+    await open();
+    sdk('result', 'answer-result', 31);
+    later.run('answer-result');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('an unfinished turn in Neo’s session keeps the ask open', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual([]);
   });
 
   test('a wake for another ask does not settle this one', async () => {
@@ -337,25 +612,13 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         kind === 'result' ? 1 : 0,
         'consumed'
       );
-    const note = db.prepare(`INSERT INTO job_queue
-      (id, queue, status, payload, run_at, created_at, completed_at)
-      VALUES (?, 'neo_notes', 'completed', ?, 0, 0, 0)`);
+    for (let i = 0; i < 1946; i += 1) held(`bulk-note-${i}`, 'big', asks[i % asks.length]!);
+    queue().attach('big', [], undefined, 'bulk-batch');
     db.transaction(() => {
-      for (let i = 0; i < 1946; i += 1)
-        note.run(
-          `bulk-note-${i}`,
-          JSON.stringify({
-            to: { kind: 'session', sessionId: 'big' },
-            origin: 'session:big',
-            messageUuid: `neo-stalled-ask:bulk-${i % asks.length}:1:0`,
-            message: { type: 'user', message: { content: 'reminder' } },
-            neoBatchUuid: `bulk-batch-${i}`,
-          })
-        );
       for (let i = 0; i < 86_710; i += 1)
         bulkSdk(i % 2 ? 'result' : 'user', `bulk-msg-${i}`, i + 1);
       for (const id of asks) {
-        bulkSdk('user', `neo-stalled-ask:${id}:1:0`, 87_000);
+        bulkSdk('user', wakeUuid(id), 87_000);
         bulkSdk('result', `bulk-result-${id}`, 87_001);
       }
     })();

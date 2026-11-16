@@ -106,7 +106,7 @@ export interface WorkVerbDeps {
     recordFailure(id: string, error: unknown): Promise<void>;
   };
   queueInput?: (input: WorkerInput, from: string, caller: OperationCaller) => Promise<string>;
-  recordStarted?: (ref: WorkRef) => void;
+  recordStarted?: (ref: WorkRef, directory?: string) => void;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
@@ -131,6 +131,8 @@ const reuseHolds = new Set<string>();
 const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
+export const WORK_START_EXCLUDE_REFS_MAX = 30;
+
 export const StartWorkInputSchema = z.object({
   todoId: z
     .string()
@@ -153,7 +155,7 @@ export const StartWorkInputSchema = z.object({
       'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
     ),
   message: z.string().trim().min(1).max(100_000),
-  excludeRefs: z.array(WorkRefSchema).max(30).optional(),
+  excludeRefs: z.array(WorkRefSchema).max(WORK_START_EXCLUDE_REFS_MAX).optional(),
   createFolder: z.boolean().optional(),
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
@@ -580,7 +582,7 @@ export async function startWork(
           }
         : input;
     const result = await route.local(request, { from, caller });
-    if (result.ok) deps.recordStarted?.(result.value.ref);
+    if (result.ok) deps.recordStarted?.(result.value.ref, result.value.execution?.directory);
     return result;
   }
   const { daemon: _daemon, ...place } = input.place;

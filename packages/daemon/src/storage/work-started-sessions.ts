@@ -1,5 +1,6 @@
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 import type { WorkerReuseFacts } from '../lib/drivers/worker-reuse.ts';
+import { workerWorkKey } from '../lib/work-locations.ts';
 
 export interface StartedWork {
   adapter: string;
@@ -34,6 +35,10 @@ export function recordStartedWork(
     claim?.todoId ?? null,
     Number(!!claim)
   );
+}
+
+export function forgetWorkGone(db: BunDatabase, root: string): void {
+  db.run('DELETE FROM work_cleanup_gone WHERE key = ?', workerWorkKey(root));
 }
 
 export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {

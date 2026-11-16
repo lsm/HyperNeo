@@ -278,6 +278,36 @@ describe('neo todo runner refresh releases removed todos and busy folders', () =
   });
 });
 
+describe('neo todo runner refresh retries a worktree the archive kept', () => {
+  test('records the release only once the kept worktree is removed', async () => {
+    const h = setup();
+    let kept = true;
+    h.setArchive(() => ({
+      ok: true,
+      value: {
+        archived: kept,
+        worktree: kept
+          ? {
+              directory: h.folder(),
+              removed: false,
+              reason: 'Could not verify or remove the worktree; kept: synthetic failure',
+            }
+          : { directory: h.folder(), removed: true },
+      },
+    }));
+    try {
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.released()).toEqual([]);
+      kept = false;
+      await h.refresh();
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
 describe('neo todo runner refresh retries a folder whose process check failed', () => {
   test.skipIf(process.platform === 'linux')(
     'keeps the folder and leaves the worker releasable when lsof fails',

@@ -1,5 +1,7 @@
 import { createNeoRelayOperations } from './relay-answer.ts';
+import { WorkRefSchema } from '../drivers/types.ts';
 import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
+import { NEO_ANSWER_NOTE } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
@@ -66,6 +68,7 @@ import { createNeoQuestionOperations } from './question-operations.ts';
 import type { NeoInputReads } from './input-ask.ts';
 import {
   createNeoTodoOperations,
+  TodoResult,
   type NeoTodoControls,
   type NeoTodoWorkerRead,
 } from './todo-operations.ts';
@@ -867,7 +870,7 @@ export function createNeoOperations(
       (ask, question, note) =>
         service.deliverForward(
           ask.sessionId,
-          `neo-question:${question.id}`,
+          `${NEO_ANSWER_NOTE.button}${question.id}`,
           note,
           ask.sessionId,
           'event'
@@ -1049,6 +1052,18 @@ export function createNeoOperations(
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
       execute: read,
+    }),
+    defineOperation({
+      name: 'neo.todo.retarget',
+      description: neoToolDescription('neo.todo.retarget'),
+      inputSchema: z.object({ todoId: z.string().min(1), fromRef: WorkRefSchema }),
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: path(
+        'neo.todo.retarget',
+        ({ todoId, fromRef }: { todoId: string; fromRef: z.infer<typeof WorkRefSchema> }) =>
+          service.todoRunner.retarget(todoId, fromRef)
+      ),
     }),
     defineOperation({
       name: 'neo.project.save',

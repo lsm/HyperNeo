@@ -12,6 +12,24 @@ import { canonicalJson, PromptContentConflictError } from '../../lib/agent/promp
 
 const LANE = 'neo_notes';
 const INTERVAL = 15 * 60_000;
+const RECEIPT = 'neo-note:';
+
+export const neoNoteBatches = (
+  db: Database,
+  subject: string
+): { sessionId: string; batchUuid: string }[] => {
+  const prefix = `${RECEIPT}${subject}:`;
+  return (
+    db
+      .prepare('SELECT key, receipt FROM message_send_receipts WHERE key >= ? AND key < ?')
+      .all(prefix, `${prefix}\uffff`) as { key: string; receipt: string }[]
+  ).flatMap((row) => {
+    const batchUuid: unknown = JSON.parse(row.receipt);
+    return typeof batchUuid === 'string'
+      ? [{ sessionId: row.key.slice(row.key.indexOf(':', prefix.length) + 1), batchUuid }]
+      : [];
+  });
+};
 
 export class NeoWakeQueueRepository {
   constructor(private readonly db: Database) {}
@@ -60,7 +78,7 @@ export class NeoWakeQueueRepository {
     });
   }
 
-  hold(entry: MailboxEntry): void {
+  hold(entry: MailboxEntry, receipt?: string): void {
     const previous = new JobQueueRepository(this.db).getLatestByPayload(LANE, {
       'to.sessionId': entry.to.kind === 'session' ? entry.to.sessionId : '',
       messageUuid: entry.messageUuid ?? entry.id,
@@ -73,13 +91,23 @@ export class NeoWakeQueueRepository {
       throw new PromptContentConflictError('queued report already exists with different content');
     new JobQueueRepository(this.db).enqueueUniquePending({
       queue: LANE,
-      payload: entry,
+      payload: receipt ? { ...entry, neoReceipt: receipt } : entry,
       createdAt: decodeUlidTimestamp(entry.id),
       matchPayload: {
         'to.sessionId': entry.to.kind === 'session' ? entry.to.sessionId : '',
         messageUuid: entry.messageUuid ?? entry.id,
       },
       activeStatuses: ['pending', 'completed'],
+    });
+  }
+
+  holdOnce(entry: MailboxEntry, subject: string): void {
+    const receipt = `${RECEIPT}${subject}:${entry.messageUuid ?? entry.id}:${
+      entry.to.kind === 'session' ? entry.to.sessionId : ''
+    }`;
+    new JobQueueRepository(this.db).commitSubmissionReceipt(receipt, 'v1', () => {
+      this.hold(entry, receipt);
+      return true;
     });
   }
 
@@ -127,6 +155,10 @@ export class NeoWakeQueueRepository {
           "UPDATE job_queue SET status='completed', completed_at=?, payload=json_set(payload, '$.neoBatchUuid', ?) WHERE id=? AND queue=?"
         )
         .run(Date.now(), deliveryUuid, note.id, LANE);
+    const delivered = this.db.prepare('UPDATE message_send_receipts SET receipt=? WHERE key=?');
+    for (const note of notes)
+      if (typeof note.payload.neoReceipt === 'string')
+        delivered.run(JSON.stringify(deliveryUuid), note.payload.neoReceipt);
     return [
       ...blocks,
       ...(typeof content === 'string' ? [{ type: 'text' as const, text: content }] : content),
@@ -177,5 +209,5 @@ export const neoWakeQueueWrite = defineRepositoryOp(
   'neo.wake-queue.write',
   'write',
   NeoWakeQueueRepository,
-  ['hold']
+  ['hold', 'holdOnce']
 );

@@ -41,6 +41,7 @@ import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-sea
 import {
   markWorkUnusable,
   readReusableWorkers,
+  forgetWorkGone,
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
@@ -248,10 +249,13 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         return reject('busy', 'The HyperNeo session still has a live turn.');
       if (session.status === 'archived') {
         await releaseWorkerSandbox(sessionSdkPath(session));
-        return { ok: true, value: { archived: false } };
+        const worktree = session.worktree
+          ? await sessionManager.cleanupArchivedWorktree(ref.id)
+          : undefined;
+        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
-      return { ok: true, value: { archived: true } };
+      const worktree = await sessionManager.archiveSessionResources(ref.id, 'work_archive');
+      return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
       createDriverSession(
@@ -295,8 +299,10 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
     },
     dropRestartResume: (sessionId) => db.clearRestartResume(sessionId),
     interrupt: async (sessionId) => {
-      const session = sessionManager.getCachedSession(sessionId);
+      const session = await sessionManager.getSessionForControl(sessionId);
       if (!session) return false;
+      if (session.getProcessingState().status === 'rate_limit_cooldown')
+        await session.cancelRateLimitRetry();
       await internalEventBus.publish('agent.interruptRequest', { sessionId });
       return (
         sessionManager.getCachedSession(sessionId) === session &&
@@ -671,7 +677,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           Date.now()
         ),
     } satisfies WorkVerbDeps['workInputs'],
-    recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    recordStarted: (ref: StartedWork, directory?: string) => {
+      recordStartedWork(db(), ref);
+      if (directory) forgetWorkGone(db(), directory);
+    },
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),

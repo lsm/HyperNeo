@@ -5,6 +5,8 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
+import { cancelRateLimitDelivery } from '../../../../src/storage/repositories/rate-limit-cancel-write';
+import { stopHyperneoWork } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -121,21 +123,78 @@ describe('hyperneoSessionControl withdraw', () => {
 });
 
 describe('hyperneoSessionControl interrupt', () => {
+  test.each(['processing', 'queued'])(
+    'stopping ordinary %s work preserves queued deliveries',
+    async (initial) => {
+      const fixture = createMailboxTestDb();
+      try {
+        for (const id of ['first', 'later']) {
+          fixture.db
+            .prepare(`INSERT INTO sdk_messages
+              (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+              VALUES (?, 'owned', 'user', '{}', '2026-11-16', 'enqueued', ?)`)
+            .run(id, id);
+          fixture.jobQueue.enqueue({
+            queue: 'message_delivery',
+            payload: { sessionId: 'owned', messageUuid: id },
+            runAt: Date.now() + 7_200_000,
+          });
+        }
+        const before = { jobs: fixture.rows(), messages: fixture.sdkRows() };
+        let status: string = initial;
+        const runtime = {
+          getProcessingState: () => ({ status }),
+          cancelRateLimitRetry: async () => {
+            await gatewayFor(fixture.db).call(cancelRateLimitDelivery, 'cancel', 'owned');
+          },
+        };
+        const controls = hyperneoSessionControl({
+          deps: {
+            sessionManager: {
+              getSessionForControl: async () => runtime,
+              getCachedSession: () => runtime,
+            },
+            internalEventBus: {
+              publish: async () => {
+                status = 'interrupted';
+              },
+            },
+          },
+        } as never);
+        expect(
+          await stopHyperneoWork(
+            { id: 'owned', status: 'active', processing: initial } as never,
+            { sessions: controls } as never
+          )
+        ).toEqual({ ok: true, value: { stopped: true } });
+        expect({ jobs: fixture.rows(), messages: fixture.sdkRows() }).toEqual(before);
+      } finally {
+        fixture.close();
+      }
+    }
+  );
+
   test.each(['idle', 'interrupted', 'processing', 'missing', 'replaced'])(
     'checks the same live runtime after interrupt acknowledgement (%s)',
     async (after) => {
       let state = 'processing';
-      const runtime = { getProcessingState: () => ({ status: state }) };
+      const runtime = {
+        getProcessingState: () => ({ status: state }),
+        cancelRateLimitRetry: async () => {},
+      };
       let current: typeof runtime | undefined = runtime;
       const controls = hyperneoSessionControl({
         deps: {
-          sessionManager: { getCachedSession: () => current },
+          sessionManager: {
+            getCachedSession: () => current,
+            getSessionForControl: async () => current,
+          },
           internalEventBus: {
             publish: async () => {
               state = after;
               if (after === 'missing') current = undefined;
               if (after === 'replaced')
-                current = { getProcessingState: () => ({ status: 'idle' }) };
+                current = { ...runtime, getProcessingState: () => ({ status: 'idle' }) };
             },
           },
         },
@@ -152,7 +211,10 @@ describe('hyperneoSessionControl interrupt', () => {
     const controls = hyperneoSessionControl({
       deps: {
         sessionManager: {
-          getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
+          getSessionForControl: async () => ({
+            getProcessingState: () => ({ status: 'processing' }),
+            cancelRateLimitRetry: async () => {},
+          }),
         },
         internalEventBus: { publish: () => handling },
       },
@@ -161,18 +223,17 @@ describe('hyperneoSessionControl interrupt', () => {
     const result = Promise.resolve(controls.interrupt('session')).finally(() => {
       settled = true;
     });
-    const rejected = expect(result).rejects.toThrow('interrupt refused');
     await Promise.resolve();
     expect(settled).toBe(false);
     fail(new Error('interrupt refused'));
-    await rejected;
+    await expect(result).rejects.toThrow('interrupt refused');
   });
 
-  test('does not restore an uncached runtime', async () => {
+  test('does not publish an interrupt when the runtime cannot be restored', async () => {
     const published: string[] = [];
     const controls = hyperneoSessionControl({
       deps: {
-        sessionManager: { getCachedSession: () => undefined },
+        sessionManager: { getSessionForControl: async () => undefined },
         internalEventBus: {
           publish: async () => {
             published.push('interrupt');
@@ -182,6 +243,60 @@ describe('hyperneoSessionControl interrupt', () => {
     } as never);
     expect(await controls.interrupt('session')).toBe(false);
     expect(published).toEqual([]);
+  });
+
+  test('restores a cold held runtime and clears its prompt before interruption', async () => {
+    const events: string[] = [];
+    let heldPrompt: string | undefined = 'Do not replay';
+    let status = 'rate_limit_cooldown';
+    const runtime = {
+      cancelRateLimitRetry: async () => {
+        heldPrompt = undefined;
+        status = 'interrupted';
+        events.push('clear hold');
+      },
+      getProcessingState: () => ({ status }),
+    };
+    let current: typeof runtime | undefined;
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getCachedSession: () => current,
+          getSessionForControl: async () => {
+            events.push('restore');
+            current = runtime;
+            return runtime;
+          },
+        },
+        internalEventBus: {
+          publish: async () => {
+            expect(heldPrompt).toBeUndefined();
+            events.push('interrupt');
+          },
+        },
+      },
+    } as never);
+    expect(await controls.interrupt('session')).toBe(true);
+    expect(events).toEqual(['restore', 'clear hold', 'interrupt']);
+  });
+
+  test('a failed held-prompt cancellation prevents interrupt acknowledgement', async () => {
+    const publish = mock(async () => {});
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getSessionForControl: async () => ({
+            getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
+            cancelRateLimitRetry: async () => {
+              throw new Error('hold cancellation failed');
+            },
+          }),
+        },
+        internalEventBus: { publish },
+      },
+    } as never);
+    await expect(controls.interrupt('session')).rejects.toThrow('hold cancellation failed');
+    expect(publish).not.toHaveBeenCalled();
   });
 });
 
@@ -224,6 +339,40 @@ describe('hyperneoSessionControl archive', () => {
     }
   });
 
+  test('an archive retry cleans the worktree an earlier archive kept', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'archived-kept-'));
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    const cleaned: string[] = [];
+    const controls = hyperneoSessionControl({
+      deps: {
+        db: { listChildSessions: () => [] },
+        sessionManager: {
+          getSessionFromDB: () => ({
+            id: 'owned',
+            workspacePath: root,
+            status: 'archived',
+            worktree: { branch: 'work', worktreePath: root, mainRepoPath: root },
+          }),
+          getWorktreeManager: () => ({ getCommitsAhead: async () => ({ hasCommitsAhead: false }) }),
+          getCachedSession: () => undefined,
+          cleanupArchivedWorktree: async (id: string) => {
+            cleaned.push(id);
+            return { directory: root, removed: true };
+          },
+        },
+      },
+    } as never);
+    try {
+      expect(await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => null)).toEqual({
+        ok: true,
+        value: { archived: false, worktree: { directory: root, removed: true } },
+      });
+      expect(cleaned).toEqual(['owned']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',
     async (state) => {
@@ -247,7 +396,7 @@ describe('hyperneoSessionControl archive', () => {
         state === 'late_refusal' ? { ok: false, reason: 'busy', detail: 'new' } : null
       );
       expect(result.ok).toBe(state === 'idle' || state === 'archived');
-      expect(archived).toEqual(state === 'idle' ? ['session:ui_session_archive'] : []);
+      expect(archived).toEqual(state === 'idle' ? ['session:work_archive'] : []);
       if (state === 'archived') expect(result).toMatchObject({ value: { archived: false } });
     }
   );
