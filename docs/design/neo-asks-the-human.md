@@ -54,13 +54,15 @@ silently: when a step is nobody's to move, it wakes Neo, not the human.
 
 | Writer today | Card | Becomes |
 |---|---|---|
-| `neo-daemon-card-write.ts` | worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
-| `neo-daemon-card-write.ts` | start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
-| `neo-stall-reminder-write.ts` | human step (`human_step`, which replaced `check_overdue`) | the check rows below |
-| `neo-todo-mutation-commit.ts` | prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
+| `storage/repositories/neo-daemon-card-write.ts` | worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
+| `storage/repositories/neo-daemon-card-write.ts` | start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
+| `storage/repositories/neo-stall-reminder-write.ts` | human step (`human_step`, which replaced `check_overdue`) | the check rows below |
+| `storage/repositories/neo-todo-mutation-commit.ts` | prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
 
 The automatic retries stay (`NEO_AUTOMATIC_RETRIES`): the daemon still retries a failed
-start twice before the step is Neo's.
+start twice before the step is Neo's. When they run out, the todo's write to `blocked` /
+`failure` stays: today it happens inside `openRetriesCard`, so slice 2 keeps that write and
+drops only the card. That state is what makes `nextStepOwner` return `failed`.
 
 **A worker's question already goes through Neo, and stays as it is.** The daemon stages
 the worker's question on its todo and tells Neo. Its card opens only when Neo calls
