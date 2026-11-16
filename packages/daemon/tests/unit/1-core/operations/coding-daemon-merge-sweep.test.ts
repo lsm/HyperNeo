@@ -296,9 +296,31 @@ describe('daemon merge sweep behavior', () => {
       );
     if (scenario === 'file-signoff') files = ['docs/design/change.md'];
     if (scenario === 'human-policy') policy('mergePolicy', 'human');
-    await sweep()(10);
+    const run = sweep();
+    await run(10);
     expect(merges()).toEqual([]);
     expect(notices).toHaveLength(scenario === 'covered' ? 0 : 1);
+    if (scenario === 'covered') {
+      await run(11);
+      expect(notices).toHaveLength(0);
+      store.askQuestion(
+        'later-decision',
+        'review-ask',
+        {
+          todoId: todo.id,
+          kind: 'reply',
+          text: 'Choose the next step',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        12
+      );
+      await run(13);
+      expect(notices).toHaveLength(1);
+      expect(merges()).toEqual([]);
+    }
   });
 
   test('an unavailable review lookup preserves this hold notice and the next candidate', async () => {
