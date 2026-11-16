@@ -2667,7 +2667,7 @@ describe('neo todo runner uncertainty', () => {
       attend: async () => {},
       changed: () => {},
     });
-    expect(await unsupported.stop(store.getTodo(resumed.id)!)).toContain('stop_failed');
+    expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
     const refusing = createNeoTodoRunner({
       limits: () => ({ running: 99, perGroup: 99 }),
       write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -3335,6 +3335,24 @@ describe('stopped worker ladder', () => {
     }
   });
 
+  test('stall redispatch refuses a stop whose worker is still live', async () => {
+    const h = await stopped(null, 'Build the rows.', async (name) => {
+      if (name === 'work.stop')
+        h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
+    });
+    try {
+      for (const minutes of [20, 40, 60]) await h.at(minutes);
+      expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(1);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(h.sessions.readRef(h.todo.id)).toEqual(ref);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+      expect(h.told.join('\n')).toContain('stop_unconfirmed');
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test.each([
     ['unreachable', 'remote send timed out'],
     ['not_delivered', 'thread-follower-steer-turn-timeout'],
@@ -3511,6 +3529,30 @@ describe('current explicit removal behavior before recompute', () => {
     });
   };
 
+  test.each(['adopted', 'unsupported', 'needs_you'])(
+    'removal keeps the ordinary stop semantics for %s workers',
+    async (mode) => {
+      const h = setup();
+      try {
+        const todo = h.add();
+        await h.runner.start(todo.id);
+        if (mode === 'adopted') h.sessions.bind(todo.id, ref, 1);
+        h.setStatus(
+          mode === 'unsupported'
+            ? { ok: false, reason: 'unsupported' }
+            : { ok: true, value: { status: 'needs_you', lastActivityAt: 2_000 } }
+        );
+        expect(await remove(h, todo.id)).toMatchObject({ ok: true });
+        expect(h.store.getTodo(todo.id)?.state).toBe('removed');
+        expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(
+          mode === 'adopted' ? 0 : 1
+        );
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('a stop refusal leaves the working todo and its complete report unchanged', async () => {
     const h = setup();
     try {
@@ -3541,7 +3583,6 @@ describe('current explicit removal behavior before recompute', () => {
       await h.runner.start(todo.id);
       const report = 'Complete previous result 🦊\n'.repeat(4000);
       h.store.updateTodo(h.store.getTodo(todo.id)!, { report }, Date.now());
-      h.setStatus({ ok: true, value: { status: 'stopped', lastActivityAt: Date.now() } });
       expect(await remove(h, todo.id)).toMatchObject({ ok: true });
       const removed = h.store.getTodo(todo.id);
       const sibling = h.add();

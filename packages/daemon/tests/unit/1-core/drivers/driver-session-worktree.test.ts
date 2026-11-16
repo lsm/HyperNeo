@@ -125,17 +125,23 @@ describe('hyperneoSessionControl interrupt', () => {
     'checks the same live runtime after interrupt acknowledgement (%s)',
     async (after) => {
       let state = 'processing';
-      const runtime = { getProcessingState: () => ({ status: state }) };
+      const runtime = {
+        getProcessingState: () => ({ status: state }),
+        cancelRateLimitRetry: async () => {},
+      };
       let current: typeof runtime | undefined = runtime;
       const controls = hyperneoSessionControl({
         deps: {
-          sessionManager: { getCachedSession: () => current },
+          sessionManager: {
+            getCachedSession: () => current,
+            getSessionForControl: async () => current,
+          },
           internalEventBus: {
             publish: async () => {
               state = after;
               if (after === 'missing') current = undefined;
               if (after === 'replaced')
-                current = { getProcessingState: () => ({ status: 'idle' }) };
+                current = { ...runtime, getProcessingState: () => ({ status: 'idle' }) };
             },
           },
         },
@@ -152,7 +158,7 @@ describe('hyperneoSessionControl interrupt', () => {
     const controls = hyperneoSessionControl({
       deps: {
         sessionManager: {
-          getCachedSession: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
+          getSessionForControl: async () => ({ cancelRateLimitRetry: async () => {} }),
         },
         internalEventBus: { publish: () => handling },
       },
@@ -161,18 +167,17 @@ describe('hyperneoSessionControl interrupt', () => {
     const result = Promise.resolve(controls.interrupt('session')).finally(() => {
       settled = true;
     });
-    const rejected = expect(result).rejects.toThrow('interrupt refused');
     await Promise.resolve();
     expect(settled).toBe(false);
     fail(new Error('interrupt refused'));
-    await rejected;
+    await expect(result).rejects.toThrow('interrupt refused');
   });
 
-  test('does not restore an uncached runtime', async () => {
+  test('does not publish an interrupt when the runtime cannot be restored', async () => {
     const published: string[] = [];
     const controls = hyperneoSessionControl({
       deps: {
-        sessionManager: { getCachedSession: () => undefined },
+        sessionManager: { getSessionForControl: async () => undefined },
         internalEventBus: {
           publish: async () => {
             published.push('interrupt');
@@ -182,6 +187,57 @@ describe('hyperneoSessionControl interrupt', () => {
     } as never);
     expect(await controls.interrupt('session')).toBe(false);
     expect(published).toEqual([]);
+  });
+
+  test('restores a cold held runtime and clears its prompt before interruption', async () => {
+    const events: string[] = [];
+    let heldPrompt: string | undefined = 'Do not replay';
+    const runtime = {
+      cancelRateLimitRetry: async () => {
+        heldPrompt = undefined;
+        events.push('clear hold');
+      },
+      getProcessingState: () => ({ status: 'interrupted' }),
+    };
+    let current: typeof runtime | undefined;
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getCachedSession: () => current,
+          getSessionForControl: async () => {
+            events.push('restore');
+            current = runtime;
+            return runtime;
+          },
+        },
+        internalEventBus: {
+          publish: async () => {
+            expect(heldPrompt).toBeUndefined();
+            events.push('interrupt');
+          },
+        },
+      },
+    } as never);
+    expect(await controls.interrupt('session')).toBe(true);
+    expect(events).toEqual(['restore', 'clear hold', 'interrupt']);
+  });
+
+  test('a failed held-prompt cancellation prevents interrupt acknowledgement', async () => {
+    const publish = mock(async () => {});
+    const controls = hyperneoSessionControl({
+      deps: {
+        sessionManager: {
+          getSessionForControl: async () => ({
+            cancelRateLimitRetry: async () => {
+              throw new Error('hold cancellation failed');
+            },
+          }),
+        },
+        internalEventBus: { publish },
+      },
+    } as never);
+    await expect(controls.interrupt('session')).rejects.toThrow('hold cancellation failed');
+    expect(publish).not.toHaveBeenCalled();
   });
 });
 

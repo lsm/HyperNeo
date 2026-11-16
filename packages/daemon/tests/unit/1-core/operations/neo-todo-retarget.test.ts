@@ -254,6 +254,27 @@ describe('neo.todo.retarget', () => {
     ).toBe(true);
   });
 
+  test.each(['done', 'removed'] as const)('a %s sibling does not prevent a move', async (state) => {
+    const h = setup();
+    const sibling = h.store.addTodo(
+      'sibling',
+      'ask',
+      {
+        title: 'Previous',
+        doneWhen: 'Done',
+        instruction: 'Previous work',
+        check: null,
+        named: null,
+      },
+      1
+    );
+    h.sessions.bind(sibling.id, old, 1);
+    h.store.updateTodo(sibling, { state, finishedAt: 2 }, 2);
+    expect((await h.boot().retarget('todo', old)).ok).toBe(true);
+    expect(h.sessions.readRef('todo')).toEqual(next);
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+  });
+
   test.each(['claim', 'stop', 'reopen'])(
     'the real recovery pass completes after a crash at %s, at any age',
     async (phase) => {
@@ -407,10 +428,22 @@ describe('neo.todo.retarget', () => {
     ).toHaveLength(0);
   });
 
-  test('the shared stop helper refuses a successful stop whose worker is still running', async () => {
+  test('a move preserves the refusal of a second automatic stall redispatch', async () => {
     const h = setup();
-    h.keepLive();
-    expect(await h.boot().stop(h.store.getTodo('todo')!)).toContain('stop_unconfirmed');
-    expect(h.store.getTodo('todo')?.state).toBe('doing');
+    h.sessions.recordNudge('todo', { since: 1, nudges: 0, redispatched: true });
+    const runner = h.boot();
+    expect((await runner.retarget('todo', old)).ok).toBe(true);
+    h.store.updateTodo(h.store.getTodo('todo')!, { startedAt: 1 }, Date.now());
+    h.sessions.recordNudge('todo', {
+      since: 1,
+      nudges: 2,
+      redispatched: true,
+    });
+    await runner.refresh(() => {});
+    expect(h.sessions.readNudge('todo')?.redispatched).toBe(true);
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+    expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(1);
+    expect(h.sessions.readRef('todo')).toEqual(next);
+    expect(h.store.getTodo('todo')).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
   });
 });
