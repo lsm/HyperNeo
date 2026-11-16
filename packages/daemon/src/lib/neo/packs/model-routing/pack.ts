@@ -237,10 +237,13 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
         Promise.all(
           held.map(async (entry) => {
             const { kind, scope } = workOf(entry.todo.named);
-            const candidates = (routeFor(routes, kind, scope)?.lines ?? []).filter(
-              (line) => !names(line, entry.hold.line)
-            );
-            return { ...entry, ranking: await rank(kind, candidates, scope) };
+            const route = routeFor(routes, kind, scope);
+            const candidates = (route?.lines ?? []).filter((line) => !names(line, entry.hold.line));
+            const ranking = await rank(kind, candidates, scope);
+            return {
+              ...entry,
+              ranking: { ...ranking, exhausted: !!route && ranking.ranked.length === 0 },
+            };
           })
         ),
       ['held', 'routes'],
