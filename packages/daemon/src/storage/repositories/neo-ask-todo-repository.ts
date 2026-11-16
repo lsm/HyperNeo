@@ -388,19 +388,23 @@ export class NeoAskTodoRepository {
   openWorkFacts() {
     const todos = this.db
       .prepare(
-        `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
+        `SELECT t.id, t.ask_id AS askId, t.title, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
          FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'`
+         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'
+         ORDER BY a.updated_at DESC, a.id, t.position`
       )
-      .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[];
+      .all() as Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'blockedBy' | 'startedAt'>[];
     const questions = (
       this.db
         .prepare(
-          `SELECT q.ask_id AS askId, q.state, q.todos, q.held_at AS heldAt
+          `SELECT q.id, q.ask_id AS askId, q.text, q.state, q.todos, q.held_at AS heldAt
            FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
-           WHERE q.state = 'open' AND a.status = 'open'`
+           WHERE q.state = 'open' AND a.status = 'open'
+           ORDER BY a.updated_at DESC, a.id, q.created_at`
         )
-        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'heldAt'> & { todos: string })[]
+        .all() as (Pick<NeoQuestion, 'id' | 'askId' | 'text' | 'state' | 'heldAt'> & {
+        todos: string;
+      })[]
     ).map((row) => ({ ...row, todos: JSON.parse(row.todos) as string[] }));
     return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }

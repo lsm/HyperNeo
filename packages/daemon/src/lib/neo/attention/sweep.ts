@@ -26,6 +26,27 @@ export function planNeoQueueHolds(facts: Facts, limits: Limits): NeoStepRow[] {
   );
 }
 
+type StepDeps = {
+  sessions: NeoTodoSessionRepository;
+  packs(): readonly NeoPack[];
+  limits(): Limits;
+};
+
+export async function readNeoSteps(deps: StepDeps) {
+  const facts = await deps.sessions.read('neoStepFacts');
+  const steps = await Promise.all(
+    planNeoQueueHolds(facts, deps.limits()).map(async (row) =>
+      owner(row).owner === 'neo' && (await neoPackWaits(deps.packs(), row.todo))
+        ? { ...row, facts: { ...row.facts, packWaiting: true } }
+        : row
+    )
+  );
+  return { facts, steps };
+}
+
+export const neoStepOwners = (steps: readonly NeoStepRow[]) =>
+  new Map(steps.map((row) => [row.todo.id, owner(row)]));
+
 export function planNeoSweepEvents(
   steps: readonly NeoStepRow[],
   { followUps, unapproved }: Pick<Facts, 'followUps' | 'unapproved'>
@@ -69,30 +90,18 @@ export function planNeoSweepEvents(
   ];
 }
 
-export function createNeoAttentionSweep(deps: {
-  sessions: NeoTodoSessionRepository;
-  packs(): readonly NeoPack[];
-  limits(): Limits;
-  scan(now: number): Promise<readonly NeoAttentionEvent[]>;
-  tell(event: NeoAttentionEvent, now: number): Promise<unknown>;
-  failed(event: NeoAttentionEvent, error: unknown): void;
-}) {
+export function createNeoAttentionSweep(
+  deps: StepDeps & {
+    scan(now: number): Promise<readonly NeoAttentionEvent[]>;
+    tell(event: NeoAttentionEvent, now: number): Promise<unknown>;
+    failed(event: NeoAttentionEvent, error: unknown): void;
+  }
+) {
   return (superpipe({})('neo.attention.sweep') as PipelineAPI)
     .input(['now'])
-    .pipe(() => deps.sessions.read('neoStepFacts'), 'now', 'facts')
-    .pipe((facts: Facts) => planNeoQueueHolds(facts, deps.limits()), 'facts', 'queued')
-    .pipe(
-      (steps: NeoStepRow[]) =>
-        Promise.all(
-          steps.map(async (row) =>
-            owner(row).owner === 'neo' && (await neoPackWaits(deps.packs(), row.todo))
-              ? { ...row, facts: { ...row.facts, packWaiting: true } }
-              : row
-          )
-        ),
-      'queued',
-      'steps'
-    )
+    .pipe(() => readNeoSteps(deps), 'now', 'read')
+    .pipe((read: { facts: Facts }) => read.facts, 'read', 'facts')
+    .pipe((read: { steps: NeoStepRow[] }) => read.steps, 'read', 'steps')
     .pipe(deps.scan, 'now', 'scanned')
     .pipe(
       (steps: NeoStepRow[], facts: Facts, scanned: readonly NeoAttentionEvent[]) => [
