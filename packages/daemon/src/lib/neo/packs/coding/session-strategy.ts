@@ -30,7 +30,7 @@ export function codingSessionStrategy(db: Database, repo: string): CodingSession
   return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
 }
 
-type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' };
+type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' | 'archived' };
 type Plan =
   | { verb: 'send'; ref: WorkRef; bind: boolean }
   | { verb: 'queue'; ref: WorkRef }
@@ -56,7 +56,8 @@ export function planCodingSessionDispatch(input: {
   assigned?: Session;
   pool: readonly Session[];
 }): Plan {
-  const { assigned, pool, workType } = input;
+  const { assigned, workType } = input;
+  const pool = input.pool.filter((candidate) => candidate.state !== 'archived');
   if (assigned)
     return assigned.state === 'available'
       ? { verb: 'send', ref: assigned.ref, bind: false }

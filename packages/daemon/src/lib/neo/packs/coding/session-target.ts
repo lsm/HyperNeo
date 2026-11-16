@@ -30,15 +30,18 @@ async function sessionState(session: Pooled, status: Status) {
   const reply =
     outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
-  const state: 'available' | 'busy' | 'unknown' = !live?.success
-    ? 'unknown'
-    : live.data.busy || LIVE_BUSY.has(live.data.status)
-      ? 'busy'
-      : 'available';
+  const state: 'available' | 'busy' | 'unknown' | 'archived' =
+    live?.success && session.ref.adapter === 'claude-desktop' && live.data.status === 'stopped'
+      ? 'archived'
+      : !live?.success
+        ? 'unknown'
+        : live.data.busy || LIVE_BUSY.has(live.data.status)
+          ? 'busy'
+          : 'available';
   return {
     ref: session.ref,
     name: session.name,
-    state: session.held && state !== 'unknown' ? ('busy' as const) : state,
+    state: session.held && state === 'available' ? ('busy' as const) : state,
   };
 }
 
