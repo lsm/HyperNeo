@@ -62,13 +62,13 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
                     .object({ ok: z.literal(true), value: WorkSummarySchema })
                     .safeParse(result.value)
                 : null;
+            const value = parsed?.success ? parsed.data.value : null;
+            const directory = value?.execution?.directory ?? null;
             return {
               ...row,
-              path: parsed?.success
-                ? (parsed.data.value.execution?.directory ?? row.path)
-                : row.path,
-              repo: row.repo ?? (parsed?.success ? (parsed.data.value.place.folder ?? null) : null),
-              readable: parsed?.success === true,
+              path: directory ?? row.path,
+              repo: row.repo ?? value?.place.folder ?? null,
+              readable: directory !== null,
             };
           })
         ))
