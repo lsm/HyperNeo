@@ -15658,7 +15658,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16031,7 +16031,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -16198,7 +16198,7 @@
             "type": "integer"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -17798,7 +17798,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -18015,7 +18015,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18203,7 +18203,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18441,7 +18441,7 @@
             "type": "array"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
