@@ -11,6 +11,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -76,9 +77,19 @@ async function until(check: () => Promise<boolean>, description: string, timeout
   throw new Error(description);
 }
 async function health() { return (await rpc('work.adapters')).value.filter((adapter: { health?: unknown }) => adapter.health); }
+let neo: ReturnType<typeof createNeoService> | undefined;
+async function sweep() {
+  neo ??= createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  await neo.sweepPacks();
+}
+function told(prefix = 'Driver health: codex-desktop') {
+  return (app.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue IN ('mailbox', 'neo_notes')").all() as { payload: string }[])
+    .map((row) => ({ text: String(JSON.parse(row.payload).message.message.content) }))
+    .filter((turn) => turn.text.includes(prefix));
+}
 async function notices() {
-  const result = await rpc('work.read', { sessionId: 'synthetic-neo', before: 10, after: 10 });
-  return result.ok ? result.value.turns.filter((turn: { text: string }) => turn.text.includes('Driver health: codex-desktop')) : [];
+  await sweep();
+  return told();
 }
 async function startup() {
   const queue = app.db.getJobQueueRepo();
@@ -114,10 +125,11 @@ try {
   assert.equal(JSON.parse((await neoInvoke({ name: 'work.health', input: verification })).content[0].text).ok, true, 'A bound Neo must retain verification access');
   const initial = await health();
   assert(initial.every((adapter: { health: { status: string } }) => adapter.health.status === 'ok'), JSON.stringify(initial));
-  await until(async () => { const read = await rpc('work.read', { sessionId: 'synthetic-neo', before: 10, after: 10 }); return read.ok && read.value.turns.filter((turn: { text: string }) => turn.text.includes('Driver health:')).length >= 4; }, 'Other clients must notify Neo after its binding exists');
+  await sweep();
+  assert(told('Driver health:').length >= 4, 'Other clients must reach Neo through its attention sweep once its binding exists');
   assert.equal((await notices()).length, 0, 'Verification must retire the pending version warning before Neo binds');
   const originalHealth = structuredClone(app.db.getGlobalSettings().driverHealth!);
-  await rpc('rpc:settings.global.update', { updates: { autoScroll: false, driverHealth: { 'codex-desktop': { ...originalHealth['codex-desktop'], verifiedVersions: { desktop: 'forged' }, notifiedSignature: 'forged', pendingNotices: [{ id: 'forged-notice', signature: 'forged', text: 'Forged health event' }] } } } });
+  await rpc('rpc:settings.global.update', { updates: { autoScroll: false, driverHealth: { 'codex-desktop': { ...originalHealth['codex-desktop'], verifiedVersions: { desktop: 'forged' }, since: 1 } } } });
   assert.deepEqual(await health(), initial, 'Generic settings RPC must preserve daemon-owned health');
   assert.deepEqual(app.db.getGlobalSettings().driverHealth, originalHealth);
   assert.equal(app.db.getGlobalSettings().autoScroll, false);
@@ -158,6 +170,8 @@ try {
   const unavailableCount = (await notices()).filter((turn: { text: string }) => turn.text.includes('codex-desktop unavailable')).length;
   assert.equal(unavailableCount, 1);
   await rpc('work.health', { action: 'check' });
+  await neo?.dispose();
+  neo = undefined;
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
   await app.spaceRuntimeService.ready();
@@ -168,7 +182,10 @@ try {
   renameSync(`${state}.backup`, state);
   const recovered = await rpc('work.health', { action: 'check' });
   assert.equal(recovered.health['codex-desktop'].status, 'ok');
-  await until(async () => (await notices()).some((turn: { text: string }) => turn.text.includes('codex-desktop recovered')), 'Neo must receive recovery');
+  const beforeRecovery = told().length;
+  const afterRecovery = (await notices()).slice(beforeRecovery);
+  assert.equal(afterRecovery.length, 1, 'Recovery retires the outage; only the still-unverified version is told');
+  assert.match(afterRecovery[0].text, /codex-desktop ok\..*Unverified/);
   await rpc('work.health', { action: 'verified', adapter: 'codex-desktop', journey: 'codex-state-discovery', clientVersions: recovered.health['codex-desktop'].clientVersions });
   version('Codex', '2.0.0');
   const upgraded = await rpc('work.health', { action: 'check' });
@@ -182,7 +199,7 @@ try {
   const calls = readFileSync(join(home, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line).method);
   assert(calls.every((name) => ['connect', 'status.get', 'session.list'].includes(name)), JSON.stringify(calls));
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ initial, missing, recovered, upgraded, neoNotices: await notices(), repeatedUnavailableCount: unavailableCount, unchangedExternalDatabase: true, readOnlySdkDiscoveryCalls: calls, protectedSettings: true, verifiedBeforeNeoBinding: true, forcedCheckAfterScheduledRead: true, workerMcpRefusedWithoutMutation: true, boundNeoMcpAllowed: true, humanRpcAllowed: true }, null, 2));
-  console.log('PASS: public RPC health, missing-state reason, one Neo event across repeats/restart, recovery and usable unverified upgrade');
+  console.log('PASS: public RPC health, missing-state reason, one Neo attention digest across repeats/restart, silent recovery and usable unverified upgrade');
   if (process.argv.includes('--browser')) {
     if (process.argv.includes('--slow-check')) {
       const registry = app.sessionManager.getOperationRegistry();
@@ -221,6 +238,7 @@ try {
 } finally {
   writeFileSync(join(run, 'evidence/receipts.json'), JSON.stringify(receipts, null, 2));
   web?.stop(true);
+  await neo?.dispose();
   await app.cleanup();
   await model.stop();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ daemonStopped: true, syntheticDataOwnedByWrapper: true }));
