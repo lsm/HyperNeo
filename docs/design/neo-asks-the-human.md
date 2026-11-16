@@ -104,8 +104,13 @@ conversations or on workers.
 
 **When Neo itself cannot run.** The rule needs Neo. If Neo's own session cannot take a
 turn (a resume error, a stalled session), the daemon tells the human directly, as the
-resume card does today. That is the one case the daemon speaks to the human, and it is
-about Neo, never about a todo.
+resume card does today. For todos and work, that is the one case the daemon speaks to
+the human, and it is about Neo, never about a todo.
+
+**Out of scope.** Cards that are not about todos keep their current path: the home-sync
+conflict card (`reportHomeConflict`, `home/conflicts.ts`), and the proposal cards that Neo
+opens through an operation (rules, preferences, and the coding pack's GitHub home). A
+later design can apply the same rule to them.
 
 ## What stays
 
