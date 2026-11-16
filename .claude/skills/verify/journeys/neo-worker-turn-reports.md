@@ -4,8 +4,11 @@ Use the neo-quiet-wake.md journey and the shared isolated setup in SKILL.md.
 Turn reports reach Neo through the attention entry (`neo.attention.tell`): a
 finished or running turn is a digest line, a turn that ends failed or needs_you,
 carries a turn question, or belongs to a blocked todo wakes Neo, and a report is
-dropped when an open card covers its todo or when the worker is the ask's focused
-discussion. Preserve every byte of the worker's report.
+dropped when an open card covers its todo. A report from the ask's focused
+discussion keeps its status-only authority warning: plain status is dropped and
+an urgent one still wakes. Direct human work in a worker session is the human's
+input: it never enters the entry and reaches Neo at once, and the follow anchor
+moves only after it is delivered. Preserve every byte of the worker's report.
 
 A report's identity is its text for one todo: an exact repeat under a different
 transport ID or time, including after a NeoService restart, adds nothing.
