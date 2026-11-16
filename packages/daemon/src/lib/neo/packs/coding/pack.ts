@@ -66,7 +66,10 @@ export function createCodingPack(deps: {
   attend: CodingAttend;
   projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
-  postReviewComments?: (read: () => Promise<readonly CodingStageFact[]>) => Promise<void>;
+  postReviewComments?: (
+    read: () => Promise<readonly CodingStageFact[]>,
+    posted: (fact: CodingStageFact, marker: string) => Promise<void>
+  ) => Promise<void>;
 }): NeoPack & {
   readMergeFacts: typeof readCodingDaemonMergeFacts;
   decideMerge: typeof decideCodingDaemonMerge;
@@ -263,8 +266,9 @@ export function createCodingPack(deps: {
     attention: { kinds: CODING_ATTENTION_KINDS, scan: scanCodingIdleOpenPrs(deps.todoPrs) },
     sweep: async (now) => {
       if (deps.postReviewComments)
-        await deps.postReviewComments(() =>
-          readCodingPostableReviews(deps.database(), deps.prLedger)
+        await deps.postReviewComments(
+          () => readCodingPostableReviews(deps.database(), deps.prLedger),
+          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker)
         );
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,

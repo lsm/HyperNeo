@@ -90,6 +90,20 @@ export class CodingStageFactsRepository {
     );
   }
 
+  postedMarker(url: string): string | null {
+    const row = this.db
+      .prepare('SELECT marker FROM pack_coding_review_comments WHERE url = ?')
+      .get(githubUrlKey(url)) as { marker: string } | undefined;
+    return row?.marker ?? null;
+  }
+
+  markPosted(url: string, marker: string): void {
+    this.db
+      .prepare(`INSERT INTO pack_coding_review_comments (url, marker) VALUES (?, ?)
+      ON CONFLICT(url) DO UPDATE SET marker = excluded.marker`)
+      .run(githubUrlKey(url), marker);
+  }
+
   read(url: string): CodingStageFact[] {
     const rows = this.db
       .prepare(`SELECT fact_json AS fact FROM pack_coding_stage_facts

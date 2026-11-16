@@ -53,7 +53,10 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
     return {};
   };
   const sweep = (post = createCodingReviewComments(github)) =>
-    post(() => readCodingPostableReviews(db, ledger));
+    post(
+      () => readCodingPostableReviews(db, ledger),
+      (fact, marker) => ledger.write('recordPostedReview', fact.url, marker)
+    );
   return { db, ledger, comments, outage, calls, github, sweep };
 }
 
@@ -211,7 +214,12 @@ describe('createCodingReviewComments', () => {
     try {
       ledger.recordStage(fact);
       const post = createCodingReviewComments(github);
-      await expect(post(() => Promise.reject(new Error('gateway busy')))).resolves.toBeUndefined();
+      await expect(
+        post(
+          () => Promise.reject(new Error('gateway busy')),
+          async () => {}
+        )
+      ).resolves.toBeUndefined();
       await sweep(post);
       expect(comments).toHaveLength(1);
     } finally {

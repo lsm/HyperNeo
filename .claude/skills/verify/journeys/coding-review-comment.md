@@ -26,10 +26,16 @@ re-observes the head before the second result. Each starts with `**HyperNeo reco
 names the reviewer model and harness, the verdict and the head. The reviewer
 session id never appears. The helper prints the first comment as a sample.
 
+Then a second Neo service on the same DB stands in for a restart: two sweeps
+make no issue-comment calls, because each PR's posted marker is stored in the DB. A merged PR with a new review fact makes none either. Last, the
+stub answers every call with a rate-limit error (and `/rate_limit` with a reset
+ten minutes out): one sweep tries once, and the next sweeps make no comment
+calls until the reset.
+
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
 
 Run `neo-coding-review-comment` unit tests for the outage retry, closed PRs,
-moved heads, overlapping sweeps, a verdict that returns at one head and a PR
-merged during a GitHub outage.
+moved heads, overlapping sweeps, a verdict that returns at one head, a restart,
+a merged PR and a rate-limit hold.
 
 Not verified here: real GitHub, the human's gh account, or the PR page rendering.

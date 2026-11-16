@@ -72,8 +72,28 @@ try {
     assert(comment.body.includes('- Head: `head-a`'));
     assert(!comment.body.includes(ref.id));
   }
+  const ghCalls = () => readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n').filter((line) => line.includes('/comments'));
+  const before = ghCalls().length;
+  const restarted = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  await restarted.sweepPacks();
+  await restarted.sweepPacks();
+  assert.equal(ghCalls().length, before, 'a restarted service with the same facts makes no GitHub calls');
+  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'merged', closed_at = ?").run(Date.now());
+  ledger.stageFacts.observeHead(url, 'head-b', Date.now());
+  ledger.recordStage({ ...fact, head: 'head-b' });
+  await restarted.sweepPacks();
+  assert.equal(ghCalls().length, before, 'a merged PR makes no GitHub calls');
+  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'waiting_review', closed_at = NULL, head = 'head-b'").run();
+  writeFileSync(join(run, 'rate-limited'), '');
+  await restarted.sweepPacks();
+  const limited = ghCalls().length;
+  assert(limited > before, 'the rate-limited sweep tried GitHub');
+  await restarted.sweepPacks();
+  await restarted.sweepPacks();
+  assert.equal(ghCalls().length, limited, 'after a rate-limit error no GitHub calls until the reset');
+  evidence.push({ restartCalls: 0, rateLimitedCalls: ghCalls().slice(before) });
   evidence.push({ comments: posted, ghCalls: readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n') });
-  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps. Evidence: ${run}/evidence/review-comment.json`);
+  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps, none after a restart or for a merged PR, and none after a rate-limit error until the reset. Evidence: ${run}/evidence/review-comment.json`);
   console.log(`--- sample comment ---\n${posted[0].body}`);
 } finally {
   writeFileSync(join(run, 'evidence/review-comment.json'), JSON.stringify(evidence, null, 2));

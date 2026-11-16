@@ -5,6 +5,10 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { Logger } from '../../../logger.ts';
+import {
+  isRateLimitError,
+  RATE_LIMIT_MIN_BACKOFF_MS,
+} from '../../../session/rate-limit-detector.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { codingLedgerReads, type CodingPrLedgerRepository } from './pr-ledger.ts';
@@ -21,7 +25,8 @@ export const codingGithubApi: CodingGithubApi = async (host, args) => {
     spawnProcess,
     { stripGHRepo: true, timeoutMs: 60_000, maxBufferBytes: 64 * 1024 * 1024 }
   );
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok)
+    throw Object.assign(new Error(result.error), { retryAfterMs: result.retryAfterMs });
   return result.data;
 };
 
@@ -67,38 +72,55 @@ export async function postCodingReviewComment(api: CodingGithubApi, fact: Coding
   return true;
 }
 
+const retryAfterMs = (error: unknown) =>
+  error instanceof Error && 'retryAfterMs' in error && typeof error.retryAfterMs === 'number'
+    ? error.retryAfterMs
+    : RATE_LIMIT_MIN_BACKOFF_MS;
+
+type CodingPostedReview = (fact: CodingStageFact, marker: string) => Promise<void>;
+
 export function createCodingReviewComments(api: CodingGithubApi) {
-  const newest = new Map<string, string>();
+  let heldUntil = 0;
   let queue = Promise.resolve();
-  const post = async (read: () => Promise<readonly CodingStageFact[]>) => {
+  const post = async (
+    read: () => Promise<readonly CodingStageFact[]>,
+    posted: CodingPostedReview
+  ) => {
+    if (Date.now() < heldUntil) return;
     for (const fact of await read()) {
-      const { marker } = planCodingReviewComment(fact);
-      if (newest.get(fact.url) === marker) continue;
-      await postCodingReviewComment(api, fact).then(
-        () => newest.set(fact.url, marker),
-        (error: unknown) =>
-          log.warn('review comment not posted', { url: fact.url, error: String(error) })
-      );
+      try {
+        await postCodingReviewComment(api, fact);
+      } catch (error) {
+        log.warn('review comment not posted', { url: fact.url, error: String(error) });
+        if (!isRateLimitError(String(error))) continue;
+        heldUntil = Date.now() + retryAfterMs(error);
+        return;
+      }
+      await posted(fact, planCodingReviewComment(fact).marker);
     }
   };
-  return (read: () => Promise<readonly CodingStageFact[]>) =>
+  return (read: () => Promise<readonly CodingStageFact[]>, posted: CodingPostedReview) =>
     (queue = queue
-      .then(() => post(read))
+      .then(() => post(read, posted))
       .catch((error: unknown) => log.warn('review comments not read', { error: String(error) })));
 }
 
 export async function readCodingPostableReviews(db: Database, ledger: CodingPrLedgerRepository) {
-  const open = (await ledger.read('list')).filter((row) => row.state !== 'closed');
+  const open = (await ledger.read('list')).filter(
+    (row) => row.state !== 'closed' && row.state !== 'merged'
+  );
+  const gateway = gatewayFor(db);
   const facts = await Promise.all(
-    open.map(async (row) =>
-      (
-        await gatewayFor(db).call(
-          codingLedgerReads,
-          'readStageFacts',
-          `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
-        )
-      ).filter((fact) => fact.stage === 'review' && fact.head === row.head)
-    )
+    open.map(async (row) => {
+      const url = `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`;
+      const posted = await gateway.call(codingLedgerReads, 'readPostedReview', url);
+      return (await gateway.call(codingLedgerReads, 'readStageFacts', url)).filter(
+        (fact) =>
+          fact.stage === 'review' &&
+          fact.head === row.head &&
+          planCodingReviewComment(fact).marker !== posted
+      );
+    })
   );
   return facts.flat();
 }
