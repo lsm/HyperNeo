@@ -1,6 +1,6 @@
 # Connections: daemon-owned OAuth for remote MCP servers
 
-**Design only; no runtime change.** This adds the "Tools via remote MCP" item from
+**Design only; no runtime change. Read-only until the [connections](connectors.md) approval gate exists.** This adds the "Tools via remote MCP" item from
 [connections](connectors.md). The daemon signs in to a remote MCP server once and
 holds that server's tokens. Then it gives sessions the server's tools, never the
 tokens. After that, adding Jira, Slack or Basecamp is mostly configuration:
@@ -26,7 +26,8 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 ## Design
 
 1. **Mark a server as OAuth.** An `http` row gets one nullable `auth` JSON
-   column: `{kind: 'oauth', scopes?, clientId?}`. No new table. A client secret
+   column: `{kind: 'oauth', preset, clientId?}`. No new table. The preset (code,
+   not data) fixes the URL and the scope set. A client secret
    (Slack needs one) goes to the vault, never into this column. Static
    `headers` stay for the servers that use them and are ignored on OAuth rows.
 2. **Store grants in the existing vault.** `ConnectionVault` gains an MCP address
@@ -39,6 +40,15 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    Google login (`127.0.0.1`, random port, one-use state, timeout). Registration
    prefers pre-registered `clientId`, then CIMD, then DCR. Connect is a
    human-only operation that returns the authorize URL; a session never starts it.
+   **The preset's scope set is a hard maximum.** By itself the SDK widens it: with
+   no explicit scope it requests the server's whole `scopes_supported`, and the
+   transport retries a 403 `insufficient_scope` with the scope from the
+   challenge. So the daemon always passes the preset scope to `auth()` and as
+   `clientMetadata.scope`. The provider's `redirectToAuthorization` acts only
+   inside a human connect or reconnect attempt, and only for a URL whose `scope`
+   is within the maximum. Anywhere else it throws: a tool call, a refresh, or a
+   401/403 retry. It never opens consent. A token response that grants scopes
+   beyond the maximum is discarded, not stored.
 4. **Inject outside registry headers.** For an OAuth row the daemon itself is the
    MCP client: SDK `Client` plus `StreamableHTTPClientTransport` with the
    provider above. Sessions get an in-process SDK server (`createSdkMcpServer`,
@@ -49,13 +59,23 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 5. **Health and refresh.** Refresh goes through the SDK provider, serialized per
    server like the Google `token-access` flight. On `invalid_grant` the provider
    clears the tokens and the server shows **Reconnect needed**; its tools drop
-   out of new sessions. Disconnect removes the vault entry. Server health is
-   derived from the vault bundle, so we record no second copy.
-6. **Writes.** The connection-wide write approval gate (phase 2 of
-   [connections](connectors.md)) is not built. Until it is, presets request read
-   and search scopes only, so the vendor's server refuses writes whatever a tool
-   hint says. A human who widens the scopes for a server opts that server into
-   writes under the session's normal permission mode, as with static MCP today.
+   out of new sessions. Server health is derived from the vault bundle, so we
+   record no second copy.
+   **Disconnect is fenced, as for Google** ([lifecycle][google-lifecycle]). It
+   aborts the pending login, refresh and in-flight calls first. Then it runs on
+   the same per-server lock as every token save, bumps the server's generation,
+   and erases the bundle. A save carrying an older generation is dropped, so a
+   late refresh or login callback cannot bring tokens back. Existing proxies
+   check the generation on each call, refuse after disconnect without contacting
+   the server, and close their client.
+6. **Read-only until the approval gate exists.** [Connections](connectors.md)
+   requires one human approval per external mutation, and remote MCP must use the
+   same gate. That gate (phase 2) is not built. So this design is read-only: only
+   presets with a read and search scope set can connect, and no setting widens
+   them. Custom OAuth servers wait for the gate, because we cannot tell their
+   scopes apart. Write tools may still be listed, but the vendor's server refuses
+   them for lack of scope; tool hints are never trusted. Adding write scopes is
+   part of the phase-2 work, not this design.
 
 Not in this design: DPoP, token exchange, device flow, a hosted relay, and
 importing tokens from other clients' caches.
@@ -101,18 +121,21 @@ Each slice is about 100–200 production lines, with tests in the same PR. All o
 them test against one **fake MCP OAuth server**: a test-only Bun server that
 publishes protected-resource and authorization-server metadata, has a DCR
 endpoint and a CIMD flag, auto-approves `/authorize`, checks PKCE, rotates
-refresh tokens, can return `invalid_grant`, and serves an `/mcp` endpoint with
-two tools that rejects a missing or expired bearer. Switches cover the vendor
-shapes above: no DCR plus a required client secret (Slack), and root versus path
-metadata.
+refresh tokens, can return `invalid_grant`, and serves an `/mcp` endpoint that
+rejects a missing or expired bearer. It has one read tool and one write tool. The
+write tool needs a write scope and counts every mutation it applies. It records
+every authorize request's scope, can advertise every scope in its metadata, can
+answer with a 403 `insufficient_scope` challenge naming a write scope, and can
+delay any token response. Switches cover the vendor shapes above: no DCR plus a
+required client secret (Slack), and root versus path metadata.
 
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
-| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault, survives a restart, and is absent from DB rows and registry reads. Wrong state and replay are refused. |
-| 2 | `auth` column; human-only connect, reconnect and disconnect operations over the loopback | RPC connect reaches a healthy state. Disconnect deletes the bundle. The Slack shape works with a pre-registered client and secret. |
-| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake tools. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. |
+| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault, survives a restart, and is absent from DB rows and registry reads. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored. |
+| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. |
+| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
-| 5 | Presets for Jira, Slack and Basecamp (URL, read scopes, client needs) | Each preset produces the expected authorize URL and scopes against the fake server. The real sign-in per vendor is the human step above. |
+| 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
 
 Proof follows the [verify skill](../../.claude/skills/verify/SKILL.md):
 `NODE_ENV=test`, a fresh data dir and DB, the fake server on loopback, and no real
@@ -123,6 +146,7 @@ vendor credentials.
 [lifecycle]: ../../packages/daemon/src/lib/mcp/app-mcp-lifecycle-manager.ts
 [vault]: ../../packages/daemon/src/lib/connections/vault.ts
 [access]: ../../packages/daemon/src/lib/connections/token-access.ts
+[google-lifecycle]: ../../packages/daemon/src/lib/connections/lifecycle.ts
 [login]: ../../packages/daemon/src/lib/connections/google-login.ts
 [ops]: ../../packages/daemon/src/lib/operations/mcp-server.ts
 [atl]: https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/
