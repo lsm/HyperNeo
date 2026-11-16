@@ -15,6 +15,7 @@ import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree'
 import {
   cleanupOwnedWorktree,
   planWorkPlacement,
+  procFolderInUse,
 } from '../../../../src/lib/drivers/work-placement';
 import { workerWorkLocations } from '../../../../src/lib/work-locations';
 
@@ -191,5 +192,40 @@ describe('archive removes the worker work folders', () => {
     expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
     expect(existsSync(places.scratch)).toBe(false);
     expect(existsSync(places.ghConfig)).toBe(false);
+  });
+});
+
+describe('procFolderInUse', () => {
+  const uid = process.getuid?.() ?? 0;
+  const failure = (code: string) => Object.assign(new Error(code), { code });
+  const proc = (pids: Record<string, { uid?: number; cwd: string | Error }>) => ({
+    readdir: async () => ['self', ...Object.keys(pids)],
+    stat: async (path: string) => ({ uid: pids[path.split('/')[2]]?.uid ?? uid }),
+    readlink: async (path: string) => {
+      const cwd = pids[path.split('/')[2]]?.cwd;
+      if (cwd instanceof Error || cwd === undefined) throw cwd ?? failure('ENOENT');
+      return cwd;
+    },
+  });
+
+  test('finds an own process whose working folder is inside', async () => {
+    expect(await procFolderInUse('/w', proc({ '1': { cwd: '/w/sub' } }))).toBe(true);
+    expect(await procFolderInUse('/w', proc({ '1': { cwd: '/wx' } }))).toBe(false);
+  });
+
+  test('keeps the folder when an own process cwd cannot be read', async () => {
+    for (const code of ['EACCES', 'EPERM', 'EIO'])
+      expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(true);
+  });
+
+  test('ignores only a process that is gone', async () => {
+    for (const code of ['ENOENT', 'ESRCH'])
+      expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(false);
+  });
+
+  test('skips processes of other users', async () => {
+    expect(
+      await procFolderInUse('/w', proc({ '1': { uid: uid + 1, cwd: failure('EACCES') } }))
+    ).toBe(false);
   });
 });
