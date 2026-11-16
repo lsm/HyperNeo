@@ -103,7 +103,8 @@ function readHeldTodos(db: Database, now: number): HeldTodo[] {
         AND x.status NOT IN ('archived', 'ended') AND x.archived_at IS NULL
         AND json_valid(x.processing_state) AND json_valid(x.config)
         AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'
-        AND (json_extract(x.processing_state, '$.retryAt') IS NULL
+        AND (json_extract(x.processing_state, '$.reason') = 'login'
+          OR json_extract(x.processing_state, '$.retryAt') IS NULL
           OR json_extract(x.processing_state, '$.retryAt') > ?)`)
     .all(now)
     .flatMap((row) => {
