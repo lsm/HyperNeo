@@ -63,7 +63,7 @@ test('Work retains every open ask plus ten recent finished or dropped cards', as
   expect(view.omitted).toEqual({ asks: 22 });
 });
 
-test.each(['todo', 'doing', 'blocked', 'failed', 'closed_unverified'])(
+test.each(['todo', 'doing', 'blocked', 'failed'])(
   'old settled cards with a %s todo stay visible outside retention',
   async (state) => {
     for (let i = 0; i < 32; i++) ask(`done-${i}`, 'done', 'a', 1000 + i);

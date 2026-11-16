@@ -9,9 +9,7 @@ export function neoTodoWithoutFollowUp<T extends Step>(todos: readonly T[]): T |
       (latest, todo) => (!latest || todo.position > latest.position ? todo : latest),
       null
     );
-  return last?.producesFollowUp && (last.state === 'done' || last.state === 'closed_unverified')
-    ? last
-    : null;
+  return last?.producesFollowUp && last.state === 'done' ? last : null;
 }
 
 export function neoTodoFollowUpRefusal(todos: readonly Step[]): string | null {

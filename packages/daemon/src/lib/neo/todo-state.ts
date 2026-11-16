@@ -126,7 +126,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       };
     else if (
       !Object.keys(change).length &&
-      !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
+      !['done', 'failed'].includes(todo.state) &&
       !(
         todo.state === 'blocked' &&
         ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')
@@ -165,11 +165,8 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       Object.entries(patch).filter(([key, value]) => value !== todo[key as keyof NeoTodo])
     ) as NeoTodoPatch;
   const next =
-    facts.askOpen && ['done', 'closed_unverified'].includes(state)
-      ? facts.order.find(
-          (row) =>
-            row.id !== todo.id && !['done', 'closed_unverified', 'removed'].includes(row.state)
-        )
+    facts.askOpen && state === 'done'
+      ? facts.order.find((row) => row.id !== todo.id && !['done', 'removed'].includes(row.state))
       : null;
   return {
     patch,

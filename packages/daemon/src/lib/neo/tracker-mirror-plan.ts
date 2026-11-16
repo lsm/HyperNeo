@@ -81,10 +81,7 @@ export function planNeoTrackerMirror(
           mirror.tracker === adapter.id &&
           mirror.state === 'bound'
       )?.ref;
-      const final =
-        owner.todo?.state === 'done' ||
-        owner.todo?.state === 'closed_unverified' ||
-        owner.todo?.state === 'removed';
+      const final = owner.todo?.state === 'done' || owner.todo?.state === 'removed';
       const settled = owner.ask.status !== 'open';
       const openChildren = mirrors.some(
         (mirror) =>

@@ -10,7 +10,6 @@
    `neo.ask.settle` refuses done with `todos_unfinished` while any todo remains
    unfinished, for both human and agent callers. Complete the work, explicitly
    remove abandoned steps with reasons, or settle dropped when abandoning the ask.
-   Historical `closed_unverified` rows retain their label and never count as done.
    See ask-bookkeeping-actions.md for that separate settlement proof.
    To verify PR ownership and URL edits, run
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated

@@ -319,7 +319,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       const described = await h.call('operations.describe', { name: 'neo.question.ask' });
       expect(described).toMatchObject({ found: true });
       expect(described.description).toContain(
-        'If a supplied todoId is unknown, belongs to another ask, or is done, closed unverified or removed'
+        'If a supplied todoId is unknown, belongs to another ask, or is done or removed'
       );
       expect(described.description).toContain(
         'supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused'
@@ -433,7 +433,7 @@ describe('todo and ask bookkeeping records through MCP', () => {
       h.db.close();
     }
   });
-  test.each(['done', 'closed_unverified', 'removed'] as const)(
+  test.each(['done', 'removed'] as const)(
     'a question about a %s todo opens at ask level with a record',
     async (state) => {
       const h = setup();

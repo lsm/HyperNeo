@@ -187,21 +187,17 @@ describe('Read-only todo mutation plans', () => {
     });
   });
 
-  test('unsupported URL bookkeeping preserves an unverified report and requirement', async () => {
+  test('unsupported URL bookkeeping preserves the report and requirement', async () => {
     const check = {
       pack: 'core',
       kind: 'evidence',
       params: { path: '/synthetic/planning/evidence' },
     };
-    store.updateTodo(
-      store.getTodo('first')!,
-      { check, state: 'closed_unverified', report: 'Complete report' },
-      2
-    );
+    store.updateTodo(store.getTodo('first')!, { check, report: 'Complete report' }, 2);
     const result = await plan({ kind: 'edit', todoId: 'first', addUrls: [url(2)] });
     expect(result).toMatchObject({
       ok: true,
-      todo: { state: 'closed_unverified', check, report: 'Complete report' },
+      todo: { check, report: 'Complete report' },
       records: [expect.stringContaining('check_urls_unsupported:')],
     });
     expect(result.ok && result.patch?.state).toBeUndefined();

@@ -75,7 +75,7 @@ test('done todo closes its child as completed', () => {
   ]);
 });
 
-for (const state of ['removed', 'closed_unverified']) {
+for (const state of ['removed']) {
   test(`${state} todo closes its child as not_planned`, () => {
     bindChild();
     db.prepare('UPDATE neo_todos SET state = ?').run(state);

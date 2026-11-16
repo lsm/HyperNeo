@@ -518,7 +518,7 @@ export function planNeoQuestion(
     requestedTodoId &&
     todo?.id === requestedTodoId &&
     todo.askId === ask.id &&
-    !['done', 'closed_unverified', 'removed'].includes(todo.state)
+    !['done', 'removed'].includes(todo.state)
       ? requestedTodoId
       : undefined;
   if (!input.retireWhen && (!todoId || !todo?.check))

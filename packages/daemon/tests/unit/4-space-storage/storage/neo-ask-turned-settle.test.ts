@@ -139,7 +139,6 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
 
   test('generates the outcome from the step list when Neo wrote none', async () => {
     add('alpha', 'done');
-    add('beta', 'closed_unverified');
     add('gamma', 'removed', { reason: 'Superseded' });
     add('delta', 'failed');
     consumedWake('ask');
@@ -147,7 +146,6 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     const ask = store.getAsk('ask')!;
     expect(ask.status).toBe('done');
     expect(ask.outcome).toContain('Step alpha');
-    expect(ask.outcome).toContain('Step beta');
     expect(ask.outcome).toContain('Step gamma');
     expect(ask.outcome).toContain('Step delta');
   });

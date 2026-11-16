@@ -329,7 +329,7 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
+  test.each(['done', 'failed', 'removed'] as const)(
     'a %s todo does not reserve the PR',
     async (state) => {
       const { db, store, call } = setup();
