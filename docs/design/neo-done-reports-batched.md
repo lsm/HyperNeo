@@ -32,15 +32,25 @@ a report kind into the batch.
 
 ## The design
 
-**A `done` report is held; the other kinds still wake.** The wake test becomes:
+**A `done` report is held; the other kinds still wake.** One helper beside
+`WORKER_REPORT_KINDS` (`packages/shared/src/types/worker-report.ts`) records which kind is
+held, so a kind added later wakes by default:
+
+```ts
+export const reportKindWakesNeo = (kind: (typeof WORKER_REPORT_KINDS)[number]) =>
+  kind !== 'done';
+```
+
+The wake test becomes:
 
 ```ts
 entry.origin === 'chat' ||
-  ['blocked', 'question', 'failed'].includes(entry.message.workerReportKind ?? '') ||
+  (!!entry.message.workerReportKind && reportKindWakesNeo(entry.message.workerReportKind)) ||
   !!entry.message.neoWakeEvent
 ```
 
-and `attach` holds a pending `done` report with the other quiet entries. A `done` report then
+and `attach` uses the same helper to hold a pending `done` report with the other quiet
+entries. A `done` report then
 reaches Neo in the next batch, in order with everything else held: at once if anything wakes
 Neo, otherwise on the first flush once the oldest held message is 15 minutes old.
 
@@ -59,10 +69,12 @@ Nothing is dropped or rewritten. The human, card answers, the attention entry's 
 ## Change plan
 
 One PR from `dev` (the repository's default and target branch), failing tests first, about 20
-production lines: the wake test in `lib/mailbox/registration.ts` and the `attach` filter in
+production lines: the helper in `packages/shared/src/types/worker-report.ts`, the wake test
+in `lib/mailbox/registration.ts` and the `attach` filter in
 `storage/repositories/neo-wake-queue-repository.ts`.
 
-`bun run system-map impact` on both files: `registration.ts` has one importer (the app's
+`bun run system-map impact` on the three files: `worker-report.ts` has three importers (the CLI,
+`lib/mailbox`, `lib/messaging`), which only gain an export. `registration.ts` has one importer (the app's
 wiring) and emits `messages.statusChanged`, whose emitters and listeners do not change.
 `neo-wake-queue-repository.ts` has six importers (two in `lib/neo`, four in `storage`); its
 writes to `job_queue` and `message_send_receipts` keep their shape, so the readers it lists do
