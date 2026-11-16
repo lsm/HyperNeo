@@ -13,4 +13,7 @@ End state, printed by the script:
   `free` then fails with `invalid_place`, because the fixture has no worker
   folder; the journey proves admission, not a worker run.
 
-The script exits non-zero when a list is wrong or `held` starts.
+- two older `closed_unverified` rows read `done` (it had started) and `removed`
+  (it never started), and their ask reads through `neo.ask.read`.
+
+The script exits non-zero when a list or a rewritten row is wrong, or `held` starts.
