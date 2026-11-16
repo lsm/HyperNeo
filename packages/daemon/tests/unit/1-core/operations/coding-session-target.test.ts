@@ -10,7 +10,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
-import { rankLines } from '../../../../src/lib/neo/packs/model-routing/rank.ts';
+import { catalogModel, driverCodingLines } from '../../helpers/coding-lines.ts';
 import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
@@ -25,7 +25,7 @@ function setup() {
   createTables(db);
   prepareCodingTodoStorage(db);
   const todos = new NeoAskTodoRepository(db);
-  for (const id of ['feature', 'other'])
+  for (const id of ['feature', 'other', 'third'])
     todos.openAsk({
       id,
       projectId: null,
@@ -101,50 +101,58 @@ function setup() {
 }
 
 describe('coding session target decision', () => {
-  const routed = (kinds: string[], held: boolean): CodingLines => ({
-    models: () => [
-      {
-        id: 'glm-6',
-        name: 'GLM 6',
-        alias: 'glm-6',
-        family: 'glm',
-        provider: 'glm',
-        contextWindow: 1,
-        description: '',
-        releaseDate: '',
-        available: true,
-      },
-    ],
-    rank: async (kind, candidates, scope) => {
-      kinds.push(`${kind} ${scope.repo ?? ''}`);
-      return rankLines({
-        kind,
-        candidates,
-        scope,
-        prefs: { routes: [], rules: [] },
-        holds: held
-          ? [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }]
-          : [],
-        usage: {},
-        availability: { glm: 'ready' },
-        now: 1,
-      });
-    },
-  });
+  const catalog = [catalogModel('glm-6', 'glm'), catalogModel('claude-opus-5-5', 'anthropic')];
+  const glmHold = [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }];
+  const routed = (kinds: string[], held: boolean) =>
+    driverCodingLines(catalog, held ? { holds: glmHold } : {}, kinds);
+  const glm = { verb: 'start' as const, adapter: 'hyperneo', model: 'glm-6', name: 'backend' };
+  const opus = { ...glm, model: 'claude-opus-5-5' };
 
-  test('a hyperneo start is ranked again as coding.write, and a held line waits with the reason', async () => {
+  test('a hyperneo start is ranked again as coding.write and moves off a held line', async () => {
     const { todo, decide } = setup();
     const kinds: string[] = [];
-    const glm = { verb: 'start' as const, adapter: 'hyperneo', model: 'glm-6', name: 'backend' };
     expect(await decide(todo(), glm, routed(kinds, false))).toEqual({ value: glm });
-    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({
-      reason: `No usable model line for coding.write: glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
-    });
+    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({ value: opus });
     expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
-    expect(await decide(todo('other'), start('desktop'), routed(kinds, true))).toEqual({
+    expect(await decide(todo('third'), start('desktop'), routed(kinds, true))).toEqual({
       value: start('desktop'),
     });
     expect(kinds).toHaveLength(2);
+  });
+
+  test('a route moves a start to its preferred usable line, and nothing usable waits with the reasons', async () => {
+    const { todo, decide } = setup();
+    const routes = [
+      { kind: 'coding.write', lines: [{ provider: 'anthropic', model: 'claude-opus-5-5' }] },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { routes }))).toEqual({
+      value: opus,
+    });
+    expect(await decide(todo('other'), glm, driverCodingLines(catalog, { ready: [] }))).toEqual({
+      reason:
+        'No usable model line for coding.write: glm/glm-6 via hyperneo: not configured; anthropic/claude-opus-5-5 via hyperneo: not configured.',
+    });
+  });
+
+  test('the owning ask project is in scope: never skips the line, only keeps it', async () => {
+    const { db, todo, decide } = setup();
+    db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'feature'").run();
+    const line = { provider: 'glm', model: 'glm-6' };
+    const kinds: string[] = [];
+    const never = driverCodingLines(
+      catalog,
+      { rules: [{ line, never: { projects: ['p1'] } }] },
+      kinds
+    );
+    const only = driverCodingLines(catalog, { rules: [{ line, only: { projects: ['p1'] } }] });
+    expect(await decide(todo(), glm, never)).toEqual({ value: opus });
+    expect(kinds).toEqual([`coding.write ${repo} p1`]);
+    expect(await decide(todo('other'), glm, only)).toEqual({ value: opus });
+    db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'third'").run();
+    expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });
   });
 
   test('a send to an existing session is not ranked', async () => {

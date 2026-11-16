@@ -158,23 +158,33 @@ describe('coding actor assignments', () => {
         exhausted: false,
       };
     };
-    const f = fixture(undefined, { models: () => [], rank });
+    const lines: CodingLines = {
+      models: () => [],
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
+      rank,
+    };
+    const f = fixture(undefined, lines);
+    f.db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    f.db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'ask'").run();
     expect(await f.assign({ candidates: [author, sonnet, opus] })).toMatchObject({ ok: true });
     expect(calls.map(({ kind, scope }) => ({ kind, scope }))).toEqual([
-      { kind: 'coding.review', scope: { repo: 'synthetic/actors' } },
+      { kind: 'coding.review', scope: { repo: 'synthetic/actors', projectId: 'p1' } },
     ]);
     expect(calls[0].candidates.map((line) => line.model)).toEqual([
       'claude-sonnet-5-5',
       'claude-opus-5-5',
     ]);
     expect(f.starts.map((start) => start.model)).toEqual(['claude-opus-5-5']);
-    const external = fixture(undefined, { models: () => [], rank });
+    const external = fixture(undefined, lines);
     expect(await external.assign()).toMatchObject({ ok: true });
     expect(calls).toHaveLength(1);
   });
   test('a review whose every candidate is refused names the skip reasons and starts nothing', async () => {
     const f = fixture(undefined, {
       models: () => [],
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
       rank: async (_kind, candidates) => ({
         ranked: [],
         skipped: candidates.map((line) => ({ line, reason: 'held until later' })),
