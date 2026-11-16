@@ -91,16 +91,18 @@ function setup() {
     () => 'en',
     async () => {}
   );
+  const asks: unknown[] = [];
   const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
-    decideCodingSessionTarget(db, item, target, status, async (input) => ({
-      kind: 'completed' as const,
-      value: await askSetting!.execute(
+    decideCodingSessionTarget(db, item, target, status, async (input) => {
+      const value = await askSetting!.execute(
         { askId: item.askId, ...input },
         { source: 'internal', sessionId: 'neo', role: 'neo' }
-      ),
-    }));
+      );
+      asks.push(value);
+      return { kind: 'completed' as const, value };
+    });
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
-  return { db, todos, todo, worked, live, decide, questions };
+  return { db, todos, todo, worked, live, decide, questions, asks };
 }
 
 describe('coding session target decision', () => {
@@ -168,7 +170,7 @@ describe('coding session target decision', () => {
   });
 
   test('the first dispatch in a repo asks its session strategy once and stays long-lived until a human answers', async () => {
-    const { db, todos, todo, worked, decide, questions } = setup();
+    const { db, todos, todo, worked, decide, questions, asks } = setup();
     worked(todo('other'), 'idle', 'dev', 'done');
     expect(await decide(todo(), start('dev'))).toEqual({
       value: { verb: 'send', ref: ref('idle') },
@@ -190,6 +192,7 @@ describe('coding session target decision', () => {
       value: { verb: 'send', ref: ref('idle') },
     });
     expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
+    expect(asks).toEqual([{ ok: true, questionId: question!.id }]);
     expect(listPackPreferences(db, 'coding')).toEqual([]);
     todos.answerQuestion(question!, 'One session per task', 'button', 2);
     expect(listPackPreferences(db, 'coding')).toMatchObject([
@@ -197,6 +200,24 @@ describe('coding session target decision', () => {
     ]);
     expect(await decide(todo('other'), start('dev'))).toEqual({ value: start('dev') });
     expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
+    expect(asks).toHaveLength(1);
+  });
+
+  test('a strategy question retired unanswered is asked again, and a kept answer is not', async () => {
+    const { todos, todo, decide, questions, asks } = setup();
+    await decide(todo(), start('dev'));
+    const [first] = questions('feature');
+    todos.retireQuestion(first!, 'ask_settled', null, 2);
+    await decide(todo('other'), start('dev'));
+    const [again] = questions('other');
+    expect(again).toMatchObject({ state: 'open', todos: [] });
+    expect(again!.id).not.toBe(first!.id);
+    todos.answerQuestion(again!, 'Keep current settings', 'button', 3);
+    await decide(todo('other'), start('dev'));
+    expect(asks).toEqual([
+      { ok: true, questionId: first!.id },
+      { ok: true, questionId: again!.id },
+    ]);
   });
 
   test('unfinished work on a feature session does not hide an unreadable status', async () => {

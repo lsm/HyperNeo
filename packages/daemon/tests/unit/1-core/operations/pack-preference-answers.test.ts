@@ -133,6 +133,21 @@ describe('immutable human settings proposals', () => {
       (reply as { value: { questionId: string } }).value.questionId
     )!;
     expect(free.todos).toEqual([]);
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'free-request',
+        values: [values[0]],
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'synthetic-request',
+        values,
+        hold: false,
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
   });
 
   test('renders global and project settings without losing false, zero or literal paths', async () => {
