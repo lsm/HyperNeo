@@ -428,7 +428,7 @@ describe('spoken replies separate from publications', () => {
     const pcm = () =>
       new Response(new Uint8Array([1, 0, 2, 0]), { headers: { 'content-type': 'audio/pcm' } });
     const withPart = (
-      part: { endpoint: string; key?: string; model?: string } | undefined,
+      part: { endpoint: string; key?: string; model?: string; voice?: string } | undefined,
       request: typeof fetch
     ) =>
       new NeoSpeech(
@@ -445,12 +445,12 @@ describe('spoken replies separate from publications', () => {
         undefined,
         async () => part
       );
-    const speakOnce = async (speaker: NeoSpeech) => {
+    const speakOnce = async (speaker: NeoSpeech, voice: string | undefined = 'alloy') => {
       const parts = createOperationRegistry(speaker.operations);
       await invokeOperation(
         parts,
         'neo.speech.listen',
-        { sessionId, enabled: true, audio: true, voice: 'alloy' },
+        { sessionId, enabled: true, audio: true, ...(voice ? { voice } : {}) },
         human
       );
       await invokeOperation(parts, 'neo.speech.say', { requestId: 'part', text: 'Hello.' }, neo);
@@ -478,6 +478,37 @@ describe('spoken replies separate from publications', () => {
           response_format: 'pcm',
         });
         expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test.each([
+      [undefined, 'echo'],
+      ['alloy', 'alloy'],
+    ])(
+      'a listener voice of %s speaks with %s over the configured voice',
+      async (listener, spoken) => {
+        const server = fakeServer(() => pcm());
+        const speaker = withPart(
+          { endpoint: 'https://api.openai.com', key: 'k', model: 'gpt-4o-mini-tts', voice: 'echo' },
+          server.request
+        );
+        try {
+          await speakOnce(speaker, listener);
+          expect(server.seen[0].body?.voice).toBe(spoken);
+        } finally {
+          await speaker.dispose();
+        }
+      }
+    );
+
+    test('the environment fallback keeps vivian when the listener names no voice', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(undefined, server.request);
+      try {
+        await speakOnce(speaker, undefined);
+        expect(server.seen[0].body?.voice).toBe('vivian');
       } finally {
         await speaker.dispose();
       }

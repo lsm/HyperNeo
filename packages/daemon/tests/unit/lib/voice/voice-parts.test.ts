@@ -12,7 +12,14 @@ const voice = (speechEndpoint?: string): VoiceSettings => ({
   hasApiKey: true,
   apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
   ...(speechEndpoint
-    ? { speech: { provider: 'openai', endpoint: speechEndpoint, model: 'gpt-4o-mini-tts' } }
+    ? {
+        speech: {
+          provider: 'openai',
+          endpoint: speechEndpoint,
+          model: 'gpt-4o-mini-tts',
+          voice: 'alloy',
+        },
+      }
     : {}),
 });
 
@@ -21,6 +28,7 @@ describe('resolveSpeechPart', () => {
     expect(await resolveSpeechPart(voice('https://api.openai.com'), credentials)).toEqual({
       endpoint: 'https://api.openai.com',
       model: 'gpt-4o-mini-tts',
+      voice: 'alloy',
       key: 'sk-openai',
     });
   });
@@ -29,6 +37,7 @@ describe('resolveSpeechPart', () => {
     expect(await resolveSpeechPart(voice('https://tts.example.com'), credentials)).toEqual({
       endpoint: 'https://tts.example.com',
       model: 'gpt-4o-mini-tts',
+      voice: 'alloy',
       key: undefined,
     });
   });
