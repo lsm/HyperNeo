@@ -9,7 +9,7 @@ import {
 
 export const STALLED_ASK_AFTER_MS = 2 * 60 * 60 * 1000;
 const log = new Logger('neo-stalled-asks');
-type StalledAsk = { id: string; title: string; since: number; finished: number };
+type StalledAsk = { id: string; title: string; since: number; updatedAt: number; finished: number };
 type Tell = (event: NeoAttentionEvent, now: number) => Promise<unknown>;
 
 export const neoStalledAskNote = (ask: { id: string; title: string; finished: number }) =>
@@ -22,7 +22,7 @@ export const neoStalledAskNote = (ask: { id: string; title: string; finished: nu
 export const neoStalledAskEvent = (ask: StalledAsk): NeoAttentionEvent => ({
   kind: ask.finished ? 'ask.finished' : 'ask.idle',
   subject: { type: 'ask', id: ask.id },
-  since: ask.since,
+  since: ask.finished ? ask.since : ask.updatedAt,
   facts: { text: neoStalledAskNote(ask) },
 });
 

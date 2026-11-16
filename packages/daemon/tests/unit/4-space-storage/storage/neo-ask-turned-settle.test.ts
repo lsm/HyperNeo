@@ -75,13 +75,15 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
   };
   const wakeUuid = (askId: string, which = 0) => {
     const row = db
-      .prepare(`SELECT title, (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id)
-        AS since FROM neo_asks WHERE id = ?`)
-      .get(askId) as { title: string; since: number | null } | undefined;
+      .prepare(`SELECT title, updated_at AS updatedAt,
+        (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id) AS since
+        FROM neo_asks WHERE id = ?`)
+      .get(askId) as { title: string; updatedAt: number; since: number | null } | undefined;
     return neoStalledAskUuids({
       id: askId,
       title: row?.title ?? askId,
       since: row?.since ?? 1,
+      updatedAt: row?.updatedAt ?? 1,
     })[which]!;
   };
   const queue = () => new NeoWakeQueueRepository(db);

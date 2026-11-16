@@ -53,11 +53,12 @@ try {
   await open();
   app!.db.getDatabase().prepare('INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)').run(root, 'Synthetic coordinator', 'general', join(run, 'workspace'), new Date(at).toISOString(), new Date(at).toISOString(), 'active', '{}', '{}');
   service!.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-  for (const id of ['stalled', 'settled', 'question', 'blocked']) {
+  for (const id of ['stalled', 'settled', 'question', 'blocked', 'failed']) {
     const ask = service!.todos.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title: id, request: 'Synthetic work', createdAt: at });
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
     if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
     if (id === 'blocked') service!.todos.updateTodo(service!.todos.addTodo('blocked-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Needs a decision' }, at);
+    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'failed', reason: 'Synthetic failure' }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);

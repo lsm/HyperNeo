@@ -163,7 +163,7 @@ const candidate = (
   row: Omit<Candidate, 'uuids'> & { title: string; since: number }
 ): Candidate => ({
   ...row,
-  uuids: neoStalledAskUuids(row),
+  uuids: neoStalledAskUuids({ ...row, updatedAt: row.updated_at }),
 });
 
 const latestConsumedSeq = (db: Database, sessionId: string, predicate: string): number | null =>
@@ -239,18 +239,20 @@ const askWakeEnded = (
   recipients: Recipients,
   facts: Map<string, SessionFacts>
 ): boolean => {
+  let ended = false;
   for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
+    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids);
+    if (!wakeSeqs.length) continue;
     let fact = facts.get(sessionId);
     if (!fact) facts.set(sessionId, (fact = sessionFacts(db, sessionId)));
     if (
       fact.maxConsumedInput !== null &&
       (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
     )
-      continue;
-    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids);
-    if (wakeTurnEnded(db, sessionId, fact.lastTerminal, wakeSeqs, ask.updated_at)) return true;
+      return false;
+    ended ||= wakeTurnEnded(db, sessionId, fact.lastTerminal, wakeSeqs, ask.updated_at);
   }
-  return false;
+  return ended;
 };
 
 const settleReadyAsks = (db: Database): string[] => {

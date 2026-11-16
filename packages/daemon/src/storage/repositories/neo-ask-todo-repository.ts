@@ -649,23 +649,26 @@ export class NeoAskTodoRepository {
     before: number,
     includeBlocked = true,
     wakeFinishedNow = false
-  ): { id: string; sessionId: string; title: string; since: number; finished: number }[] {
+  ): {
+    id: string;
+    sessionId: string;
+    title: string;
+    since: number;
+    updatedAt: number;
+    finished: number;
+  }[] {
     return this.db
-      .prepare(`SELECT id, session_id AS sessionId, title, ${ASK_ALL_DONE} AS finished,
+      .prepare(`SELECT id, session_id AS sessionId, title, ${ASK_ALL_DONE} AS finished, updated_at AS updatedAt,
       COALESCE((SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id), updated_at) AS since
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
+      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('blocked', 'failed')))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
-      .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as {
-      id: string;
-      sessionId: string;
-      title: string;
-      since: number;
-      finished: number;
-    }[];
+      .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
+      NeoAskTodoRepository['listStalledAsks']
+    >;
   }
 
   getTodo(id: string): NeoTodo | null {
