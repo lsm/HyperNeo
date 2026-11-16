@@ -220,6 +220,20 @@ export function effortForThinkingLevel(
     .find((effort): effort is ThinkingEffort => !!effort && supported.includes(effort));
 }
 
+export function executedEffort(effort: string, supported?: readonly ThinkingEffort[]): string {
+  const name = effort.toLowerCase();
+  const option = THINKING_OPTIONS.find(
+    ({ value, label }) =>
+      value === name || label.toLowerCase() === name || THINKING_LEVEL_EFFORT[value] === name
+  );
+  if (!option || option.value === 'off') return option ? 'off' : name;
+  return (
+    (supported?.length ? effortForThinkingLevel(option.value, supported) : undefined) ??
+    THINKING_LEVEL_EFFORT[option.value] ??
+    name
+  );
+}
+
 export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = THINKING_LEVELS.map(
   (value) => ({ value, label: THINKING_LEVEL_LABELS[value] })
 );
