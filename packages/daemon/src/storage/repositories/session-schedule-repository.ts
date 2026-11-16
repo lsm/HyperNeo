@@ -281,8 +281,7 @@ export class SessionScheduleRepository {
         this.db
           .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
           .run(id, expectedJobId).changes > 0;
-      if (deleted)
-        this.db.prepare('DELETE FROM session_schedule_runs WHERE schedule_id = ?').run(id);
+      if (deleted) this.db.run('DELETE FROM session_schedule_runs WHERE schedule_id = ?', id);
       return deleted;
     })();
   }
