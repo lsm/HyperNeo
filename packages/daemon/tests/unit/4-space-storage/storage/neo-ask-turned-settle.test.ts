@@ -230,6 +230,40 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(changes).toEqual([]);
   });
 
+  test('a card answered after the wake turn settles the ask once the turn that reads the answer ends', async () => {
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20);
+    sdk('result', 'wake-result', 21);
+    const answeredAt = new Date('2026-01-02').getTime();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        kind: 'yesno',
+        text: 'Go?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        confirm: null,
+        document: null,
+        replyTo: [],
+        todoId: null,
+        artifacts: [],
+      },
+      answeredAt - 1
+    );
+    store.answerQuestion(card, true as never, 'button', answeredAt);
+    expect(await sweep()).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('user', 'answer-note', 30);
+    expect(await sweep()).toEqual([]);
+    sdk('result', 'answer-result', 31);
+    db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid IN ('answer-note', 'answer-result')`).run();
+    expect(await sweep()).toEqual(['ask']);
+  });
+
   test('an undelivered or unconsumed wake does not settle the ask', async () => {
     add('finished', 'done');
     wakeNote('ask');
