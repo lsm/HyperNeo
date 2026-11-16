@@ -609,8 +609,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private async refreshStoredOauthCredentialsUncached(): Promise<StoredRefreshAttempt> {
     const credentials = await this.loadCredentials();
-    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
-      return 'definitive';
+    if (!credentials || credentials.type !== 'oauth') return 'definitive';
+    if (!credentials.refresh) {
+      await this.importFromCodexAuth();
+      const reread = await this.loadCredentials();
+      return reread?.access && reread.access !== credentials.access ? reread : 'definitive';
     }
 
     const result = await this.tryRefreshCodexToken(credentials.refresh);
@@ -1244,31 +1247,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (!codexData.tokens?.access_token) return;
 
-    let accessToken = codexData.tokens.access_token;
-    let refreshToken = codexData.tokens.refresh_token;
-    let expires: number | undefined;
-
-    if (refreshToken) {
-      const refreshed = await this.tryRefreshCodexToken(refreshToken);
-      if (refreshed.ok) {
-        accessToken = refreshed.token.access_token;
-        refreshToken = refreshed.token.refresh_token || refreshToken;
-        expires = Date.now() + refreshed.token.expires_in * 1000;
-        logger.info(
-          'AnthropicToCodexBridgeProvider: imported refreshed OAuth token from ~/.codex/auth.json'
-        );
-      } else {
-        logger.warn(
-          'AnthropicToCodexBridgeProvider: Codex token refresh failed; importing existing ~/.codex/auth.json token'
-        );
-      }
-    }
+    const accessToken = codexData.tokens.access_token;
 
     const creds: StoredCredentials = {
       type: 'oauth',
       access: accessToken,
-      refresh: refreshToken,
-      expires,
       accountId: this.extractAccountId(accessToken) ?? codexData.tokens.account_id,
       planType: this.extractPlanType(accessToken),
       isFedrampAccount:

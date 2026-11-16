@@ -1871,37 +1871,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
-    it('Test 3: falls back to importing existing token when refresh fails', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo');
-      const codexDir = path.join(tmpDir, 'codex');
-      writeCodexAuth(codexDir, {
-        tokens: { access_token: 'expired-token', refresh_token: 'invalid-refresh' },
-      });
-
-      fetchSpy.mockResolvedValueOnce(
-        new Response('{"error":"invalid_grant"}', {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      );
-
-      const p = makeProvider({}, hyperneoDir, codexDir);
-      const key = await p.getApiKey();
-
-      expect(key).toBe('expired-token');
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-      const hyperneoAuth = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
-      ) as {
-        openai: { type: string; access: string; refresh?: string };
-      };
-      expect(hyperneoAuth.openai.type).toBe('oauth');
-      expect(hyperneoAuth.openai.access).toBe('expired-token');
-      expect(hyperneoAuth.openai.refresh).toBe('invalid-refresh');
-      p.stopAllBridgeServers();
-    });
-
     it('Test 4: second call uses in-memory cachedApiKey (no further file I/O)', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
@@ -2086,32 +2055,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(await second.getApiKey()).toBe('late-hyperneo-token');
       expect(await second.isAvailable()).toBe(true);
       second.stopAllBridgeServers();
-    });
-
-    it('does not cache a miss when the in-import token refresh fails transiently (network error)', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo');
-      const codexDir = path.join(tmpDir, 'codex');
-      writeCodexAuth(codexDir, {
-        tokens: { access_token: 'codex-existing-token', refresh_token: 'codex-refresh-token' },
-      });
-
-      fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-
-      const p = makeProvider({}, hyperneoDir, codexDir);
-      expect(await p.getApiKey()).toBe('codex-existing-token');
-      expect(await p.isAvailable()).toBe(true);
-      expect(await p.getApiKey()).toBe('codex-existing-token');
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-      const hyperneoAuth = JSON.parse(
-        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
-      ) as {
-        openai: { type: string; access: string; refresh: string };
-      };
-      expect(hyperneoAuth.openai.type).toBe('oauth');
-      expect(hyperneoAuth.openai.access).toBe('codex-existing-token');
-      expect(hyperneoAuth.openai.refresh).toBe('codex-refresh-token');
-      p.stopAllBridgeServers();
     });
   });
 
