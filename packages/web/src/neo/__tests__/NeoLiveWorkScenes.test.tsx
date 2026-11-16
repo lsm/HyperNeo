@@ -1000,6 +1000,78 @@ describe('card reply notice navigation', () => {
     expect(holdQuestion).toHaveBeenCalledWith('qw', true);
   });
 
+  it('reports a failed queue refresh after a stale card and retries on request', async () => {
+    const { model } = mount();
+    const refresh = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Snapshot offline'))
+      .mockResolvedValue(undefined);
+    const setError = vi.fn();
+    const card = (state: string) => ({
+      id: 'q1',
+      askId: 'trip',
+      text: 'Stale card?',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: 'No',
+      yesLabel: 'Agree',
+      todos: [],
+      state,
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt: 1,
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.read'
+          ? {
+              ok: true,
+              entry: testAskEntry('trip', 'Fictional trip', {
+                state: 'waiting',
+                questions: [card('answered') as never],
+              }),
+            }
+          : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        refresh,
+        setError,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...testAskEntry('trip', 'Fictional trip', {
+                state: 'waiting',
+                questions: [card('open') as never],
+              }),
+              summary: { todoCount: 0, questionCount: 1, openQuestionCount: 1 },
+            },
+          ],
+          humanQueue: {
+            items: [
+              { state: 'waiting', askId: 'trip', questionId: 'q1', text: 'Stale card?', todos: [] },
+            ],
+            counts: { trip: { waiting: 1, held: 0, progress: 0 } },
+          },
+        },
+      } as never;
+    });
+    await waitFor(() => expect(setError).toHaveBeenCalledWith('Snapshot offline'));
+    const alert = await screen.findByText('Couldn’t refresh the queue.');
+    fireEvent.click(
+      within(alert.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Retry' })
+    );
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Couldn’t refresh the queue.')).toBeNull());
+  });
+
   it('applies the chosen topic to the queue', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
