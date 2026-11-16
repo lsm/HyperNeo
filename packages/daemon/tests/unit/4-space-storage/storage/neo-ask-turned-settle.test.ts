@@ -407,6 +407,50 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await sweep()).toEqual(['ask']);
   });
 
+  test('a card answer still being read in the ask’s own session keeps the ask open', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'reminder-result', 21, 'consumed', 0, 0, 'coordinator');
+    const answeredAt = new Date('2026-01-02').getTime();
+    const card = store.askQuestion(
+      'card',
+      'ask',
+      {
+        kind: 'yesno',
+        text: 'Go?',
+        options: null,
+        multiple: false,
+        yesLabel: null,
+        noLabel: null,
+        confirm: null,
+        document: null,
+        replyTo: [],
+        todoId: null,
+        artifacts: [],
+      },
+      answeredAt - 1
+    );
+    store.answerQuestion(card, true as never, 'button', answeredAt);
+    sdk('user', 'answer-note', 30);
+    sdk('user', 'unrelated', 40, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'unrelated-result', 41, 'consumed', 0, 0, 'coordinator');
+    const later = db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
+      WHERE sdk_uuid = ?`);
+    for (const uuid of ['answer-note', 'unrelated', 'unrelated-result']) later.run(uuid);
+    const reads = DB_OPS.get('neo.turnedAskSettleReads') as DbOp<Record<string, never>, string[]>;
+    const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
+      { now: number; ids: string[] },
+      string[]
+    >;
+    expect(await gateway.run(reads, {})).toEqual([]);
+    expect(await gateway.run(write, { now: 100, ids: ['ask'] })).toEqual([]);
+    expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
+    sdk('result', 'answer-result', 31);
+    later.run('answer-result');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
   test('an unfinished turn in Neo’s session keeps the ask open', async () => {
     coordinator();
     add('finished', 'done');
