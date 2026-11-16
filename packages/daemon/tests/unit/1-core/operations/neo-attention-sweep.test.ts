@@ -344,6 +344,23 @@ describe('the Neo attention sweep', () => {
     expect(told).toEqual(expected);
   });
 
+  test('tracked work that was never approved still wakes Neo on the ladder when its worker is blocked', async () => {
+    const todo = started(add('tracked', { approvedAt: null, instruction: null }), 'done');
+    store.updateTodo(
+      todo,
+      { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Which host?' },
+      T0
+    );
+    const sent: number[] = [];
+    for (let minutes = 0; minutes <= 25 * 60; minutes += 30) {
+      const before = wakes().length;
+      await sweep(T0 + minutes * 60_000);
+      if (wakes().length > before) sent.push(minutes / 60);
+    }
+    expect(sent).toEqual([0, 1, 4, 24]);
+    expect(wakes()[0]).toContain('it waits on an answer and no card is open');
+  });
+
   test('a second failure starts its own ladder', async () => {
     const todo = failed(started(add('todo-1'), 'done'));
     await sweep(T0 + 5 * HOUR);
