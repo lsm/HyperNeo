@@ -16,6 +16,9 @@ import {
   deliverCodingPrEvents,
 } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { createCodingDaemonMergeSweep } from '../../../../src/lib/neo/packs/coding/daemon-merge-sweep.ts';
+import { CODING_ATTENTION_KINDS } from '../../../../src/lib/neo/packs/coding/attention.ts';
+import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
@@ -130,24 +133,43 @@ const spawn: SpawnFn = (args) => {
     kill() {},
   };
 };
-const sweep = (customSpawn: SpawnFn = spawn, overrides: Partial<CodingSweepDeps> = {}) =>
-  createCodingDaemonMergeSweep(
+type Attend = (event: NeoAttentionEvent) => Promise<boolean>;
+const sweep = (
+  customSpawn: SpawnFn = spawn,
+  overrides: Partial<CodingSweepDeps & { attend: Attend }> = {}
+) => {
+  const wake: CodingSweepDeps['wake'] =
+    overrides.wake ??
+    (async (_key, text) => {
+      if (deliver) notices.push(text);
+      return deliver;
+    });
+  return createCodingDaemonMergeSweep(
     () => db,
     ledger,
     new CodingPrEventRepository(db),
     {
-      host: 'github.com',
       tell: async () => {
         throw new Error('Unowned PR must route to Neo');
       },
-      wake: async (_key, text) => {
-        if (deliver) notices.push(text);
-        return deliver;
-      },
+      attend: (event) =>
+        wake(`${event.kind}:${event.subject.id}:${event.since}`, String(event.facts.text)),
       ...overrides,
     },
     customSpawn
   );
+};
+const entry = () => {
+  const notes = neoAttentionNotes(
+    db,
+    new NeoAskTodoRepository(db),
+    () => {},
+    CODING_ATTENTION_KINDS
+  );
+  const run = (now: number) =>
+    sweep(spawn, { attend: async (event) => 'told' in (await notes.tell(event, now)) })(now);
+  return { run, wakes: notes.wakes };
+};
 const merges = () => calls.filter((args) => args[2] === 'merge');
 const reserve = (at: number) =>
   ledger.write('daemonMerge', { kind: 'begin', url, head, actor: 'daemon:coding-sweep', at });
@@ -1192,7 +1214,6 @@ test('an undelivered retry-limit notice survives removal from the candidate set'
   for (const at of [10, 11, 12]) await sweep()(at);
   expect(merges()).toHaveLength(3);
   policy('mergeBy', 'owner');
-  await ledger.write('replace', 'synthetic/merge', [], 13);
   deliver = true;
   await sweep()(14);
   await sweep()(15);
@@ -1231,4 +1252,114 @@ test('an external merge after a failed attempt still notifies its owner through 
   });
   expect(notices).toEqual([expect.stringContaining('was merged on head')]);
   expect(merges()).toHaveLength(1);
+});
+
+const FOUR_HOURS = 4 * 3_600_000;
+
+test('a sign-off hold wakes Neo once per head through the attention entry', async () => {
+  labels = ['human-merge'];
+  const { run, wakes } = entry();
+  await run(10);
+  await run(600_010);
+  await run(1_200_010);
+  expect(wakes()).toEqual([expect.stringContaining(`${url} requires human sign-off`)]);
+  actualHead = reviewHead = 'b'.repeat(40);
+  const rows = await ledger.read('list');
+  await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], head: actualHead }], 1_200_011);
+  await run(1_200_012);
+  expect(wakes()).toHaveLength(2);
+  expect(merges()).toHaveLength(0);
+});
+
+test('a stopped merge budget wakes Neo once and once more after four hours', async () => {
+  mergeFailed = true;
+  const { run, wakes } = entry();
+  for (const at of [10, 11, 12, 13, 14]) await run(at);
+  expect(merges()).toHaveLength(3);
+  expect(wakes()).toEqual([expect.stringContaining('3 failed attempts')]);
+  await run(12 + FOUR_HOURS - 1);
+  expect(wakes()).toHaveLength(1);
+  await run(12 + FOUR_HOURS);
+  await run(13 + FOUR_HOURS);
+  await run(12 + 6 * FOUR_HOURS);
+  expect(wakes()).toHaveLength(2);
+  expect(wakes()[1]).toContain('Required check still settling');
+  expect(merges()).toHaveLength(3);
+});
+
+test.each(['closed', 'new head'])(
+  'a stopped merge budget is not repeated once its pull request is %s',
+  async (change) => {
+    mergeFailed = true;
+    const { run, wakes } = entry();
+    for (const at of [10, 11, 12]) await run(at);
+    expect(wakes()).toHaveLength(1);
+    const rows = await ledger.read('list');
+    if (change === 'new head') ci = 'pending';
+    await ledger.write(
+      'replace',
+      'synthetic/merge',
+      [
+        change === 'closed'
+          ? { ...rows[0], state: 'merged', closedAt: 13 }
+          : { ...rows[0], head: (actualHead = reviewHead = 'b'.repeat(40)) },
+      ],
+      13
+    );
+    await run(12 + FOUR_HOURS);
+    expect(wakes()).toHaveLength(1);
+    expect(merges()).toHaveLength(3);
+  }
+);
+
+test('gates passing again after a stopped budget tell Neo once per time they pass', async () => {
+  mergeFailed = true;
+  const { run, wakes } = entry();
+  for (const at of [10, 11, 12]) await run(at);
+  const ready = (since: number) =>
+    db.prepare("UPDATE pack_coding_pr_ledger SET state='approved_green', state_since=?").run(since);
+  ready(20);
+  await run(21);
+  await run(22);
+  expect(wakes()).toEqual([
+    expect.stringContaining('3 failed attempts'),
+    expect.stringContaining('Fresh merge gates now pass'),
+  ]);
+  ready(30);
+  await run(31);
+  expect(wakes()).toHaveLength(3);
+  expect(merges()).toHaveLength(3);
+});
+
+test('the merge sweep keeps no record of what it told Neo', () => {
+  db.exec(
+    'CREATE TABLE pack_coding_daemon_merge_notices (url TEXT, head TEXT, kind TEXT, at INTEGER)'
+  );
+  const columns = () =>
+    (
+      db.prepare('PRAGMA table_info(pack_coding_daemon_merge_failures)').all() as {
+        name: string;
+      }[]
+    ).map((column) => column.name);
+  if (!columns().includes('notified_at'))
+    db.exec('ALTER TABLE pack_coding_daemon_merge_failures ADD COLUMN notified_at INTEGER');
+  createCodingPackTables(db);
+  expect(
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE name = 'pack_coding_daemon_merge_notices'")
+      .all()
+  ).toEqual([]);
+  expect(columns()).not.toContain('notified_at');
+});
+
+test('an unconfirmed receipt of a closed pull request is told once and released', async () => {
+  await reserve(2);
+  state = 'CLOSED';
+  const { run, wakes } = entry();
+  await run(10);
+  await run(11);
+  expect(wakes()).toEqual([expect.stringContaining('Daemon merge held:')]);
+  expect(db.prepare('SELECT count(*) AS n FROM pack_coding_daemon_merges').get()).toEqual({
+    n: 0,
+  });
 });
