@@ -459,6 +459,31 @@ describe('NeoHumanQueue', () => {
     expect(view.getByText('Question q1')).toBeTruthy();
   });
 
+  it('treats a card the newer detail read shows answered as closed and refreshes the queue', async () => {
+    const summarised = {
+      ...entry('trip', 'Plan the trip', [question('q1', 'trip', { document: 'Preview' })]),
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const answered = entry('trip', 'Plan the trip', [
+      question('q1', 'trip', { state: 'answered' }),
+    ]);
+    const onStale = vi.fn();
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={async () => answered}
+        onStale={onStale}
+      />
+    );
+    await waitFor(() => expect(onStale).toHaveBeenCalledTimes(1));
+    expect(view.getByText('Question q1')).toBeTruthy();
+    for (const name of ['Agree', 'No', 'Hold', 'Reply in chat'])
+      expect(view.queryByRole('button', { name })).toBeNull();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
