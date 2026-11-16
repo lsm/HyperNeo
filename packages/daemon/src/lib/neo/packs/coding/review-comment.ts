@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { Logger } from '../../../logger.ts';
 import {
   isRateLimitError,
@@ -18,13 +18,16 @@ const log = new Logger('NeoCodingReviewComment');
 
 export type CodingGithubApi = (host: string, args: string[]) => Promise<unknown>;
 
-export const codingGithubApi: CodingGithubApi = async (host, args) => {
-  const result = await runGhJson(
-    ['gh', 'api', '--hostname', host, ...args],
-    homedir(),
-    spawnProcess,
-    { stripGHRepo: true, timeoutMs: 60_000, maxBufferBytes: 64 * 1024 * 1024 }
-  );
+export const codingGithubApi = async (
+  host: string,
+  args: string[],
+  spawn: SpawnFn = spawnProcess
+) => {
+  const result = await runGhJson(['gh', 'api', '--hostname', host, ...args], homedir(), spawn, {
+    stripGHRepo: true,
+    timeoutMs: 60_000,
+    maxBufferBytes: 64 * 1024 * 1024,
+  });
   if (!result.ok)
     throw Object.assign(new Error(result.error), { retryAfterMs: result.retryAfterMs });
   return result.data;

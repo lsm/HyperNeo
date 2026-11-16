@@ -1,9 +1,11 @@
-import { describe, test, expect, setSystemTime } from 'bun:test';
+import { describe, test, expect, jest } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 import {
+  codingGithubApi,
   createCodingReviewComments,
   readCodingPostableReviews,
 } from '../../../../src/lib/neo/packs/coding/review-comment.ts';
@@ -131,7 +133,7 @@ describe('createCodingReviewComments', () => {
     const second = 'https://github.com/synthetic/review/pull/4';
     const start = Date.parse('2026-11-16T12:00:00Z');
     try {
-      setSystemTime(start);
+      jest.setSystemTime(start);
       db.prepare(
         `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at)
          VALUES ('synthetic/review', 4, 'Synthetic', 'branch-4', 'head-a', 'waiting_review', 1, NULL, 1)`
@@ -150,17 +152,17 @@ describe('createCodingReviewComments', () => {
       await sweep(post);
       expect(calls).toHaveLength(1);
       outage.on = false;
-      setSystemTime(start + 9 * 60_000);
+      jest.setSystemTime(start + 9 * 60_000);
       await sweep(post);
       expect(calls).toHaveLength(1);
-      setSystemTime(start + 11 * 60_000);
+      jest.setSystemTime(start + 11 * 60_000);
       await sweep(post);
       expect(comments.map((item) => item.path)).toEqual([
         'repos/synthetic/review/issues/3/comments',
         'repos/synthetic/review/issues/4/comments',
       ]);
     } finally {
-      setSystemTime();
+      jest.useRealTimers();
       db.close();
     }
   });
@@ -257,6 +259,100 @@ describe('createCodingReviewComments', () => {
         '**HyperNeo recorded review: FAIL**',
       ]);
     } finally {
+      db.close();
+    }
+  });
+});
+
+describe('codingGithubApi rate limits', () => {
+  const start = Date.parse('2026-11-16T12:00:00Z');
+  const reply = (stdout: string, code: number, stderr = '') =>
+    ({
+      stdout: new Response(stdout).body,
+      stderr: new Response(stderr).body,
+      exited: Promise.resolve(code),
+      exitCode: code,
+      kill() {},
+    }) as unknown as ReturnType<SpawnFn>;
+  const sweepWith = (respond: (args: string[]) => ReturnType<SpawnFn>, prUrl = url) => {
+    const { db, ledger, comments } = setup();
+    const calls: string[][] = [];
+    const spawn: SpawnFn = (args) => {
+      calls.push([...args]);
+      return respond([...args]);
+    };
+    ledger.stageFacts.observeHead(prUrl, 'head-a', 1);
+    ledger.recordStage({ ...fact, url: prUrl });
+    const post = createCodingReviewComments((host, args) => codingGithubApi(host, args, spawn));
+    const sweep = () =>
+      post(
+        () => readCodingPostableReviews(db, ledger),
+        (posted, marker) => ledger.write('recordPostedReview', posted.url, marker)
+      );
+    return { db, comments, calls, sweep };
+  };
+  test('a 403 whose only rate-limit sign is Retry-After holds the poster until then', async () => {
+    const { db, calls, sweep } = sweepWith((args) =>
+      args.includes('POST')
+        ? reply(
+            'HTTP/2.0 403 Forbidden\r\nRetry-After: 120\r\nContent-Type: application/json\r\n\r\n{"message":"Forbidden"}',
+            1,
+            'gh: Forbidden (HTTP 403)'
+          )
+        : reply(JSON.stringify([[]]), 0)
+    );
+    try {
+      jest.setSystemTime(start);
+      await sweep();
+      const tried = calls.length;
+      expect(calls.some((args) => args.includes('POST'))).toBe(true);
+      jest.setSystemTime(start + 60_000);
+      await sweep();
+      expect(calls).toHaveLength(tried);
+      jest.setSystemTime(start + 121_000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(tried);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
+  test('a core rate limit holds until the core reset on the PR host', async () => {
+    const host = process.env.GH_HOST;
+    process.env.GH_HOST = 'git.example.com';
+    const coreReset = Math.floor(start / 1000) + 3600;
+    const { db, calls, sweep } = sweepWith(
+      (args) =>
+        args.includes('/rate_limit')
+          ? reply(
+              JSON.stringify({
+                resources: {
+                  core: { remaining: 0, reset: coreReset },
+                  graphql: { remaining: 0, reset: Math.floor(start / 1000) + 60 },
+                },
+              }),
+              0
+            )
+          : reply('', 1, 'gh: API rate limit exceeded for user ID 1. (HTTP 403)'),
+      'https://git.example.com/synthetic/review/pull/3'
+    );
+    try {
+      jest.setSystemTime(start);
+      await sweep();
+      const limit = calls.find((args) => args.includes('/rate_limit'));
+      expect(limit).toContain('--hostname');
+      expect(limit?.[limit.indexOf('--hostname') + 1]).toBe('git.example.com');
+      const tried = calls.length;
+      jest.setSystemTime(start + 10 * 60_000);
+      await sweep();
+      expect(calls).toHaveLength(tried);
+      jest.setSystemTime(coreReset * 1000 + 1000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(tried);
+    } finally {
+      jest.useRealTimers();
+      if (host === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = host;
       db.close();
     }
   });
