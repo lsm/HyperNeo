@@ -10,6 +10,10 @@ import {
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createExternalEventConfigStore } from '../../helpers/external-event-config-store';
+import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
+import { CODING_ATTENTION_KINDS } from '../../../../src/lib/neo/packs/coding/attention.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 
 describe('GitHub watch reconciliation', () => {
   test('startup and cycles restore subscriptions and todo-only watches', async () => {
@@ -161,35 +165,35 @@ describe('GitHub watch reconciliation', () => {
     }
   }, 10000);
 
-  test('three missed cycles persist a concern and recovery retries delivery', async () => {
+  test('three missed polling cycles are one GitHub health digest that retires on recovery', async () => {
     const db = new Database(':memory:');
     createTables(db);
     runMigrations(db, () => {});
     createCodingPackTables(db);
     const ledger = new CodingPrLedgerRepository(db);
+    const notes = neoAttentionNotes(db, new NeoAskTodoRepository(db), () => {}, [
+      ...CODING_ATTENTION_KINDS,
+    ]);
     const watched = new GitHubEventExtension(db).repo.upsertWatchedRepo({
       spaceId: 'sessions',
       owner: 'fixture',
       repo: 'stale',
       pollingEnabled: true,
     });
-    const notices: string[] = [];
-    const wake = async (_key: string, text: string) => {
-      notices.push(text);
-      return true;
-    };
+    const attend = (event: NeoAttentionEvent) => notes.tell(event, 4);
     try {
       for (const at of [1, 2])
-        await reportGitHubWatchHealth(ledger, [watched], new Set(), wake, at);
-      expect(notices).toHaveLength(0);
-      await reportGitHubWatchHealth(ledger, [watched], new Set(), async () => false, 3);
-      expect(ledger.health.read('polling:fixture/stale')?.notices?.[0].acceptedAt).toBeNull();
-      await reportGitHubWatchHealth(ledger, [watched], new Set([watched.id]), wake, 4);
-      expect(notices).toHaveLength(2);
-      expect(notices[0]).toContain('stalled');
-      expect(notices[1]).toContain('recovered');
-      await reportGitHubWatchHealth(ledger, [watched], new Set([watched.id]), wake, 5);
-      expect(notices).toHaveLength(2);
+        await reportGitHubWatchHealth(ledger, [watched], new Set(), attend, at);
+      expect(notes.digests()).toEqual([]);
+      for (const at of [3, 4])
+        await reportGitHubWatchHealth(ledger, [watched], new Set(), attend, at);
+      expect(notes.digests()).toEqual([
+        'GitHub coverage stalled for polling:fixture/stale. Incident github-health:polling:fixture/stale:1.',
+      ]);
+      for (const at of [5, 6])
+        await reportGitHubWatchHealth(ledger, [watched], new Set([watched.id]), attend, at);
+      expect(notes.digests()).toHaveLength(1);
+      expect(notes.wakes()).toEqual([]);
     } finally {
       db.close();
     }
