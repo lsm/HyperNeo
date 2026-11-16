@@ -20,6 +20,12 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { NEO_ATTENTION_KINDS } from '../../../../src/lib/neo/attention/decide.ts';
+import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
+import {
+  createNeoAttention,
+  neoAttentionDelivery,
+} from '../../../../src/lib/neo/attention/tell.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -741,5 +747,59 @@ test('repeating a large ambiguous report shares one wake despite fresh published
     if (before === undefined) delete process.env.HYPERNEO_DATA_DIR;
     else process.env.HYPERNEO_DATA_DIR = before;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a question from a session with no open todo becomes a Neo todo that wakes Neo again at 1 h', async () => {
+  const { db, service, send } = await setup();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  const sweep = createNeoAttentionSweep({
+    sessions: service.todoSessions,
+    packs: () => [],
+    limits: () => ({ running: 6, perGroup: 3 }),
+    tell: createNeoAttention({
+      kinds: () => NEO_ATTENTION_KINDS,
+      read: () => ({ covered: false, latestReportAt: null }),
+      ...neoAttentionDelivery(
+        db.getDatabase(),
+        () => 'neo',
+        () => false
+      ),
+      dropped: () => {},
+    }),
+    failed: (_event, error) => {
+      throw error;
+    },
+  });
+  const wakes = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .map((job) => JSON.stringify(job.payload))
+      .filter((text) => text.includes('Close the merged todo'));
+  try {
+    const sent = await send(
+      { to: 'neo', kind: 'question', text: 'Close the merged todo\nIts pull request merged.' },
+      'stranger'
+    );
+    expect(sent).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    const asks = service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask');
+    expect(asks).toHaveLength(1);
+    const [request] = service.todos.listTodos(asks[0].id);
+    expect(request).toMatchObject({ title: 'Close the merged todo', state: 'todo' });
+    expect(request.approvedAt).not.toBeNull();
+    await sweep(now + 30 * 60_000);
+    const before = wakes().length;
+    await sweep(now + 60 * 60_000);
+    expect(wakes().length).toBe(before + 1);
+    expect(
+      await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker')
+    ).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask')).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
   }
 });
