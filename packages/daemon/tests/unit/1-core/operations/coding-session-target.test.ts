@@ -98,7 +98,17 @@ function setup() {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
-    preferences: { sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE },
+    preferences: {
+      sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
+      mergePolicy: {
+        label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
+        valueLabels: {},
+        scope: 'repo',
+        type: { kind: 'enum', values: ['ci_only', 'human'] },
+        default: 'human',
+        ask: 'Merge policy?',
+      },
+    },
   } satisfies NeoPack;
   const [askSetting] = createPackPreferenceQuestions(
     db,
@@ -259,27 +269,33 @@ describe('coding session target decision', () => {
     expect(asks).toHaveLength(1);
   });
 
-  test('a proposal that only borrows the strategy request id is not taken for the strategy question', async () => {
-    const { todo, decide, questions, asks, agentAsk } = setup();
-    const borrowed = (await agentAsk({
-      askId: 'other',
-      requestId: `coding.sessionStrategy:${repo}:1`,
-      values: [
-        {
-          pack: 'coding',
-          scope: { kind: 'repo', key: repo },
-          key: 'sessionStrategy',
-          value: 'per_pr',
-        },
-      ],
-      hold: false,
-    })) as { questionId: string };
-    await decide(todo(), start('dev'));
-    const [asked] = questions('feature');
-    expect(asked).toMatchObject({ state: 'open', kind: 'choice' });
-    expect(asked!.id).not.toBe(borrowed.questionId);
-    expect(asks).toEqual([{ ok: true, questionId: asked!.id }]);
-  });
+  for (const answered of [false, true])
+    test(`an unrelated ${answered ? 'answered' : 'open'} proposal under the strategy request id does not stand in for the strategy question`, async () => {
+      const { db, todos, todo, decide, questions, asks, agentAsk } = setup();
+      const borrowed = (await agentAsk({
+        askId: 'other',
+        requestId: `coding.sessionStrategy:${repo}:1`,
+        values: [
+          {
+            pack: 'coding',
+            scope: { kind: 'repo', key: repo },
+            key: 'mergePolicy',
+            value: 'ci_only',
+          },
+        ],
+        hold: false,
+      })) as { questionId: string };
+      if (answered) {
+        const [card] = questions('other');
+        todos.answerQuestion(card!, card!.options![0]!, 'button', 2);
+        expect(listPackPreferences(db, 'coding').map((row) => row.key)).toEqual(['mergePolicy']);
+      }
+      await decide(todo(), start('dev'));
+      const [asked] = questions('feature');
+      expect(asked).toMatchObject({ state: 'open', kind: 'choice', todos: [] });
+      expect(asked!.id).not.toBe(borrowed.questionId);
+      expect(asks).toEqual([{ ok: true, questionId: asked!.id }]);
+    });
 
   test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
     const { todo, worked, decide, questions, asks } = setup();
