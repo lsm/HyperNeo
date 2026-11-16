@@ -25,21 +25,27 @@ class CodingSessionAssignments {
     featureKey: string;
     todoId: string;
     now: number;
-    replace?: boolean;
+    replace?: { todoId: string; ref: WorkRef };
   }): Owner {
     this.db
       .prepare(
         `INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at)
          VALUES (?1, ?2, ?3, ?4) ON CONFLICT (repo, feature_key) DO UPDATE
          SET todo_id = excluded.todo_id, reserved_at = excluded.reserved_at
-         WHERE ?5 = 1 OR ${RELEASED('pack_coding_feature_sessions')}`
+         WHERE (pack_coding_feature_sessions.todo_id = ?5 AND EXISTS (
+             SELECT 1 FROM neo_todo_sessions r WHERE r.todo_id = ?5
+               AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.adapter') = ?6
+               AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.id') = ?7))
+           OR ${RELEASED('pack_coding_feature_sessions')}`
       )
       .run(
         input.repo.toLowerCase(),
         input.featureKey,
         input.todoId,
         input.now,
-        input.replace ? 1 : 0
+        input.replace?.todoId ?? null,
+        input.replace?.ref.adapter ?? null,
+        input.replace?.ref.id ?? null
       );
     return this.feature(input.repo, input.featureKey)!;
   }

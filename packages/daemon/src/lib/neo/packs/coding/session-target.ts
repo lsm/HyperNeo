@@ -21,7 +21,7 @@ type Facts = {
   pool: Pooled[];
 } | null;
 type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
-  ownerArchived?: boolean;
+  takeover?: { todoId: string; ref: WorkRef };
 };
 
 const WAIT = 'session_unknown: the session for this work is starting or unreachable; wait.';
@@ -32,16 +32,17 @@ async function sessionState(session: Pooled, status: Status) {
   const reply =
     outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
-  if (live?.success && live.data.status === 'stopped') return null;
-  const state: 'available' | 'busy' | 'unknown' = !live?.success
+  const state: 'available' | 'busy' | 'unknown' | 'archived' = !live?.success
     ? 'unknown'
-    : live.data.busy || LIVE_BUSY.has(live.data.status)
-      ? 'busy'
-      : 'available';
+    : live.data.status === 'stopped'
+      ? 'archived'
+      : live.data.busy || LIVE_BUSY.has(live.data.status)
+        ? 'busy'
+        : 'available';
   return {
     ref: session.ref,
     name: session.name,
-    state: session.held && state !== 'unknown' ? ('busy' as const) : state,
+    state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
   };
 }
 
@@ -71,12 +72,11 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       const { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
       const ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
-      const assigned = ownerState ?? undefined;
+      const archived = ownerState?.state === 'archived';
+      const assigned = archived ? undefined : ownerState;
       const pool = assigned
         ? []
-        : (await Promise.all(facts.pool.map((s) => sessionState(s, status)))).filter(
-            (s) => s !== null
-          );
+        : await Promise.all(facts.pool.map((s) => sessionState(s, status)));
       return {
         ...planCodingSessionDispatch({
           strategy: facts.strategy,
@@ -84,7 +84,9 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
           assigned,
           pool,
         }),
-        ownerArchived: ownerState === null,
+        ...(archived && owner?.session
+          ? { takeover: { todoId: owner.todoId, ref: owner.session.ref } }
+          : {}),
       };
     },
     ['facts', 'todo', 'target', 'status'],
@@ -94,14 +96,14 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
       const binds =
         (plan.verb === 'send' && plan.bind) ||
-        (plan.verb === 'start' && (!facts?.owner || plan.ownerArchived) && target.verb === 'start');
+        (plan.verb === 'start' && (!facts?.owner || plan.takeover) && target.verb === 'start');
       if (!facts || facts.strategy !== 'long_lived' || !binds) return true;
       const owner = await gatewayFor(db).call(codingSessionAssignmentWrites, 'reserveFeature', {
         repo: facts.repo,
         featureKey: todo.askId,
         todoId: todo.id,
         now: Date.now(),
-        replace: plan.ownerArchived,
+        replace: plan.takeover,
       });
       return owner.todoId === todo.id;
     },
