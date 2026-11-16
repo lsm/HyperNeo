@@ -160,6 +160,8 @@ describe('coding actor assignments', () => {
     };
     const lines: CodingLines = {
       models: () => [],
+      active: () => true,
+      defaultEffort: () => undefined,
       resolve: async (target) => ({ ok: true, value: { model: target.model } }),
       rank,
     };
@@ -184,6 +186,8 @@ describe('coding actor assignments', () => {
   test('a review whose every candidate is refused names the skip reasons and starts nothing', async () => {
     const f = fixture(undefined, {
       models: () => [],
+      active: () => true,
+      defaultEffort: () => undefined,
       resolve: async (target) => ({ ok: true, value: { model: target.model } }),
       rank: async (_kind, candidates) => ({
         ranked: [],

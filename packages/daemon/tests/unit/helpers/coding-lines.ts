@@ -27,7 +27,13 @@ export const catalogModel = (
 
 export function driverCodingLines(
   catalog: readonly ModelInfo[],
-  prefs: { routes?: Route[]; rules?: LineRule[]; holds?: LineHold[]; ready?: string[] } = {},
+  prefs: {
+    routes?: Route[];
+    rules?: LineRule[];
+    holds?: LineHold[];
+    ready?: string[];
+    effort?: string;
+  } = {},
   calls: string[] = []
 ): CodingLines {
   const adapter = createHyperneoAdapter({
@@ -37,6 +43,8 @@ export function driverCodingLines(
     },
   } as unknown as HyperneoAdapterDeps);
   return {
+    active: () => true,
+    defaultEffort: () => prefs.effort,
     models: () => catalog,
     resolve: async (target) =>
       target.adapter === 'hyperneo'
@@ -44,7 +52,8 @@ export function driverCodingLines(
             place: { machine: 'fixture', name: 'Fixture' },
             title: '',
             message: '',
-            ...target,
+            ...(target.model ? { model: target.model } : {}),
+            ...(target.effort ? { effort: target.effort } : {}),
           })) ?? null)
         : null,
     rank: async (kind, candidates, scope) => {
