@@ -2,7 +2,7 @@ import { WorkDeliveryInputRepository } from '../../../../src/storage/repositorie
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import { afterEach, describe, test, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
@@ -26,6 +26,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   process.env.PATH = initialPath;
+  delete process.env.HYPERNEO_DATA_DIR;
   configureWorkerSandbox(() => 'off');
 });
 const url = 'https://github.com/synthetic/actors/pull/7';
@@ -536,6 +537,28 @@ describe('coding actor assignments', () => {
     release();
     expect((await first).ok).toBe(true);
     expect(f.starts).toHaveLength(1);
+  });
+});
+
+describe('review place', () => {
+  const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
+  test("a repository with a read view hands the reviewer that checkout", async () => {
+    const data = mkdtempSync(join(tmpdir(), 'neo-read-'));
+    cleanups.push(() => rmSync(data, { recursive: true, force: true }));
+    const view = join(data, 'worktrees', 'synthetic', 'actors', 'neo-read');
+    mkdirSync(join(view, '.git'), { recursive: true });
+    process.env.HYPERNEO_DATA_DIR = data;
+    const f = fixture();
+    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(f.starts[0].place?.folder).toBe(view);
+  });
+  test('a repository without a read view gets no place, never the default folder', async () => {
+    process.env.HYPERNEO_DATA_DIR = mkdtempSync(join(tmpdir(), 'neo-read-'));
+    const data = process.env.HYPERNEO_DATA_DIR;
+    cleanups.push(() => rmSync(data, { recursive: true, force: true }));
+    const f = fixture();
+    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(f.starts[0].place).toBeUndefined();
   });
 });
 
