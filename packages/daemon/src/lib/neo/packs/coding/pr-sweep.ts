@@ -5,6 +5,7 @@ import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
@@ -29,14 +30,6 @@ export type CodingSweepRow = {
 
 export type CodingSweepDeps = {
   host: string;
-  delivery?: {
-    recipient(): string | null;
-    status(
-      recipient: string,
-      key: string
-    ): Promise<'admitted' | 'absent' | 'in-flight' | 'unknown' | 'recipient_gone'>;
-    send(recipient: string, key: string, text: string): Promise<boolean>;
-  };
   human?(key: string, text: string): Promise<boolean>;
   tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
@@ -82,17 +75,11 @@ export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
   return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
 
-export function codingPrEscalationText(
-  row: CodingSweepRow,
-  now: number,
-  unreachable: boolean
-): string {
+export function codingPrEscalationText(row: CodingSweepRow): string {
+  const since = new Date(row.stateSince).toISOString();
   if (row.state === 'waiting_cross_review')
-    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
-  const why = unreachable
-    ? `its owner ${owned(row.owner!)} could not be reached`
-    : `its owner ${owned(row.owner!)} has made no progress`;
-  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.' : ''}`;
+    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} since ${since} on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
+  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} since ${since} on head ${row.head.slice(0, 7)}, and its owner ${owned(row.owner!)} could not be reached or has made no progress. Reassign it to a free session.${row.state === 'approved_green' ? ' If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.' : ''}`;
 }
 
 export class CodingPrSweepRepository {
@@ -139,7 +126,7 @@ export const codingPrUrl = (host: string, row: { repo: string; number: number })
 
 export async function sweepCodingPrs(
   repo: CodingPrSweepRepository,
-  deps: CodingSweepDeps,
+  deps: Pick<CodingSweepDeps, 'host' | 'tell'> & { attend: CodingAttend },
   now: number
 ): Promise<void> {
   for (const row of await repo.rowsAsync()) {
@@ -159,9 +146,18 @@ export async function sweepCodingPrs(
       continue;
     }
     const woken = await deps
-      .wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'))
+      .attend(
+        codingPrHeadEvent(
+          'coding.pr_sweep',
+          { url: codingPrUrl(deps.host, row), head: row.head },
+          row.stateSince,
+          codingPrEscalationText(row)
+        )
+      )
       .catch(() => false);
-    log.warn(`PR sweep ${key} escalated to Neo: ${woken ? 'woken' : 'not woken'}`);
+    log.warn(
+      `PR sweep ${key} escalated to Neo (${row.state === 'waiting_cross_review' ? 'review needed' : nudge.kind === 'remind' ? 'owner unreachable' : 'no progress'}): ${woken ? 'woken' : 'not woken'}`
+    );
     if (woken) await repo.markLater(row, CODING_PR_REMINDERS + 1, now);
   }
 }

@@ -80,7 +80,7 @@ try {
     writeFileSync(join(run, 'tick'), String(tick));
     Date.now = () => base + tick * 300_000;
     try { await reconcileCodingPrLedger(ledger, ['synthetic/active', 'synthetic/idle'], readCodingLedgerRepo, Date.now());
-      await sweepCodingPrs(new CodingPrSweepRepository(db), { tell: async (_ref, _key, text) => { nudgeDeliveries.push(text); return true; }, wake: async (_key, text) => { nudgeDeliveries.push(text); return true; } }, Date.now());
+      await sweepCodingPrs(new CodingPrSweepRepository(db), { host: 'github.com', tell: async (_ref, _key, text) => { nudgeDeliveries.push(text); return true; }, attend: async event => { nudgeDeliveries.push(String(event.facts.text)); return true; } }, Date.now());
     }
     finally { Date.now = clock; }
     const rows = ledger.snapshot(null, base + tick * 300_000);
