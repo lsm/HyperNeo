@@ -113,6 +113,10 @@ try {
   await pack.workerTargetRefused(reused.todo!);
   assert.deepEqual(reserved('refused'), [{ todoId: reused.todo!.id }]);
   for (const ref of [front, back]) await rpc('session.archive', { sessionId: ref.id, confirmed: true });
+  db.prepare('DELETE FROM neo_todo_sessions WHERE ref = ?').run(JSON.stringify(missing));
+  const archivedStatus = await status(back);
+  evidence.push({ surface: 'work.status', label: 'an archived session reports stopped', status: archivedStatus });
+  assert.equal((archivedStatus.value as { value?: { status?: string } }).value?.status, 'stopped', JSON.stringify(archivedStatus));
   for (const id of ['after-archive', 'after-fresh'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
   const onlyArchived = await decide('only archived sessions: a new session starts', todo('after-archive'), { verb: 'start', adapter: 'hyperneo', name: 'backend' });
