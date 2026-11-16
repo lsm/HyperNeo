@@ -1,8 +1,12 @@
 import { z } from 'zod';
 
+export const connectionProviders = ['google'] as const;
+
+const connectionProvider = z.enum(connectionProviders);
+
 export const connectionStatus = z.object({
   id: z.string().min(1).max(200),
-  provider: z.literal('google'),
+  provider: connectionProvider,
   accountId: z.string().min(1).max(200),
   email: z.string().email(),
   scopes: z.array(z.string().max(300)).max(20),
