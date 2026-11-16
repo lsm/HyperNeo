@@ -10,7 +10,7 @@ import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/oper
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { createCodingPrFileOperation } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-file-operation.ts';
-import { readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/git-blob.ts';
+import { prFileGitBlob as readBoundGitBlob } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-file-operation.ts';
 
 const [portText, runText] = process.argv.slice(2);
 const run = resolve(runText);

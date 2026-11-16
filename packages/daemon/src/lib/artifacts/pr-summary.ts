@@ -1,6 +1,6 @@
 import type { ArtifactPrSummary } from '@hyperneo/shared/types/artifact-pr';
 import { homedir } from 'node:os';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import type { PipelineAPI, SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../github/gh-lookup-helpers.ts';
 import { summarizeNeoWorkPr } from '../neo/packs/coding/work-prs.ts';
@@ -93,22 +93,29 @@ function present(plan: Planned, response: { data: unknown }) {
   return result.success ? { value: result.data } : { reason: null };
 }
 
-export const readArtifactPrSummary = (superpipe({})('artifact-github-pr-summary') as PipelineAPI)
-  .input(['target', 'spawnImpl'])
-  .pipe(requireKnownPr, 'target', 'result:summary')
-  .pipe(
-    async (plan: Planned, spawnImpl: SpawnFn) => {
-      const response = await runGhJson(plan.args, homedir(), spawnImpl, {
-        stripGHRepo: true,
-        hostHint: 'github.com',
-        resourceHint: 'graphql',
-      });
-      return { data: response.ok ? response.data : null };
-    },
-    ['summary', 'spawnImpl'],
-    'response'
-  )
-  .pipe(present, ['summary', 'response'], 'result:summary')
-  .endAsync('summary') as (target: Target, spawnImpl: SpawnFn) => Promise<ArtifactPrSummary | null>;
+export const artifactPrSummaryReader = (pipeline: ReturnType<SuperPipeFactory>) =>
+  (pipeline as PipelineAPI)
+    .input(['target', 'spawnImpl'])
+    .pipe(requireKnownPr, 'target', 'result:summary')
+    .pipe(
+      async (plan: Planned, spawnImpl: SpawnFn) => {
+        const response = await runGhJson(plan.args, homedir(), spawnImpl, {
+          stripGHRepo: true,
+          hostHint: 'github.com',
+          resourceHint: 'graphql',
+        });
+        return { data: response.ok ? response.data : null };
+      },
+      ['summary', 'spawnImpl'],
+      'response'
+    )
+    .pipe(present, ['summary', 'response'], 'result:summary')
+    .endAsync('summary') as (
+    target: Target,
+    spawnImpl: SpawnFn
+  ) => Promise<ArtifactPrSummary | null>;
 
-export const readBoundPrSummary = (target: Target) => readArtifactPrSummary(target, spawnProcess);
+export function boundPrSummaryReader(pipeline: ReturnType<SuperPipeFactory>) {
+  const read = artifactPrSummaryReader(pipeline);
+  return (target: Target) => read(target, spawnProcess);
+}
