@@ -135,7 +135,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     return `${NEO_GOAL_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
 ${state.note ?? 'No what-works note yet.'}
-${compact ? 'Read the journal pages and rewrite the what-works note with goal.session.update {goalId, worksNote}, folding new entries into it. Journal entries are kept.' : ''}
+${compact ? 'Read the journal pages and rewrite the what-works note with goal.session.update {goalId, worksNote}, folding new entries into it; keep its routines inside the Resources and Do alone sections of the goal definition. Journal entries are kept.' : ''}
 Act using the usual tools; new asks in this cycle carry goalId ${id}.
 Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
   }
