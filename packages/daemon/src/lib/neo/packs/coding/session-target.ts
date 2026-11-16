@@ -65,13 +65,8 @@ function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
     const plan = async () =>
       planCodingStrategyQuestion({
         repo,
-        saved: false,
         nonce: crypto.randomUUID(),
-        questions: await gatewayFor(db).call(
-          codingSessionAssignmentReads,
-          'strategyQuestions',
-          repo
-        ),
+        ...(await gatewayFor(db).call(codingSessionAssignmentReads, 'strategyQuestions', repo)),
       });
     let outcome: Awaited<ReturnType<AskSetting>> | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {

@@ -159,13 +159,14 @@ class CodingSessionAssignments {
   }
 
   strategyQuestions(repo: string) {
-    return this.db
+    const questions = this.db
       .prepare(
         `SELECT q.id, q.state, p.values_json AS proposal FROM neo_pack_preference_proposals p
          JOIN neo_questions q ON q.id = p.question_id
          WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
       )
       .all(codingSessionStrategyRequest(repo)) as { id: string; state: string; proposal: string }[];
+    return { saved: savedCodingSessionStrategy(this.db, repo) !== null, questions };
   }
 
   private feature(repo: string, featureKey: string): Owner | null {
