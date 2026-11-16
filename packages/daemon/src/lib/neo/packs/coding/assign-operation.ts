@@ -142,10 +142,10 @@ export function createCodingAssignmentOperation(deps: Deps) {
         codingLineScope(deps.db, input.todoId, repoName(input))
       );
       if ('reason' in ranked) return { ok: false as const, reason: ranked.reason };
-      const choice = plan.choices.find((entry) => entry.target === ranked.value[0])!;
+      const choice = plan.choices.find((entry) => entry.target === ranked.sources[0])!;
       return {
         ok: true as const,
-        target: choice.target,
+        target: ranked.value[0],
         fallback: [...choice.fallback, ...ranked.skipped.map((line) => `Skipped ${line}.`)],
       };
     };

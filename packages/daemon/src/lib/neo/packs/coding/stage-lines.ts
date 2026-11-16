@@ -5,15 +5,22 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { usableModels } from '../../../usable-models.ts';
 import type { NeoLine, NeoLineRanking, NeoLineScope, NeoWorkKind } from '../../pack-contract.ts';
 
-type Candidate = { adapter: string; model?: string; effort?: string };
+type Candidate = {
+  adapter: string;
+  model?: string;
+  effort?: string;
+  place?: { machine: string; daemon?: string };
+};
 type Resolved = Awaited<ReturnType<NonNullable<WorkAdapter['resolveStartConfiguration']>>>;
 export type CodingLines = {
+  active: () => boolean;
   rank: (
     kind: string,
     candidates: readonly NeoLine[],
     scope: NeoLineScope
   ) => Promise<NeoLineRanking>;
   resolve: (target: Candidate) => Promise<Resolved>;
+  defaultEffort: () => string | undefined;
   models: () => readonly ModelInfo[];
 };
 
@@ -23,28 +30,38 @@ export const CODING_WORK_KINDS: readonly NeoWorkKind[] = [
   { id: 'coding.verify', label: { en: 'Coding: verify', 'zh-Hans': '编码：验证' } },
 ];
 
-export async function codingCandidateLine(lines: CodingLines, target: Candidate): Promise<NeoLine> {
+export async function codingCandidateLine<T extends Candidate>(
+  lines: CodingLines,
+  target: T
+): Promise<{ line: NeoLine; target: T }> {
   const resolved = await lines.resolve(target).catch(() => null);
   const value = resolved?.ok ? resolved.value : null;
-  const effort = value ? value.effort : target.effort;
+  const effort = (value ? value.effort : target.effort) ?? lines.defaultEffort();
+  const model = value?.model ?? target.model;
   return {
-    provider: value?.provider ?? '',
-    model: value?.model ?? target.model ?? '',
-    harness: target.adapter,
-    ...(effort ? { effort } : {}),
+    line: {
+      provider: value?.provider ?? '',
+      model: model ?? '',
+      harness: target.adapter,
+      ...(effort ? { effort } : {}),
+    },
+    target: value
+      ? { ...target, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+      : target,
   };
 }
+
+const rankedHere = (target: Candidate) => target.adapter === 'hyperneo' && !target.place?.daemon;
 
 export function codingStartAlternatives<T extends Candidate>(
   target: T,
   models: readonly ModelInfo[]
 ): T[] {
-  if (target.adapter !== 'hyperneo') return [target];
+  if (!rankedHere(target)) return [target];
+  const ids = [...new Set(usableModels(models).map((model) => model.id))];
   return [
     target,
-    ...usableModels(models)
-      .filter((model) => model.id !== target.model)
-      .map((model) => ({ ...target, model: model.id })),
+    ...ids.filter((id) => id !== target.model).map((model) => ({ ...target, model })),
   ];
 }
 
@@ -56,22 +73,32 @@ export async function rankCodingTargets<T extends Candidate>(
   kind: string,
   targets: readonly T[],
   scope: NeoLineScope
-): Promise<{ value: T[]; skipped: string[] } | { reason: string }> {
-  const routed = targets.filter((target) => target.adapter === 'hyperneo');
-  if (!routed.length) return { value: [...targets], skipped: [] };
-  const candidates = await Promise.all(routed.map((target) => codingCandidateLine(lines, target)));
+): Promise<{ value: T[]; sources: T[]; skipped: string[] } | { reason: string }> {
+  const routed = targets.filter(rankedHere);
+  if (!routed.length || !lines.active())
+    return { value: [...targets], sources: [...targets], skipped: [] };
+  const resolved = await Promise.all(routed.map((target) => codingCandidateLine(lines, target)));
+  const candidates = resolved.map((entry) => entry.line);
   const ranking = await lines.rank(kind, candidates, scope);
   const skipped = ranking.skipped.map(({ line, reason }) => `${lineText(line)}: ${reason}`);
   const ranked = ranking.ranked.flatMap(({ line }) => {
     const index = candidates.indexOf(line);
-    return index === -1 ? [] : [routed[index]];
+    return index === -1 ? [] : [{ value: resolved[index].target, source: routed[index] }];
   });
   let slot = 0;
-  const value = targets.flatMap((target) =>
-    target.adapter !== 'hyperneo' ? [target] : slot < ranked.length ? [ranked[slot++]] : []
+  const order = targets.flatMap((target) =>
+    !rankedHere(target)
+      ? [{ value: target, source: target }]
+      : slot < ranked.length
+        ? [ranked[slot++]]
+        : []
   );
-  return value.length
-    ? { value, skipped }
+  return order.length
+    ? {
+        value: order.map((entry) => entry.value),
+        sources: order.map((entry) => entry.source),
+        skipped,
+      }
     : { reason: `No usable model line for ${kind}: ${skipped.join('; ')}.` };
 }
 

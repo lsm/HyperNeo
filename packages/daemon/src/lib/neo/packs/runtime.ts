@@ -1,3 +1,4 @@
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { publishCodingHumanMerge } from './coding/human-merge-notice.ts';
 import { neoPublicationWrites } from '../../../storage/repositories/neo-publication-repository.ts';
 import { NEO_DEFAULT_PACKS } from './index.ts';
@@ -96,7 +97,12 @@ export function createNeoService(...args: NeoServiceArgs) {
     (core) => {
       const configured = Object.assign(core, readers, { todoPrs });
       const lines: CodingLines = {
+        active: () => configured.packs().some((pack) => pack.rankLines),
         rank: (kind, candidates, scope) => chooseLine(configured.packs(), kind, candidates, scope),
+        defaultEffort: () =>
+          THINKING_OPTIONS.find(
+            (option) => option.value === db.getGlobalSettings().thinkingLevel
+          )?.label.toLowerCase(),
         resolve: async (target) =>
           (await configured
             .workAdapters?.()
@@ -105,7 +111,8 @@ export function createNeoService(...args: NeoServiceArgs) {
               place: { machine: '', name: '' },
               title: '',
               message: '',
-              ...target,
+              ...(target.model ? { model: target.model } : {}),
+              ...(target.effort ? { effort: target.effort } : {}),
             })) ?? null,
         models: () => getAvailableModels('global'),
       };
