@@ -163,6 +163,7 @@ try {
       holdsARefreshToken: false,
     },
   });
+  assert.deepEqual(outbound, []);
   console.log(JSON.stringify({ passed: true }));
 } finally {
   socket?.close();
