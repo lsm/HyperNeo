@@ -115,7 +115,12 @@ export function createCodingPack(deps: {
     prepareMerge: prepareCodingMerge,
     operations: [
       createCodingHumanMergeOperation(undefined, mergeSweep.invalidate),
-      createCodingRetryMergeOperation(deps.database, deps.prLedger),
+      createCodingRetryMergeOperation(
+        deps.database,
+        deps.prLedger,
+        undefined,
+        mergeSweep.invalidate
+      ),
       createCodingPrFileOperation(deps.database),
     ],
     tracker: createCodingIssueTracker({
