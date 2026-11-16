@@ -172,7 +172,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     )
     .end('outcome');
 
-  const runs = byId('schedule.session.runs', null)
+  const runs = byId(superpipe({})('schedule.session.runs'), null)
     .pipe(
       (schedule: SessionSchedule, input: z.infer<typeof Runs>) => ({
         ok: true as const,
