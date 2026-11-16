@@ -100,6 +100,7 @@ describe('onLineHeld', () => {
 describe('the attention sweep with model-routing on', () => {
   let db: Database;
   let sweep: (now: number) => Promise<void>;
+  let whileRanking = () => {};
 
   const wakes = () =>
     (
@@ -108,7 +109,11 @@ describe('the attention sweep with model-routing on', () => {
       }[]
     ).map((row) => String(JSON.parse(row.payload).message.message.content));
 
-  const heldTodo = (sinceMinutes: number, status = 'active') => {
+  const heldTodo = (
+    sinceMinutes: number,
+    status = 'active',
+    retryAt: number | null = NOW + 10 * MINUTE
+  ) => {
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
     store.openAsk({
@@ -149,7 +154,7 @@ describe('the attention sweep with model-routing on', () => {
         status: 'rate_limit_cooldown',
         retryCount: 0,
         maxRetries: 0,
-        retryAt: NOW + 10 * MINUTE,
+        ...(retryAt === null ? {} : { retryAt }),
         reason: 'limit',
         since: NOW - sinceMinutes * MINUTE,
       })
@@ -158,6 +163,7 @@ describe('the attention sweep with model-routing on', () => {
 
   beforeEach(() => {
     db = new Database(':memory:');
+    whileRanking = () => {};
     runMigrations(db, () => {});
     createTables(db);
     db.prepare(
@@ -169,7 +175,10 @@ describe('the attention sweep with model-routing on', () => {
       provider: () =>
         ({
           isAvailable: async () => true,
-          getAuthStatus: async () => ({ isAuthenticated: true }),
+          getAuthStatus: async () => {
+            whileRanking();
+            return { isAuthenticated: true };
+          },
         }) as unknown as Provider,
       now: () => NOW,
     });
@@ -208,6 +217,25 @@ describe('the attention sweep with model-routing on', () => {
     expect(wakes()).toEqual([
       'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
     ]);
+  });
+
+  test('a long hold with no known reset is measured from its start and told once', async () => {
+    heldTodo(31, 'active', null);
+    await sweep(NOW);
+    await sweep(NOW + 5 * MINUTE);
+    expect(wakes()).toEqual([
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
+    ]);
+  });
+
+  test('a hold that ends while the lines are ranked tells Neo nothing', async () => {
+    heldTodo(31);
+    whileRanking = () =>
+      db
+        .prepare(`UPDATE sessions SET processing_state = '{"status":"idle"}' WHERE id = 'worker-1'`)
+        .run();
+    await sweep(NOW);
+    expect(wakes()).toEqual([]);
   });
 
   test('a hold left on an archived worker tells Neo nothing', async () => {
