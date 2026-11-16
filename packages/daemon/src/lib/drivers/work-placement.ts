@@ -131,7 +131,8 @@ export async function procFolderInUse(
       try {
         const ids = /^Uid:\s+(.*)$/m.exec(await proc.readFile(`/proc/${pid}/status`, 'utf8'));
         if (!ids) return true;
-        if (ids[1].split(/\s+/)[1] !== String(uid)) return false;
+        const [real, effective] = ids[1].split(/\s+/);
+        if (real !== String(uid) && effective !== String(uid)) return false;
         return `${await proc.readlink(`/proc/${pid}/cwd`)}/`.startsWith(`${root}/`);
       } catch (error) {
         return !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');
@@ -141,10 +142,35 @@ export async function procFolderInUse(
   return busy.includes(true);
 }
 
+// Unit tests set HYPERNEO_TEST_OWN_PROCESSES so that host processes outside the test
+// run (a CI runner's own sudo, say) cannot keep their worktrees.
+async function testRunProcesses(): Promise<string[]> {
+  const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
+  const parents = new Map<string, string>();
+  await Promise.all(
+    pids.map(async (pid) => {
+      const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
+      if (stat) parents.set(pid, stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+    })
+  );
+  const self = String(process.pid);
+  return pids.filter((pid) => {
+    for (let at = parents.get(pid), hops = 0; at && hops < 64; at = parents.get(at), hops++)
+      if (at === self) return true;
+    return false;
+  });
+}
+
 async function folderInUse(directory: string): Promise<boolean> {
   const root = realpathSync(directory);
   const inside = (path: string) => `${path}/`.startsWith(`${root}/`);
-  if (process.platform === 'linux') return procFolderInUse(root);
+  if (process.platform === 'linux')
+    return procFolderInUse(
+      root,
+      process.env.NODE_ENV === 'test' && process.env.HYPERNEO_TEST_OWN_PROCESSES === '1'
+        ? { readdir: testRunProcesses, readFile, readlink }
+        : undefined
+    );
   const uid = String(process.getuid?.() ?? '');
   const { stdout } = await execFileAsync('lsof', ['-w', '-a', '-d', 'cwd', '-u', uid, '-Fn']);
   return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
