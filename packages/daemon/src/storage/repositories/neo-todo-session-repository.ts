@@ -1,4 +1,6 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { NeoStepRow } from '../../lib/neo/attention/sweep.ts';
+import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
@@ -9,6 +11,7 @@ import {
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { markWorkUnusable } from '../work-started-sessions.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef, WorkStatus, WorkTurnQuestion } from '../../lib/drivers/types.ts';
 import type { DriverSent, NeoDriverTarget, readDriverOutcome } from '../../lib/neo/driver-work.ts';
@@ -79,6 +82,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'queueFacts',
     trackerHolds?: Record<string, string | null>
   ): Promise<ReturnType<NeoTodoSessionRepository['queueFacts']>>;
+  read(method: 'neoStepFacts'): Promise<ReturnType<NeoTodoSessionRepository['neoStepFacts']>>;
   read(method: 'syncedActivity'): Promise<ReturnType<NeoTodoSessionRepository['syncedActivity']>>;
   read(
     method: 'syncedLive',
@@ -288,6 +292,79 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         : []
     );
     return { candidates, running, unworked };
+  }
+
+  neoStepFacts() {
+    const store = new NeoAskTodoRepository(this.db);
+    const { candidates, running } = this.queueFacts();
+    const pending = new Set(store.questionAnswers.pending().map((route) => route.todoId));
+    const failedAt = (todo: NeoTodo) =>
+      todo.state === 'blocked' && todo.blockedBy === 'failure' ? todo.updatedAt : null;
+    const asks = store.listOpenAsks().map((ask) => ({
+      ask,
+      family: store.listFamilyTodos(ask.id),
+      cards: store.gateQuestions(ask),
+    }));
+    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRow => {
+      const nudge = this.readNudge(todo.id);
+      const answered = cards.flatMap((card) =>
+        card.state === 'answered' && card.todos.includes(todo.id) ? (card.answeredAt ?? []) : []
+      );
+      return {
+        todo,
+        facts: {
+          covered: neoTodoCovered(todo, cards),
+          held: todo.blockedBy === 'held',
+          prerequisites: (todo.dependsOn ?? []).flatMap((id) =>
+            family.flatMap((item) =>
+              item.id === id
+                ? [
+                    {
+                      state: item.state,
+                      blockedBy: item.blockedBy,
+                      finishedAt: item.finishedAt,
+                      failedAt: failedAt(item),
+                    },
+                  ]
+                : []
+            )
+          ),
+          answerPending: pending.has(todo.id),
+          cardClosedAt: answered.length ? Math.max(...answered) : null,
+          failedAt: failedAt(todo),
+          worker: this.readRef(todo.id)
+            ? {
+                status: ['running', 'queued'].includes(nudge?.live ?? '')
+                  ? 'running'
+                  : this.workerIdle(todo.id)
+                    ? 'idle'
+                    : 'unknown',
+                since: Math.max(nudge?.since ?? 0, todo.startedAt ?? todo.createdAt),
+              }
+            : null,
+          packWaiting: false,
+          start: candidates.some((item) => item.id === todo.id) ? 'ready' : null,
+        },
+      };
+    };
+    return {
+      candidates,
+      running,
+      followUps: asks.flatMap(({ ask, family }) => {
+        const todo = neoTodoWithoutFollowUp(family.filter((item) => item.askId === ask.id));
+        return todo ? [{ ask, todo }] : [];
+      }),
+      steps: asks.flatMap(({ ask, family, cards }) =>
+        family
+          .filter(
+            (todo) =>
+              todo.askId === ask.id &&
+              todo.approvedAt !== null &&
+              ['todo', 'doing', 'blocked', 'failed'].includes(todo.state)
+          )
+          .map((todo) => step(todo, family, cards))
+      ),
+    };
   }
 
   claimNudge(
@@ -562,6 +639,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'nudgeContext',
     'stopContext',
     'queueFacts',
+    'neoStepFacts',
     'workerName',
     'syncedActivity',
     'syncedLive',

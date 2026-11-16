@@ -112,7 +112,11 @@ import {
 } from './model-preference.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
-import { neoTodoFollowUpRefusal, wakeNeoFollowUpGaps } from './todo-follow-up.ts';
+import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
+import { createNeoAttentionSweep } from './attention/sweep.ts';
+import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
+import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
+import { neoTodoCovered } from './todo-state.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -142,6 +146,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
+  private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
@@ -343,6 +348,33 @@ export class NeoService {
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
       readSource: (ref) => this.readQuestionSource(ref),
+    });
+    this.sweepAttention = createNeoAttentionSweep({
+      sessions: this.todoSessions,
+      packs: () => this.installedPacks(),
+      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      tell: createNeoAttention({
+        kinds: () => [
+          ...NEO_ATTENTION_KINDS,
+          ...this.installedPacks().flatMap((pack) => pack.attention?.kinds ?? []),
+        ],
+        read: ({ subject }) => {
+          const todo = subject.type === 'todo' ? this.todos.getTodo(subject.id) : null;
+          return {
+            covered: !!todo && neoTodoCovered(todo, this.todos.todoCards(todo)),
+            latestReportAt: null,
+          };
+        },
+        ...neoAttentionDelivery(
+          db.getDatabase(),
+          () => this.defaultSessionId() ?? null,
+          (id) => parseProcessingState(this.db.getSession(id)?.processingState).status !== 'idle'
+        ),
+        dropped: (event, reason) =>
+          this.log.info(`Attention ${event.kind} ${event.subject.id} dropped: ${reason}`),
+      }),
+      failed: (event, error) =>
+        this.log.warn(`Attention ${event.kind} ${event.subject.id} pending`, error),
     });
     const runtime = composePacks(this);
     this.builtinPacks = runtime.packs;
@@ -1197,8 +1229,8 @@ export class NeoService {
     await this.returnToPreferredModels().catch((error) =>
       this.log.warn('Preferred model return pending', error)
     );
-    await wakeNeoFollowUpGaps(this.todos, this.wakeNeo.bind(this)).catch((error) =>
-      this.log.warn('Follow-up wake pending', error)
+    await this.sweepAttention(Date.now()).catch((error) =>
+      this.log.warn('Attention sweep pending', error)
     );
     const retire = createQuestionRetirement(this.todos, () => this.installedPacks());
     for (const { question, todo } of await this.todos.read('openQuestionChecks'))
