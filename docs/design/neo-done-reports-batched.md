@@ -62,8 +62,11 @@ every report kind the helper does not hold wake Neo as today. A session's reques
 
 - **A `done` report can wait about 15 minutes.** A reviewer's verdict is one: Neo records it
   with `neo.coding.result` before the cross-model gate lets the daemon merge, so a merge can
-  start about 15 minutes later than today. A reviewer that needs Neo now (a blocker, a
-  question) uses those kinds, which still wake.
+  start about 15 minutes later than today. A verdict that asks for changes is also `done`,
+  because `done` means the reviewer finished its review (`worker-rules.md`: "Use done for PR
+  milestones"); the verdict itself is in the text. So the fix that follows can also start
+  about 15 minutes later. The daemon does not read the verdict out of the text to decide. A
+  reviewer that needs Neo now (a blocker, a question) uses those kinds, which still wake.
 - **Neo reads the same text.** The batch holds every report; only the number of turns falls.
 
 ## Change plan
