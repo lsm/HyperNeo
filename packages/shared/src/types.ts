@@ -464,6 +464,7 @@ export type HyperNeoActionMessage = {
   resolved: boolean;
   chosenOption?: 'start_fresh' | 'leave_as_is';
   error?: string;
+  repairError?: string;
   timestamp: number;
 };
 

@@ -25,6 +25,7 @@ import {
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
   getSDKSessionFilePath,
+  type SDKTranscriptCheck,
 } from '../sdk-session-file-manager.ts';
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
@@ -143,9 +144,9 @@ export class QueryLifecycleManager {
     return false;
   }
 
-  private async validateAndRepairWithMigration(): Promise<boolean> {
+  private async validateAndRepairWithMigration(): Promise<SDKTranscriptCheck> {
     const { session, db } = this.ctx;
-    if (!session.sdkSessionId) return false;
+    if (!session.sdkSessionId) return { valid: false };
 
     const fileFound = await this.ensureSDKSessionFileMigrated();
 
@@ -155,7 +156,7 @@ export class QueryLifecycleManager {
           'Will attempt resume anyway — the SDK may produce a "No conversation found" error ' +
           'and start fresh automatically.'
       );
-      return false;
+      return { valid: false };
     }
 
     const sdkSessionId = session.sdkSessionId;
@@ -387,7 +388,8 @@ export class QueryLifecycleManager {
     if (!session.sdkSessionId || session.config.harness === 'codex') {
       return true;
     }
-    if (await this.validateAndRepairWithMigration()) {
+    const transcript = await this.validateAndRepairWithMigration();
+    if (transcript.valid) {
       return true;
     }
     const resumeRefused =
@@ -415,25 +417,28 @@ export class QueryLifecycleManager {
       `SDK session file missing/invalid for sdkSessionId=${session.sdkSessionId} (${caller}). ` +
         'Emitting sdk_resume_choice action message for user.'
     );
-    const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
+    const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage(transcript.repairError);
     if (!recoveryPromptAvailable) {
+      const problem = transcript.repairError
+        ? `could not be repaired (${transcript.repairError})`
+        : 'is missing';
       throw new Error(
-        `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
+        `Unable to start session: SDK transcript ${session.sdkSessionId} ${problem} ` +
           'and the recovery prompt could not be persisted.'
       );
     }
     return false;
   }
 
-  async validateSdkTranscript(): Promise<boolean> {
+  async validateSdkTranscript(): Promise<SDKTranscriptCheck> {
     const { session } = this.ctx;
     if (!session.sdkSessionId || session.config.harness === 'codex') {
-      return true;
+      return { valid: true };
     }
     return this.validateAndRepairWithMigration();
   }
 
-  private async emitSdkResumeChoiceMessage(): Promise<boolean> {
+  private async emitSdkResumeChoiceMessage(repairError?: string): Promise<boolean> {
     const { session, db, messageHub } = this.ctx;
 
     const messageRepo = db.getSDKMessageRepo?.();
@@ -447,6 +452,7 @@ export class QueryLifecycleManager {
       session_id: session.id,
       action: 'sdk_resume_choice',
       resolved: false,
+      ...(repairError ? { repairError } : {}),
       timestamp: Date.now(),
     };
 
