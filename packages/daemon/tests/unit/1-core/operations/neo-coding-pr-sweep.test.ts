@@ -7,7 +7,12 @@ import {
   sweepCodingPrs,
 } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { CODING_ATTENTION_KINDS } from '../../../../src/lib/neo/packs/coding/attention.ts';
+import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 
 const MIN = 60_000;
 const owner = { adapter: 'claude-desktop', id: 'worker-1' };
@@ -24,18 +29,20 @@ function setup() {
       )
       .run(number, state, ownerRef ? JSON.stringify(ownerRef) : null);
   const told: { ref: unknown; key: string; text: string }[] = [];
-  const woken: { key: string; text: string }[] = [];
+  const woken: { kind: string; subject: string; text: string }[] = [];
   let reachable = true;
+  const attend = async (event: NeoAttentionEvent) => {
+    woken.push({ kind: event.kind, subject: event.subject.id, text: String(event.facts.text) });
+    return true;
+  };
   const deps = {
+    host: 'github.com',
     tell: async (ref: unknown, key: string, text: string) => {
       if (!reachable) return false;
       told.push({ ref, key, text });
       return true;
     },
-    wake: async (key: string, text: string) => {
-      woken.push({ key, text });
-      return true;
-    },
+    attend,
   };
   const repo = new CodingPrSweepRepository(db);
   const at = async (minutes: number) => {
@@ -47,6 +54,7 @@ function setup() {
     insert,
     told,
     woken,
+    attend,
     at,
     unreachable: () => {
       reachable = false;
@@ -68,7 +76,36 @@ describe('PR sweep ladder', () => {
       'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Complete all required merge gates, re-read the head, then squash-merge manually with --match-head-commit and the full approved head SHA.'
     );
     expect(woken).toHaveLength(1);
-    expect(woken[0].text).toContain('has made no progress');
+    expect(woken[0].text).toBe(
+      'PR sweep: lsm/hyperneo#7 "Fix login" has been approved and green since 1970-01-01T00:00:00.000Z on head abc1234, and its owner claude-desktop:worker-1 has made no progress. Reassign it to a free session. If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.'
+    );
+    db.close();
+  });
+
+  test('an escalation told before its ledger mark was written is not told again', async () => {
+    const { insert, db } = setup();
+    runMigrations(db, () => {});
+    createTables(db);
+    const notes = neoAttentionNotes(
+      db,
+      new NeoAskTodoRepository(db),
+      () => {},
+      CODING_ATTENTION_KINDS
+    );
+    insert(7, 'approved_green');
+    for (const minutes of [60, 65]) {
+      db.prepare('UPDATE pack_coding_pr_ledger SET read_at = ?, nudges = 0').run(minutes * MIN);
+      await sweepCodingPrs(
+        new CodingPrSweepRepository(db),
+        {
+          host: 'github.com',
+          tell: async () => true,
+          attend: async (event) => 'told' in (await notes.attend(event)),
+        },
+        minutes * MIN
+      );
+    }
+    expect(notes.wakes()).toEqual([expect.stringContaining('has made no progress')]);
     db.close();
   });
 
@@ -101,7 +138,7 @@ describe('PR sweep ladder', () => {
   });
 
   test('an unowned, draft or stale-read PR is never nudged', async () => {
-    const { insert, told, woken, db } = setup();
+    const { insert, told, woken, attend, db } = setup();
     insert(1, 'approved_green', null);
     insert(2, 'draft');
     insert(3, 'approved_green');
@@ -112,7 +149,8 @@ describe('PR sweep ladder', () => {
           told.push({ ref: null, key: 'x', text: 'x' });
           return true;
         },
-        wake: async () => true,
+        host: 'github.com',
+        attend,
       },
       300 * MIN
     );
@@ -136,7 +174,7 @@ describe('PR sweep ladder', () => {
 
 describe('sweepCodingPrs', () => {
   test('a throwing delivery counts as unreachable and the next rows still get their reminders', async () => {
-    const { insert, told, woken, db } = setup();
+    const { insert, told, woken, attend, db } = setup();
     insert(1, 'approved_green', { adapter: 'hyperneo', id: 'broken' });
     insert(2, 'approved_green');
     db.prepare('UPDATE pack_coding_pr_ledger SET read_at = ?').run(20 * MIN);
@@ -148,10 +186,8 @@ describe('sweepCodingPrs', () => {
           told.push({ ref, key, text });
           return true;
         },
-        wake: async (key, text) => {
-          woken.push({ key, text });
-          return true;
-        },
+        host: 'github.com',
+        attend,
       },
       20 * MIN
     );
@@ -222,7 +258,8 @@ describe('sweepCodingPrs cross-model review', () => {
     expect(told).toEqual([]);
     expect(woken).toEqual([
       {
-        key: 'neo-pr-sweep:lsm/hyperneo#9:abc1234def:waiting_cross_review:1',
+        kind: 'coding.pr_sweep',
+        subject: 'https://github.com/lsm/hyperneo/pull/9@abc1234def',
         text: expect.stringContaining('different model'),
       },
     ]);
@@ -240,7 +277,8 @@ describe('sweepCodingPrs cross-model review without an owner', () => {
     expect(told).toEqual([]);
     expect(woken).toEqual([
       {
-        key: 'neo-pr-sweep:lsm/hyperneo#10:abc1234def:waiting_cross_review:1',
+        kind: 'coding.pr_sweep',
+        subject: 'https://github.com/lsm/hyperneo/pull/10@abc1234def',
         text: expect.stringContaining('different model'),
       },
     ]);

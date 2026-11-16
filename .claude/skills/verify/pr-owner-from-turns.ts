@@ -46,11 +46,9 @@ try {
   assert.equal(owner(2), null);
   assert.equal(owner(3), null);
   db.prepare('UPDATE pack_coding_pr_unowned_state SET activated_at = 0').run();
-  const notice = events.pendingUnowned(at, { key: null, recipient: 'synthetic-neo', status: 'absent' });
-  evidence.notice = notice;
-  assert(notice?.text.includes('synthetic/proof#3'), JSON.stringify(notice));
-  assert(!notice.text.includes('synthetic/proof#1'), notice.text);
-  assert(!notice.text.includes('synthetic/proof#2'), notice.text);
+  const unowned = events.unowned(at).map((row) => `${row.repo}#${row.number}`);
+  evidence.unowned = unowned;
+  assert.deepEqual(unowned, ['synthetic/proof#3']);
   console.log('PASS: on a real daemon DB the producing turn owns #1, an unread turn holds #2, and only #3 is announced as unowned.');
 } finally {
   await app.cleanup();
