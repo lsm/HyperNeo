@@ -849,79 +849,92 @@ describe('card reply notice navigation', () => {
     );
   });
 
-  it('opens a child todo quote on the parent card that covers it', async () => {
-    const { model } = mount();
-    const card = {
-      id: 'qp',
-      askId: 'trip',
-      text: 'Parent card?',
-      kind: 'yesno',
-      options: null,
-      multiple: false,
-      noLabel: 'No',
-      yesLabel: 'Agree',
-      todos: ['hotel'],
-      state: 'open',
-      answer: null,
-      answeredBy: null,
-      answeredAt: null,
-      retiredReason: null,
-      replacedBy: null,
-      createdAt: 1,
-    };
-    act(() => {
-      model.value = {
-        ...model.value,
-        snapshot: {
-          ...model.value.snapshot,
-          todoAsks: [
-            testAskEntry('trip', 'Fictional trip', {
-              state: 'waiting',
-              questions: [card as never],
-            }),
-            testAskEntry('hotel-ask', 'Fictional hotel booking', {
-              state: 'doing',
-              todos: [testTodo('hotel', { title: 'Fictional hotel', state: 'doing' })],
-            }),
-          ],
-          humanQueue: {
-            items: [
+  it.each([null, 'Money'])(
+    'opens a child todo quote on the parent card that covers it, topic %s',
+    async (topic) => {
+      const { model } = mount();
+      const card = {
+        id: 'qp',
+        askId: 'trip',
+        text: 'Parent card?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Agree',
+        todos: ['hotel'],
+        state: 'open',
+        answer: null,
+        answeredBy: null,
+        answeredAt: null,
+        retiredReason: null,
+        replacedBy: null,
+        createdAt: 1,
+      };
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
               {
-                state: 'waiting',
-                askId: 'trip',
-                questionId: 'qp',
-                text: 'Parent card?',
-                todos: [{ id: 'hotel', title: 'Fictional hotel' }],
+                ...testAskEntry('trip', 'Fictional trip', {
+                  state: 'waiting',
+                  questions: [card as never],
+                }),
+                ask: { ...testAskEntry('trip', 'Fictional trip').ask, topic: 'Travel' },
+              },
+              {
+                ...testAskEntry('hotel-ask', 'Fictional hotel booking', {
+                  state: 'doing',
+                  todos: [testTodo('hotel', { title: 'Fictional hotel', state: 'doing' })],
+                }),
+                ask: {
+                  ...testAskEntry('hotel-ask', 'Fictional hotel booking').ask,
+                  topic: 'Money',
+                },
               },
             ],
-            counts: { trip: { waiting: 1, held: 0, progress: 0 } },
-          },
-        } as never,
-        viewPublicConversation: {
-          ...model.value.viewPublicConversation!,
-          entries: [
-            {
-              kind: 'ask',
-              key: 'hotel-quote',
-              ask: {
-                conversationId: root.slice(4),
-                requestId: '20000000-0000-4000-8000-000000000010',
-                askOrigin: { sessionId: root, messageId: 'quoted-hotel' },
-                content: 'About the hotel',
-                replyTo: { kind: 'todo', id: 'hotel', excerpt: 'Quoted hotel target' },
-                sequence: 1,
-                createdAt: '2026-10-24T12:00:00Z',
-              },
+            humanQueue: {
+              items: [
+                {
+                  state: 'waiting',
+                  askId: 'trip',
+                  questionId: 'qp',
+                  text: 'Parent card?',
+                  todos: [{ id: 'hotel', title: 'Fictional hotel' }],
+                },
+              ],
+              counts: { trip: { waiting: 1, held: 0, progress: 0 } },
             },
-          ],
-        },
-      };
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
-    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
-    expect(document.activeElement?.closest('[data-human-queue]')).toBeTruthy();
-    expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
-  });
+          } as never,
+          viewPublicConversation: {
+            ...model.value.viewPublicConversation!,
+            entries: [
+              {
+                kind: 'ask',
+                key: 'hotel-quote',
+                ask: {
+                  conversationId: root.slice(4),
+                  requestId: '20000000-0000-4000-8000-000000000010',
+                  askOrigin: { sessionId: root, messageId: 'quoted-hotel' },
+                  content: 'About the hotel',
+                  replyTo: { kind: 'todo', id: 'hotel', excerpt: 'Quoted hotel target' },
+                  sequence: 1,
+                  createdAt: '2026-10-24T12:00:00Z',
+                },
+              },
+            ],
+          },
+        };
+      });
+      if (topic) fireEvent.click(screen.getByRole('button', { name: `${topic} 1` }));
+      fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
+      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
+      expect(document.activeElement?.closest('[data-human-queue]')).toBeTruthy();
+      expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
+    }
+  );
 
   it('holds and takes back cards found by work search', async () => {
     const { model } = mount();

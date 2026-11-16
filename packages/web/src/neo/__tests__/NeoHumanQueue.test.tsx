@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/pr
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoHumanQueue } from '../NeoHumanQueue.tsx';
 import { locale } from '../../lib/i18n/index.ts';
+import { testTodo } from './neo-test-views.ts';
 
 beforeEach(() => {
   locale.value = 'en';
@@ -482,6 +483,85 @@ describe('NeoHumanQueue', () => {
     expect(view.getByText('Question q1')).toBeTruthy();
     for (const name of ['Agree', 'No', 'Hold', 'Reply in chat'])
       expect(view.queryByRole('button', { name })).toBeNull();
+  });
+
+  it('keeps a picked option while a newer ask revision reloads the card', async () => {
+    const choice = (updatedAt: number) =>
+      ({
+        ask: { id: 'trip', title: 'Plan the trip', updatedAt },
+        todos: [],
+        questions: [
+          question('q1', 'trip', { kind: 'choice', multiple: true, options: ['Train', 'Car'] }),
+        ],
+      }) as unknown as NeoAskEntry;
+    const summarised = (updatedAt: number) =>
+      ({ ...choice(updatedAt), summary: {} }) as unknown as NeoAskEntry;
+    let second = (_: NeoAskEntry) => {};
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockResolvedValueOnce(choice(1))
+      .mockImplementationOnce(() => new Promise((resolve) => (second = resolve)));
+    const props = {
+      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+      onLoadDetails,
+    };
+    const view = render(<NeoHumanQueue {...props} entries={[summarised(1)]} />);
+    const train = (await view.findByText('Train')).closest('label')!.querySelector('input')!;
+    fireEvent.click(train);
+    expect(train.checked).toBe(true);
+    view.rerender(<NeoHumanQueue {...props} entries={[summarised(2)]} />);
+    await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
+    expect(train.isConnected).toBe(true);
+    expect(train.checked).toBe(true);
+    second(choice(2));
+    await waitFor(() => expect(train.isConnected && train.checked).toBe(true));
+  });
+
+  it('lets the human hand this computer to an eligible in-progress todo', () => {
+    const onDesktopControl = vi.fn();
+    const car = {
+      ...entry('car', 'Service the car'),
+      todos: [
+        testTodo('t4', { title: 'Call the garage', state: 'doing' }),
+        testTodo('t6', {
+          title: 'Remote step',
+          state: 'doing',
+          worker: { id: 'w', adapter: 'hyperneo', name: null, label: 'Remote', daemon: 'other' },
+        }),
+      ],
+    } as NeoAskEntry;
+    const view = render(
+      <NeoHumanQueue
+        queue={{
+          items: [
+            queue.items[3],
+            {
+              state: 'progress',
+              askId: 'car',
+              todoId: 't6',
+              title: 'Remote step',
+              owner: 'worker',
+            },
+          ],
+          counts: { car: { waiting: 0, held: 0, progress: 2 } },
+        }}
+        entries={[car]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onDesktopControl={onDesktopControl}
+      />
+    );
+    const label = 'Let the agent use this computer';
+    fireEvent.click(view.getByRole('button', { name: 'In progress 2' }));
+    expect(view.getByText('Remote step')).toBeTruthy();
+    expect(view.queryByRole('checkbox', { name: label })).toBeNull();
+    expect(view.queryByRole('button', { name: 'Show details: Remote step' })).toBeNull();
+    const row = view.container.querySelector('[data-ask-todo="t4"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Show details: Call the garage' }));
+    fireEvent.click(within(row).getByRole('checkbox', { name: label }));
+    expect(onDesktopControl).toHaveBeenCalledWith('t4', true);
   });
 
   it('shows nothing when nothing waits', () => {
