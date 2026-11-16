@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { CodingAssignmentsRepository, type CodingAssignment } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
+import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data')));
+assert(process.env.PATH?.startsWith(`${join(run, 'bin')}:`));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+mkdirSync(join(run, 'bin'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), `#!/bin/sh\nexec bun ${JSON.stringify(join(import.meta.dir, 'review-comment-gh.ts'))} ${JSON.stringify(run)} "$@"\n`);
+chmodSync(join(run, 'bin/gh'), 0o755);
+const url = 'https://github.com/synthetic/review-comment/pull/7';
+const write = { adapter: 'codex-desktop', id: 'author' };
+const ref = { adapter: 'hyperneo', id: 'review-session' };
+const actor = { kind: 'agent', id: ref.id, model: 'claude-opus-5-5', harness: ref.adapter } as const;
+const assignment: CodingAssignment = { url, head: 'head-a', acceptanceContract: 'artifact:acceptance-7', newDispatch: true, write, ref, actor };
+const fact = { url, head: 'head-a', stage: 'review', actor, verdict: 'pass', acceptanceContract: assignment.acceptanceContract, evidence: ['artifact:observed-review-7'] };
+const comments = () => (existsSync(join(run, 'comments.json')) ? JSON.parse(readFileSync(join(run, 'comments.json'), 'utf8')) : []) as { path: string; body: string }[];
+const evidence: unknown[] = [];
+const network = globalThis.fetch;
+globalThis.fetch = (() => { throw new Error('No HTTP in synthetic review-comment proof'); }) as typeof fetch;
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+let ws: WebSocket | undefined;
+try {
+  await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  const db = app.db.getDatabase(); createCodingPackTables(db);
+  const assignments = new CodingAssignmentsRepository(db), ledger = new CodingPrLedgerRepository(db);
+  ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
+  const rpc = (input: unknown) => new Promise<unknown>((done, fail) => {
+    const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 20000);
+    ws!.onmessage = event => {
+      const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return;
+      clearTimeout(timer); evidence.push({ input, reply });
+      if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
+    };
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'neo.coding.result', input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  db.exec("INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','synthetic','Review comment','Review comment',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Review comment','Merged','doing',1,1)");
+  ledger.stageFacts.observeHead(url, 'head-a', 1);
+  assert(await assignments.recordLater('todo', 'review', assignment));
+  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
+  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
+  assert.equal(comments().length, 1, 'a repeated pass posts nothing new');
+  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact: { ...fact, verdict: 'fail' } }), { ok: true });
+  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact: { ...fact, verdict: 'fail' } }), { ok: false, reason: 'head_changed_or_failed_stage' });
+  const posted = comments();
+  assert.equal(posted.length, 2, 'the changed verdict posts once, its repeat posts nothing');
+  for (const [comment, verdict] of [[posted[0], 'pass'], [posted[1], 'fail']] as const) {
+    assert.equal(comment.path, 'repos/synthetic/review-comment/issues/7/comments');
+    assert.equal(comment.body.split('\n')[0], `**HyperNeo recorded review: ${verdict.toUpperCase()}**`);
+    assert(comment.body.includes('- Reviewer: `claude-opus-5-5` via hyperneo'));
+    assert(comment.body.includes(`- Verdict: ${verdict}`));
+    assert(comment.body.includes('- Head: `head-a`'));
+    assert(!comment.body.includes(ref.id));
+  }
+  assert.deepEqual(ledger.stageFacts.read(url).map((item) => item.verdict), ['fail']);
+  evidence.push({ comments: posted, ghCalls: readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n') });
+  console.log(`PASS: real RPC review results posted ${posted.length} labelled comments through gh, none on repeats. Evidence: ${run}/evidence/review-comment.json`);
+  console.log(`--- sample comment ---\n${posted[0].body}`);
+} finally {
+  writeFileSync(join(run, 'evidence/review-comment.json'), JSON.stringify(evidence, null, 2));
+  ws?.close(); await app.cleanup();
+  globalThis.fetch = network;
+}

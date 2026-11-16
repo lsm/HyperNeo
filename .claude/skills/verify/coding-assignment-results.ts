@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -7,6 +7,7 @@ import { CodingAssignmentsRepository, type CodingAssignment } from '../../../pac
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -14,6 +15,10 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
+assert(process.env.PATH?.startsWith(`${join(run, 'bin')}:`));
+mkdirSync(join(run, 'bin'), { recursive: true });
+writeFileSync(join(run, 'bin/gh'), `#!/bin/sh\nexec bun ${JSON.stringify(join(import.meta.dir, 'review-comment-gh.ts'))} ${JSON.stringify(run)} "$@"\n`);
+chmodSync(join(run, 'bin/gh'), 0o755);
 const evidence: unknown[] = [];
 const url = 'https://github.com/synthetic/assignments/pull/7';
 const write = { adapter: 'codex-desktop', id: 'author' };
@@ -33,7 +38,7 @@ try {
       assert.notEqual(app.server.port, 8399);
       const db = app.db.getDatabase(); createCodingPackTables(db);
       const assignments = new CodingAssignmentsRepository(db), ledger = new CodingPrLedgerRepository(db);
-      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+      ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
       const rpc = (input: unknown) => new Promise<unknown>((done, fail) => {
         const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);

@@ -4,11 +4,13 @@ Read shared isolation setup in `../SKILL.md` and `coding-stage-facts.md`. This
 metadata-only proof starts its own real daemon twice on ephemeral loopback ports,
 with a fresh synthetic DB/home. No model, HTTP mock, real GitHub or browser is
 needed. HTTP is refused; neither provider credentials nor port 8399 is used.
+`$RUN/bin/gh` is the comment stub from `coding-review-comment.md`, because an
+accepted Review result posts its labelled PR comment.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-assignment-results-XXXXXX)
 mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
   bun .claude/skills/verify/coding-assignment-results.ts "$RUN"
 ```

@@ -7,6 +7,7 @@ import { WorkRefSchema } from '../../../drivers/types.ts';
 import { CodingStageFact } from './stage-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
+import { postCodingReviewComment, type CodingGithubApi } from './review-comment.ts';
 
 const Input = z.object({
   todoId: z.string().min(1),
@@ -22,7 +23,8 @@ type Result = { ok: boolean; reason?: string };
 
 export function createCodingResultOperation(
   assignments: CodingAssignmentsRepository,
-  ledger: CodingPrLedgerRepository
+  ledger: CodingPrLedgerRepository,
+  github: CodingGithubApi
 ) {
   const record = (superpipe({})('coding.record-assigned-result') as PipelineAPI)
     .input(['input'])
@@ -41,10 +43,14 @@ export function createCodingResultOperation(
       'result:fact'
     )
     .pipe(
-      async (fact: CodingStageFact): Promise<Result> =>
-        (await ledger.write('recordStage', fact))
-          ? { ok: true }
-          : { ok: false, reason: 'head_changed_or_failed_stage' },
+      async (fact: CodingStageFact): Promise<Result> => {
+        const recorded = await ledger.write('recordStage', fact);
+        const stored = ledger.stageFacts
+          .read(fact.url)
+          .find((item) => item.stage === 'review' && item.head === fact.head);
+        if (fact.stage === 'review' && stored) await postCodingReviewComment(github, stored);
+        return recorded ? { ok: true } : { ok: false, reason: 'head_changed_or_failed_stage' };
+      },
       'fact',
       'fact'
     )
