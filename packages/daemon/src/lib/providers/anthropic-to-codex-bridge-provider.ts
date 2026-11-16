@@ -443,7 +443,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     } catch (error) {
       const isAuthRejection = error instanceof Error && error.message.includes('(HTTP 401)');
       if (isAuthRejection && retryOn401 && auth.source === 'chatgpt_oauth') {
-        const refreshed = await this.refreshStoredOauthCredentials();
+        const refreshed = await this.refreshStoredOauthCredentials(auth.apiKey);
         if (typeof refreshed === 'object' && refreshed.access) {
           const refreshedAuth = this.toBridgeAuth(refreshed);
           if (refreshedAuth) {
@@ -638,7 +638,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       }
       await this.importFromCodexAuth();
       const reread = await this.loadCredentials();
-      return reread?.access && reread.access !== credentials.access ? reread : 'definitive';
+      const current = reread?.access !== credentials.access || rejectedAccessToken === undefined;
+      return reread?.access && current ? reread : 'definitive';
     }
     if (!credentials.refresh) return 'definitive';
 
