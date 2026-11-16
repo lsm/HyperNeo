@@ -151,9 +151,14 @@ The first row is `oxap-codex`:
 - settings: the Codex executable;
 - hub entry: `approval_policy: on-request`, `sandbox: workspace-write` and
   `any_directory`, as today's `oap-hub-config.ts` builds it. `CODEX_HOME` is
-  an empty directory the daemon owns under the state directory, with
-  `cli_auth_credentials_store = "ephemeral"`. So it never loads or overwrites
-  the human's own Codex login.
+  an empty directory per provider, owned by the daemon under the state
+  directory, with `cli_auth_credentials_store = "ephemeral"`. So it never
+  loads or overwrites the human's own Codex login.
+- `CODEX_HOME` is a path, not a key, so the entry carries it as a literal
+  `CODEX_HOME=<path>` environment entry. The Go hub already accepts literal
+  `NAME=value` entries (`resolveEnvironment` in `go/serve/registry.go`). Two
+  providers on OXAP Codex therefore get separate homes without touching the
+  shared process environment.
 
 ### How OXAP Codex signs in
 
@@ -230,6 +235,8 @@ harness keep separate settings.
 A pure function, `buildHubConfig(providerRecords, OXAP_HARNESSES)`, builds the
 config. It keeps the existing posture (`docs/architecture/oap-backend-plan.md`):
 the config lists only allowlisted environment variable names, never keys.
+Non-secret values, such as a provider's `CODEX_HOME` path, may be literal
+`NAME=value` entries.
 
 - A key goes only into the hub process's environment, under the name its
   harness reads. The hub resolves each listed name from that environment.
