@@ -11,7 +11,7 @@ set -e
 inert_docs="$(git rev-parse --show-toplevel)/scripts/lib/inert-docs.sh"
 if [ -f "$inert_docs" ]; then
     . "$inert_docs"
-    if git diff --cached --name-only --no-renames | all_inert_docs; then
+    if git diff --cached --name-only --no-renames -z | all_inert_docs; then
         echo "📝 Only docs staged; skipping code checks."
         exit 0
     fi

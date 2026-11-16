@@ -275,9 +275,11 @@ jobs:
           # diff). --no-renames lists a rename as BOTH its old and new path
           # (delete + add), so a file moved across the daemon/web boundary
           # classifies both sides instead of only the destination. An
-          # empty/unreadable diff falls back to running everything.
-          files=$(git diff --name-only --no-renames origin/dev HEAD || true)
-          if [ -z "$files" ]; then
+          # empty/unreadable diff falls back to running everything. -z keeps
+          # non-ASCII paths raw instead of quoted.
+          files=$(mktemp)
+          git diff --name-only --no-renames -z origin/dev HEAD > "$files" || true
+          if [ ! -s "$files" ]; then
             echo "Empty diff against dev — defaulting to run everything."
             echo "daemon=true" >> "$GITHUB_OUTPUT"
             echo "online=true" >> "$GITHUB_OUTPUT"
@@ -292,7 +294,7 @@ jobs:
           online=false
           web=false
           desktop=false
-          while IFS= read -r f; do
+          while IFS= read -r -d '' f; do
             if is_inert_doc "$f"; then continue; fi
             code=true
             case "$f" in
@@ -317,7 +319,7 @@ jobs:
               packages/daemon/*|packages/space/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
               *) web=true ;;
             esac
-          done <<< "$files"
+          done < "$files"
           echo "daemon=$daemon" >> "$GITHUB_OUTPUT"
           echo "online=$online" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
