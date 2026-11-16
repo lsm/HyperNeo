@@ -15,7 +15,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived';
+type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived' | 'interrupted';
 
 function setup() {
   const db = new Database(':memory:');
@@ -34,13 +34,23 @@ function setup() {
       createdAt: 1,
     });
   createCodingTodoPack(new CodingTodoPrRepository(db), async () => []).schema(db);
-  const todo = (askId = 'feature', inRepo = repo): NeoTodo => {
+  const todo = (askId = 'feature', inRepo = repo, url?: string): NeoTodo => {
     const added = todos.addTodo(
       crypto.randomUUID(),
       askId,
-      { title: 'Slice', doneWhen: 'Merged', check: null, instruction: 'Do it', named: null },
+      {
+        title: 'Slice',
+        doneWhen: 'Merged',
+        check: url ? { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } : null,
+        instruction: 'Do it',
+        named: null,
+      },
       1
     );
+    if (url)
+      db.prepare(
+        'INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, 1)'
+      ).run(added.id, JSON.stringify([{ url, state: 'OPEN', checks: 'passing', review: 'none' }]));
     if (inRepo)
       db.prepare(
         'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
@@ -68,7 +78,13 @@ function setup() {
           ref: work,
           title: work.id,
           place: { machine: 'm', name: 'w' },
-          status: state === 'idle' ? 'done' : state === 'archived' ? 'stopped' : state,
+          status:
+            state === 'idle'
+              ? 'done'
+              : state === 'archived' || state === 'interrupted'
+                ? 'stopped'
+                : state,
+          ...(state === 'archived' ? { archived: true } : {}),
           lastActivityAt: 1,
         },
       },
@@ -225,5 +241,35 @@ describe('coding session target decision', () => {
     const results = await Promise.all([decide(todo(), start()), decide(todo(), start())]);
     expect(results.filter((result) => 'value' in result)).toHaveLength(1);
     expect(results.filter((result) => 'reason' in result)).toHaveLength(1);
+  });
+
+  test('a stopped but open feature session keeps its feature', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    worked(todo('other'), 'gone', 'backend-3', 'done');
+    live['backend-1'] = 'interrupted';
+    live.gone = 'archived';
+    expect(await decide(todo(), start())).toEqual({
+      value: { verb: 'send', ref: ref('backend-1') },
+    });
+  });
+
+  test('later slices of a PR follow the session that took over its archived holder', async () => {
+    const { todo, worked, live, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    await decide(first, start('backend'));
+    worked(first, 'holder', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    live.holder = 'archived';
+    const second = todo('feature', repo, url);
+    expect(await decide(second, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    worked(second, 'spare', undefined, 'done');
+    expect(await decide(todo('feature', repo, url), start())).toEqual({
+      value: { verb: 'send', ref: ref('spare') },
+    });
   });
 });
