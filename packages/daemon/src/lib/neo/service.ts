@@ -355,6 +355,17 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      scan: async (now) =>
+        (
+          await Promise.all(
+            this.packs().map((pack) =>
+              (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
+                this.log.warn(`Attention scan ${pack.id} failed`, error);
+                return [];
+              })
+            )
+          )
+        ).flat(),
       tell: (this.attention = createNeoAttention({
         kinds: () => [
           ...NEO_ATTENTION_KINDS,
