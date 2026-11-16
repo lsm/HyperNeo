@@ -84,24 +84,27 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
       since: row?.since ?? 1,
     })[which]!;
   };
-  const wakeNote = (askId: string, options: { batch?: string; status?: string } = {}) => {
-    const payload = {
-      to: { kind: 'session', sessionId: 'neo' },
-      origin: 'session:neo',
-      messageUuid: wakeUuid(askId),
-      message: { type: 'user', message: { content: 'reminder' } },
-      ...(options.batch ? { neoBatchUuid: options.batch } : {}),
-    };
-    db.prepare(`INSERT INTO job_queue
-      (id, queue, status, payload, run_at, created_at, completed_at)
-      VALUES (?, 'neo_notes', ?, ?, 0, 0, 0)`).run(
-      `note-${askId}-${++seq}`,
-      options.status ?? 'completed',
-      JSON.stringify(payload)
+  const queue = () => new NeoWakeQueueRepository(db);
+  const held = (messageUuid: string, sessionId = 'neo') =>
+    queue().holdOnce(
+      createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        origin: `session:${sessionId}`,
+        messageUuid,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'reminder' },
+          inputKind: 'system',
+        },
+      })
     );
+  const wakeNote = (askId: string, batch?: string) => {
+    held(wakeUuid(askId));
+    if (batch) queue().attach('neo', [], undefined, batch);
   };
   const consumedWake = (askId: string, turnEnds = true) => {
-    wakeNote(askId, { batch: `batch-${askId}` });
+    wakeNote(askId, `batch-${askId}`);
     sdk('user', `batch-${askId}`, 10);
     if (turnEnds) sdk('result', `result-${askId}`, 11);
   };
@@ -229,7 +232,7 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     add('finished', 'done');
     wakeNote('ask');
     expect(await sweep()).toEqual([]);
-    wakeNote('ask', { batch: 'unconsumed-batch', status: 'completed' });
+    wakeNote('ask', 'unconsumed-batch');
     sdk('user', 'unconsumed-batch', null, 'enqueued');
     expect(await sweep()).toEqual([]);
     expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
@@ -307,16 +310,8 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     coordinator();
     session('earlier');
     add('removed', 'removed', { reason: 'Not needed' });
-    db.prepare(`INSERT INTO job_queue
-      (id, queue, status, payload, run_at, created_at, completed_at)
-      VALUES ('held', 'neo_notes', 'completed', ?, 0, 0, 0)`).run(
-      JSON.stringify({
-        to: { kind: 'session', sessionId: 'earlier' },
-        messageUuid: wakeUuid('ask', 2),
-        message: { type: 'user', message: { content: 'reminder' } },
-        neoBatchUuid: 'earlier-batch',
-      })
-    );
+    held(wakeUuid('ask', 2), 'earlier');
+    queue().attach('earlier', [], undefined, 'earlier-batch');
     sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
     sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
     expect(await sweep()).toEqual(['ask']);
@@ -324,21 +319,8 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
 
   test('a digest read before the queue cleanup settles the ask once its child settles', async () => {
     add('removed', 'removed', { reason: 'Not needed' });
-    const queue = new NeoWakeQueueRepository(db);
-    queue.holdOnce(
-      createMailboxEntry({
-        to: { kind: 'session', sessionId: 'neo' },
-        origin: 'session:neo',
-        messageUuid: wakeUuid('ask', 2),
-        message: {
-          type: 'user',
-          parent_tool_use_id: null,
-          message: { content: 'reminder' },
-          inputKind: 'system',
-        },
-      })
-    );
-    queue.attach('neo', [], undefined, 'digest-batch');
+    held(wakeUuid('ask', 2));
+    queue().attach('neo', [], undefined, 'digest-batch');
     sdk('user', 'digest-batch', 10);
     sdk('result', 'digest-result', 11);
     store.openAsk({
@@ -465,21 +447,10 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         kind === 'result' ? 1 : 0,
         'consumed'
       );
-    const note = db.prepare(`INSERT INTO job_queue
-      (id, queue, status, payload, run_at, created_at, completed_at)
-      VALUES (?, 'neo_notes', 'completed', ?, 0, 0, 0)`);
+    for (let i = 0; i < 1946; i += 1)
+      held(i < asks.length ? wakeUuid(asks[i]!) : `bulk-note-${i}`, 'big');
+    queue().attach('big', [], undefined, 'bulk-batch');
     db.transaction(() => {
-      for (let i = 0; i < 1946; i += 1)
-        note.run(
-          `bulk-note-${i}`,
-          JSON.stringify({
-            to: { kind: 'session', sessionId: 'big' },
-            origin: 'session:big',
-            messageUuid: wakeUuid(`bulk-${i % asks.length}`),
-            message: { type: 'user', message: { content: 'reminder' } },
-            neoBatchUuid: `bulk-batch-${i}`,
-          })
-        );
       for (let i = 0; i < 86_710; i += 1)
         bulkSdk(i % 2 ? 'result' : 'user', `bulk-msg-${i}`, i + 1);
       for (const id of asks) {

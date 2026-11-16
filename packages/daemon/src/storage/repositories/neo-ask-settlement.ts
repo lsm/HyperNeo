@@ -8,6 +8,7 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
+import { neoNoteBatches } from './neo-wake-queue-repository.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 
 type Input = { askId: string; status: 'done' | 'dropped'; outcome: string; todosVersion?: string };
@@ -222,24 +223,17 @@ const wakeRecipients = (db: Database, asks: readonly Candidate[]): Recipients =>
       id: string;
     } | null
   )?.id;
-  const told = new Map(asks.flatMap((ask) => ask.uuids.map((uuid) => [uuid, ask.id] as const)));
-  const recipients: Recipients = new Map(
-    asks.map((ask) => [
-      ask.id,
-      new Map([ask.session_id, neo ?? ask.session_id].map((id) => [id, [...ask.uuids]])),
-    ])
+  return new Map(
+    asks.map((ask) => {
+      const sessions = new Map(
+        [ask.session_id, neo ?? ask.session_id].map((id) => [id, [...ask.uuids]])
+      );
+      for (const uuid of ask.uuids)
+        for (const { sessionId, batchUuid } of neoNoteBatches(db, uuid))
+          sessions.set(sessionId, [...(sessions.get(sessionId) ?? []), batchUuid]);
+      return [ask.id, sessions];
+    })
   );
-  for (const row of db
-    .prepare(`SELECT json_extract(payload, '$.to.sessionId') AS session_id,
-      json_extract(payload, '$.messageUuid') AS message_uuid,
-      json_extract(payload, '$.neoBatchUuid') AS batch_uuid
-      FROM job_queue WHERE queue = 'neo_notes' AND status = 'completed'`)
-    .iterate() as Iterable<Record<'session_id' | 'message_uuid' | 'batch_uuid', string | null>>) {
-    const sessions = recipients.get(told.get(row.message_uuid ?? '') ?? '');
-    if (sessions && row.session_id && row.batch_uuid)
-      sessions.set(row.session_id, [...(sessions.get(row.session_id) ?? []), row.batch_uuid]);
-  }
-  return recipients;
 };
 
 const askWakeEnded = (

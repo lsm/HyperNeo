@@ -12,6 +12,26 @@ import { canonicalJson, PromptContentConflictError } from '../../lib/agent/promp
 
 const LANE = 'neo_notes';
 const INTERVAL = 15 * 60_000;
+const RECEIPT = 'neo-note:';
+const receiptKey = (entry: MailboxEntry) =>
+  `${RECEIPT}${entry.messageUuid ?? entry.id}:${entry.to.kind === 'session' ? entry.to.sessionId : ''}`;
+
+export const neoNoteBatches = (
+  db: Database,
+  messageUuid: string
+): { sessionId: string; batchUuid: string }[] => {
+  const prefix = `${RECEIPT}${messageUuid}:`;
+  return (
+    db
+      .prepare('SELECT key, receipt FROM message_send_receipts WHERE key >= ? AND key < ?')
+      .all(prefix, `${prefix}\uffff`) as { key: string; receipt: string }[]
+  ).flatMap((row) => {
+    const batchUuid: unknown = JSON.parse(row.receipt);
+    return typeof batchUuid === 'string'
+      ? [{ sessionId: row.key.slice(prefix.length), batchUuid }]
+      : [];
+  });
+};
 
 export class NeoWakeQueueRepository {
   constructor(private readonly db: Database) {}
@@ -84,15 +104,10 @@ export class NeoWakeQueueRepository {
   }
 
   holdOnce(entry: MailboxEntry): void {
-    const sessionId = entry.to.kind === 'session' ? entry.to.sessionId : '';
-    new JobQueueRepository(this.db).commitSubmissionReceipt(
-      `neo-note:${sessionId}:${entry.messageUuid ?? entry.id}`,
-      'v1',
-      () => {
-        this.hold(entry);
-        return true;
-      }
-    );
+    new JobQueueRepository(this.db).commitSubmissionReceipt(receiptKey(entry), 'v1', () => {
+      this.hold(entry);
+      return true;
+    });
   }
 
   attach(
@@ -139,6 +154,12 @@ export class NeoWakeQueueRepository {
           "UPDATE job_queue SET status='completed', completed_at=?, payload=json_set(payload, '$.neoBatchUuid', ?) WHERE id=? AND queue=?"
         )
         .run(Date.now(), deliveryUuid, note.id, LANE);
+    const delivered = this.db.prepare('UPDATE message_send_receipts SET receipt=? WHERE key=?');
+    for (const note of notes)
+      delivered.run(
+        JSON.stringify(deliveryUuid),
+        receiptKey(note.payload as unknown as MailboxEntry)
+      );
     return [
       ...blocks,
       ...(typeof content === 'string' ? [{ type: 'text' as const, text: content }] : content),

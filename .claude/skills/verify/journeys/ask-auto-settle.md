@@ -7,10 +7,10 @@ under `env -i` with NODE_ENV=test, a private HOME and HYPERNEO_DATA_DIR.
 
 The helper starts an isolated daemon on an ephemeral non-8399 port and seeds
 four asks on one synthetic session: one with a finished step, one with no
-steps, one with a live todo and one with an open card. It records a completed
-neo_notes wake for each and the consumed batch user message plus the terminal
-result row that together prove Neo's reminder was consumed in a turn that has
-ended, then invokes the production one-minute refresh handler once.
+steps, one with a live todo and one with an open card. It records for each the
+consumed wake message, under the id the attention entry gives it, plus the
+terminal result row that together prove Neo's reminder was consumed in a turn
+that has ended, then invokes the production one-minute refresh handler once.
 
 After the refresh the finished ask is `done` with the generated sentence
 "Finished Ship the slice.", and the ask that never had a todo stays `open` —
