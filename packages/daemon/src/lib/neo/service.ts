@@ -1375,7 +1375,7 @@ export class NeoService {
           ids: settleIds,
           versions,
         }).catch((error) => this.log.warn('Ask auto-settle pending', error));
-      await wakeStalledAsks(this.todos, this.deliverForward.bind(this), Date.now()).catch((error) =>
+      await wakeStalledAsks(this.todos, this.attention, Date.now()).catch((error) =>
         this.log.warn('Stalled ask wake pending', error)
       );
       await this.sessionWatcher.watchSessions(Date.now());

@@ -1,12 +1,15 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
+import { neoFinishedAskUuids } from '../../lib/neo/stalled-asks.ts';
 import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NEO_ANSWER_NOTE, NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NeoRepository } from './neo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
+import { neoNoteBatches } from './neo-wake-queue-repository.ts';
 import { SESSION_BILLING_TERMINAL, CONSUMED_INPUT } from './sdk-message-input-predicates.ts';
 
 type Input = { askId: string; status: 'done' | 'dropped'; outcome: string; todosVersion?: string };
@@ -145,14 +148,32 @@ export const neoAskSettlementWrites = defineRepositoryOp(
   ['settle']
 );
 
-const WAKE_NOTE_PREFIX = 'neo-stalled-ask:';
 const MAX_IN_LIST = 500;
 
+type Candidate = {
+  id: string;
+  session_id: string;
+  updated_at: number;
+  since: number;
+  answer_note: string | null;
+  uuids: string[];
+};
 type SessionFacts = {
   maxConsumedInput: number | null;
   lastTerminal: { seq: number; timestamp: string } | null;
-  batchUuidsByAsk: Map<string, Set<string>>;
 };
+
+const CANDIDATE_SELECT = `SELECT id, session_id, updated_at, title,
+  (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id) AS since,
+  (SELECT CASE WHEN q.answered_by = 'button' THEN '${NEO_ANSWER_NOTE.button}' || q.id
+      WHEN q.answer_provenance_json IS NOT NULL THEN '${NEO_ANSWER_NOTE.relay}' || q.id END
+    FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'answered'
+    ORDER BY q.answered_at DESC LIMIT 1) AS answer_note FROM neo_asks`;
+
+const candidate = (row: Omit<Candidate, 'uuids'> & { title: string }): Candidate => ({
+  ...row,
+  uuids: neoFinishedAskUuids(row),
+});
 
 const latestConsumedSeq = (db: Database, sessionId: string, predicate: string): number | null =>
   (
@@ -166,29 +187,19 @@ const latestConsumedSeq = (db: Database, sessionId: string, predicate: string): 
 const wakeTurnSeqs = (
   db: Database,
   sessionId: string,
-  askId: string,
-  batchUuids: Set<string> | undefined
+  uuids: readonly string[],
+  since: number
 ): number[] => {
   const seqs: number[] = [];
-  const direct =
-    db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
-    WHERE session_id = ? AND message_type = 'user' AND consumed_seq IS NOT NULL
-      AND sdk_uuid >= ? AND sdk_uuid < ?`);
-  for (const row of direct.iterate(
-    sessionId,
-    `${WAKE_NOTE_PREFIX}${askId}:`,
-    `${WAKE_NOTE_PREFIX}${askId};`
-  ) as Iterable<{ seq: number }>)
-    seqs.push(row.seq);
-  const uuidList = [...(batchUuids ?? [])];
-  for (let at = 0; at < uuidList.length; at += MAX_IN_LIST) {
-    const chunk = uuidList.slice(at, at + MAX_IN_LIST);
+  const from = new Date(since).toISOString();
+  for (let at = 0; at < uuids.length; at += MAX_IN_LIST) {
+    const chunk = uuids.slice(at, at + MAX_IN_LIST);
     const marks = chunk.map(() => '?').join(',');
-    const batch =
+    const told =
       db.prepare(`SELECT consumed_seq AS seq FROM sdk_messages INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = ? AND message_type = 'user' AND consumed_seq IS NOT NULL
-        AND sdk_uuid IN (${marks})`);
-    for (const row of batch.iterate(sessionId, ...chunk) as Iterable<{ seq: number }>)
+        AND sdk_uuid IN (${marks}) AND timestamp >= ?`);
+    for (const row of told.iterate(sessionId, ...chunk, from) as Iterable<{ seq: number }>)
       seqs.push(row.seq);
   }
   return seqs;
@@ -211,78 +222,71 @@ const wakeTurnEnded = (
   return wakeSeqs.some((seq) => seq <= terminal.seq && ended.get(sessionId, seq, since) != null);
 };
 
-const sessionFacts = (
-  db: Database,
-  sessionId: string,
-  batchesBySession: Map<string, Map<string, Set<string>>>
-): SessionFacts => ({
+const sessionFacts = (db: Database, sessionId: string): SessionFacts => ({
   maxConsumedInput: latestConsumedSeq(db, sessionId, CONSUMED_INPUT),
   lastTerminal: db
     .prepare(`SELECT consumed_seq AS seq, timestamp FROM sdk_messages
       WHERE session_id = ? AND consumed_seq IS NOT NULL AND ${SESSION_BILLING_TERMINAL}
       ORDER BY consumed_seq DESC LIMIT 1`)
     .get(sessionId) as { seq: number; timestamp: string } | null,
-  batchUuidsByAsk: batchesBySession.get(sessionId) ?? new Map(),
 });
 
-const wakeBatchesBySession = (db: Database): Map<string, Map<string, Set<string>>> => {
-  const batches = new Map<string, Map<string, Set<string>>>();
-  for (const row of db
-    .prepare(`SELECT json_extract(payload, '$.to.sessionId') AS session_id,
-      json_extract(payload, '$.messageUuid') AS message_uuid,
-      json_extract(payload, '$.neoBatchUuid') AS batch_uuid
-      FROM job_queue WHERE queue = 'neo_notes' AND status = 'completed'`)
-    .iterate() as Iterable<{
-    session_id: string | null;
-    message_uuid: string | null;
-    batch_uuid: string | null;
-  }>) {
-    if (!row.session_id || !row.message_uuid || !row.batch_uuid) continue;
-    if (!row.message_uuid.startsWith(WAKE_NOTE_PREFIX)) continue;
-    const askId = row.message_uuid.slice(WAKE_NOTE_PREFIX.length).split(':')[0]!;
-    let byAsk = batches.get(row.session_id);
-    if (!byAsk) batches.set(row.session_id, (byAsk = new Map()));
-    let uuids = byAsk.get(askId);
-    if (!uuids) byAsk.set(askId, (uuids = new Set()));
-    uuids.add(row.batch_uuid);
-  }
-  return batches;
+type Recipients = Map<string, Map<string, string[]>>;
+
+const wakeRecipients = (db: Database, asks: readonly Candidate[]): Recipients => {
+  const neo = new NeoRepository(db).defaultBinding()?.sessionId;
+  return new Map(
+    asks.map((ask) => {
+      const sessions = new Map(
+        [ask.session_id, neo ?? ask.session_id].map((id) => [id, [...ask.uuids]])
+      );
+      for (const { sessionId, batchUuid } of neoNoteBatches(db, `ask.idle:${ask.id}`))
+        sessions.set(sessionId, [...(sessions.get(sessionId) ?? []), batchUuid]);
+      return [ask.id, sessions];
+    })
+  );
 };
 
 const askWakeEnded = (
   db: Database,
-  ask: { id: string; session_id: string; updated_at: number },
-  fact: SessionFacts
+  ask: Candidate,
+  recipients: Recipients,
+  facts: Map<string, SessionFacts>
 ): boolean => {
-  if (
-    fact.maxConsumedInput !== null &&
-    (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
-  )
+  if (ask.answer_note && !wakeTurnSeqs(db, ask.session_id, [ask.answer_note], 0).length)
     return false;
-  const wakeSeqs = wakeTurnSeqs(db, ask.session_id, ask.id, fact.batchUuidsByAsk.get(ask.id));
-  return wakeTurnEnded(db, ask.session_id, fact.lastTerminal, wakeSeqs, ask.updated_at);
+  let ended = false;
+  for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
+    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids, ask.since);
+    if (!wakeSeqs.length && sessionId !== ask.session_id) continue;
+    let fact = facts.get(sessionId);
+    if (!fact) facts.set(sessionId, (fact = sessionFacts(db, sessionId)));
+    if (
+      fact.maxConsumedInput !== null &&
+      (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
+    )
+      return false;
+    ended ||= wakeTurnEnded(db, sessionId, fact.lastTerminal, wakeSeqs, ask.updated_at);
+  }
+  return ended;
 };
 
 const settleReadyAsks = (db: Database): string[] => {
-  const candidates = db
-    .prepare(`SELECT id, session_id, updated_at FROM neo_asks WHERE status = 'open'
+  const candidates = (
+    db
+      .prepare(`${CANDIDATE_SELECT} WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id)
       AND NOT EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
         AND t.state IN ('todo', 'doing', 'blocked'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open')
       AND NOT EXISTS (SELECT 1 FROM neo_asks child WHERE child.parent_id = neo_asks.id
         AND child.status = 'open')`)
-    .all() as { id: string; session_id: string; updated_at: number }[];
+      .all() as Parameters<typeof candidate>[0][]
+  ).map(candidate);
   if (!candidates.length) return [];
-  const batches = wakeBatchesBySession(db);
+  const recipients = wakeRecipients(db, candidates);
   const facts = new Map<string, SessionFacts>();
-  const ready: string[] = [];
-  for (const ask of candidates) {
-    let fact = facts.get(ask.session_id);
-    if (!fact) facts.set(ask.session_id, (fact = sessionFacts(db, ask.session_id, batches)));
-    if (askWakeEnded(db, ask, fact)) ready.push(ask.id);
-  }
-  return ready;
+  return candidates.filter((ask) => askWakeEnded(db, ask, recipients, facts)).map((ask) => ask.id);
 };
 
 const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
@@ -376,23 +380,19 @@ export const neoAskTurnedSettleWrites = defineDbOp<
   run(db, { now, ids, versions }, changes) {
     const store = new NeoAskTodoRepository(db, undefined, undefined, undefined, changes);
     if (!ids.length) return [];
-    const batches = wakeBatchesBySession(db);
+    const asks = ids.flatMap((id) => {
+      const row = db.prepare(`${CANDIDATE_SELECT} WHERE id = ?`).get(id) as
+        | Parameters<typeof candidate>[0]
+        | undefined;
+      return row?.since == null ? [] : [candidate(row)];
+    });
+    const recipients = wakeRecipients(db, asks);
     const facts = new Map<string, SessionFacts>();
     const settled: string[] = [];
-    for (const id of ids) {
-      const ask = store.getAsk(id);
-      if (!ask) continue;
+    for (const ask of asks) {
+      const id = ask.id;
       if (versions && neoAskTodosVersion(store.listTodos(id)) !== versions[id]) continue;
-      let fact = facts.get(ask.sessionId);
-      if (!fact) facts.set(ask.sessionId, (fact = sessionFacts(db, ask.sessionId, batches)));
-      if (
-        !askWakeEnded(
-          db,
-          { id: ask.id, session_id: ask.sessionId, updated_at: ask.updatedAt },
-          fact
-        )
-      )
-        continue;
+      if (!askWakeEnded(db, ask, recipients, facts)) continue;
       const outcome = turnedSettle(store, id, now, changes);
       if (typeof outcome === 'string') settled.push(outcome);
     }

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { createCleanupHandler } from '../../../packages/daemon/src/lib/job-handlers/cleanup.handler.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
 
@@ -35,39 +36,58 @@ const open = async () => {
 };
 const close = async () => { await service?.dispose(); service = undefined; await app?.cleanup(); app = undefined; };
 const refresh = () => refreshNeoDriverWork(app!.jobQueue, service!);
-const notes = () => app!.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all() as { payload: string }[];
-const check = (name: string, count: number) => {
-  const rows = notes();
+const root = 'neo:00000000-0000-4000-8000-000000008419';
+const idle = 'This ask has nothing in progress. Add the next todo, or settle it.';
+const finished = 'All todos are finished: write the outcome with neo.ask.settle, or add the next todo.';
+const told = (queue: 'mailbox' | 'neo_notes') => (app!.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue=? ORDER BY created_at, rowid").all(queue) as { payload: string }[]).map((row) => JSON.parse(row.payload) as { to: { sessionId: string }; messageUuid: string; message: { message: { content: string } } }).filter((input) => input.message.message.content.startsWith('Ask: '));
+const check = (name: string, digests: number, wakes = 0) => {
+  const rows = { digests: told('neo_notes'), wakes: told('mailbox') };
   (evidence.checks as unknown[]).push({ name, clock, rows });
-  assert.equal(rows.length, count, name);
-  for (const row of rows) {
-    const input = JSON.parse(row.payload);
-    assert.equal(input.to.sessionId, 'neo:00000000-0000-4000-8000-000000008419');
-    assert(JSON.stringify(input).includes('This ask has nothing in progress. Add the next todo, or settle it.'));
-    assert(JSON.stringify(input).includes('stalled'));
-  }
+  assert.equal(rows.digests.length, digests, name);
+  assert.equal(rows.wakes.length, wakes, name);
+  for (const input of [...rows.digests, ...rows.wakes]) assert.equal(input.to.sessionId, root);
+  for (const input of rows.digests) assert.equal(input.message.message.content, `Ask: stalled (stalled)\n${idle}`);
+  for (const input of rows.wakes) assert.equal(input.message.message.content, `Ask: finished (finished)\n${finished}`);
 };
 try {
   await open();
-  const root = 'neo:00000000-0000-4000-8000-000000008419';
   app!.db.getDatabase().prepare('INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)').run(root, 'Synthetic coordinator', 'general', join(run, 'workspace'), new Date(at).toISOString(), new Date(at).toISOString(), 'active', '{}', '{}');
-  for (const id of ['stalled', 'settled', 'question']) {
+  service!.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  for (const id of ['stalled', 'settled', 'question', 'blocked', 'failed']) {
     const ask = service!.todos.openAsk({ id, sessionId: root, projectId: null, originMessageId: null, title: id, request: 'Synthetic work', createdAt: at });
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
     if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
+    if (id === 'blocked') service!.todos.updateTodo(service!.todos.addTodo('blocked-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Needs a decision' }, at);
+    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'failed', reason: 'Synthetic failure' }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);
   clock++;
-  await Promise.all([refresh(), refresh()]); check('one wake at threshold', 1);
+  await Promise.all([refresh(), refresh()]); check('one digest line at threshold', 1);
   await close();
   await open();
-  await refresh(); check('restart preserves cooldown', 1);
-  clock += 4 * hour - 1;
+  await refresh(); check('restart tells nothing again', 1);
+  clock = at + 6 * hour;
+  await refresh(); check('no repeat at four hours', 1);
+  clock = at + 24 * hour - 1;
   await refresh(); check('no early repeat', 1);
   clock++;
-  await refresh(); check('repeat at four hours', 2);
-  assert.equal(new Set(notes().map(row => JSON.parse(row.payload).messageUuid)).size, 2);
+  await refresh(); check('one repeat after a day', 2);
+  clock = at + 72 * hour;
+  await refresh(); check('no repeat after the last rung', 2);
+  assert.equal(new Set(told('neo_notes').map((input) => input.messageUuid)).size, 2);
+  clock = at + 30 * 24 * hour;
+  evidence.cleaned = (await createCleanupHandler(app!.db.getJobQueueRepo())({} as never)).deletedJobs;
+  check('queue cleanup removes the delivered lines', 0);
+  await refresh(); check('a cleaned-up line is not told again', 0);
+  service!.todos.openAsk({ id: 'finished', sessionId: root, projectId: null, originMessageId: null, title: 'finished', request: 'Synthetic work', createdAt: clock });
+  service!.todos.updateTodo(service!.todos.addTodo('finished-step', 'finished', { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, clock), { state: 'done' }, clock);
+  await Promise.all([refresh(), refresh()]); check('a finished ask wakes at once', 0, 1);
+  clock += 60_000;
+  service!.todos.recordAskOutcome('finished', 'Shipped', clock);
+  await refresh(); check('writing the outcome does not wake again', 0, 1);
+  evidence.askColumns = (app!.db.getDatabase().prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[]).map((column) => column.name);
+  assert(!(evidence.askColumns as string[]).includes('stalled_wake_at'));
   evidence.passed = true;
 } catch (error) {
   evidence.error = String(error);

@@ -4,6 +4,8 @@ import {
   type NeoAttentionKnown,
   decideNeoAttention,
   NEO_ATTENTION_KINDS,
+  neoAttentionUuid,
+  neoAttentionUuids,
   renderNeoAttention,
 } from '../../../../src/lib/neo/attention/decide.ts';
 
@@ -197,5 +199,21 @@ describe('renderNeoAttention', () => {
         NEO_ATTENTION_KINDS
       )
     ).toBe('Opened #12');
+  });
+});
+
+describe('neoAttentionUuids', () => {
+  test('a ladder kind has one id per rung it can reach, each the id its tell uses', () => {
+    const finished = event('ask.finished', { text: 'All todos are finished' });
+    expect(neoAttentionUuids(finished, NEO_ATTENTION_KINDS)).toEqual(
+      [0, 1].map((rung) => neoAttentionUuid(finished, rung, 'All todos are finished'))
+    );
+  });
+
+  test('a one-shot kind has one id', () => {
+    const report = event('turn.report', { text: 'Opened #12' });
+    expect(neoAttentionUuids(report, NEO_ATTENTION_KINDS)).toEqual([
+      neoAttentionUuid(report, 0, 'Opened #12'),
+    ]);
   });
 });

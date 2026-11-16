@@ -27,10 +27,10 @@ export function neoAttentionNotes(
     () => false
   );
   const sunk =
-    (queue: 'mailbox' | 'neo_notes', deliver: typeof delivery.wake): typeof delivery.wake =>
-    async (uuid, text) => {
+    (queue: 'mailbox' | 'neo_notes', deliver: typeof delivery.digest): typeof delivery.digest =>
+    async (uuid, text, event) => {
       const before = texts(queue).length;
-      const sent = await deliver(uuid, text);
+      const sent = await deliver(uuid, text, event);
       if (texts(queue).length > before) sink(text);
       return sent;
     };
