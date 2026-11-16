@@ -20,6 +20,12 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import { NEO_ATTENTION_KINDS } from '../../../../src/lib/neo/attention/decide.ts';
+import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
+import {
+  createNeoAttention,
+  neoAttentionDelivery,
+} from '../../../../src/lib/neo/attention/tell.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -741,5 +747,150 @@ test('repeating a large ambiguous report shares one wake despite fresh published
     if (before === undefined) delete process.env.HYPERNEO_DATA_DIR;
     else process.env.HYPERNEO_DATA_DIR = before;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a question from a session with no open todo becomes a Neo todo that wakes Neo again at 1 h', async () => {
+  const { db, service, send } = await setup();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  const sweep = createNeoAttentionSweep({
+    sessions: service.todoSessions,
+    packs: () => [],
+    limits: () => ({ running: 6, perGroup: 3 }),
+    tell: createNeoAttention({
+      kinds: () => NEO_ATTENTION_KINDS,
+      read: () => ({ covered: false, latestReportAt: null }),
+      ...neoAttentionDelivery(
+        db.getDatabase(),
+        () => 'neo',
+        () => false
+      ),
+      dropped: () => {},
+    }),
+    failed: (_event, error) => {
+      throw error;
+    },
+  });
+  const wakes = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .map((job) => JSON.stringify(job.payload))
+      .filter((text) => text.includes('Close the merged todo'));
+  try {
+    const sent = await send(
+      { to: 'neo', kind: 'question', text: 'Close the merged todo\nIts pull request merged.' },
+      'stranger'
+    );
+    expect(sent).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    const asks = service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask');
+    expect(asks).toHaveLength(1);
+    const [request] = service.todos.listTodos(asks[0].id);
+    expect(request).toMatchObject({ title: 'Close the merged todo', state: 'todo' });
+    expect(request.approvedAt).not.toBeNull();
+    await sweep(now + 30 * 60_000);
+    const before = wakes().length;
+    await sweep(now + 60 * 60_000);
+    expect(wakes().length).toBe(before + 1);
+    expect(
+      await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker')
+    ).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
+    expect(service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask')).toHaveLength(1);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a request todo names its sender, and a repeat after Neo closes it records nothing', async () => {
+  const { db, service, send } = await setup();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  const count = (sql: string) => (db.getDatabase().prepare(sql).get() as { n: number }).n;
+  const records = () => ({
+    receipts: count('SELECT COUNT(*) AS n FROM message_send_receipts'),
+    mailbox: count("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox'"),
+    asks: count('SELECT COUNT(*) AS n FROM neo_asks'),
+    todos: count('SELECT COUNT(*) AS n FROM neo_todos'),
+  });
+  try {
+    db.getDatabase()
+      .prepare(
+        "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo','Neo','/synthetic','2026-10-25','2026-10-25','active','{}','{}')"
+      )
+      .run();
+    const request = { to: 'neo', kind: 'question', text: 'Close the merged todo' };
+    const first = await send(request, 'stranger');
+    if (first.kind !== 'completed') throw new Error(JSON.stringify(first));
+    const { messageId } = first.value as {
+      messageId: `${string}-${string}-${string}-${string}-${string}`;
+    };
+    const [ask] = service.todos.listOpenAsks().filter((item) => item.id !== 'ask');
+    const [todo] = service.todos.listTodos(ask.id);
+    expect(todo.named).toEqual({ requestFrom: 'stranger' });
+    const job = db.getJobQueueRepo().dequeue('mailbox')[0];
+    await db.saveUserMessage(
+      'neo',
+      {
+        type: 'user',
+        uuid: messageId,
+        session_id: 'neo',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'synthetic' },
+      },
+      'consumed'
+    );
+    db.getJobQueueRepo().complete(job.id, {});
+    service.todos.updateTodo(todo, { state: 'done', finishedAt: now }, now);
+    clock.mockReturnValue(now + 11 * 60_000);
+    const before = records();
+    expect(await send(request, 'stranger')).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected' },
+    });
+    expect(records()).toEqual(before);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a retried request whose todo failed to record records it on the retry, waking Neo once', async () => {
+  const { db, service, send } = await setup();
+  const request = {
+    to: 'neo',
+    kind: 'question',
+    text: 'Close the merged todo',
+    idempotencyKey: 'request-once',
+  };
+  const wakes = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .filter((job) => JSON.stringify(job.payload).includes('Close the merged todo'));
+  const add = vi.spyOn(service.todos, 'addTodo').mockImplementationOnce(() => {
+    throw new Error('synthetic todo write failure');
+  });
+  try {
+    expect(await send(request, 'stranger')).not.toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    add.mockRestore();
+    expect(await send(request, 'stranger')).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    const asks = service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask');
+    expect(asks).toHaveLength(1);
+    expect(service.todos.listTodos(asks[0].id)).toHaveLength(1);
+    expect(wakes()).toHaveLength(1);
+  } finally {
+    add.mockRestore();
+    service.dispose();
+    db.close();
   }
 });
