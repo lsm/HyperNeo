@@ -28,7 +28,7 @@ function setup() {
          VALUES ('lsm/hyperneo', ?, 'Fix login', 'b', 'abc1234def', ?, 0, ?, 0)`
       )
       .run(number, state, ownerRef ? JSON.stringify(ownerRef) : null);
-  const told: { ref: unknown; key: string; text: string }[] = [];
+  const told: { ref: unknown; key: string; text: string; findings?: readonly string[] }[] = [];
   const woken: { kind: string; subject: string; text: string }[] = [];
   let reachable = true;
   const attend = async (event: NeoAttentionEvent) => {
@@ -37,9 +37,15 @@ function setup() {
   };
   const deps = {
     host: 'github.com',
-    tell: async (ref: unknown, key: string, text: string) => {
+    tell: async (
+      ref: unknown,
+      key: string,
+      text: string,
+      _pr?: string,
+      findings?: readonly string[]
+    ) => {
       if (!reachable) return false;
-      told.push({ ref, key, text });
+      told.push({ ref, key, text, ...(findings?.length ? { findings } : {}) });
       return true;
     },
     attend,
@@ -346,8 +352,9 @@ describe('sweepCodingPrs failed cross-model review', () => {
     expect(told).toEqual([
       {
         ref: owner,
-        key: 'neo-pr-sweep:lsm/hyperneo#11:abc1234def:changes_requested:1',
-        text: 'lsm/hyperneo#11 "Fix login" has been waiting on requested changes for 20 min on head abc1234. Address the review and push. Review findings: P1 the retry loop never stops.',
+        key: 'neo-pr-sweep:lsm/hyperneo#11:abc1234def:changes_requested:review:1',
+        text: 'lsm/hyperneo#11 "Fix login" has been waiting on requested changes for 20 min on head abc1234. Address the review and push.',
+        findings: ['P1 the retry loop never stops.'],
       },
     ]);
     expect(woken).toEqual([]);

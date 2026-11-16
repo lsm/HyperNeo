@@ -11,7 +11,12 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { planCodingPrEvent } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import {
+  CodingPrEventRepository,
+  planCodingPrEvent,
+} from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrSweepRepository } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
+import { WORK_MESSAGE_MAX } from '../../../../src/lib/drivers/work-operations.ts';
 import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
@@ -503,9 +508,138 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
     expect(
       ledger.snapshot(null, 200).map((row) => [row.pr, row.state, row.ownerAdapter, row.ownerId])
     ).toEqual([['lsm/hyperneo#1', 'changes_requested', 'claude-desktop', 'author-1']]);
-    expect(planCodingPrEvent(moved!)?.text).toBe(
-      'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push. Review findings: P1 the retry loop never stops.'
+    expect(planCodingPrEvent(moved!)).toEqual({
+      key: 'neo-pr-event:lsm/hyperneo#1:h1:changes_requested:review',
+      text: 'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push.',
+      findings: ['P1 the retry loop never stops.'],
+    });
+    db.close();
+  });
+
+  test.each(['delivered', 'pending'])(
+    'a cross-model fail on a head GitHub already asked to change reaches its author once its earlier event is %s',
+    async (earlier) => {
+      const { db, ledger } = setup();
+      for (const [key, value] of Object.entries({
+        mergePolicy: 'review_bot',
+        reviewBot: 'bot',
+        crossModelReview: true,
+      }))
+        db.prepare(
+          `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+        ).run(key, JSON.stringify(value));
+      const url = 'https://github.com/lsm/hyperneo/pull/1';
+      const author = { adapter: 'claude-desktop', id: 'author-1' };
+      claim(db, 'live', 'doing', 10, url, author);
+      let review = 'APPROVED';
+      const read = async () =>
+        response([
+          node(1, {
+            body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+            reviews: {
+              nodes: [{ state: review, commit: { oid: 'h1' }, author: { login: 'bot' } }],
+            },
+          }),
+        ]);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 50);
+      review = 'CHANGES_REQUESTED';
+      await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+      const events = new CodingPrEventRepository(db);
+      const [github] = events.pendingEvents();
+      expect(planCodingPrEvent(github!)?.key).toBe(
+        'neo-pr-event:lsm/hyperneo#1:h1:changes_requested'
+      );
+      if (earlier === 'delivered') ledger.acceptTerminalEvent(github!, JSON.stringify(author), 150);
+      db.prepare('UPDATE pack_coding_pr_ledger SET nudges = 3').run();
+      expect(
+        ledger.recordStage(
+          {
+            url,
+            head: 'h1',
+            stage: 'review',
+            actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+            verdict: 'fail',
+            acceptanceContract: 'contract',
+            evidence: ['P1 the retry loop never stops.'],
+          },
+          300
+        )
+      ).toBe(true);
+      await reconcile(ledger, ['lsm/hyperneo'], read, 400);
+      expect(events.pendingEvents().map((row) => planCodingPrEvent(row))).toEqual([
+        {
+          key: 'neo-pr-event:lsm/hyperneo#1:h1:changes_requested:review',
+          text: 'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push.',
+          findings: ['P1 the retry loop never stops.'],
+        },
+      ]);
+      expect(
+        new CodingPrSweepRepository(db)
+          .rows()
+          .map((row) => [row.nudges, row.stateSince, row.findings])
+      ).toEqual([[0, 300, ['P1 the retry loop never stops.']]]);
+      db.close();
+    }
+  );
+
+  test('long review findings are cut to fit one worker message with its merge context', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    claim(db, 'live', 'doing', 10, url, { adapter: 'claude-desktop', id: 'author-1' });
+    const pr = node(1, {
+      body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const told: string[] = [];
+    const pack = createCodingPack({
+      database: () => db,
+      readPrs: async () => [],
+      todoPrs: new CodingTodoPrRepository(db),
+      prLedger: ledger,
+      prEvents: new CodingPrEventRepository(db),
+      prSweep: new CodingPrSweepRepository(db),
+      projectRepos: () => ['lsm/hyperneo'],
+      readLedgerRepo: named(async () => response([pr])),
+      prSweepDeps: {
+        tell: async (_ref, _key, text) => {
+          told.push(text);
+          return true;
+        },
+        wake: async () => true,
+      },
+      attend: async () => true,
+    });
+    await pack.sweep!(100);
+    const mentions = Array.from({ length: 400 }, (_, i) => `see other${i}/repo${i}#1`).join(' ');
+    ledger.recordStage(
+      {
+        url,
+        head: 'h1',
+        stage: 'review',
+        actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+        verdict: 'fail',
+        acceptanceContract: 'contract',
+        evidence: [`P1 ${mentions}`, 'x'.repeat(30_000)],
+      },
+      150
     );
+    await pack.sweep!(200);
+    expect(told).toHaveLength(1);
+    expect(told[0]!.length).toBeLessThanOrEqual(WORK_MESSAGE_MAX);
+    expect(told[0]).toContain(
+      'Address the review and push. Review findings: P1 see other0/repo0#1'
+    );
+    expect(told[0]).toContain('(truncated; ask Neo for the full cross-model review of this head)');
+    expect(told[0]).not.toContain('other0/repo0 merge policy');
+    expect(told[0]!.endsWith('crossModelReview: true; allowNoChecksMerge: false')).toBe(true);
     db.close();
   });
 
@@ -935,6 +1069,26 @@ describe('planCodingLedgerRead cross-model review', () => {
     expect(state(true, [])).toBe('waiting_cross_review');
     expect(state(true, [review('claude-opus-5-5')])).toBe('waiting_cross_review');
     expect(state(true, [review('gpt-6.1-sol', 'h0')])).toBe('waiting_cross_review');
+  });
+
+  test('a failed review by a different model on the head asks for changes even with failing CI or conflicts', () => {
+    const fail = { ...review('gpt-6.1-sol'), verdict: 'fail' as const };
+    const read = (more: Record<string, unknown>, ci = 'SUCCESS') =>
+      planCodingLedgerRead(
+        response([
+          {
+            ...pr,
+            ...more,
+            commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+          },
+        ]),
+        0,
+        () => policy,
+        () => [fail]
+      )?.rows[0].state;
+    expect(read({}, 'FAILURE')).toBe('changes_requested');
+    expect(read({ mergeable: 'CONFLICTING' })).toBe('changes_requested');
+    expect(read({ isDraft: true })).toBe('draft');
   });
 
   test('a passing review by a different model on the head makes it green', () => {
