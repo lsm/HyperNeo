@@ -185,11 +185,16 @@ that live channel, never in the config file or the hub environment.
 That request can arrive before any run exists: during `open`, or while the
 chat is idle. Today nothing would hear it. `createOapRuntime` awaits
 `openOapSession` before it builds the query hub. The only session
-subscription is made at submit, and its `readEvent` drops any event without a
-`run_id`. So PR 6 adds one session-level auth dispatcher:
+subscription is made at submit. Its `readEvent` turns any event without a
+`run_id` into an `Error('Invalid OAP hub event scope')`, which fails that
+run's stream. So PR 6 adds one session-level auth dispatcher:
 
 - **Installed before open.** It subscribes to the session before `open` is
   sent and reads only the session-scoped host-auth event, with no `run_id`.
+- **Ignored by the run stream.** If that event arrives mid-run, the submit-time
+  subscription also sees it. PR 6 makes `readEvent` skip exactly the host-auth
+  event type, so the run continues while the dispatcher answers. Any other
+  event without a `run_id` stays an error, as today.
 - **Provider-bound.** It answers only with tokens from the session's own
   `config.provider`, using the reply operation the upstream change defines.
   Any other request gets an error reply.
