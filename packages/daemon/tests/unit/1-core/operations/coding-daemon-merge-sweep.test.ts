@@ -425,6 +425,16 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(0);
     }
   );
+  test('two passes over an unchanged held PR read its merge facts from GitHub once', async () => {
+    reviewHead = 'b'.repeat(40);
+    const run = sweep();
+    await run(10);
+    const firstPass = calls.length;
+    await run(11);
+    expect(firstPass).toBeGreaterThan(0);
+    expect(merges()).toEqual([]);
+    expect(calls.slice(firstPass)).toEqual([]);
+  });
   test.each(['ci', 'review', 'thread', 'read'])(
     'a truncated-scope ledger never bypasses fresh %s gates',
     async (condition) => {
