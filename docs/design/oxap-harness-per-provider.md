@@ -212,7 +212,9 @@ pipeline edges.
   other door: raw `session.update` can write `config.provider`, because
   `provider` is an updatable field in `create-session-config.ts`. So
   `admitUpdateSessionConfig` calls `decideSwitch` whenever the update sets
-  `provider` or `model`.
+  `provider` or `model`. A same-provider update still passes. Tests send raw
+  `session.update` calls covering three cases: SDK → OXAP, OXAP → SDK, and
+  one OXAP provider to another on the same harness.
 - `decideOxapOpen(session, providerRecord)` gates each open. It returns the
   adapter name, or the refusal for a provider whose harness changed.
 - `isOxapHarness`, `buildHubConfig`, each row's entry builder and each row's
