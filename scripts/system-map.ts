@@ -40,10 +40,10 @@ interface Scan {
 }
 
 const IMPORT = /(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"\n]+)\1/g;
-const LITERAL = /(['"`])([a-zA-Z]\w*(?:\.[A-Za-z]\w*)+)\1/g;
+const LITERAL = /(['"`])([a-zA-Z]\w*(?:\.[A-Za-z]\w*)*)\1/g;
 const SQL =
   /\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|FROM|JOIN|CREATE\s+(?:VIRTUAL\s+|TEMP\s+|TEMPORARY\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+([a-z_][a-z0-9_]{2,})\b/g;
-const CALL_BEFORE = /(\w+)\s*(?:<[^>]*>)?\(\s*(?:[\w.()]+\s*,\s*)?$/;
+const OPEN_CALL = /\(\s*(?:[\w.()]+\s*,\s*)?$/;
 const OWNING = new Set<Role>(['defines', 'handles', 'emits', 'writes']);
 const RPC_CALLS = new Set(['request', 'callIfConnected']);
 const EVENT_EMITS = new Set(['publish', 'event']);
@@ -57,12 +57,34 @@ export function isSource(path: string): boolean {
   );
 }
 
+function contextBefore(source: string, index: number): string {
+  const start = Math.max(0, index - 70);
+  const before = source.slice(start, index);
+  if (/\bname:\s*$/.test(before)) return 'name:';
+  const open = OPEN_CALL.exec(before);
+  if (!open) return '';
+  let at = start + open.index - 1;
+  while (at >= 0 && /\s/.test(source[at])) at--;
+  if (source[at] === '>') {
+    if (source[at - 1] === '=') return '';
+    const limit = Math.max(0, at - 600);
+    let depth = 0;
+    for (; at >= limit; at--) {
+      if (source[at] === '>' && source[at - 1] !== '=') depth++;
+      else if (source[at] === '<' && --depth === 0) break;
+    }
+    if (at < limit) return '';
+    at--;
+  }
+  const end = at + 1;
+  while (at >= 0 && /\w/.test(source[at])) at--;
+  return source.slice(at + 1, end);
+}
+
 function scanFile(source: string): Scan {
   const literals: Scan['literals'] = [];
   for (const match of source.matchAll(LITERAL)) {
-    const before = source.slice(Math.max(0, match.index - 70), match.index);
-    const context = /\bname:\s*$/.test(before) ? 'name:' : (CALL_BEFORE.exec(before)?.[1] ?? '');
-    literals.push({ value: match[2], context });
+    literals.push({ value: match[2], context: contextBefore(source, match.index) });
   }
   return {
     imports: [...new Set([...source.matchAll(IMPORT)].map((match) => match[2]))],
@@ -141,6 +163,7 @@ export function buildSystemMap(
     for (const { verb, table } of scan.sql) if (verb === 'CREATE') names.table.add(table);
     for (const { value, context } of scan.literals) {
       if (isNameList(path)) names.op.add(value);
+      if (!value.includes('.')) continue;
       if (context === 'onRequest') names.rpc.add(value);
       if (EVENT_EMITS.has(context)) names.event.add(value);
     }

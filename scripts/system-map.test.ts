@@ -96,6 +96,44 @@ test('where links virtual and temporary tables', () => {
   ]);
 });
 
+test('where links an operation name that has no dot', () => {
+  const map = buildSystemMap(
+    new Map([
+      [NAMES, "export const TODO_NAMES = ['send_todo'] as const;"],
+      [OPERATIONS, "export const operation = defineOperation({ name: 'send_todo' });"],
+      [CONTROLS, "export const send = (hub) => invokeOperation(hub, 'send_todo', {});"],
+    ])
+  );
+  expect(where(map, 'send_todo').map((link) => [link.role, link.path])).toEqual([
+    ['defines', OPERATIONS],
+    ['uses', CONTROLS],
+  ]);
+});
+
+test('where sees a handler registered with long type arguments', () => {
+  const map = buildSystemMap(
+    new Map([
+      [
+        HANDLER,
+        [
+          'export const setup = (messageHub) =>',
+          '  messageHub.onRequest<TodoMetricSnapshotListRequest, Map<string, (id: string) => TodoMetricSnapshotListResponse>>(',
+          "    'todo.metricSnapshot.list',",
+          '    async () => []',
+          '  );',
+        ].join('\n'),
+      ],
+      [
+        CONTROLS,
+        "export const pick = (flag) => (flag ? () => ('todo.metricSnapshot.list') : null);",
+      ],
+    ])
+  );
+  expect(where(map, 'todo.metricSnapshot.list')).toEqual([
+    { kind: 'rpc', name: 'todo.metricSnapshot.list', role: 'handles', path: HANDLER },
+  ]);
+});
+
 test('where separates the definition of an operation from its callers', () => {
   expect(formatWhere(where(fixture(), 'todo.remove'))).toBe(
     [`op todo.remove  defines  ${OPERATIONS}`, `op todo.remove  uses  ${CONTROLS}`].join('\n')
