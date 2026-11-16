@@ -1920,6 +1920,36 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2j: an explicitly supplied login survives a restart instead of the Codex login', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-account-b', refresh_token: 'codex-refresh-b' },
+      });
+
+      const before = makeProvider({}, hyperneoDir, codexDir);
+      before.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-account-a',
+        refreshToken: 'explicit-refresh-a',
+      } as ProviderCredentials);
+      await vi.waitFor(() => {
+        const stored = JSON.parse(readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')) as {
+          openai?: { access?: string };
+        };
+        expect(stored.openai?.access).toBe('explicit-account-a');
+      });
+      before.stopAllBridgeServers();
+
+      const after = makeProvider({}, hyperneoDir, codexDir);
+      expect(await after.getCredentials()).toMatchObject({
+        type: 'oauth',
+        accessToken: 'explicit-account-a',
+        refreshToken: 'explicit-refresh-a',
+      });
+      after.stopAllBridgeServers();
+    });
+
     it('Test 2f: an explicitly supplied login without an expiry is still refreshed', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
