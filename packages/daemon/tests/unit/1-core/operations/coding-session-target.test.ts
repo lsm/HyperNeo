@@ -182,7 +182,7 @@ describe('coding session target decision', () => {
     }
   });
 
-  test("a feature whose own session was archived starts a new one", async () => {
+  test('a feature whose own session was archived starts a new one', async () => {
     const { todo, worked, live, decide } = setup();
     const first = todo();
     await decide(first, start('backend'));
@@ -196,7 +196,7 @@ describe('coding session target decision', () => {
     });
   });
 
-  test("a feature whose own session was archived moves to a live idle session", async () => {
+  test('a feature whose own session was archived moves to a live idle session', async () => {
     const { todo, worked, live, decide } = setup();
     const first = todo();
     await decide(first, start('backend'));

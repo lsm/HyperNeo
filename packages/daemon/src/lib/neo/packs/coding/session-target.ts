@@ -32,7 +32,6 @@ async function sessionState(session: Pooled, status: Status) {
   const reply =
     outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
-  // Archived sessions report stopped; they cannot take new work.
   if (live?.success && live.data.status === 'stopped') return null;
   const state: 'available' | 'busy' | 'unknown' = !live?.success
     ? 'unknown'
@@ -85,7 +84,6 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
           assigned,
           pool,
         }),
-        // An archived owner can never run the feature again; this dispatch takes it over.
         ownerArchived: ownerState === null,
       };
     },
