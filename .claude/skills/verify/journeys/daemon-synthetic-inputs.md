@@ -14,21 +14,28 @@ NODE_PATH=<directory-containing-playwright> VERIFY_BROWSER=<headless-chromium> \
 The helper owns an isolated daemon and static web listener on ephemeral ports,
 a synthetic Neo binding and a fresh database. No model, provider, external MCP,
 GitHub, simulator or human daemon is used. The job processor is stopped before
-seeding, so no provider turns are attempted. The completion check is a synthetic
-pack fixture; nudge selection, todo completion, note delivery, persistence,
-public message reading and UI rendering use production code.
+seeding, so no provider turns are attempted. The stalled-ask producer, the
+attention entry, the digest hold, its timed flush, persistence, public message
+reading and UI rendering use production code.
 
-Pass: the real stalled-ask producer and todo runner each persist a system input
-with isSynthetic true. The actual served /session/neo:UUID page displays both as
-synthetic cards and keeps a human input as a human bubble. Both synthetic cards
-survive reload. Session routes use the literal colon, as the production router
-expects; an encoded neo%3A path does not reach this surface.
+The real driver refresh raises one open ask that has had nothing in progress
+for three hours. Require one pending `neo_notes` line and no session message
+yet. Advance the helper's clock past the 15-minute hold and refresh again: the
+production flush must release the line as one batch input with isSynthetic
+true, queued for Neo's next turn. No turn runs here, so the helper stands in
+for the provider's acknowledgement with the repository call the SDK handler
+makes (`updateMessageStatus(..., 'consumed')`); that step alone is synthetic.
 
-Keep messages.json, browser.json, notices.png and the wrapper log/status. On
-signed test-first commit 966de7e0d, the public reader omits isSynthetic and both
-notices appear as human bubbles; the browser assertion fails user vs synthetic.
-The helper closes its browser, listeners, service and daemon in finally; the
-shared wrapper saves evidence and removes the temporary data.
+Pass: the actual served /session/neo:UUID page displays the released digest as
+a synthetic card that names the ask and keeps a human input as a human bubble.
+The card survives reload. Session routes use the literal colon, as the
+production router expects; an encoded neo%3A path does not reach this surface.
+
+Keep messages.json, browser.json, notices.png, notices-reloaded.png and the
+wrapper log/status. The helper closes its browser, listeners, service and
+daemon in finally; the shared wrapper saves evidence and removes the temporary
+data. A finished ask's wake and a todo's own notes are not covered here: a
+wake reaches the session only through a model turn.
 
 Audit: mailbox admission (planMailboxAdmission/projectAdmissionMessage) derives
 synthetic provenance for non-human daemon origins, including recovery, scheduled

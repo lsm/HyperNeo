@@ -5,7 +5,7 @@ import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import { renderAddress } from '../../lib/mailbox/address.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NEO_ANSWER_NOTE, NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { planNeoRemovedPrerequisiteAnswer } from '../../lib/neo/todo-removal.ts';
 
@@ -73,7 +73,7 @@ class NeoAskInputs {
           createMailboxEntry({
             to,
             origin: renderAddress(to),
-            messageUuid: `neo-relay-answer:${question!.id}`,
+            messageUuid: `${NEO_ANSWER_NOTE.relay}${question!.id}`,
             message: {
               type: 'user',
               parent_tool_use_id: null,

@@ -10,6 +10,7 @@ import {
   createNeoService,
 } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { refreshNeoDriverWork } from '../../../packages/daemon/src/lib/neo/driver-refresh.ts';
+import { neoFinishedAskUuids } from '../../../packages/daemon/src/lib/neo/stalled-asks.ts';
 
 const run = resolve(process.argv[2]);
 assert(/^\/(private\/)?tmp\//.test(run));
@@ -91,20 +92,14 @@ try {
   };
   finished('plan-ask', 'plan-step', true);
   finished('plain-ask', 'plain-step', false);
-  const note = (askId: string) =>
-    db
-      .prepare(`INSERT INTO job_queue (id, queue, status, payload, run_at, created_at, completed_at)
-        VALUES (?, 'neo_notes', 'completed', ?, 0, 0, 0)`)
-      .run(
-        `note-${askId}`,
-        JSON.stringify({
-          to: { kind: 'session', sessionId: root },
-          origin: `session:${root}`,
-          messageUuid: `neo-stalled-ask:${askId}:1:0`,
-          message: { type: 'user', message: { content: 'reminder' } },
-          neoBatchUuid: `batch-${askId}`,
-        })
-      );
+  const wakeUuid = (askId: string) =>
+    neoFinishedAskUuids({
+      id: askId,
+      ...(db
+        .prepare(`SELECT title, COALESCE((SELECT MAX(updated_at) FROM neo_todos
+          WHERE ask_id = neo_asks.id), updated_at) AS since FROM neo_asks WHERE id = ?`)
+        .get(askId) as { title: string; since: number }),
+    })[0]!;
   let seq = 0;
   const sdk = (kind: 'user' | 'result', uuid: string, consumedSeq: number) =>
     db
@@ -124,8 +119,7 @@ try {
         kind === 'result' ? 1 : 0
       );
   for (const askId of ['plan-ask', 'plain-ask']) {
-    note(askId);
-    sdk('user', `batch-${askId}`, 10 + seq);
+    sdk('user', wakeUuid(askId), 10 + seq);
     sdk('result', `result-${askId}`, 20 + seq);
   }
   const asks = () =>
