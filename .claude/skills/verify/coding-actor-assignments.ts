@@ -12,6 +12,7 @@ import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/p
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createDriverSession } from '../../../packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../packages/prompts/src/mod.ts';
 
@@ -125,6 +126,13 @@ try {
         const readView = join(run, 'data/worktrees/synthetic/session/neo-read');
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
         const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, readView, 'Review starts in the repository read view'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
+        const probeId = await createDriverSession(app.sessionManager, readView, 'Review place probe');
+        const probe = app.sessionManager.getSessionFromDB(probeId)!; const actorCwd = probe.worktree?.worktreePath ?? probe.workspacePath!;
+        const placeProof = { readView, readViewHead: git(readView, 'rev-parse', 'HEAD'), actorCwd, actorHead: git(actorCwd, 'rev-parse', 'HEAD'), actorGitDir: git(actorCwd, 'rev-parse', '--absolute-git-dir'), readViewBranch: git(readView, 'rev-parse', '--abbrev-ref', 'HEAD'), actorBranch: git(actorCwd, 'rev-parse', '--abbrev-ref', 'HEAD') };
+        assert.notEqual(resolve(actorCwd), resolve(readView), 'A session started on the read view runs in its own worktree'); assert(probe.worktree?.isWorktree); assert.notEqual(placeProof.actorGitDir, join(readView, '.git'));
+        git(readView, 'checkout', '-q', '--detach', head); const actorHeadAfterSync = git(actorCwd, 'rev-parse', 'HEAD'); assert.equal(actorHeadAfterSync, placeProof.actorHead, 'A read-view sync checkout leaves the actor HEAD');
+        git(readView, 'checkout', '-q', '--detach', placeProof.readViewHead); git(actorCwd, 'checkout', '-q', '--detach', head); const readViewHeadAfterActor = git(readView, 'rev-parse', 'HEAD'); assert.equal(readViewHeadAfterActor, placeProof.readViewHead, 'An actor checkout leaves the read view HEAD');
+        writeFileSync(join(run, 'evidence/read-view-place.json'), JSON.stringify({ ...placeProof, syncMovedReadViewTo: head, actorHeadAfterSync, actorMovedTo: git(actorCwd, 'rev-parse', 'HEAD'), readViewHeadAfterActor }, null, 2));
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
         const beforeRetry = attempts;
         assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert((await assign({ ...session, stage: 'verify', candidates: [] })).ok); assert.equal(attempts, beforeRetry);
