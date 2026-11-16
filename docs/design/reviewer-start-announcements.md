@@ -33,8 +33,7 @@ The policy line becomes:
 
 Neo and the human do not lose the start. The daemon already records it: a review todo turns
 `doing` with a `started_at` time when its session starts, and the attention entry wakes Neo
-when a todo is never worked (`todo.unworked`) or stops moving (`todo.stalled`,
-`lib/neo/attention/decide.ts`). A healthy review needs no message until its verdict.
+when a todo stops moving (`todo.stalled`, `lib/neo/attention/decide.ts`). A healthy review needs no message until its verdict.
 
 Nothing else changes. The source and depth still reach Neo, inside the verdict. Verdicts,
 `blocked`, `question` and `failed` reports, human messages and the daemon's own notices
