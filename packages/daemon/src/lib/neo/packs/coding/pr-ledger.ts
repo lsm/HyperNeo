@@ -528,7 +528,7 @@ export class CodingPrLedgerRepository {
   recordStage(fact: CodingStageFact, at = Date.now()): boolean {
     const recorded = this.stageFacts.record(fact);
     const pr = parsePrUrl(fact.url);
-    if (recorded && fact.verdict === 'fail' && pr)
+    if (recorded && fact.stage === 'review' && fact.verdict === 'fail' && pr)
       this.db.run(
         `UPDATE pack_coding_pr_ledger SET nudges = 0, state_since = ?, told_at = NULL,
            terminal_event_json = json_object('repo', repo, 'number', number, 'title', title,

@@ -14,6 +14,7 @@ import {
 } from './pr-ledger.ts';
 import {
   CODING_MANUAL_MERGE_NEXT_STEP,
+  codingDeliveryKey,
   codingReviewKey,
   codingPrUrl,
   type CodingSweepDeps,
@@ -33,10 +34,13 @@ const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}
 export function planCodingPrEvent(
   row: CodingPrTransition
 ): { key: string; text: string; findings?: string[] } | null {
+  const findings = row.state === 'changes_requested' ? (row.findings ?? []) : [];
   const owner = (text: string) => ({
-    key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}`,
+    key: codingDeliveryKey(
+      `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(findings)}`
+    ),
     text: `${pr(row)} ${text}`,
-    ...(row.findings?.length ? { findings: row.findings } : {}),
+    ...(findings.length ? { findings } : {}),
   });
   if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
   if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);

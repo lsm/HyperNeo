@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
@@ -90,6 +91,11 @@ export function codingFindingsText(findings: readonly string[] = [], budget = In
 export const codingReviewKey = (findings: readonly string[] = []) =>
   findings.length ? ':review' : '';
 
+export const codingDeliveryKey = (key: string) =>
+  key.length <= 200
+    ? key
+    : `${key.slice(0, 100)}:${createHash('sha256').update(key).digest('hex')}`;
+
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
   return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
@@ -160,7 +166,9 @@ export async function sweepCodingPrs(
   for (const row of await repo.rowsAsync()) {
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
-    const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}:${nudge.nudges}`;
+    const key = codingDeliveryKey(
+      `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}:${nudge.nudges}`
+    );
     const told =
       nudge.kind === 'remind' &&
       row.state !== 'waiting_cross_review' &&
