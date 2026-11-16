@@ -8,8 +8,6 @@ import { getLongHorizonAgentTemplates } from '../../../daemon/src/lib/agents/lon
 import type { SpaceAgentTemplateManager } from '../../../daemon/src/lib/agents/template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 
-const METHOD_PREFIX = 'spaceAgentTemplate';
-
 export interface SpaceAgentTemplateDeps {
   spaceManager: Pick<SpaceManager, 'getSpace'>;
   templateManager?: SpaceAgentTemplateManager;
@@ -19,7 +17,6 @@ export function setupSpaceAgentTemplateHandlers(
   messageHub: MessageHub,
   deps: SpaceAgentTemplateDeps
 ): void {
-  const method = (name: string): string => `${METHOD_PREFIX}.${name}`;
   const templateManager = deps.templateManager;
 
   const requireTemplateSpace = async (spaceId: string | undefined): Promise<string> => {
@@ -29,7 +26,7 @@ export function setupSpaceAgentTemplateHandlers(
     return spaceId;
   };
 
-  messageHub.onRequest(method('listBuiltIn'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.listBuiltIn', async (data) => {
     await requireTemplateSpace((data as { spaceId?: string }).spaceId);
     return {
       templates: getLongHorizonAgentTemplates().filter(
@@ -40,7 +37,7 @@ export function setupSpaceAgentTemplateHandlers(
 
   if (!templateManager) return;
 
-  messageHub.onRequest(method('list'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.list', async (data) => {
     const spaceId = await requireTemplateSpace((data as { spaceId?: string }).spaceId);
     return {
       templates: templateManager.listIn(spaceId),
@@ -48,7 +45,7 @@ export function setupSpaceAgentTemplateHandlers(
     };
   });
 
-  messageHub.onRequest(method('create'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.create', async (data) => {
     const params = data as { spaceId?: string } & CreateSpaceAgentTemplateParams;
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');
@@ -58,7 +55,7 @@ export function setupSpaceAgentTemplateHandlers(
     return { template: result.value };
   });
 
-  messageHub.onRequest(method('update'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.update', async (data) => {
     const params = data as { spaceId?: string; key: string } & UpdateSpaceAgentTemplateParams;
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');
@@ -68,7 +65,7 @@ export function setupSpaceAgentTemplateHandlers(
     return { template: result.value };
   });
 
-  messageHub.onRequest(method('delete'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.delete', async (data) => {
     const params = data as { spaceId?: string; key: string; expectedVersion?: number };
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');
@@ -77,7 +74,7 @@ export function setupSpaceAgentTemplateHandlers(
     return { success: true };
   });
 
-  messageHub.onRequest(method('hideBuiltIn'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.hideBuiltIn', async (data) => {
     const params = data as { spaceId?: string; key: string };
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');
@@ -86,7 +83,7 @@ export function setupSpaceAgentTemplateHandlers(
     return { success: true };
   });
 
-  messageHub.onRequest(method('unhideBuiltIn'), async (data) => {
+  messageHub.onRequest('spaceAgentTemplate.unhideBuiltIn', async (data) => {
     const params = data as { spaceId?: string; key: string };
     const spaceId = await requireTemplateSpace(params.spaceId);
     if (!params.key) throw new Error('key is required');

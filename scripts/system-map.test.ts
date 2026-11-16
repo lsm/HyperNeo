@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   buildSystemMap,
   formatImpact,
@@ -228,4 +230,55 @@ test('formatImpact counts each outside file once and flags unknown paths', () =>
   expect(text).toContain(`    reads  ${READER}`);
   expect(text).toContain('packages/daemon/src/missing.ts  (not a mapped source file)');
   expect(text.endsWith('1 files outside the plan are linked by name')).toBe(true);
+});
+
+test('where finds every space agent RPC handler by its registered name', () => {
+  const dir = 'packages/space/src/rpc';
+  const handlers: Record<string, string[]> = {
+    'space-agent-v2-handlers.ts': [
+      'spaceAgentV2.list',
+      'spaceAgentV2.get',
+      'spaceAgentV2.create',
+      'spaceAgentV2.update',
+      'spaceAgentV2.listReminderCounts',
+      'spaceAgentV2.delete',
+    ],
+    'space-agent-reminder-handlers.ts': [
+      'spaceAgentReminder.listCounts',
+      'spaceAgentReminder.create',
+      'spaceAgentReminder.delete',
+    ],
+    'space-agent-template-handlers.ts': [
+      'spaceAgentTemplate.listBuiltIn',
+      'spaceAgentTemplate.list',
+      'spaceAgentTemplate.create',
+      'spaceAgentTemplate.update',
+      'spaceAgentTemplate.delete',
+      'spaceAgentTemplate.hideBuiltIn',
+      'spaceAgentTemplate.unhideBuiltIn',
+    ],
+    'space-agent-subscription-handlers.ts': [
+      'spaceAgentSubscription.list',
+      'spaceAgentSubscription.create',
+      'spaceAgentSubscription.update',
+      'spaceAgentSubscription.delete',
+    ],
+  };
+  const map = buildSystemMap(
+    new Map(
+      Object.keys(handlers).map((file) => [
+        `${dir}/${file}`,
+        readFileSync(join(import.meta.dir, '..', dir, file), 'utf8'),
+      ])
+    ),
+    new Map()
+  );
+  for (const [file, names] of Object.entries(handlers)) {
+    for (const name of names) {
+      expect([name, where(map, name).map((link) => [link.role, link.path])]).toEqual([
+        name,
+        [['handles', `${dir}/${file}`]],
+      ]);
+    }
+  }
 });
