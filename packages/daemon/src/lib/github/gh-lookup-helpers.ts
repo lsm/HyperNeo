@@ -259,11 +259,15 @@ export async function runGhJson(
       (response?.status === 403 && remaining === 0)
     ) {
       if (retryAfterMs !== null || isSecondaryRateLimitError(errorText)) {
+        const waitMs = retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
         return {
           ok: false,
           error: errorText,
           retryable: true,
-          retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+          retryAfterMs:
+            remaining === 0 && reset !== null
+              ? Math.max(waitMs, computeRateLimitRetryMs(reset))
+              : waitMs,
           rateLimited: true,
         };
       }
