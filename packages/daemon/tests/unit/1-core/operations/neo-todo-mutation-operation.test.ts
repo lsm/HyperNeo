@@ -372,7 +372,7 @@ describe('Writer-backed todo operation activation', () => {
         todoId: 'request',
         to: 'stranger',
         from: 'neo',
-        text: 'Neo closed your request "Close the merged todo" as done: Closed it as merged',
+        text: 'Neo closed your request "Close the merged todo" as done: Closed it as merged\nTodos added for it: "first" (first), "peer" (peer).',
       },
     ]);
   });
