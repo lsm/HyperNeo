@@ -1,5 +1,6 @@
 import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
 import { listPackPreferences } from '../../preference-operations.ts';
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
@@ -231,9 +232,14 @@ export function createCodingPack(deps: {
       sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
-    workerStartExclusions: async () => ({
-      value: await gatewayFor(deps.database()).call(codingSessionAssignmentReads, 'actorRefs'),
-    }),
+    workerStartExclusions: async (todo) => {
+      const target = new NeoTodoSessionRepository(deps.database()).get(todo.id);
+      return {
+        value: await gatewayFor(deps.database()).call(codingSessionAssignmentReads, 'actorRefs', {
+          adapter: target?.verb === 'start' ? target.adapter : undefined,
+        }),
+      };
+    },
     workerTarget: (todo, target, status) =>
       decideCodingSessionTarget(deps.database(), todo, target, status),
     workerTargetRefused: (todo) =>

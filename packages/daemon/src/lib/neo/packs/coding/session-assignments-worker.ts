@@ -88,7 +88,7 @@ class CodingSessionAssignments {
     return own && { todoId: own.todoId, ref: own.ref };
   }
 
-  actorRefs(): WorkRef[] {
+  actorRefs(input?: { adapter?: string }): WorkRef[] {
     const seen = new Set<string>();
     return (
       this.db
@@ -99,7 +99,12 @@ class CodingSessionAssignments {
         .all() as { ref: string | null }[]
     )
       .flatMap((row) => (row.ref ? [JSON.parse(row.ref) as WorkRef] : []))
-      .filter((ref) => !seen.has(workKey(ref)) && (seen.add(workKey(ref)), true))
+      .filter(
+        (ref) =>
+          (!input?.adapter || ref.adapter === input.adapter) &&
+          !seen.has(workKey(ref)) &&
+          (seen.add(workKey(ref)), true)
+      )
       .slice(0, WORK_START_EXCLUDE_REFS_MAX);
   }
 
@@ -128,7 +133,7 @@ class CodingSessionAssignments {
       pool.set(workKey(ref), known);
     }
     const holders = input.prUrl ? this.prHolders(input.prUrl) : [];
-    const actors = new Set(this.actorRefs().map(workKey));
+    const actors = new Set(this.actorRefs({ adapter: input.adapter }).map(workKey));
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,

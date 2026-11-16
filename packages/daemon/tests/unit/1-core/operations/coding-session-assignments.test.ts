@@ -76,7 +76,8 @@ function setup() {
       todoId: string;
       prUrl?: string;
     }) => run(codingSessionAssignmentReads, { method: 'owner', args: [input] }),
-    actorRefs: () => run(codingSessionAssignmentReads, { method: 'actorRefs', args: [] }),
+    actorRefs: (input?: { adapter?: string }) =>
+      run(codingSessionAssignmentReads, { method: 'actorRefs', args: [input] }),
   };
   return { db, prs, todo, started, sent, assignments };
 }
@@ -256,7 +257,30 @@ describe('durable session assignments', () => {
         bot: 'hyperneo-ai-test',
       })
     );
-    expect(await assignments.actorRefs()).toEqual([ref('reviewer'), ref('verifier')]);
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head4:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head4',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'other-adapter', model: 'm', harness: 'codex-desktop' },
+        ref: { adapter: 'codex-desktop', id: 'other-adapter' },
+      })
+    );
+    expect(await assignments.actorRefs()).toEqual([
+      { adapter: 'codex-desktop', id: 'other-adapter' },
+      ref('reviewer'),
+      ref('verifier'),
+    ]);
+    expect(await assignments.actorRefs({ adapter: 'claude-desktop' })).toEqual([
+      ref('reviewer'),
+      ref('verifier'),
+    ]);
   });
 
   test('a takeover replaces only the exact session it saw, daemon included', async () => {
