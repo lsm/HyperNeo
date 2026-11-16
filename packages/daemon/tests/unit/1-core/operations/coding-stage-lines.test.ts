@@ -414,3 +414,19 @@ describe('rankCodingTargets with executed efforts', () => {
     ).toMatchObject({ value: [{ ...hyperneo, effort: 'off' }] });
   });
 });
+
+describe('rankCodingTargets with a copying ranker', () => {
+  test('a ranker that returns copies of the lines still maps back to the targets', async () => {
+    const lines = driverCodingLines(catalog);
+    const copying = {
+      ...lines,
+      rank: async (...args: Parameters<typeof lines.rank>) => {
+        const ranking = await lines.rank(...args);
+        return { ...ranking, ranked: ranking.ranked.map((entry) => ({ line: { ...entry.line } })) };
+      },
+    };
+    expect(await rankCodingTargets(copying, 'coding.write', [hyperneo, glm], {})).toMatchObject({
+      value: [hyperneo, glm],
+    });
+  });
+});

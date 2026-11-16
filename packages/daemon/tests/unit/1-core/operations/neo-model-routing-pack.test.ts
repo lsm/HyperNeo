@@ -246,6 +246,31 @@ describe('createModelRoutingPack', () => {
     });
   });
 
+  test('usage is read in parallel and a fresh reading is not read again', async () => {
+    let reads = 0;
+    let open = 0;
+    let most = 0;
+    const counted = {
+      ...provider(true, null),
+      getUsage: async () => {
+        reads += 1;
+        open += 1;
+        most = Math.max(most, open);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        open -= 1;
+        return { supported: true, provider: 'x', windows: [] };
+      },
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => counted,
+      now: () => NOW,
+    });
+    await pack.rankLines!('coding.write', [A, B, C], {});
+    await pack.rankLines!('coding.write', [A, B, C], {});
+    expect({ reads, most }).toEqual({ reads: 3, most: 3 });
+  });
+
   test('ignores holds left on archived and ended sessions', async () => {
     const cooling = JSON.stringify({
       status: 'rate_limit_cooldown',
