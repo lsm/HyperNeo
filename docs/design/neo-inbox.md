@@ -81,7 +81,8 @@ packages/daemon/src/
   lib/neo/
     human-card.ts                             no card_open refusal (rule 2)
     question-operations.ts                    neo.question.hold superpipe; todoId description without the one-card limit
-    daemon-cards.ts                           human-step card text
+    daemon-cards.ts                           human-step card text; pure readiness check replaces neoCheckOverdue
+    ask-entries.ts                            neoWorkCounts ignores held cards
     human-queue.ts                            new: pure neoHumanQueue
     operations.ts                             adds it to the Neo snapshot
 packages/web/src/neo/                         filter rows and items
@@ -96,7 +97,7 @@ The migration number is taken when its PR lands.
 
 Each step is one PR within the repo's slice budget.
 1. **Build: no limit on cards.** Remove the `card_open` refusal from `onlyCard`, and in the same PR the agent-facing sentence that states it: the `todoId` description of `neo.question.ask` (`question-operations.ts`, "One card may be open per ask; a second returns card_open"), with `api-surface.json` regenerated, and the verify journey that asserts the old refusal (`worker-question-storage.ts` and `journeys/worker-question-storage.md` in `.claude/skills/verify/`) changed to expect the second card accepted and both open. The other `card_open`, which refuses settling an ask while a card is open (`neo-ask-settlement.ts`), stays. Tests: a second and a third card on the same todo are accepted; the todo starts only after the last one is answered; `replaces` still replaces.
-2. **Build + wire: held cards.** The `held_at` column and `neo.question.hold` (registered in `operation-names/neo.ts`). Tests: hold and take back, each repeatable; a held card stays held with no timer; a held card still covers its todos; answering a held card works and clears the hold; holding an answered card is refused.
+2. **Build + wire: held cards.** The `held_at` column and `neo.question.hold` (registered in `operation-names/neo.ts`). Tests: hold and take back, each repeatable; a held card stays held with no timer; a held card still covers its todos; answering a held card works and clears the hold; holding an answered card is refused; `neoWorkCounts` (`ask-entries.ts`) ignores a held card in both terms, so an ask whose only card is held does not raise `needsYou`.
 3. **Build: `neoHumanQueue`** with its tests (state × ask counts, several cards on one todo, ask-level cards, held items), after attention step 1 has added `nextStepOwner`. **Wire:** add it to the Neo snapshot.
 4. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
 5. **Build: the human-step card** replaces the `check_overdue` card in the stall reminder sweep (rule 5). Old `check_overdue` rows stay readable. Tests: a check-only todo whose prerequisites are done gets its card at once; one whose prerequisites are unfinished gets none; one that already has a card gets none; replay of a check-only todo that today waits 24 hours.
