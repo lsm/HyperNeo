@@ -586,6 +586,92 @@ describe('refreshDriverWork', () => {
     await db.close();
   });
 
+  const modelState = (state: Record<string, unknown>) => {
+    db.getDatabase()
+      .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+      .run(JSON.stringify(state), 'neo:root');
+  };
+  const holdNotices = () =>
+    events.filter(([name]) => name === 'neo.session.notice').map(([, notice]) => notice);
+
+  test('a Neo login hold alerts once across restart and clears when it ends', async () => {
+    const held = { status: 'rate_limit_cooldown', reason: 'login', since: now };
+    modelState(held);
+    await service.refreshDriverWork();
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(holdNotices()[0]).toMatchObject({
+      kind: 'needs_you',
+      ref: { adapter: 'hyperneo', id: 'neo:root' },
+    });
+    expect(service.sessionNotices).toHaveLength(1);
+    const sessions = service.sessions;
+    await service.dispose();
+    events.length = 0;
+    service = createNeoService(
+      db,
+      sessions,
+      {
+        event: mock((name: string, payload: unknown) => events.push([name, payload])),
+      } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(0);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+    modelState({ ...held, since: now + 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(
+      JSON.parse(
+        (
+          db
+            .getDatabase()
+            .prepare('SELECT processing_state FROM sessions WHERE id = ?')
+            .get('neo:root') as { processing_state: string }
+        ).processing_state
+      )
+    ).toEqual({ ...held, since: now + 1 });
+  });
+
+  test('a long Neo limit hold alerts once even when its reset moves nearer', async () => {
+    const held = {
+      status: 'rate_limit_cooldown',
+      reason: 'limit',
+      since: Date.now(),
+      retryAt: Date.now() + 31 * 60_000,
+    };
+    modelState(held);
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    modelState({ ...held, retryAt: held.since + 5 * 60_000 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'processing', phase: 'thinking' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
+  });
+
+  test.each(['network', 'overloaded', 'limit'])(
+    'a %s hold outside the alert policy stays quiet',
+    async (reason) => {
+      const since = Date.now();
+      modelState({
+        status: 'rate_limit_cooldown',
+        reason,
+        since,
+        retryAt: since + (reason === 'limit' ? 30 : 60) * 60_000,
+      });
+      await service.refreshDriverWork();
+      expect(holdNotices()).toHaveLength(0);
+      expect(service.sessionNotices).toHaveLength(0);
+    }
+  );
+
   test('keeps what it saw when a listing comes back partial', async () => {
     let clock = Date.now();
     const time = spyOn(Date, 'now').mockImplementation(() => clock);
