@@ -87,7 +87,9 @@ open card is the hold, as today, and it survives a restart because it is a card.
 | The same, after the deadline | `neo` (`no_worker`) | `neo`, reason `check_overdue`, `since` = the deadline |
 
 `decideNeoAttention` renders the new reason as "its check has not passed for 24 hours.
-Ask whoever it waits on, keep it waiting with a note, mark it done, or remove it."
+Ask whoever it waits on, mark it done, or remove it."
+If the wait is still right, Neo does nothing: the ladder reminds it again in 24 hours. No
+new timed-wait state is added.
 
 **When Neo is woken.** As built (`decideNeoAttention`), a `todo.neo_step` wakes Neo at
 once when Neo becomes the owner, then again at 1 h, 4 h and 24 h after its `since`, then
