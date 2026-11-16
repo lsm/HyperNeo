@@ -276,6 +276,63 @@ describe('NeoHumanQueue', () => {
     expect(await far.findByRole('button', { name: 'Agree' })).toBeTruthy();
   });
 
+  it('reads an omitted ask again when the queue names a card its loaded copy lacks', async () => {
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockResolvedValueOnce(entry('far', 'Far ask', [question('q1', 'far')]))
+      .mockResolvedValue(entry('far', 'Far ask', [question('q2', 'far', { text: 'Second' })]));
+    const queued = (questionId: string) => ({
+      items: [{ state: 'waiting' as const, askId: 'far', questionId, text: questionId, todos: [] }],
+      counts: { far: { waiting: 1, held: 0, progress: 0 } },
+    });
+    const props = { entries: [], onHold: vi.fn(), onAnswer: vi.fn(), onLoadDetails };
+    const view = render(<NeoHumanQueue {...props} queue={queued('q1')} />);
+    expect(await view.findByText('Question q1')).toBeTruthy();
+    view.rerender(<NeoHumanQueue {...props} entries={[]} queue={queued('q2')} />);
+    await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
+    expect(await view.findByText('Second')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Agree' })).toBeTruthy();
+  });
+
+  it('keeps focus on a referenced card after its full copy loads', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      let release = (_: NeoAskEntry) => {};
+      const onLoadDetails = vi.fn(() => new Promise<NeoAskEntry>((resolve) => (release = resolve)));
+      const summarised = {
+        ...entry('trip', 'Plan the trip', [question('q1', 'trip', { document: 'Preview' })]),
+        summary: {},
+      } as unknown as NeoAskEntry;
+      const view = render(
+        <NeoHumanQueue
+          queue={{
+            items: [queue.items[0]],
+            counts: { trip: { waiting: 1, held: 0, progress: 0 } },
+          }}
+          entries={[summarised]}
+          onHold={vi.fn()}
+          onAnswer={vi.fn()}
+          onLoadDetails={onLoadDetails}
+          focus={{ askId: 'trip', questionId: 'q1' }}
+        />
+      );
+      await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+      const preview = document.activeElement;
+      release(entry('trip', 'Plan the trip', [question('q1', 'trip')]));
+      const agree = await view.findByRole('button', { name: 'Agree' });
+      const card = agree.closest('[id="neo-ref-question-q1"]');
+      expect(card).not.toBe(preview);
+      await waitFor(() => expect(document.activeElement).toBe(card));
+      expect(scrolled.at(-1)).toBe(card);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
