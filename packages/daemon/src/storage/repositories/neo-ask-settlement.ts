@@ -251,7 +251,7 @@ const askWakeEnded = (
   let ended = false;
   for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
     const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids, ask.since);
-    if (!wakeSeqs.length) continue;
+    if (!wakeSeqs.length && sessionId !== ask.session_id) continue;
     let fact = facts.get(sessionId);
     if (!fact) facts.set(sessionId, (fact = sessionFacts(db, sessionId)));
     if (
