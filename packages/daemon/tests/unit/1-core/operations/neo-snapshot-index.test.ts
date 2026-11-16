@@ -315,3 +315,148 @@ test.each(['workers', 'packs', 'projects'] as const)(
     expect(snapshotRows).not.toHaveBeenCalled();
   }
 );
+
+test('the RPC snapshot carries the human queue with each in-progress todo owner', async () => {
+  seed(2);
+  db.getDatabase().exec("UPDATE neo_todos SET title = id, approved_at = 1 WHERE id = 'todo-0'");
+  service.todos.askQuestion(
+    'queue-card',
+    'index-1',
+    {
+      text: 'Ship it?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      document: null,
+      replyTo: [],
+      confirm: null,
+    },
+    1
+  );
+  expect((await snapshot(rpc)).humanQueue).toEqual({
+    items: [
+      {
+        state: 'waiting',
+        askId: 'index-1',
+        questionId: 'queue-card',
+        text: 'Ship it?',
+        todos: [{ id: 'todo-1', title: 'Title '.repeat(100) }],
+      },
+      { state: 'progress', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
+    ],
+    counts: {
+      'index-0': { waiting: 0, held: 0, progress: 1 },
+      'index-1': { waiting: 1, held: 0, progress: 0 },
+    },
+  });
+  expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
+});
+
+test('a project-scoped snapshot still carries the whole human queue, like needsYou', async () => {
+  seed(2);
+  service.repo.saveProject({ id: 'scoped', title: 'Scoped', summary: '', context: '' }, 0);
+  db.getDatabase().exec("UPDATE neo_asks SET project_id = 'scoped' WHERE id = 'index-0'");
+  service.todos.askQuestion(
+    'other-project-card',
+    'index-1',
+    {
+      text: 'Elsewhere?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      document: null,
+      todoId: 'todo-1',
+    },
+    1
+  );
+  const scoped = await snapshot(rpc, { projectId: 'scoped' });
+  expect(scoped.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
+  expect(scoped.needsYou).toBe(1);
+  expect(scoped.humanQueue?.counts).toEqual({
+    'index-0': { waiting: 0, held: 0, progress: 1 },
+    'index-1': { waiting: 1, held: 0, progress: 0 },
+  });
+});
+
+test('a pack whose wait check fails leaves the human queue out, not the snapshot', async () => {
+  seed(1);
+  db.getDatabase().exec("UPDATE neo_todos SET approved_at = 1 WHERE id = 'todo-0'");
+  const packs = service.installedPacks();
+  spyOn(service, 'installedPacks').mockReturnValue([
+    ...packs,
+    {
+      id: 'broken',
+      describe: 'Synthetic',
+      instructions: () => null,
+      todos: {
+        schema: () => {},
+        check: async () => null,
+        statusLine: () => null,
+        waiting: async () => {
+          throw new Error('synthetic waiting failure');
+        },
+      },
+    },
+  ]);
+  const value = await snapshot(rpc);
+  expect(value.todoAsks?.map((entry) => entry.ask.id)).toEqual(['index-0']);
+  expect(value).not.toHaveProperty('humanQueue');
+});
+
+test('unapproved pending work and a tracked session both have an owner in the human queue', async () => {
+  seed(1);
+  const ref = { adapter: 'codex-desktop', id: 'tracked-thread' };
+  const tracked = service.todos.addTodo(
+    'tracked',
+    'index-0',
+    { title: 'Tracked', doneWhen: 'Done', check: null, instruction: null, named: null },
+    1
+  );
+  service.todoSessions.create(tracked.id, { verb: 'adopt', ref });
+  service.todoSessions.recordRef(tracked.id, ref, 1);
+  service.todos.commitState(tracked.id, { state: 'doing', startedAt: 1 }, 1, {
+    state: 'no_opinion',
+  });
+  const { humanQueue } = await snapshot(rpc);
+  expect(humanQueue?.items).toEqual([
+    expect.objectContaining({ todoId: 'todo-0', owner: 'neo' }),
+    expect.objectContaining({ todoId: 'tracked', owner: 'daemon' }),
+  ]);
+});
+
+test('a card written during the snapshot does not leave its todo owned by the human', async () => {
+  seed(1);
+  db.getDatabase().exec("UPDATE neo_todos SET approved_at = 1 WHERE id = 'todo-0'");
+  const read = service.readWorker.bind(service);
+  let wrote = false;
+  spyOn(service, 'readWorker').mockImplementation(async (ref) => {
+    if (!wrote) {
+      wrote = true;
+      service.todos.askQuestion(
+        'late-card',
+        'index-0',
+        {
+          text: 'Late?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          document: null,
+          todoId: 'todo-0',
+        },
+        2
+      );
+    }
+    return read(ref);
+  });
+  const { humanQueue } = await snapshot(rpc);
+  expect(wrote).toBe(true);
+  expect(humanQueue?.items).toEqual([
+    expect.objectContaining({ state: 'progress', todoId: 'todo-0', owner: 'neo' }),
+  ]);
+});

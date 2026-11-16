@@ -407,13 +407,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       }),
       steps: asks.flatMap(({ ask, family, cards }) =>
         family
-          .filter(
-            (todo) =>
-              todo.askId === ask.id &&
-              todo.approvedAt !== null &&
-              ['todo', 'doing', 'blocked', 'failed'].includes(todo.state)
-          )
+          .filter((todo) => todo.askId === ask.id && LIVE_TODO_STATES.includes(todo.state))
           .map((todo) => step(todo, family, cards))
+      ),
+      cards: asks.flatMap(({ ask, cards }) =>
+        cards.filter((card) => card.askId === ask.id && card.state === 'open')
       ),
     };
   }

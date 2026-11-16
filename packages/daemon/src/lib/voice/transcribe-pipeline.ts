@@ -65,6 +65,7 @@ interface VoiceTranscribeAdmission {
 export interface VoiceTranscribeInput {
   data: { audioBase64: string; mimeType: string };
   context?: { clientId?: string; sessionId?: string };
+  interactive?: boolean;
   deps: VoiceTranscribeDeps;
   signal?: AbortSignal;
 }
@@ -314,7 +315,9 @@ async function acquireTranscriptionCredentials(
 }
 
 function buildTranscriptionRequest(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = ctx.interactive
+    ? { 'X-Speech-Priority': 'interactive' }
+    : {};
   if (ctx.apiKey && ctx.endpoint!.protocol !== 'https:') {
     return {
       ...ctx,
@@ -402,6 +405,7 @@ export async function runVoiceTranscribe(
     const ctx = await runVoiceTranscribePipeline({
       data: input.data,
       context: input.context,
+      interactive: input.interactive,
       clientKey: input.context?.clientId ?? input.context?.sessionId ?? 'global',
       deps: input.deps,
       signal,

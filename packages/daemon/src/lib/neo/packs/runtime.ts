@@ -23,6 +23,7 @@ import { createCodingMergeOperation } from './coding/merge-operation.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
 import type { NeoWorkPrReader } from './coding/work-prs.ts';
 import { createCodingResultOperation } from './coding/result-operation.ts';
+import { codingGithubApi, createCodingReviewComments } from './coding/review-comment.ts';
 import { createCodingAssignmentOperation } from './coding/assign-operation.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
@@ -121,6 +122,7 @@ export function createNeoService(...args: NeoServiceArgs) {
         readRefStates: (refs) => configured.readRefStates(refs),
         todoPrs,
         lines,
+        postReviewComments: createCodingReviewComments(codingGithubApi),
         prSweepDeps: {
           human: (key, text) =>
             publishCodingHumanMerge(
@@ -144,6 +146,8 @@ export function createNeoService(...args: NeoServiceArgs) {
             },
           },
         },
+        attend: async (event) =>
+          !!configured.defaultSessionId() && 'told' in (await configured.attend(event)),
         projectRepos: (projectId) => configured.repo.allRepositories(projectId),
       });
       coding.operations = [

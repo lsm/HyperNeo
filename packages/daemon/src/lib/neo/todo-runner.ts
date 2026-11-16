@@ -54,7 +54,7 @@ import { neoHumanInSession, neoTurnQuestionLine } from './session-watch.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import type { NeoAttentionEvent } from './attention/decide.ts';
-import { neoPackWaits } from './attention/sweep.ts';
+import { neoPackWaiting } from './attention/sweep.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
@@ -1348,7 +1348,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (context: NudgeContext) =>
-        (await neoPackWaits(deps.packs(), context.todo)) ? { reason: null } : { value: context },
+        (await neoPackWaiting(deps.packs(), [context.todo])).has(context.todo.id)
+          ? { reason: null }
+          : { value: context },
       'admission',
       'result:admission'
     )

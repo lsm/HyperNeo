@@ -149,12 +149,22 @@ export class CodingTodoPrRepository {
     return gatewayFor(this.db).call(codingTodoPrReads, 'holder', url, ref);
   }
 
-  isWaiting(todoId: string): boolean {
-    return this.prs(todoId).some((pr) => pr.state === 'OPEN');
+  waiting(todoIds: readonly string[]): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
+          WHERE todo_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(todoIds)) as { todoId: string; prs: string }[];
+    return new Set(
+      rows.flatMap((row) =>
+        (JSON.parse(row.prs) as NeoWorkPr[]).some((pr) => pr.state === 'OPEN') ? [row.todoId] : []
+      )
+    );
   }
 
-  readWaiting(todoId: string): Promise<boolean> {
-    return gatewayFor(this.db).call(codingTodoPrReads, 'isWaiting', todoId);
+  readWaiting(todoIds: readonly string[]): Promise<Set<string>> {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'waiting', todoIds);
   }
 
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
@@ -542,7 +552,7 @@ export function createCodingTodoPack(
       return checked(todo, facts);
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
-    waiting: (todo) => repo.readWaiting(todo.id),
+    waiting: (todos) => repo.readWaiting(todos.map((todo) => todo.id)),
     ...createCodingTodoPolicy(repo),
   };
 }
@@ -558,5 +568,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['isWaiting', 'holder', 'linkedIssues']
+  ['waiting', 'holder', 'linkedIssues']
 );

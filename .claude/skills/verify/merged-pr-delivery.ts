@@ -38,7 +38,7 @@ async function open() {
   ledger = new CodingPrLedgerRepository(sql());
   pack = createCodingPack({ database: sql, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(sql()), prLedger: ledger, prEvents: new CodingPrEventRepository(sql()),
     prSweep: new CodingPrSweepRepository(sql()), projectRepos: () => [repo], readLedgerRepo: async () => { if (readFails) throw new Error('synthetic GitHub reader unavailable'); return raw(); },
-    prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) } });
+    prSweepDeps: { tell: (ref, key, text) => neo!.sendToRef(ref, key, text), wake: (key, text) => neo!.wakeNeo(key, text) }, attend: async (event) => 'told' in (await neo!.attend(event)) });
 }
 async function close() { await neo?.dispose(); neo = undefined; await app?.cleanup(); app = undefined; }
 try {

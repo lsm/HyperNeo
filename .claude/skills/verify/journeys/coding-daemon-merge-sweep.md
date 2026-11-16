@@ -34,7 +34,14 @@ confirmation read failed. Build-slice proof covers durable receipts across daemo
 restart. Unreadable confirmation retains the receipt and CLI error, even when the command
 exits nonzero. Only a readable OPEN result releases/counts the attempt; retries
 recheck every gate.
-Readable held warnings are durably acknowledged and terminal attempts retire; confirmation stays distinct.
+A readable held warning is told once and its terminal attempt is released; confirmation stays distinct.
+
+Merge wakes for Neo go through the attention entry as `coding.merge_held`,
+`coding.merge_failing` and `coding.merge_confirmed`; the pack keeps no record of
+what it told. The helper routes `attend` through a real `neo.attention.tell`
+pipeline with the pack's kinds: `notices` holds what the entry delivered, and the
+sign-off coverage cases count what the sweep raised, because the entry tells one
+head once. A direct `wake` from the merge sweep fails the run.
 
 Add `ci-startup-queued` and `ci-startup-running` for the #9623/#9625 failure:
 the required aggregate check has not appeared, so the CLI returns exit 1, empty
@@ -50,7 +57,7 @@ head, pending CI, a human label and unreadable reviews must not reopen the budge
 The exact ready head may be acknowledged once through neo.coding.merge.retry;
 historical failures remain unchanged and the daemon, not that operation, merges.
 A per-head retry acknowledgement is stored independently of transient merge
-receipts, whose notice rows have a cascading foreign key. It survives receipt
+receipts. It survives receipt
 release. Unit coverage verifies that the next episode still stops at three,
 including timestamp zero and an acknowledgement made after a clock rollback.
 The retry-budget helper uses the real Neo mailbox with its processor stopped:
@@ -110,6 +117,12 @@ confirmation, and retain the original CLI error in the hold log. `coding-daemon-
 also checks the durable failure budget through a real daemon restart; its synthetic
 writer records are distinct from the sweep's CLI execution proof.
 
+Add `closed-reopen` to seed an unconfirmed receipt on a pull request that then
+closes. Neo must be told once that the merge was never confirmed and the pull
+request is no longer open, with no mention of a receipt, and the receipt must be
+gone. Reopening the pull request on the same head must then pass fresh gates and
+merge exactly once, with one confirmation and unchanged preferences.
+
 Add `legacy-open` to seed an unfinished receipt from the previous build. With
 fresh facts confirming OPEN, the full sweep must release that attempt, consume
 one failure from the durable budget and merge through current admission without
@@ -122,8 +135,12 @@ without issuing another merge. A separate regression recovers OPEN after an
 unreadable third command and requires the original CLI error in Neo's limit notice.
 
 Add `limit-gone` to exhaust retries while Neo delivery is unavailable, close the
-PR and switch its policy to owner, then restore delivery. The pending limit
-report must still reach Neo exactly once. Add `external-owned` to fail one
+PR and switch its policy to owner, then restore delivery while the repository
+read fails: first with the clock set back, so the ledger keeps its older
+complete health, then with the clock forward, so the health is failed. The
+ledger still shows the old open row both times, and the stopped report must not
+be sent on that stale row. After a complete read closes the row it is still
+not told: the report retires with its subject. Add `external-owned` to fail one
 attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions
 are suppressed for daemon execution. Terminal fixtures must contain the PR
@@ -134,6 +151,8 @@ Add `large-files` for a 171-file PR whose ledger and `gh pr view` expose only
 merge once with the full head. A protected design path on the last page must
 hold; missing pages, malformed data and a failed files read must also hold.
 No policy changes or manual merge are used to complete the scope.
+The helper advances its clock ten minutes before the final clean sweep, because
+a same-head sign-off hold is not read again sooner.
 Ordinary waiting_human rows remain signaling-only. This exception requires a
 truncated file summary plus complete current scope and passing fresh gates.
 

@@ -103,7 +103,7 @@ function setup(
         return packDone === null ? null : { done: packDone, evidence: '#1 已合并' };
       },
       statusLine: () => null,
-      waiting: () => prOpen,
+      waiting: async (todos) => new Set((await prOpen) ? todos.map((todo) => todo.id) : []),
     },
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
@@ -3456,9 +3456,9 @@ describe('stopped worker ladder', () => {
       id: 'later',
       todos: {
         ...h.packs[0].todos!,
-        waiting: () => {
+        waiting: async () => {
           later.push('called');
-          return false;
+          return new Set<string>();
         },
       },
     });
