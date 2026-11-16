@@ -523,8 +523,13 @@ export async function repairSDKSessionFile(
     const lines = content.split('\n').filter((line) => line.trim());
 
     const insertions: Array<{ lineIndex: number; message: string }> = [];
+    const recoveredToolUseIds = new Set<string>();
 
     for (const orphan of validation.orphanedToolResults) {
+      if (recoveredToolUseIds.has(orphan.toolUseId)) {
+        result.repairedCount++;
+        continue;
+      }
       const { messages: dbMessages } = db.getSDKMessages(kaiSessionId, 10000);
 
       let missingAssistantMsg: SDKFileMessage | null = null;
@@ -555,6 +560,10 @@ export async function repairSDKSessionFile(
           `Could not find tool_use message for ${orphan.toolUseId} in HyperNeo DB or transcript`
         );
         continue;
+      }
+
+      for (const block of missingAssistantMsg.message?.content ?? []) {
+        if (block.type === 'tool_use' && block.id) recoveredToolUseIds.add(block.id);
       }
 
       const orphanedLine = JSON.parse(lines[orphan.lineIndex]) as SDKFileMessage;
