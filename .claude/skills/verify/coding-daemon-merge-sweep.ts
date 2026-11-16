@@ -388,7 +388,7 @@ try{
  publish({labels:[[]],...extra});await runSweep();assert.equal(mergeCalls().length,0);
  }
  assert.equal(ledger.list()[0].state,'waiting_human');
- publish({labels:[[]],files:pages});await runSweep();await runSweep();
+ publish({labels:[[]],files:pages});tick+=600_000;await runSweep();await runSweep();
  assert.deepEqual(mergeCalls(),[['pr','merge',url,'--squash','--match-head-commit',head]]);
  assert.equal(notices.filter(text=>text.includes('Merge confirmed:')).length,1);
  assert.deepEqual(await rpc('pack.preferences.list',{}),preferences);

@@ -141,6 +141,8 @@ Add `large-files` for a 171-file PR whose ledger and `gh pr view` expose only
 merge once with the full head. A protected design path on the last page must
 hold; missing pages, malformed data and a failed files read must also hold.
 No policy changes or manual merge are used to complete the scope.
+The helper advances its clock ten minutes before the final clean sweep, because
+a same-head sign-off hold is not read again sooner.
 Ordinary waiting_human rows remain signaling-only. This exception requires a
 truncated file summary plus complete current scope and passing fresh gates.
 
