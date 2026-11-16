@@ -27,6 +27,10 @@ const app = await createDaemonApp({
 });
 assert(![8399, 8499].includes(app.server.port));
 const requests: Record<string, unknown>[] = [];
+const driverError = {
+  content: [{ type: 'text', text: 'No screenshot of window 7: call get_window_state first' }, { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }],
+  structuredContent: { code: 'no_screenshot' },
+};
 const host = createServer(socket => {
   let line = '';
   socket.on('data', chunk => {
@@ -34,7 +38,8 @@ const host = createServer(socket => {
     if (!line.includes('\n')) return;
     const request = JSON.parse(line);
     requests.push(request);
-    socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: 'org.example.fixture', class: 'pointer', decision: 'allowed', reason: null, dispatched: true } }) + '\n');
+    const body = request.tool === 'get_window_state' ? { reason: 'driver_error', ...driverError } : { reason: null };
+    socket.end(JSON.stringify({ ok: true, result: { call_id: request.callId, bundle_id: 'org.example.fixture', class: 'pointer', decision: 'allowed', dispatched: true, ...body } }) + '\n');
   });
 });
 try {
@@ -66,6 +71,12 @@ try {
   assert.equal(audit.length, 1);
   assert.equal(audit[0].session_id, worker);
   assert.deepEqual(JSON.parse(audit[0].params_summary), { todo: 'todo', session: worker, tool: 'click', app: 'org.example.fixture', class: 'pointer', decision: 'allowed', reason: null, dispatched: true });
+  const failed = await call({ name: 'desktop.call', input: { tool: 'get_window_state', args: { pid: 123, window_id: 7 } } });
+  const failure = JSON.parse(failed.content[0].text);
+  assert.equal(failure.ok, false, JSON.stringify(failed));
+  assert.equal(failure.reason, 'driver_error');
+  assert.deepEqual(failure.structuredContent, driverError.structuredContent);
+  assert.deepEqual(failed.content.slice(1), driverError.content);
   const registry = app.sessionManager.getOperationRegistry();
   const rpc = await invokeOperation(registry, 'desktop.call', input, { source: 'rpc', principal: 'local', sessionId: worker, role: 'direct_task_worker' });
   assert(!('value' in rpc) || !(rpc.value as { dispatched?: boolean }).dispatched);
@@ -75,9 +86,9 @@ try {
   await call({ name: 'desktop.call', input: { tool: 'kill_app', args: {} } });
   sql.prepare("UPDATE neo_todos SET approved_at=NULL WHERE id='todo'").run();
   await call({ name: 'desktop.call', input });
-  assert.equal(requests.length, 1);
-  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audit.length, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
-  console.log(`desktop.call journey PASS host_requests=1 audit_rows=1 refused_paths=5 described_tools=${listedTools.length}`);
+  assert.equal(requests.length, 2);
+  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audit.length, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
+  console.log(`desktop.call journey PASS host_requests=2 audit_rows=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();

@@ -9,6 +9,8 @@ export const DesktopDispatchReply = z.object({
   decision: z.enum(['allowed', 'refused']),
   reason: z.string().nullable(),
   dispatched: z.boolean(),
+  content: z.array(z.looseObject({ type: z.string() })).optional(),
+  structuredContent: z.unknown().optional(),
 });
 const Envelope = z.object({ ok: z.literal(true), result: DesktopDispatchReply });
 
@@ -39,7 +41,7 @@ export function dispatchDesktopCall(
     client.once('end', () => fail(new Error('Desktop host closed without a reply.')));
     client.on('data', (chunk) => {
       text += chunk.toString();
-      if (Buffer.byteLength(text) > 1 << 20)
+      if (Buffer.byteLength(text) > 2 << 20)
         return fail(new Error('Desktop host reply too large.'));
       if (!text.includes('\n')) return;
       try {

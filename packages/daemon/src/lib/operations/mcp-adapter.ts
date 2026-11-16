@@ -1,4 +1,5 @@
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
 import { invokeOperation, type OperationOutcome } from './invoke.ts';
@@ -18,6 +19,11 @@ function mcpResult(value: unknown, isError = false) {
     content: [{ type: 'text' as const, text: JSON.stringify(value ?? null) }],
     ...(isError ? { isError: true } : {}),
   };
+}
+
+function desktopCallResult(value: unknown) {
+  const { content = [], ...rest } = value as { content?: CallToolResult['content'] };
+  return { content: [...mcpResult(rest).content, ...content] };
 }
 
 export type OperationRefusal = { operation: string; reason: string; accepted?: true };
@@ -72,6 +78,8 @@ export function createOperationMcpHandler(
             }
           }
       }
+      if (outcome.kind === 'completed' && parsed.data.name === 'desktop.call')
+        return desktopCallResult(outcome.value);
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value
