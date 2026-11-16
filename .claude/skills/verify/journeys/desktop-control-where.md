@@ -23,9 +23,15 @@ rows.
 Pass means the helper exits 0 and `where-observations.json` shows:
 
 - no switch visible before any row is expanded;
-- every seeded todo row rendered with a chevron, and its switch visible after
-  the chevron is clicked, at both widths;
+- every seeded todo row rendered with a chevron, and after the chevron is
+  pressed (tapped at phone width) its switch is visible, enabled and passes an
+  unforced trial press that leaves its value unchanged, at both widths;
+- `desktopReachableWhenObstructed` and `phoneReachableWhenObstructed` are
+  `false`: the same check fails once a transparent overlay covers the page.
 - `phoneWorkButton` names the header button that opens the work sheet.
+
+Negative control: `VERIFY_OBSTRUCT_SWITCH=1` covers each switch before it is
+checked, and the helper must exit non-zero.
 
 Screenshots show the click path: `desktop-1280-errands-collapsed.png`,
 `desktop-1280-errands-expanded.png`, `phone-390-page.png` (the header button),

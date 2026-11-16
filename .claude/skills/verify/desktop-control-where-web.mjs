@@ -56,7 +56,39 @@ const visibleSwitches = (page) =>
   page
     .getByRole('checkbox', { name: LABEL })
     .evaluateAll((boxes) => boxes.filter((box) => box.getClientRects().length > 0).length);
-const expandAll = async (page) => {
+const press = (locator, touch, options) =>
+  touch ? locator.tap(options) : locator.click(options);
+const reachable = async (box, touch) => {
+  if (!(await box.isVisible()) || !(await box.isEnabled())) return false;
+  const before = await box.isChecked();
+  const ok = await press(box, touch, { trial: true, timeout: 3000 }).then(
+    () => true,
+    () => false
+  );
+  assert.equal(await box.isChecked(), before, 'trial press changed the switch');
+  return ok;
+};
+const cover = (page) =>
+  page.evaluate(() => {
+    if (document.getElementById('verify-obstruction')) return;
+    const sheet = document.createElement('div');
+    sheet.id = 'verify-obstruction';
+    sheet.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:transparent';
+    document.body.append(sheet);
+  });
+const uncover = (page) =>
+  page.evaluate(() => document.getElementById('verify-obstruction')?.remove());
+const obstructed = async (page, touch) => {
+  await cover(page);
+  const box = page
+    .locator('[data-ask-todo="dentist"]')
+    .first()
+    .getByRole('checkbox', { name: LABEL });
+  const result = await reachable(box, touch);
+  await uncover(page);
+  return result;
+};
+const expandAll = async (page, touch) => {
   const result = {};
   for (const [id, title] of Object.entries(TODOS)) {
     const row = page.locator(`[data-ask-todo="${id}"]`).first();
@@ -66,10 +98,12 @@ const expandAll = async (page) => {
     }
     const show = row.getByRole('button', { name: `Show details: ${title}` });
     const hasChevron = (await show.count()) > 0;
-    if (hasChevron) await show.click();
+    if (hasChevron) await press(show, touch);
     const box = row.getByRole('checkbox', { name: LABEL });
     await box.waitFor({ timeout: 5000 }).catch(() => {});
-    result[id] = { rowRendered: true, hasChevron, switchAfterExpand: await box.isVisible() };
+    if (process.env.VERIFY_OBSTRUCT_SWITCH === '1') await cover(page);
+    result[id] = { rowRendered: true, hasChevron, switchAfterExpand: await reachable(box, touch) };
+    await uncover(page);
   }
   return result;
 };
@@ -80,9 +114,9 @@ const frame = async (page, selector, name) => {
   await card.scrollIntoViewIfNeeded();
   await card.screenshot({ path: join(out, name) });
 };
-const showInProgress = async (page) => {
+const showInProgress = async (page, touch) => {
   const chip = page.getByRole('button', { name: /^In progress/ });
-  if (await chip.count()) await chip.first().click();
+  if (await chip.count()) await press(chip.first(), touch);
 };
 const firstRow = (page) =>
   page.locator('[data-ask-todo="dentist"]').first().waitFor({ timeout: 8000 }).catch(() => {});
@@ -94,10 +128,11 @@ try {
   observations.desktopSwitchesOnLoad = await visibleSwitches(desk.page);
   await desk.page.screenshot({ path: join(out, 'desktop-1280-page.png') });
   await frame(desk.page, 'article[data-ask="errands"]', 'desktop-1280-errands-collapsed.png');
-  await showInProgress(desk.page);
+  await showInProgress(desk.page, false);
   await firstRow(desk.page);
-  observations.desktopAfterExpand = await expandAll(desk.page);
+  observations.desktopAfterExpand = await expandAll(desk.page, false);
   observations.desktopSwitchesAfterExpand = await visibleSwitches(desk.page);
+  observations.desktopReachableWhenObstructed = await obstructed(desk.page, false);
   await frame(desk.page, 'article[data-ask="errands"]', 'desktop-1280-errands-expanded.png');
   await desk.context.close();
 
@@ -114,10 +149,11 @@ try {
   await phone.page.waitForTimeout(600);
   observations.phoneSwitchesInSheet = await visibleSwitches(phone.page);
   await phone.page.screenshot({ path: join(out, 'phone-390-work-sheet.png') });
-  await showInProgress(phone.page);
+  await showInProgress(phone.page, true);
   await firstRow(phone.page);
-  observations.phoneAfterExpand = await expandAll(phone.page);
+  observations.phoneAfterExpand = await expandAll(phone.page, true);
   observations.phoneSwitchesAfterExpand = await visibleSwitches(phone.page);
+  observations.phoneReachableWhenObstructed = await obstructed(phone.page, true);
   await frame(phone.page, 'article[data-ask="errands"]', 'phone-390-errands-expanded.png');
   await phone.context.close();
 } finally {
@@ -125,10 +161,12 @@ try {
   await browser.close();
 }
 console.log(JSON.stringify(observations));
-const reachable = { rowRendered: true, hasChevron: true, switchAfterExpand: true };
+const expected = { rowRendered: true, hasChevron: true, switchAfterExpand: true };
 assert.equal(observations.desktopSwitchesOnLoad, 0);
-for (const width of ['desktop', 'phone'])
+for (const width of ['desktop', 'phone']) {
   for (const id of Object.keys(TODOS))
-    assert.deepEqual(observations[`${width}AfterExpand`][id], reachable, `${width} ${id}`);
+    assert.deepEqual(observations[`${width}AfterExpand`][id], expected, `${width} ${id}`);
+  assert.equal(observations[`${width}ReachableWhenObstructed`], false, `${width} obstruction control`);
+}
 assert.equal(observations.desktopSwitchesAfterExpand, Object.keys(TODOS).length);
 assert.equal(observations.phoneSwitchesAfterExpand, Object.keys(TODOS).length);
