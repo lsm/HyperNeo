@@ -551,9 +551,7 @@ describe('neo.coding.assign with cross-model review', () => {
     });
     expect(f.starts).toHaveLength(1);
     const assigned = review.assignment!;
-    const results = createOperationRegistry([
-      createCodingResultOperation(f.assignments, f.ledger, async () => [[]]),
-    ]);
+    const results = createOperationRegistry([createCodingResultOperation(f.assignments, f.ledger)]);
     expect(
       await invokeOperation(
         results,

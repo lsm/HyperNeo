@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -15,10 +15,6 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
-assert(process.env.PATH?.startsWith(`${join(run, 'bin')}:`));
-mkdirSync(join(run, 'bin'), { recursive: true });
-writeFileSync(join(run, 'bin/gh'), `#!/bin/sh\nexec bun ${JSON.stringify(join(import.meta.dir, 'review-comment-gh.ts'))} ${JSON.stringify(run)} "$@"\n`);
-chmodSync(join(run, 'bin/gh'), 0o755);
 const evidence: unknown[] = [];
 const url = 'https://github.com/synthetic/assignments/pull/7';
 const write = { adapter: 'codex-desktop', id: 'author' };

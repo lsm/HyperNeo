@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import { Logger } from '../../../logger.ts';
 import type { CodingStageFact } from './stage-facts.ts';
+
+const log = new Logger('NeoCodingReviewComment');
 
 export type CodingGithubApi = (host: string, args: string[]) => Promise<unknown>;
 
@@ -13,7 +16,7 @@ export const codingGithubApi: CodingGithubApi = async (host, args) => {
     ['gh', 'api', '--hostname', host, ...args],
     homedir(),
     spawnProcess,
-    { stripGHRepo: true, timeoutMs: 120_000, maxBufferBytes: 64 * 1024 * 1024 }
+    { stripGHRepo: true, timeoutMs: 60_000, maxBufferBytes: 64 * 1024 * 1024 }
   );
   if (!result.ok) throw new Error(result.error);
   return result.data;
@@ -55,4 +58,19 @@ export async function postCodingReviewComment(api: CodingGithubApi, fact: Coding
   if (pages.flat().some((comment) => comment.body?.includes(marker))) return false;
   await api(pr.host, [path, '--method', 'POST', '-f', `body=${body}`]);
   return true;
+}
+
+export function createCodingReviewComments(api: CodingGithubApi) {
+  const posted = new Set<string>();
+  return async (facts: readonly CodingStageFact[]) => {
+    for (const fact of facts) {
+      const { marker } = planCodingReviewComment(fact);
+      if (posted.has(marker)) continue;
+      await postCodingReviewComment(api, fact).then(
+        () => posted.add(marker),
+        (error: unknown) =>
+          log.warn('review comment not posted', { url: fact.url, error: String(error) })
+      );
+    }
+  };
 }

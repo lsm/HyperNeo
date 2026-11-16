@@ -14,13 +14,18 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/coding-review-comment.ts "$RUN"
 ```
 
-Real WebSocket RPC `neo.coding.result` records an assigned Review pass, then the
-same pass again, then a fail at the same head, then that fail again. The daemon
-spawns `gh` itself. Exactly two comments must exist: one per stored verdict, none
-for the repeats. Each starts with `**HyperNeo recorded review: <VERDICT>**` and
+Real WebSocket RPC `neo.coding.result` records an assigned Review pass on an open
+ledger PR and must not call GitHub. Two coding pack sweeps follow, then a fail at
+the same head and two more sweeps. The sweep spawns `gh` itself. Exactly two
+comments must exist: one per stored verdict, none from the repeat sweeps. The
+sweep's own cleanup drops facts for the unwatched synthetic repo, so the helper
+re-observes the head before the second result. Each starts with `**HyperNeo recorded review: <VERDICT>**` and
 names the reviewer model and harness, the verdict and the head. The reviewer
 session id never appears. The helper prints the first comment as a sample.
 
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
+
+Run `neo-coding-review-comment` unit tests for the outage retry, closed PRs and
+moved heads.
 
 Not verified here: real GitHub, the human's gh account, or the PR page rendering.

@@ -7,6 +7,7 @@ import { CodingAssignmentsRepository, type CodingAssignment } from '../../../pac
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -49,13 +50,19 @@ try {
   db.exec("INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','synthetic','Review comment','Review comment',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Review comment','Merged','doing',1,1)");
   ledger.stageFacts.observeHead(url, 'head-a', 1);
   assert(await assignments.recordLater('todo', 'review', assignment));
+  db.prepare("INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at) VALUES ('synthetic/review-comment', 7, 'Synthetic', 'branch', 'head-a', 'waiting_review', ?, NULL, ?)").run(Date.now(), Date.now());
+  const neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
-  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact }), { ok: true });
-  assert.equal(comments().length, 1, 'a repeated pass posts nothing new');
+  assert.equal(comments().length, 0, 'the result RPC never calls GitHub');
+  await neo.sweepPacks();
+  await neo.sweepPacks();
+  assert.equal(comments().length, 1, 'the next sweep posts nothing new');
+  ledger.stageFacts.observeHead(url, 'head-a', Date.now());
   assert.deepEqual(await rpc({ todoId: 'todo', ref, fact: { ...fact, verdict: 'fail' } }), { ok: true });
-  assert.deepEqual(await rpc({ todoId: 'todo', ref, fact: { ...fact, verdict: 'fail' } }), { ok: false, reason: 'head_changed_or_failed_stage' });
+  await neo.sweepPacks();
+  await neo.sweepPacks();
   const posted = comments();
-  assert.equal(posted.length, 2, 'the changed verdict posts once, its repeat posts nothing');
+  assert.equal(posted.length, 2, 'the changed verdict posts once');
   for (const [comment, verdict] of [[posted[0], 'pass'], [posted[1], 'fail']] as const) {
     assert.equal(comment.path, 'repos/synthetic/review-comment/issues/7/comments');
     assert.equal(comment.body.split('\n')[0], `**HyperNeo recorded review: ${verdict.toUpperCase()}**`);
@@ -64,9 +71,8 @@ try {
     assert(comment.body.includes('- Head: `head-a`'));
     assert(!comment.body.includes(ref.id));
   }
-  assert.deepEqual(ledger.stageFacts.read(url).map((item) => item.verdict), ['fail']);
   evidence.push({ comments: posted, ghCalls: readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n') });
-  console.log(`PASS: real RPC review results posted ${posted.length} labelled comments through gh, none on repeats. Evidence: ${run}/evidence/review-comment.json`);
+  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps. Evidence: ${run}/evidence/review-comment.json`);
   console.log(`--- sample comment ---\n${posted[0].body}`);
 } finally {
   writeFileSync(join(run, 'evidence/review-comment.json'), JSON.stringify(evidence, null, 2));

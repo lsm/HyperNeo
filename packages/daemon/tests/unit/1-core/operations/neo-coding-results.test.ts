@@ -50,24 +50,10 @@ function setup() {
   const assignments = new CodingAssignmentsRepository(db),
     ledger = new CodingPrLedgerRepository(db);
   ledger.stageFacts.observeHead(url, 'head-a', 1);
-  const comments: { host: string; path: string; body: string }[] = [];
-  const outage = { on: false };
-  const github = async (host: string, args: string[]) => {
-    if (outage.on) throw new Error('gh response exceeded the buffer and was truncated');
-    const path = args[0];
-    if (args.includes('GET'))
-      return [comments.filter((item) => item.path === path).map(({ body }) => ({ body }))];
-    const body = args.find((arg) => arg.startsWith('body='));
-    if (!body) throw new Error('unexpected GitHub call');
-    comments.push({ host, path, body: body.slice('body='.length) });
-    return {};
-  };
-  const registry = createOperationRegistry([
-    createCodingResultOperation(assignments, ledger, github),
-  ]);
+  const registry = createOperationRegistry([createCodingResultOperation(assignments, ledger)]);
   const result = (input: unknown, role = 'neo' as const) =>
     invokeOperation(registry, 'neo.coding.result', input, { source: 'internal', role });
-  return { db, assignments, ledger, result, comments, outage };
+  return { db, assignments, ledger, result };
 }
 
 describe('linked coding assignment results', () => {
@@ -266,62 +252,6 @@ describe('linked coding assignment results', () => {
         value: { ok: false, reason: 'stage_assignment_mismatch' },
       });
       expect(ledger.stageFacts.read(url)).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-  test.each(['pass', 'fail'] as const)(
-    'a recorded %s Review posts one labelled PR comment and a repeat posts nothing',
-    async (verdict) => {
-      const { db, assignments, result, comments } = setup();
-      try {
-        assignments.record('todo', 'review', assignment);
-        const input = { todoId: 'todo', ref, fact: { ...fact, verdict } };
-        expect((await result(input)).kind).toBe('completed');
-        await result(input);
-        expect(comments).toHaveLength(1);
-        expect(comments[0].host).toBe('github.com');
-        expect(comments[0].path).toBe('repos/synthetic/assignments/issues/1/comments');
-        const lines = comments[0].body.split('\n');
-        expect(lines[0]).toBe(`**HyperNeo recorded review: ${verdict.toUpperCase()}**`);
-        expect(lines).toContain('- Reviewer: `claude-opus-5-5` via hyperneo');
-        expect(lines).toContain(`- Verdict: ${verdict}`);
-        expect(lines).toContain('- Head: `head-a`');
-        expect(comments[0].body).not.toContain(ref.id);
-      } finally {
-        db.close();
-      }
-    }
-  );
-  test('a GitHub outage keeps the recorded verdict and a later result posts it', async () => {
-    const { db, assignments, ledger, result, comments, outage } = setup();
-    try {
-      assignments.record('todo', 'review', assignment);
-      outage.on = true;
-      expect(await result({ todoId: 'todo', ref, fact })).toEqual({
-        kind: 'completed',
-        value: { ok: true },
-      });
-      expect(ledger.stageFacts.read(url)).toHaveLength(1);
-      expect(comments).toEqual([]);
-      outage.on = false;
-      await result({ todoId: 'todo', ref, fact });
-      expect(comments).toHaveLength(1);
-    } finally {
-      db.close();
-    }
-  });
-  test('a recorded Verify result posts no Review comment', async () => {
-    const { db, assignments, result, comments } = setup();
-    try {
-      const qaRef = { ...ref, id: 'qa' },
-        qaActor = { ...actor, id: 'qa' };
-      assignments.record('todo', 'review', assignment);
-      assignments.record('todo', 'qa', { ...assignment, ref: qaRef, actor: qaActor });
-      expect(
-        await result({ todoId: 'todo', ref: qaRef, fact: { ...fact, stage: 'qa', actor: qaActor } })
-      ).toEqual({ kind: 'completed', value: { ok: true } });
-      expect(comments).toEqual([]);
     } finally {
       db.close();
     }
