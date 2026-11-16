@@ -96,6 +96,7 @@ describe('createWorkCleanupRuntime', () => {
     todo('old file', 'done', start - 8 * DAY);
     todo('old-home', 'done', start - 8 * DAY);
     todo('live', 'doing', start, `Read ${evidence('old-live-ref')}`);
+    todo('live-percent', 'doing', start, 'Inspect byte %FF in the dump');
     const card = {
       options: null,
       multiple: false,
