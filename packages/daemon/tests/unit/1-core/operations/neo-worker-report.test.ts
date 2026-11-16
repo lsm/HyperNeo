@@ -803,3 +803,57 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
     db.close();
   }
 });
+
+test('a request todo names its sender, and a repeat after Neo closes it records nothing', async () => {
+  const { db, service, send } = await setup();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  const count = (sql: string) => (db.getDatabase().prepare(sql).get() as { n: number }).n;
+  const records = () => ({
+    receipts: count('SELECT COUNT(*) AS n FROM message_send_receipts'),
+    mailbox: count("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox'"),
+    asks: count('SELECT COUNT(*) AS n FROM neo_asks'),
+    todos: count('SELECT COUNT(*) AS n FROM neo_todos'),
+  });
+  try {
+    db.getDatabase()
+      .prepare(
+        "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo','Neo','/synthetic','2026-10-25','2026-10-25','active','{}','{}')"
+      )
+      .run();
+    const request = { to: 'neo', kind: 'question', text: 'Close the merged todo' };
+    const first = await send(request, 'stranger');
+    if (first.kind !== 'completed') throw new Error(JSON.stringify(first));
+    const { messageId } = first.value as {
+      messageId: `${string}-${string}-${string}-${string}-${string}`;
+    };
+    const [ask] = service.todos.listOpenAsks().filter((item) => item.id !== 'ask');
+    const [todo] = service.todos.listTodos(ask.id);
+    expect(todo.named).toEqual({ requestFrom: 'stranger' });
+    const job = db.getJobQueueRepo().dequeue('mailbox')[0];
+    await db.saveUserMessage(
+      'neo',
+      {
+        type: 'user',
+        uuid: messageId,
+        session_id: 'neo',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'synthetic' },
+      },
+      'consumed'
+    );
+    db.getJobQueueRepo().complete(job.id, {});
+    service.todos.updateTodo(todo, { state: 'done', finishedAt: now }, now);
+    clock.mockReturnValue(now + 11 * 60_000);
+    const before = records();
+    expect(await send(request, 'stranger')).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected' },
+    });
+    expect(records()).toEqual(before);
+  } finally {
+    clock.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
