@@ -6,15 +6,17 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import {
   cleanupOwnedWorktree,
   planWorkPlacement,
 } from '../../../../src/lib/drivers/work-placement';
+import { workerWorkLocations } from '../../../../src/lib/work-locations';
 
 const runs: string[] = [];
 afterEach(() => {
@@ -111,4 +113,83 @@ describe('submodule archive retention', () => {
         );
     }
   );
+});
+
+describe('archive removes the worker work folders', () => {
+  const priorDataDir = process.env.HYPERNEO_DATA_DIR;
+  afterEach(() => {
+    process.env.HYPERNEO_DATA_DIR = priorDataDir;
+  });
+
+  function setup(label: string) {
+    const run = realpathSync(mkdtempSync(join(tmpdir(), `worker-folders-${label}-`)));
+    runs.push(run);
+    process.env.HYPERNEO_DATA_DIR = join(run, 'data');
+    const parent = createPushedWorkerRepo(run);
+    const workers = join(run, 'workers');
+    const folder = join(workers, 'worker');
+    const sibling = join(workers, 'sibling');
+    parent.git('worktree', 'add', '--detach', folder, 'HEAD');
+    for (const root of [folder, sibling]) {
+      const places = workerWorkLocations(root);
+      for (const place of [places.builds, places.scratch, places.ghConfig, places.evidence]) {
+        mkdirSync(place, { recursive: true });
+        writeFileSync(join(place, 'synthetic'), 'synthetic');
+      }
+    }
+    return { run, parent, workers, folder, places: workerWorkLocations(folder), sibling };
+  }
+
+  test('a removed worktree takes its builds, scratch and gh-config folders with it', async () => {
+    const { workers, folder, places, sibling } = setup('removed');
+    expect(await cleanupOwnedWorktree(folder, [workers])).toEqual({
+      directory: folder,
+      removed: true,
+    });
+    expect(existsSync(places.builds)).toBe(false);
+    expect(existsSync(places.scratch)).toBe(false);
+    expect(existsSync(places.ghConfig)).toBe(false);
+    expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
+    const others = workerWorkLocations(sibling);
+    for (const place of [others.builds, others.scratch, others.ghConfig, others.evidence])
+      expect(readFileSync(join(place, 'synthetic'), 'utf8')).toBe('synthetic');
+    expect(await cleanupOwnedWorktree(folder, [workers])).toEqual({
+      directory: folder,
+      removed: true,
+    });
+  });
+
+  test('a retained worktree keeps its work folders', async () => {
+    const { workers, folder, places } = setup('retained');
+    writeFileSync(join(folder, 'unsaved'), 'local work');
+    expect(await cleanupOwnedWorktree(folder, [workers])).toMatchObject({
+      directory: folder,
+      removed: false,
+    });
+    for (const place of [places.builds, places.scratch, places.ghConfig])
+      expect(readFileSync(join(place, 'synthetic'), 'utf8')).toBe('synthetic');
+  });
+
+  test('a linked work folder is unlinked without touching its target', async () => {
+    const { run, workers, folder, places } = setup('linked');
+    const outside = join(run, 'outside');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'kept'), 'kept');
+    rmSync(places.builds, { recursive: true, force: true });
+    symlinkSync(outside, places.builds);
+    expect(await cleanupOwnedWorktree(folder, [workers])).toMatchObject({ removed: true });
+    expect(existsSync(places.builds)).toBe(false);
+    expect(readFileSync(join(outside, 'kept'), 'utf8')).toBe('kept');
+  });
+
+  test('a linked parent folder never leads cleanup into evidence', async () => {
+    const { workers, folder, places } = setup('parent-linked');
+    const buildsParent = dirname(places.builds);
+    rmSync(buildsParent, { recursive: true, force: true });
+    symlinkSync(dirname(places.evidence), buildsParent);
+    expect(await cleanupOwnedWorktree(folder, [workers])).toMatchObject({ removed: true });
+    expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
+    expect(existsSync(places.scratch)).toBe(false);
+    expect(existsSync(places.ghConfig)).toBe(false);
+  });
 });

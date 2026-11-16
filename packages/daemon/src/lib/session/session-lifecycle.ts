@@ -1,3 +1,4 @@
+import { releaseRemovedWorkerFolders } from '../drivers/work-placement.ts';
 import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
@@ -653,6 +654,7 @@ export class SessionLifecycle {
     if (session.worktree) {
       try {
         await this.worktreeManager.removeWorktree(session.worktree, true);
+        await releaseRemovedWorkerFolders(session.worktree.worktreePath);
         completedPhases.push('worktree-remove');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] archiveResources: worktree removal failed:`, error);
@@ -773,6 +775,7 @@ export class SessionLifecycle {
       if (session?.worktree) {
         try {
           await this.worktreeManager.removeWorktree(session.worktree, true);
+          await releaseRemovedWorkerFolders(session.worktree.worktreePath);
           const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
           completedPhases.push(stillExists ? 'worktree-cleanup-partial' : 'worktree-cleanup');
         } catch (error) {
