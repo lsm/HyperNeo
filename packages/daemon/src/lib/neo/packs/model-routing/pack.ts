@@ -1,7 +1,9 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
+import { type RateLimitHoldReason, THINKING_OPTIONS } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { readProviderUsage } from '../../../rpc-handlers/family-operations/settings.ts';
+import type { NeoAttentionEvent } from '../../attention/decide.ts';
 import type {
   NeoLine,
   NeoLineRanking,
@@ -11,28 +13,33 @@ import type {
   NeoPackPreferenceDeclaration,
 } from '../../pack-contract.ts';
 import { getNeoPackPreference } from '../../preferences.ts';
+import { DEFAULT_ON_HOLD, type HeldLine, type HoldRule, lineHeldText, onLineHeld } from './held.ts';
 import {
   type Availability,
   type LineHold,
   type LineRule,
   type RankInput,
   type Route,
+  names,
   rankLines,
+  routeFor,
   type UsageReading,
 } from './rank.ts';
 
 const PACK = 'model-routing';
+const LINE_HELD = `${PACK}.line_held`;
 
 const listPreference = (
-  kind: 'routes' | 'lineRules',
+  kind: 'routes' | 'lineRules' | 'holdRules',
   en: string,
-  zh: string
+  zh: string,
+  value: readonly unknown[] = []
 ): NeoPackPreferenceDeclaration => ({
   label: { en, 'zh-Hans': zh },
   valueLabels: {},
   scope: 'global',
   type: { kind },
-  default: [],
+  default: value,
   ask: en,
 });
 
@@ -43,6 +50,12 @@ const preferences = {
     '各类工作优先用哪些模型线路？'
   ),
   rules: listPreference('lineRules', 'Where may each line be used?', '每条线路可以用在哪里？'),
+  onHold: listPreference(
+    'holdRules',
+    'When a worker is held on a line, how long should it wait before Neo hears?',
+    '工作者被某条线路挡住时，等多久再告诉 Neo？',
+    DEFAULT_ON_HOLD
+  ),
 };
 
 export const MODEL_ROUTING_PACK_BRIEF: NeoPackBrief = {
@@ -57,31 +70,104 @@ export interface ModelRoutingDeps {
   now?: () => number;
 }
 
+const readPreference = (db: Database, key: keyof typeof preferences) =>
+  getNeoPackPreference(db, PACK, { kind: 'global', key: '' }, key)?.value ??
+  preferences[key].default;
+
 function readPrefs(db: Database): RankInput['prefs'] {
-  const read = (key: keyof typeof preferences) =>
-    getNeoPackPreference(db, PACK, { kind: 'global', key: '' }, key)?.value ?? [];
-  return { routes: read('routes') as Route[], rules: read('rules') as LineRule[] };
+  return {
+    routes: readPreference(db, 'routes') as Route[],
+    rules: readPreference(db, 'rules') as LineRule[],
+  };
+}
+
+type HeldTodo = {
+  todo: { id: string; title: string; named: string | null };
+  worker: string;
+  told: { since: number; text: string; sent: boolean } | null;
+  hold: HeldLine;
+};
+
+type Cooldown = Record<string, unknown>;
+
+function readCooldowns(db: Database): Cooldown[] {
+  return db
+    .prepare(`SELECT t.id, t.title, t.named, x.id AS worker,
+        json_extract(x.config, '$.provider') AS provider,
+        json_extract(x.config, '$.model') AS model,
+        json_extract(x.config, '$.thinkingLevel') AS thinkingLevel,
+        json_extract(x.processing_state, '$.reason') AS reason,
+        json_extract(x.processing_state, '$.since') AS since,
+        json_extract(x.processing_state, '$.retryAt') AS retryAt,
+        json_extract(x.processing_state, '$.manualRetry') AS manualRetry,
+        json_extract(f.value_json, '$.since') AS told,
+        json_extract(f.value_json, '$.text') AS toldText,
+        json_extract(f.value_json, '$.sent') AS sent
+      FROM sessions x
+      LEFT JOIN neo_todo_sessions s ON json_valid(s.ref)
+        AND json_extract(s.ref, '$.id') = x.id
+        AND json_extract(s.ref, '$.adapter') = 'hyperneo' AND json_extract(s.ref, '$.daemon') IS NULL
+      LEFT JOIN neo_todos t ON t.id = s.todo_id AND t.state = 'doing'
+      LEFT JOIN pack_facts f ON f.todo_id = t.id AND f.pack = '${PACK}' AND f.key = 'told'
+      WHERE x.status NOT IN ('archived', 'ended') AND x.archived_at IS NULL
+        AND json_valid(x.processing_state) AND json_valid(x.config)
+        AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'`)
+    .all() as Cooldown[];
+}
+
+const effortOf = (level: unknown) => {
+  const option = THINKING_OPTIONS.find((entry) => entry.value === level);
+  return option ? { effort: option.label.toLowerCase() } : {};
+};
+
+const waitsOnSomeone = ({ reason, manualRetry }: Cooldown) =>
+  reason === 'login' || manualRetry === 1;
+
+function readHeldTodos(db: Database, now: number): HeldTodo[] {
+  return readCooldowns(db).flatMap((row) => {
+    const { id, title, named, worker, provider, model, reason, since, retryAt, told, toldText } =
+      row;
+    const live = waitsOnSomeone(row) || typeof retryAt !== 'number' || retryAt > now;
+    return id !== null &&
+      live &&
+      typeof provider === 'string' &&
+      typeof model === 'string' &&
+      typeof reason === 'string' &&
+      typeof since === 'number'
+      ? [
+          {
+            todo: { id: String(id), title: String(title), named: named as string | null },
+            worker: String(worker),
+            told:
+              typeof told === 'number'
+                ? { since: told, text: String(toldText ?? ''), sent: row.sent === 1 }
+                : null,
+            hold: {
+              line: { provider, model, harness: 'hyperneo', ...effortOf(row.thinkingLevel) },
+              reason: reason as RateLimitHoldReason,
+              since,
+              ...(typeof retryAt === 'number' ? { retryAt } : {}),
+            },
+          },
+        ]
+      : [];
+  });
+}
+
+function workOf(named: string | null): { kind: string; scope: NeoLineScope } {
+  const facts = (named ? JSON.parse(named) : {}) as Record<string, unknown>;
+  return {
+    kind: typeof facts.workKind === 'string' ? facts.workKind : 'general',
+    scope: typeof facts.repository === 'string' ? { repo: facts.repository } : {},
+  };
 }
 
 function readHolds(db: Database): LineHold[] {
-  return db
-    .prepare(`SELECT json_extract(config, '$.provider') AS provider,
-        json_extract(config, '$.model') AS model,
-        json_extract(processing_state, '$.reason') AS reason,
-        json_extract(processing_state, '$.retryAt') AS retryAt
-      FROM sessions
-      WHERE status NOT IN ('archived', 'ended') AND archived_at IS NULL
-        AND json_valid(processing_state) AND json_valid(config)
-        AND json_extract(processing_state, '$.status') = 'rate_limit_cooldown'`)
-    .all()
-    .flatMap((row) => {
-      const { provider, model, reason, retryAt } = row as Record<string, unknown>;
-      return typeof provider === 'string' &&
-        typeof model === 'string' &&
-        typeof retryAt === 'number'
-        ? [{ provider, model, retryAt, ...(typeof reason === 'string' ? { reason } : {}) }]
-        : [];
-    });
+  return readCooldowns(db).flatMap(({ provider, model, reason, retryAt }) =>
+    typeof provider === 'string' && typeof model === 'string' && typeof retryAt === 'number'
+      ? [{ provider, model, retryAt, ...(typeof reason === 'string' ? { reason } : {}) }]
+      : []
+  );
 }
 
 async function readAvailability(provider: Provider | undefined): Promise<Availability> {
@@ -153,10 +239,102 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     scope: NeoLineScope
   ) => Promise<NeoLineRanking>;
 
+  const scan = (superpipe({})('model-routing.line-held') as PipelineAPI)
+    .input(['now'])
+    .pipe((at: number) => readHeldTodos(deps.database(), at), 'now', 'held')
+    .pipe(() => readPreference(deps.database(), 'onHold'), 'now', 'rules')
+    .pipe(() => readPrefs(deps.database()).routes, 'now', 'routes')
+    .pipe(
+      (held: HeldTodo[], routes: Route[]) => {
+        const rankings = new Map<string, Promise<NeoLineRanking>>();
+        return Promise.all(
+          held.map(async (entry) => {
+            const { kind, scope } = workOf(entry.todo.named);
+            const route = routeFor(routes, kind, scope);
+            const others = (route?.lines ?? []).filter((line) => !names(line, entry.hold.line));
+            const key = JSON.stringify([kind, scope, entry.hold.line]);
+            if (!rankings.has(key)) rankings.set(key, rank(kind, others, scope));
+            const ranking = await rankings.get(key)!;
+            return {
+              ...entry,
+              ranking: { ...ranking, exhausted: !!route && ranking.ranked.length === 0 },
+            };
+          })
+        );
+      },
+      ['held', 'routes'],
+      'ranked'
+    )
+    .pipe(
+      (
+        ranked: (HeldTodo & { ranking: NeoLineRanking })[],
+        rules: HoldRule[],
+        at: number
+      ): NeoAttentionEvent[] => {
+        const current = ranked.length ? readHeldTodos(deps.database(), at) : [];
+        return ranked.flatMap(({ todo, worker, hold, ranking }) => {
+          const live = current.find(
+            (entry) =>
+              entry.todo.id === todo.id &&
+              entry.worker === worker &&
+              entry.hold.since === hold.since
+          );
+          if (!live) return [];
+          const pending =
+            live.told?.since === hold.since && !live.told.sent ? live.told.text : null;
+          if (
+            pending === null &&
+            onLineHeld({ hold, rules, ranking, now: at, told: live.told?.since ?? null }).action !==
+              'tellNeo'
+          )
+            return [];
+          const text = pending ?? lineHeldText(todo, hold, ranking);
+          if (pending === null)
+            deps.database().run(
+              `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
+               ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json`,
+              todo.id,
+              JSON.stringify({ since: hold.since, text })
+            );
+          return [
+            {
+              kind: LINE_HELD,
+              subject: { type: 'todo', id: todo.id },
+              since: hold.since,
+              facts: { text },
+            },
+          ];
+        });
+      },
+      ['ranked', 'rules', 'now'],
+      'events'
+    )
+    .endAsync('events') as (now: number) => Promise<NeoAttentionEvent[]>;
+
+  const sent = (event: NeoAttentionEvent) =>
+    deps.database().run(
+      `UPDATE pack_facts SET value_json = json_set(value_json, '$.sent', json('true'))
+       WHERE todo_id = ? AND pack = '${PACK}' AND key = 'told'
+         AND json_extract(value_json, '$.since') = ?`,
+      event.subject.id,
+      event.since
+    );
+
   return {
     ...MODEL_ROUTING_PACK_BRIEF,
     preferences,
     rankLines: rank,
+    attention: {
+      kinds: [
+        {
+          id: LINE_HELD,
+          decide: () => 'wake',
+          render: ({ facts }) => String(facts.text),
+          sent,
+        },
+      ],
+      scan,
+    },
     instructions: () => null,
   };
 }
