@@ -45,15 +45,17 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     consumedSeq: number | null,
     sendStatus = 'consumed',
     recoveryIntercepted = 0,
-    recoveryBillingTerminal = 0
+    recoveryBillingTerminal = 0,
+    session = 'neo'
   ) => {
     seq += 1;
     db.prepare(`INSERT INTO sdk_messages
       (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
        is_terminal, send_status, recovery_intercepted, recovery_billing_terminal)
-      VALUES (?, ?, 'neo', ?, ?, '2026-01-01', ?, ?, ?, ?, ?, ?)`).run(
+      VALUES (?, ?, ?, ?, ?, '2026-01-01', ?, ?, ?, ?, ?, ?)`).run(
       seq,
       `m${seq}`,
+      session,
       kind,
       JSON.stringify({ type: kind }),
       uuid,
@@ -270,6 +272,53 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     db.prepare('UPDATE neo_todos SET updated_at = 2 WHERE ask_id = ?').run('ask');
     sdk('user', earlier, 20);
     sdk('result', 'direct-result', 21);
+    expect(await sweep()).toEqual([]);
+  });
+
+  const session = (id: string) =>
+    db
+      .prepare(`INSERT INTO sessions
+      (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata)
+      VALUES (?,'Neo','general','/synthetic','2026-01-01','2026-01-01','active','{}','{}')`)
+      .run(id);
+  const coordinator = () => {
+    session('coordinator');
+    db.prepare(
+      "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES ('coordinator', NULL, 'neo')"
+    ).run();
+  };
+
+  test('a wake read in Neo’s session settles an ask recorded on another session', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
+    sdk('result', 'coordinator-result', 21, 'consumed', 0, 0, 'coordinator');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('a digest read in the session it was held for settles the ask', async () => {
+    coordinator();
+    session('earlier');
+    add('removed', 'removed', { reason: 'Not needed' });
+    db.prepare(`INSERT INTO job_queue
+      (id, queue, status, payload, run_at, created_at, completed_at)
+      VALUES ('held', 'neo_notes', 'completed', ?, 0, 0, 0)`).run(
+      JSON.stringify({
+        to: { kind: 'session', sessionId: 'earlier' },
+        messageUuid: wakeUuid('ask', 2),
+        message: { type: 'user', message: { content: 'reminder' } },
+        neoBatchUuid: 'earlier-batch',
+      })
+    );
+    sdk('user', 'earlier-batch', 20, 'consumed', 0, 0, 'earlier');
+    sdk('result', 'earlier-result', 21, 'consumed', 0, 0, 'earlier');
+    expect(await sweep()).toEqual(['ask']);
+  });
+
+  test('an unfinished turn in Neo’s session keeps the ask open', async () => {
+    coordinator();
+    add('finished', 'done');
+    sdk('user', wakeUuid('ask'), 20, 'consumed', 0, 0, 'coordinator');
     expect(await sweep()).toEqual([]);
   });
 
