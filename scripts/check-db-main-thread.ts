@@ -20,6 +20,7 @@ const workers = new Set([
   'storage/repositories/worker-input-worker.ts',
   'storage/repositories/work-cleanup-worker.ts',
   'storage/repositories/neo-peer-repository.ts',
+  'storage/repositories/neo-todo-move-worker.ts',
   'storage/repositories/pairing-request-repository.ts',
   'storage/repositories/neo-tracker-mirror.ts',
   'storage/repositories/agent-memory-embed-worker.ts',

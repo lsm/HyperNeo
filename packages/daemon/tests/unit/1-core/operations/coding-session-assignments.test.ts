@@ -76,6 +76,8 @@ function setup() {
       todoId: string;
       prUrl?: string;
     }) => run(codingSessionAssignmentReads, { method: 'owner', args: [input] }),
+    actorRefs: (input?: { adapter?: string }) =>
+      run(codingSessionAssignmentReads, { method: 'actorRefs', args: [input] }),
   };
   return { db, prs, todo, started, sent, assignments };
 }
@@ -191,6 +193,94 @@ describe('durable session assignments', () => {
         prUrl: 'https://example.test/notes/b',
       })
     ).toBeNull();
+  });
+
+  test('review and qa actor refs are listed for worker exclusion', async () => {
+    const { db, assignments, todo } = setup();
+    const author = todo();
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'reviewer', model: 'm', harness: 'claude-desktop' },
+        ref: ref('reviewer'),
+      })
+    );
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head:qa',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'verifier', model: 'm', harness: 'claude-desktop' },
+        ref: ref('verifier'),
+      })
+    );
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head3:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head3',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'reviewer', model: 'm', harness: 'claude-desktop' },
+        ref: ref('reviewer'),
+      })
+    );
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head2:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head2',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        bot: 'hyperneo-ai-test',
+      })
+    );
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      author,
+      'assignment:github.com/synthetic/repo/pull/7:head4:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/7',
+        head: 'head4',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'other-adapter', model: 'm', harness: 'codex-desktop' },
+        ref: { adapter: 'codex-desktop', id: 'other-adapter' },
+      })
+    );
+    expect(await assignments.actorRefs()).toEqual([
+      { adapter: 'codex-desktop', id: 'other-adapter' },
+      ref('reviewer'),
+      ref('verifier'),
+    ]);
+    expect(await assignments.actorRefs({ adapter: 'claude-desktop' })).toEqual([
+      ref('reviewer'),
+      ref('verifier'),
+    ]);
   });
 
   test('a takeover replaces only the exact session it saw, daemon included', async () => {

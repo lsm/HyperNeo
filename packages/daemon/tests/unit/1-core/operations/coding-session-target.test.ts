@@ -134,6 +134,44 @@ describe('coding session target decision', () => {
     });
   });
 
+  test('an idle session of another work type is never reused for new work', async () => {
+    const { todo, worked, decide } = setup();
+    worked(todo('other'), 'jason', 'Jason', 'done');
+    worked(todo('other'), 'worker', 'dev', 'done');
+    expect(await decide(todo(), start())).toEqual({
+      value: { verb: 'send', ref: ref('worker') },
+    });
+  });
+
+  test('a place holding only sessions of other work types starts a fresh worker', async () => {
+    const { todo, worked, decide } = setup();
+    worked(todo('other'), 'jason', 'Jason', 'done');
+    worked(todo('other'), 'reviews', 'Claude review TLS W1a', 'done');
+    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
+  });
+
+  test('a session assigned as a review actor is never reused for other work', async () => {
+    const { db, todo, worked, decide } = setup();
+    const review = todo('other');
+    worked(review, 'actor', undefined, 'done');
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      review.id,
+      'assignment:github.com/synthetic/repo/pull/9:head:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/9',
+        head: 'head',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'actor', model: 'm', harness: 'claude-desktop' },
+        ref: ref('actor'),
+      })
+    );
+    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
+  });
+
   test('a session held by unfinished work is busy even when its turn is idle', async () => {
     const { todo, worked, decide } = setup();
     worked(todo('other'), 'dev', 'dev', 'doing');
@@ -212,7 +250,7 @@ describe('coding session target decision', () => {
     });
   });
 
-  test('a feature whose own session was archived moves to a live idle session', async () => {
+  test('a feature whose own session was archived moves to a live idle session of its work type', async () => {
     const { todo, worked, live, decide } = setup();
     const first = todo();
     await decide(first, start('backend'));
@@ -220,9 +258,26 @@ describe('coding session target decision', () => {
     worked(todo('other'), 'spare', 'backend-2', 'done');
     live['backend-1'] = 'archived';
     const moved = todo();
-    expect(await decide(moved, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    expect(await decide(moved, start('backend'))).toEqual({
+      value: { verb: 'send', ref: ref('spare') },
+    });
     worked(moved, 'spare');
-    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    expect(await decide(todo(), start('backend'))).toEqual({
+      value: { verb: 'send', ref: ref('spare') },
+    });
+  });
+
+  test('a feature whose own session was archived starts over rather than take another type', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    live['backend-1'] = 'archived';
+    const moved = todo();
+    expect(await decide(moved, start())).toEqual({ value: start('dev') });
+    worked(moved, 'dev', 'dev', 'done');
+    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('dev') } });
   });
 
   test('an archived session keeps its name taken', async () => {
@@ -266,9 +321,11 @@ describe('coding session target decision', () => {
     worked(todo('other'), 'spare', 'backend-2', 'done');
     live.holder = 'archived';
     const second = todo('feature', repo, url);
-    expect(await decide(second, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    expect(await decide(second, start('backend'))).toEqual({
+      value: { verb: 'send', ref: ref('spare') },
+    });
     worked(second, 'spare', undefined, 'done');
-    expect(await decide(todo('feature', repo, url), start())).toEqual({
+    expect(await decide(todo('feature', repo, url), start('backend'))).toEqual({
       value: { verb: 'send', ref: ref('spare') },
     });
   });

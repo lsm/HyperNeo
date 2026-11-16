@@ -1,4 +1,5 @@
 import type { WorkRef } from '../../../drivers/types.ts';
+import { WORK_START_EXCLUDE_REFS_MAX } from '../../../drivers/work-operations.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
@@ -87,6 +88,26 @@ class CodingSessionAssignments {
     return own && { todoId: own.todoId, ref: own.ref };
   }
 
+  actorRefs(input?: { adapter?: string }): WorkRef[] {
+    const seen = new Set<string>();
+    return (
+      this.db
+        .prepare(
+          `SELECT json_extract(value_json, '$.ref') AS ref FROM pack_facts
+           WHERE pack = 'coding' AND key LIKE 'assignment:%' ORDER BY rowid DESC`
+        )
+        .all() as { ref: string | null }[]
+    )
+      .flatMap((row) => (row.ref ? [JSON.parse(row.ref) as WorkRef] : []))
+      .filter(
+        (ref) =>
+          (!input?.adapter || ref.adapter === input.adapter) &&
+          !seen.has(workKey(ref)) &&
+          (seen.add(workKey(ref)), true)
+      )
+      .slice(0, WORK_START_EXCLUDE_REFS_MAX);
+  }
+
   dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
     const repo = (
       this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(input.todoId) as {
@@ -112,6 +133,7 @@ class CodingSessionAssignments {
       pool.set(workKey(ref), known);
     }
     const holders = input.prUrl ? this.prHolders(input.prUrl) : [];
+    const actors = new Set(this.actorRefs({ adapter: input.adapter }).map(workKey));
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,
@@ -124,7 +146,9 @@ class CodingSessionAssignments {
       owner: pooled(this.ownerAmong(holders, { ...input, repo, strategy })),
       feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
       successors: [...holders].sort((a, b) => b.assignedAt - a.assignedAt).map(pooled),
-      pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
+      pool: [...pool.values()].filter(
+        (session) => session.ref.adapter === input.adapter && !actors.has(workKey(session.ref))
+      ),
     };
   }
 
@@ -173,7 +197,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts']
+  ['owner', 'dispatchFacts', 'actorRefs']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',

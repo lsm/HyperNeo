@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
+import { neoToolDescription } from '@hyperneo/prompts';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
@@ -467,6 +468,7 @@ describe('Neo MVP', () => {
       'neo.pack.read',
       'neo.ask.history',
       'neo.snapshot',
+      'neo.todo.retarget',
       'neo.project.save',
     ]);
     const humanOperations = [
@@ -502,6 +504,42 @@ describe('Neo MVP', () => {
       )
     ).toBe(true);
     expect(service.repo.getProject('private')).toBeNull();
+  });
+
+  test('retarget shares tool instructions and validates the complete todo result', () => {
+    const operation = createNeoOperations(service).find(
+      (item) => item.name === 'neo.todo.retarget'
+    )!;
+    expect(operation.description).toBe(neoToolDescription('neo.todo.retarget'));
+    service.todos.openAsk({
+      id: 'retarget-schema',
+      sessionId: 'ordinary',
+      projectId: null,
+      originMessageId: null,
+      title: 'Move work',
+      request: 'Move work',
+      createdAt: 1,
+    });
+    const todo = service.todos.addTodo(
+      'retarget-schema-todo',
+      'retarget-schema',
+      {
+        title: 'Work',
+        doneWhen: 'Done',
+        instruction: 'Continue work',
+        check: null,
+        named: null,
+      },
+      1
+    );
+    expect(operation.resultSchema.safeParse({ ok: true, todo }).success).toBe(true);
+    expect(operation.resultSchema.safeParse({ ok: true, todo: { id: todo.id } }).success).toBe(
+      false
+    );
+    expect(operation.resultSchema.safeParse({ ok: false }).success).toBe(false);
+    expect(
+      operation.resultSchema.safeParse({ ok: false, reason: 'move_not_started' }).success
+    ).toBe(true);
   });
 
   test('every Neo session may create a project and revise one at its current revision', async () => {
