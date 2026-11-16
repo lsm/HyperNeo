@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
+  NEO_CHECK_OVERDUE,
   neoDaemonCardCodes,
+  neoDaemonCardDraft,
   neoStartRetryDue,
   planNeoDaemonCardActions,
   planNeoDaemonCardPrune,
@@ -383,6 +385,36 @@ describe('daemon cards in the store', () => {
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toMatchObject([
       { id: 'asked' },
     ]);
+  });
+
+  test('the human-step card retires once worker work is attached to its todo', async () => {
+    await sweep(1);
+    const [stepCard] = open();
+    store.updateTodo(store.getTodo('check')!, { instruction: 'Merge it' }, 2);
+    expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
+  });
+
+  test('the human-step card retires once its todo waits on an unfinished step', async () => {
+    after('build', [], 'Build it');
+    await sweep(1);
+    const [stepCard] = open();
+    store.updateTodo(store.getTodo('check')!, { dependsOn: ['build'] }, 2);
+    expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
+  });
+
+  test('an old Keep waiting answer still holds off the next card for 24 hours', async () => {
+    const legacy = openHumanCard(
+      store,
+      'legacy',
+      'ask',
+      neoDaemonCardDraft(NEO_CHECK_OVERDUE, [store.getTodo('check')!]),
+      0
+    );
+    store.answerQuestion(legacy, ['Keep waiting'], 'button', 10);
+    await sweep(11);
+    expect(open()).toEqual([]);
+    await sweep(DAY + 10);
+    expect(open()).toHaveLength(1);
   });
 
   test('the overdue card retires when its check passes on its own', async () => {
