@@ -909,22 +909,24 @@ export class NeoService {
               kind: 'rejected',
               reason: `request_closed: Neo already closed this request (todo ${closed}). Send a new request if something changed.`,
             };
-          wake(
-            incident,
-            input.handoff && typeof content !== 'string'
-              ? (content.find((b) => b.type === 'text')?.text ?? text)
-              : text
-          );
-          const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
-          if (request && sent?.kind === 'accepted')
-            recordNeoRequestTodo(this.todos, {
+          this.todos.inTransaction(() => {
+            wake(
               incident,
-              neoSession: input.sessionId,
-              sender,
-              text,
-              messageId: sent.messageId,
-              now: Date.now(),
-            });
+              input.handoff && typeof content !== 'string'
+                ? (content.find((b) => b.type === 'text')?.text ?? text)
+                : text
+            );
+            const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
+            if (request && sent?.kind === 'accepted')
+              recordNeoRequestTodo(this.todos, {
+                incident,
+                neoSession: input.sessionId,
+                sender,
+                text,
+                messageId: sent.messageId,
+                now: Date.now(),
+              });
+          });
           return receipt;
         }
         const todo = this.todos.getTodo(input.question.todoId);
