@@ -212,6 +212,15 @@ const project = ([
     mergeCommit: pr.mergeCommit?.oid ?? null,
   };
 };
+export async function readCodingLocalMergeFacts<
+  F extends ReturnType<typeof project> | { ok: false; reason: string },
+>(db: Database, url: string, facts: F) {
+  const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
+  const stageFacts = await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', url);
+  return facts.ok
+    ? { ...facts, stageFacts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
+    : facts;
+}
 const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .input(['db', 'url', 'spawn'])
   .pipe(
@@ -257,13 +266,8 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   )
   .pipe(project, 'observed', 'observed')
   .pipe(
-    async (facts: ReturnType<typeof project>, db: Database, url: string) => {
-      const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
-      const stageFacts = await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', url);
-      return facts.ok
-        ? { ...facts, stageFacts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
-        : facts;
-    },
+    (facts: ReturnType<typeof project>, db: Database, url: string) =>
+      readCodingLocalMergeFacts(db, url, facts),
     ['observed', 'db', 'url'],
     'observed'
   )

@@ -19,7 +19,11 @@ import {
 } from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
-import { readCodingDaemonMergeFacts, readCodingRequiredChecks } from './daemon-merge-facts.ts';
+import {
+  readCodingDaemonMergeFacts,
+  readCodingLocalMergeFacts,
+  readCodingRequiredChecks,
+} from './daemon-merge-facts.ts';
 import {
   codingNoChecksNeedsHuman,
   decideCodingHumanHandoff,
@@ -39,6 +43,7 @@ type Candidate = {
   policy: CodingMergePolicy;
   ledgerState: CodingPrState;
   stateSince: number;
+  readKey?: string;
 };
 type Observed = Candidate & { facts: Awaited<ReturnType<typeof readCodingDaemonMergeFacts>> };
 const admit = (observed: Observed) => {
@@ -74,6 +79,17 @@ export function createCodingDaemonMergeSweep(
   let holdRevision = 0;
   const signoffHolds = new Map<string, { key: string; at: number }>();
   const lastRead = new Map<string, { key: string; at: number; facts: Observed['facts'] }>();
+  const remember = (
+    url: string,
+    key: string | undefined,
+    facts: Observed['facts'],
+    at: number,
+    revision: number
+  ) => {
+    if (facts.ok && facts.mergeable !== 'UNKNOWN' && key && revision === holdRevision)
+      lastRead.set(url, { key, at, facts });
+    else lastRead.delete(url);
+  };
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
   const read = async (url: string, human = false) => {
@@ -180,7 +196,9 @@ export function createCodingDaemonMergeSweep(
         const { owner, repo } = parsePrUrl(receipt.url)!;
         let admitted = false;
         try {
+          const revision = holdRevision;
           observed = { ...observed, facts: await read(receipt.url) };
+          remember(receipt.url, observed.readKey, observed.facts, now, revision);
           const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
           if ('reason' in fresh) return fresh.reason;
           admitted = true;
@@ -276,11 +294,18 @@ export function createCodingDaemonMergeSweep(
         )
       ),
     ];
+    for (const [url, prior] of lastRead)
+      if (
+        now - prior.at >= CODING_MERGE_REREAD_MS ||
+        !candidates.some((row) => row.url === url && row.policy.mergeBy === 'daemon')
+      )
+        lastRead.delete(url);
+    const observedAt = new Map<string, number>();
     const unchanged = (url: string) => {
       const prior = lastRead.get(url);
       const row = candidates.find((candidate) => candidate.url === url);
       return prior && row?.readKey === prior.key && now - prior.at < CODING_MERGE_REREAD_MS
-        ? prior.facts
+        ? prior
         : null;
     };
     const facts = new Map(
@@ -288,13 +313,15 @@ export function createCodingDaemonMergeSweep(
         pending.map(async (url) => {
           if (!receipts.some((receipt) => receipt.url === url)) {
             const cached = unchanged(url);
-            if (cached) return [url, cached] as const;
+            if (cached) {
+              observedAt.set(url, cached.at);
+              return [url, await readCodingLocalMergeFacts(database(), url, cached.facts)] as const;
+            }
           }
           const fresh = await read(url);
+          observedAt.set(url, now);
           const key = candidates.find((candidate) => candidate.url === url)?.readKey;
-          if (fresh.ok && key && revision === holdRevision)
-            lastRead.set(url, { key, at: now, facts: fresh });
-          else lastRead.delete(url);
+          remember(url, key, fresh, now, revision);
           return [url, fresh] as const;
         })
       )
@@ -342,7 +369,10 @@ export function createCodingDaemonMergeSweep(
       if (outcome === 'attempted' || outcome === 'read_failure') lastRead.delete(candidate.url);
       signoffHolds.delete(candidate.url);
       if (outcome === 'needs_human_signoff' && revision === holdRevision)
-        signoffHolds.set(candidate.url, { key: candidate.holdKey, at: now });
+        signoffHolds.set(candidate.url, {
+          key: candidate.holdKey,
+          at: observedAt.get(candidate.url) ?? now,
+        });
       if (
         typeof outcome === 'string' &&
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)
