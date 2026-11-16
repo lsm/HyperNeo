@@ -82,12 +82,13 @@ packages/daemon/src/
   lib/neo/
     human-card.ts                             no card_open refusal (rule 2)
     question-hold.ts                          new: pure planHold
-    question-operations.ts                    neo.question.hold superpipe
+    question-operations.ts                    neo.question.hold superpipe; todoId description without the one-card limit
     pack-sweep.ts                             clears expired holds
     daemon-cards.ts                           human-step card text
     human-queue.ts                            new: pure neoHumanQueue
     operations.ts                             adds it to the Neo snapshot
 packages/web/src/neo/                         filter rows and items
+api-surface.json                              regenerated for the description change
 ```
 
 The migration number is taken when its PR lands.
@@ -95,7 +96,7 @@ The migration number is taken when its PR lands.
 ## Change plan
 
 Each step is one PR within the repo's slice budget.
-1. **Build: no limit on cards.** Remove the `card_open` refusal from `onlyCard`. Tests: a second and a third card on the same todo are accepted; the todo starts only after the last one is answered; `replaces` still replaces.
+1. **Build: no limit on cards.** Remove the `card_open` refusal from `onlyCard`, and in the same PR the agent-facing sentence that states it: the `todoId` description of `neo.question.ask` (`question-operations.ts`, "One card may be open per ask; a second returns card_open"), with `api-surface.json` regenerated. The other `card_open`, which refuses settling an ask while a card is open (`neo-ask-settlement.ts`), stays. Tests: a second and a third card on the same todo are accepted; the todo starts only after the last one is answered; `replaces` still replaces.
 2. **Build + wire: held cards.** The `held_at` and `held_until` columns, `neo.question.hold`, and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
 3. **Build: `neoHumanQueue`** with its tests (state × ask counts, several cards on one todo, ask-level cards, held items), after attention step 1 has added `nextStepOwner`. **Wire:** add it to the Neo snapshot.
 4. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
