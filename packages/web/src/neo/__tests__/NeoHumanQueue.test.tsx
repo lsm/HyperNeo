@@ -148,6 +148,64 @@ describe('NeoHumanQueue', () => {
     ).toBe('true');
   });
 
+  it('loads the full card before the human decides on a summarised ask', async () => {
+    const full = 'Full report. '.repeat(300);
+    const summarised = {
+      ...entry('trip', 'Plan the trip', [
+        question('q1', 'trip', { document: 'Preview\n\n[Document preview truncated]' }),
+      ]),
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const detailed = entry('trip', 'Plan the trip', [question('q1', 'trip', { document: full })]);
+    const onLoadDetails = vi.fn(async () => detailed);
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={onLoadDetails}
+      />
+    );
+    expect(onLoadDetails).toHaveBeenCalledWith('trip');
+    expect(view.queryByRole('button', { name: 'Agree' })).toBeNull();
+    fireEvent.click(await view.findByRole('button', { name: 'View full report' }));
+    expect((await view.findByText(/Full report\./)).textContent).toBe(full);
+  });
+
+  it('keeps the card reply in chat', async () => {
+    const onReply = vi.fn();
+    const view = render(
+      <NeoHumanQueue
+        queue={queue}
+        entries={entries}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onReply={onReply}
+      />
+    );
+    const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
+    fireEvent.click(trip.getByRole('button', { name: 'Reply in chat' }));
+    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'q1' }));
+  });
+
+  it('reveals a card the conversation points at, whatever filter is on', async () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={queue}
+        entries={entries}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        focusQuestionId="q2"
+      />
+    );
+    const states = within(view.getByRole('group', { name: 'State' }));
+    expect(states.getByRole('button', { name: 'Held 1' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(await view.findByText('Question q2')).toBeTruthy();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
