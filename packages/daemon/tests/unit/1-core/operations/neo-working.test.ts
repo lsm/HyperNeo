@@ -257,4 +257,23 @@ describe('Neo working sessions', () => {
         ?.working.map((entry: { role?: string }) => entry.role)
     ).toEqual(['front']);
   });
+
+  test('archiving a held front session drops it from the working list it sends', async () => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const front = frontSessionId(conversation);
+    await db.createSession({ ...createTestSession(front), title: 'Neo fast replies' });
+    provider(front);
+    await state(front, held('login'));
+    expect(sent().at(-1)?.working).toHaveLength(1);
+
+    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(front);
+    await events.publish('session.updated', {
+      sessionId: front,
+      source: 'update',
+      session: { status: 'archived' },
+    });
+
+    expect(sent().at(-1)).toEqual({ working: [] });
+  });
 });
