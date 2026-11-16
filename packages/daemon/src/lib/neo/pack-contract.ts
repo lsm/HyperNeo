@@ -10,6 +10,7 @@ import type { OperationDefinition } from '../operations/registry.ts';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
 import type { z } from 'zod';
 import type { PackPreferenceInput } from './preference-operations.ts';
+import type { NeoStepFacts } from './attention/owner.ts';
 
 export interface NeoPackBrief {
   id: string;
@@ -55,7 +56,7 @@ export interface NeoTodoPack {
   check(todo: NeoTodo, context?: { readOnly: true }): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
   repository?(draft: NeoTodoRepositoryDraft, scope?: NeoTodoPolicyScope): string | null;
-  waiting?(todo: NeoTodo): boolean | Promise<boolean>;
+  waiting?(todos: readonly NeoTodo[]): Promise<ReadonlySet<string>>;
   doneWhen?(check: NeoTodoCheck): string | null;
   addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
   refuse?(
@@ -139,7 +140,10 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   sweep?(now: number): Promise<void>;
   attention?: {
     kinds: readonly NeoAttentionKind[];
-    scan?(now: number): Promise<readonly NeoAttentionEvent[]>;
+    scan?(
+      now: number,
+      waiting: readonly { todo: NeoTodo; facts: Pick<NeoStepFacts, 'worker'> }[]
+    ): Promise<readonly NeoAttentionEvent[]>;
   };
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;
   snapshotRows?(

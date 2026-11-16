@@ -120,7 +120,8 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
-import { createNeoAttentionSweep } from './attention/sweep.ts';
+import { createNeoAttentionSweep, neoStepOwners, readNeoSteps } from './attention/sweep.ts';
+import { neoHumanQueue } from './human-queue.ts';
 import { driverHealthEvents } from '../drivers/driver-health.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -361,12 +362,12 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      scan: async (now) => [
+      scan: async (now, waiting) => [
         ...driverHealthEvents(this.db.getGlobalSettings?.().driverHealth ?? {}),
         ...(
           await Promise.all(
             this.packs().map((pack) =>
-              (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
+              (pack.attention?.scan?.(now, waiting) ?? Promise.resolve([])).catch((error) => {
                 this.log.warn(`Attention scan ${pack.id} failed`, error);
                 return [];
               })
@@ -1433,6 +1434,24 @@ export class NeoService {
     });
   }
 
+  async humanQueue() {
+    const facts = await this.todoSessions.read('neoStepFacts');
+    const steps = await readNeoSteps(facts, {
+      packs: () => this.installedPacks(),
+      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+    }).catch((error) => {
+      this.log.warn('Human queue pack waits failed', error);
+      return null;
+    });
+    return steps
+      ? neoHumanQueue({
+          questions: facts.cards,
+          todos: steps.map((row) => row.todo),
+          owners: neoStepOwners(steps),
+        })
+      : null;
+  }
+
   installedPacks(): NeoPack[] {
     const seen = new Set<string>();
     return [...this.builtinPacks, ...this.filePacks].filter((pack) => {
@@ -1465,34 +1484,15 @@ export class NeoService {
     return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
   }
 
+  attend(event: Parameters<typeof this.attention>[0]) {
+    return this.attention(event, Date.now());
+  }
+
   async wakeNeo(key: string, text: string): Promise<boolean> {
     const root = this.defaultSessionId();
     if (!root) return false;
     await this.deliver(root, key, text, root);
     return true;
-  }
-
-  deliveryStatus(sessionId: string, messageId: string) {
-    try {
-      if (
-        !this.db.getSession(sessionId) ||
-        this.repo.getBindingBySession(sessionId)?.kind !== 'neo'
-      )
-        return 'recipient_gone' as const;
-      if (
-        this.db.getSDKMessageRepo().findMessageIdByUuid(sessionId, messageId) ||
-        this.db.getJobQueueRepo().getLatestByPayload('mailbox', {
-          'to.sessionId': sessionId,
-          messageUuid: messageId,
-        })
-      )
-        return 'admitted' as const;
-      return this.deliveries.has(`${sessionId}:${messageId}`)
-        ? ('in-flight' as const)
-        : ('absent' as const);
-    } catch {
-      return 'unknown' as const;
-    }
   }
 
   hasDelivery(sessionId: string, messageId: string): boolean {

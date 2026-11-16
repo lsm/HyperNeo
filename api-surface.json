@@ -30053,6 +30053,144 @@
                   }
                 ]
               },
+              "humanQueue": {
+                "additionalProperties": false,
+                "description": "Everything that waits on the human across every open ask, like needsYou: projectId and paging do not narrow it.",
+                "properties": {
+                  "counts": {
+                    "additionalProperties": {
+                      "additionalProperties": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "propertyNames": {
+                        "enum": [
+                          "waiting",
+                          "held",
+                          "progress"
+                        ],
+                        "type": "string"
+                      },
+                      "required": [
+                        "waiting",
+                        "held",
+                        "progress"
+                      ],
+                      "type": "object"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "items": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "askId": {
+                              "type": "string"
+                            },
+                            "questionId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "enum": [
+                                "waiting",
+                                "held"
+                              ],
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "todos": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "title"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "askId",
+                            "questionId",
+                            "text",
+                            "todos"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "askId": {
+                              "type": "string"
+                            },
+                            "owner": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "human",
+                                    "nobody",
+                                    "prerequisite",
+                                    "daemon",
+                                    "worker",
+                                    "pack",
+                                    "neo"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "state": {
+                              "const": "progress",
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "todoId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "askId",
+                            "todoId",
+                            "title",
+                            "owner"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "items",
+                  "counts"
+                ],
+                "type": "object"
+              },
               "more": {
                 "additionalProperties": false,
                 "properties": {
@@ -30449,68 +30587,6 @@
                   "string",
                   "null"
                 ]
-              },
-              "sessionMessages": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "conversationId": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "fromName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "fromSession": {
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "session",
-                        "worker-batch"
-                      ],
-                      "type": "string"
-                    },
-                    "messageId": {
-                      "type": "string"
-                    },
-                    "sequence": {
-                      "type": "number"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "toName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "toSession": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "messageId",
-                    "conversationId",
-                    "sequence",
-                    "fromSession",
-                    "fromName",
-                    "toSession",
-                    "toName",
-                    "text",
-                    "createdAt",
-                    "kind"
-                  ],
-                  "type": "object"
-                },
-                "maxItems": 30,
-                "type": "array"
               },
               "sessionNoticeGroups": {
                 "items": {
@@ -38292,6 +38368,144 @@
                   }
                 ]
               },
+              "humanQueue": {
+                "additionalProperties": false,
+                "description": "Everything that waits on the human across every open ask, like needsYou: projectId and paging do not narrow it.",
+                "properties": {
+                  "counts": {
+                    "additionalProperties": {
+                      "additionalProperties": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "propertyNames": {
+                        "enum": [
+                          "waiting",
+                          "held",
+                          "progress"
+                        ],
+                        "type": "string"
+                      },
+                      "required": [
+                        "waiting",
+                        "held",
+                        "progress"
+                      ],
+                      "type": "object"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "items": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "askId": {
+                              "type": "string"
+                            },
+                            "questionId": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "enum": [
+                                "waiting",
+                                "held"
+                              ],
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "todos": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "title"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "askId",
+                            "questionId",
+                            "text",
+                            "todos"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "askId": {
+                              "type": "string"
+                            },
+                            "owner": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "human",
+                                    "nobody",
+                                    "prerequisite",
+                                    "daemon",
+                                    "worker",
+                                    "pack",
+                                    "neo"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "state": {
+                              "const": "progress",
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "todoId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "askId",
+                            "todoId",
+                            "title",
+                            "owner"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "items",
+                  "counts"
+                ],
+                "type": "object"
+              },
               "more": {
                 "additionalProperties": false,
                 "properties": {
@@ -38688,68 +38902,6 @@
                   "string",
                   "null"
                 ]
-              },
-              "sessionMessages": {
-                "items": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "conversationId": {
-                      "type": "string"
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "fromName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "fromSession": {
-                      "type": "string"
-                    },
-                    "kind": {
-                      "enum": [
-                        "session",
-                        "worker-batch"
-                      ],
-                      "type": "string"
-                    },
-                    "messageId": {
-                      "type": "string"
-                    },
-                    "sequence": {
-                      "type": "number"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "toName": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "toSession": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "messageId",
-                    "conversationId",
-                    "sequence",
-                    "fromSession",
-                    "fromName",
-                    "toSession",
-                    "toName",
-                    "text",
-                    "createdAt",
-                    "kind"
-                  ],
-                  "type": "object"
-                },
-                "maxItems": 30,
-                "type": "array"
               },
               "sessionNoticeGroups": {
                 "items": {

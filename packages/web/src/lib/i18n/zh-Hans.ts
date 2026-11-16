@@ -236,8 +236,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.wakeLabel': '定时查看：{title}',
   'chat.wakeFinished': '已完成',
   'chat.wakeRunning': '运行中',
-  'chat.sessionMessage': '{from} → {to}',
-  'chat.sessionMessageLabel': '{from} 发给 {to} 的消息',
   'chat.unmute': '取消静音',
   'chat.muteNamed': '静音 {name}',
   'chat.unmuteNamed': '取消静音 {name}',
@@ -320,6 +318,7 @@ export const zhHans: Record<keyof typeof en, string> = {
     '{steps} 自动重试 {retries} 次后仍无法开始：{reason}。重试、标记完成，还是移除？',
   'question.checkOverdue':
     '{steps} 已等了 {hours} 小时，检查还没通过。继续等、标记完成，还是移除？',
+  'question.humanStep': '{steps} 现在该你来做了。做完后标记完成，还是移除？',
   'question.daemonMarkDone': '标记完成',
   'question.daemonRemove': '移除',
   'question.daemonRetry': '重试',

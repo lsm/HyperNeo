@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { pcm16Wav } from '../../../packages/daemon/src/lib/voice/stream-relay.ts';
 
 const port = process.env.VERIFY_PORT;
 assert(port && port !== '8399');
 const requests: string[] = [];
+const priorities: (string | null)[] = [];
 const asr = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
   async fetch(request) {
     const url = new URL(request.url);
     requests.push(url.pathname + url.search);
+    priorities.push(request.headers.get('x-speech-priority'));
     await request.formData();
     return Response.json({ text: 'Explicit batch URL received' });
   },
 });
-const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+assert(process.env.HYPERNEO_DATA_DIR, 'set HYPERNEO_DATA_DIR to the isolated run');
+const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+  headers: { authorization: `Bearer ${await readLocalCredential()}` },
+} as unknown as string[]);
 await new Promise((resolve, reject) => {
   socket.onopen = resolve;
   socket.onerror = reject;
@@ -82,7 +88,8 @@ try {
     mimeType: 'audio/wav',
   });
   assert.equal((direct as { text: string }).text, 'Explicit batch URL received');
-  console.log(JSON.stringify({ results, direct, requests }, null, 2));
+  assert.deepEqual(priorities, ['interactive', 'interactive', null]);
+  console.log(JSON.stringify({ results, direct, requests, priorities }, null, 2));
 } finally {
   socket.close();
   await asr.stop(true);

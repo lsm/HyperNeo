@@ -54,7 +54,7 @@ import { neoHumanInSession, neoTurnQuestionLine } from './session-watch.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import type { NeoAttentionEvent } from './attention/decide.ts';
-import { neoPackWaits } from './attention/sweep.ts';
+import { neoPackWaiting } from './attention/sweep.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
@@ -1356,17 +1356,19 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:admission'
     )
     .pipe(
-      async (context: NudgeContext) => {
+      async (context: NudgeContext, now: number) => {
         const live = await workerLive(context.ask, context.ref);
-        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown');
+        await sessions.write('noteWorkerStatus', context.todo.id, live?.status ?? 'unknown', now);
         return live;
       },
-      ['admission'],
+      ['admission', 'now'],
       'live'
     )
     .pipe(
       async (context: NudgeContext) =>
-        (await neoPackWaits(deps.packs(), context.todo)) ? { reason: null } : { value: context },
+        (await neoPackWaiting(deps.packs(), [context.todo])).has(context.todo.id)
+          ? { reason: null }
+          : { value: context },
       'admission',
       'result:admission'
     )

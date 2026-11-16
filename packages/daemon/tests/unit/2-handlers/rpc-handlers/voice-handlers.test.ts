@@ -1385,6 +1385,38 @@ describe('voice stream RPC handlers', () => {
     }
   });
 
+  it('marks only the live-recording batch fallback as interactive speech', async () => {
+    resetVoiceTranscriptionLimitsForTests();
+    const { hub, handlers } = createMockMessageHub();
+    Object.assign(hub, { getRouter: () => undefined });
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const sent: Record<string, string>[] = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      sent.push(init?.headers as Record<string, string>);
+      return Response.json({ text: 'spoken' });
+    });
+    try {
+      const { streamId } = (await handlers.get('voice.stream.start')!({
+        encoding: 'pcm16',
+        sampleRate: 16000,
+      })) as { streamId: string };
+      await handlers.get('voice.stream.chunk')!({ streamId, audioBase64: 'AAAAAA==' });
+      expect(await handlers.get('voice.stream.stop')!({ streamId })).toMatchObject({
+        text: 'spoken',
+      });
+      expect(
+        await handlers.get('voice.transcribe')!({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+      ).toEqual({ text: 'spoken' });
+      expect(sent).toEqual([
+        { 'X-Speech-Priority': 'interactive', Host: 'example.com' },
+        { Host: 'example.com' },
+      ]);
+    } finally {
+      fetch.mockRestore();
+      resetVoiceTranscriptionLimitsForTests();
+    }
+  });
+
   it('voice.stream.start rejects an unsupported sample rate', async () => {
     const { hub, handlers } = createMockMessageHub();
     registerVoiceHandlers(hub, createSettings({ voice }));

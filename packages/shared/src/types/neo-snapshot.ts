@@ -1,7 +1,6 @@
 import type { ModelHold } from './model-hold.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
-import type { NeoSessionMessage } from './neo-session-message.ts';
 import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoRuleSource } from './settings';
 import type { NeoModelPreference } from './settings.ts';
@@ -192,7 +191,6 @@ export interface NeoSnapshot {
   projectRedirects?: { sourceId: string; targetId: string }[];
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
-  sessionMessages?: NeoSessionMessage[];
   wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];
@@ -200,6 +198,7 @@ export interface NeoSnapshot {
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  humanQueue?: NeoHumanQueue;
   needsYou?: number;
   neoUnhandled?: number;
   historyCursor?: { updatedAt: number; id: string } | null;
@@ -209,6 +208,29 @@ export interface NeoSnapshot {
     asks?: { count: number; cursor: { updatedAt: number; id: string } };
     working?: { count: number };
   };
+}
+
+export type NeoHumanQueueState = 'waiting' | 'held' | 'progress';
+
+export type NeoHumanQueueItem =
+  | {
+      state: 'waiting' | 'held';
+      askId: string;
+      questionId: string;
+      text: string;
+      todos: { id: string; title: string }[];
+    }
+  | {
+      state: 'progress';
+      askId: string;
+      todoId: string;
+      title: string;
+      owner: 'human' | 'nobody' | 'prerequisite' | 'daemon' | 'worker' | 'pack' | 'neo' | null;
+    };
+
+export interface NeoHumanQueue {
+  items: NeoHumanQueueItem[];
+  counts: Record<string, Record<NeoHumanQueueState, number>>;
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

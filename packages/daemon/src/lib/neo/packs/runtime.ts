@@ -19,6 +19,7 @@ import { createCodingMergeOperation } from './coding/merge-operation.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
 import type { NeoWorkPrReader } from './coding/work-prs.ts';
 import { createCodingResultOperation } from './coding/result-operation.ts';
+import { codingGithubApi, createCodingReviewComments } from './coding/review-comment.ts';
 import { createCodingAssignmentOperation } from './coding/assign-operation.ts';
 import { invokeOperation } from '../../operations/invoke.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
@@ -96,6 +97,7 @@ export function createNeoService(...args: NeoServiceArgs) {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
         todoPrs,
+        postReviewComments: createCodingReviewComments(codingGithubApi),
         prSweepDeps: {
           human: (key, text) =>
             publishCodingHumanMerge(
@@ -110,15 +112,9 @@ export function createNeoService(...args: NeoServiceArgs) {
             ),
           tell: (ref, key, text, todoId) => configured.sendToRef(ref, key, text, todoId),
           wake: (key, text) => configured.wakeNeo(key, text),
-          delivery: {
-            recipient: () => configured.defaultSessionId() ?? null,
-            status: async (recipient, key) => configured.deliveryStatus(recipient, key),
-            send: async (recipient, key, text) => {
-              await configured.deliverForward(recipient, key, text, recipient, 'event');
-              return true;
-            },
-          },
         },
+        attend: async (event) =>
+          !!configured.defaultSessionId() && 'told' in (await configured.attend(event)),
         projectRepos: (projectId) => configured.repo.allRepositories(projectId),
       });
       coding.operations = [

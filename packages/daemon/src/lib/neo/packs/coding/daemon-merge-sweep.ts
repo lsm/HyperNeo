@@ -1,4 +1,5 @@
 import { CodingAssignmentsRepository } from './assignments.ts';
+import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { codingReviewCoversMergeHold } from './review-merge-hold.ts';
 import {
   CODING_DAEMON_MERGE_MAX_ATTEMPTS,
@@ -27,6 +28,8 @@ import {
 import { codingMergeGithubSchemas } from './merge-operation.ts';
 
 const log = new Logger('CodingDaemonMerge');
+const prUrl = (row: { repo: string; number: number }) =>
+  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`.toLowerCase();
 
 type Receipt = ReturnType<CodingPrLedgerRepository['daemonMerge']>[number];
 type Candidate = {
@@ -63,7 +66,7 @@ export function createCodingDaemonMergeSweep(
   database: () => Database,
   ledger: CodingPrLedgerRepository,
   events: CodingPrEventRepository,
-  delivery: CodingSweepDeps,
+  delivery: Pick<CodingSweepDeps, 'tell' | 'human'> & { attend: CodingAttend },
   spawn: SpawnFn = spawnProcess
 ) {
   const actor = 'daemon:coding-sweep';
@@ -80,40 +83,39 @@ export function createCodingDaemonMergeSweep(
       });
     return facts;
   };
+  const attend = (...event: Parameters<typeof codingPrHeadEvent>) =>
+    delivery.attend(codingPrHeadEvent(...event)).catch(() => false);
   const notify = async (receipt: Receipt, now: number) => {
-    if (!receipt.mergeCommit && receipt.heldNotifiedAt) return true;
     const { owner: org, repo, number } = parsePrUrl(receipt.url)!;
     const { owner } = await events.routeLater({ repo: `${org}/${repo}`, number: +number });
     const key = `coding-daemon-${receipt.mergeCommit ? 'merged' : 'held'}:${receipt.url}:${receipt.head}`;
     const text = receipt.mergeCommit
       ? `Merge confirmed: ${receipt.url} head ${receipt.head}, commit ${receipt.mergeCommit}. Receipt executor ${receipt.actor}; confirmation sweep ${new Date(receipt.mergedAt!).toISOString()}.`
-      : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
+      : `Daemon merge held: ${receipt.url} head ${receipt.head}. The daemon started a merge on this head and never confirmed it, and the pull request is no longer open.${receipt.error ? ` Last error: ${receipt.error}.` : ''} Check on GitHub how it closed before any manual action.`;
     const told = owner && (await delivery.tell(owner, key, text, receipt.url).catch(() => false));
-    const notified = told || (await delivery.wake(key, text).catch(() => false));
-    if (notified)
-      await record({ ...receipt, kind: receipt.mergeCommit ? 'notified' : 'held', at: now });
+    const notified =
+      told ||
+      (await attend(
+        receipt.mergeCommit ? 'coding.merge_confirmed' : 'coding.merge_held',
+        receipt,
+        receipt.mergedAt ?? receipt.startedAt,
+        text
+      ));
+    if (notified && receipt.mergeCommit) await record({ ...receipt, kind: 'notified', at: now });
     return notified;
   };
   const retryLimit = async (url: string, head: string, readySince?: number) => {
     const [failure] = await record({ kind: 'failures', url, head });
     if (!failure || (failure.failures ?? 0) < CODING_DAEMON_MERGE_MAX_ATTEMPTS) return false;
-    if (
-      failure.notifiedAt === null &&
-      (await delivery
-        .wake(
-          `coding-daemon-retry-limit:${url}:${head}:${failure.startedAt}`,
-          `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Resolve the failure, then use neo.coding.merge.retry on this exact head once fresh gates pass.`
-        )
-        .catch(() => false))
-    )
-      await record({ kind: 'limitNotified', url, head, at: Date.now() });
-    if (readySince !== undefined && failure.notifiedAt !== null && readySince > failure.notifiedAt)
-      await delivery
-        .wake(
-          `coding-daemon-retry-ready:${url}:${head}:${failure.startedAt}:${readySince}`,
-          `Fresh merge gates now pass for ${url} head ${head}, but the daemon merge budget is stopped. Last error: ${failure.error}. Inspect it, then use neo.coding.merge.retry on this exact head to reopen the budget; leave merging to the daemon.`
-        )
-        .catch(() => false);
+    const ready = readySince !== undefined && readySince > failure.startedAt;
+    await attend(
+      'coding.merge_failing',
+      { url, head },
+      ready ? readySince : failure.startedAt,
+      ready
+        ? `Fresh merge gates now pass for ${url} head ${head}, but the daemon merge budget is stopped. Last error: ${failure.error}. Inspect it, then use neo.coding.merge.retry on this exact head to reopen the budget; leave merging to the daemon.`
+        : `Daemon merge stopped after ${failure.failures} failed attempts: ${url} head ${head}. Last error: ${failure.error}. Resolve the failure, then use neo.coding.merge.retry on this exact head once fresh gates pass.`
+    );
     return true;
   };
   const finish = async (
@@ -146,7 +148,7 @@ export function createCodingDaemonMergeSweep(
       });
       if (merged) await notify(merged, now);
     } else if (pr.ok && (await notify(receipt, now)) && pr.state !== 'OPEN') {
-      await record({ ...receipt, kind: 'retired', at: now });
+      await record({ ...receipt, kind: 'void', at: receipt.startedAt });
     }
   };
   const merge = (superpipe({})('coding.sweep-daemon-merge') as PipelineAPI)
@@ -195,20 +197,22 @@ export function createCodingDaemonMergeSweep(
     .endAsync('result') as (observed: Observed, now: number) => Promise<unknown>;
   const sweep = async (now: number): Promise<void> => {
     const revision = holdRevision;
-    for (const failure of await record({ kind: 'limits' }))
-      await retryLimit(failure.url, failure.head);
-    const rows = (await ledger.read('list')).filter(
-      (row) =>
-        row.closedAt === null &&
-        ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
+    const open = (await ledger.read('list')).filter((row) => row.closedAt === null);
+    for (const { url, head } of await record({ kind: 'limits' })) {
+      const row = open.find((row) => prUrl(row) === url && row.head === head);
+      const health = row?.readAt === now && (await ledger.pollContextCurrent(row.repo)).health;
+      if (health && health.reason === 'complete' && health.cycleAt === now)
+        await retryLimit(url, head);
+    }
+    const rows = open.filter((row) =>
+      ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
     );
     const handedOff = await ledger.read('humanHandoffs');
     const observed = await Promise.all(
       rows.map(async (row) => {
         const { repo, number, head, state, stateSince } = row;
         const { policy, health } = await ledger.pollContextCurrent(repo);
-        const url =
-          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase();
+        const url = prUrl(row);
         const reviewHolds = await new CodingAssignmentsRepository(database())
           .reviewHoldsCurrent(url, head)
           .catch(() => []);
@@ -322,12 +326,12 @@ export function createCodingDaemonMergeSweep(
           candidate.reviewHolds
         )
       ) {
-        const notified = await delivery
-          .wake(
-            `coding-daemon-signoff:${candidate.url}:${candidate.head}`,
-            `${candidate.url} requires human sign-off or a resolved merge policy; daemon merge is held.`
-          )
-          .catch(() => false);
+        const notified = await attend(
+          'coding.merge_held',
+          candidate,
+          0,
+          `${candidate.url} requires human sign-off or a resolved merge policy; daemon merge is held.`
+        );
         if (!notified) signoffHolds.delete(candidate.url);
       }
     }

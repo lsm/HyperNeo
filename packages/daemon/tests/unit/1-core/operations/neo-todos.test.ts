@@ -8,7 +8,9 @@ import {
 } from '../../../../src/lib/neo/todo-operations.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { neoStallReminderWrite } from '../../../../src/storage/repositories/neo-stall-reminder-write.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -290,6 +292,33 @@ describe('neo.todo operations', () => {
     expect(repo.getQuestion(card.id)?.state).toBe('open');
     expect(repo.getTodo(added.todo.id)?.state).not.toBe('done');
     expect(stopped).toEqual([]);
+  });
+
+  test('refuses to finish a human step while its daemon card waits, and keeps the card', async () => {
+    const { db, call, repo } = setup();
+    db.prepare(
+      "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('neo-a','Neo','/tmp','2026-11-13T00:00:00Z','2026-11-13T00:00:00Z','active','{}','{}')"
+    ).run();
+    const added = await call('neo.todo.add', {
+      after: [],
+      check: pendingTodoCheck,
+      askId: 'ask',
+      title: 'Sign the form',
+      doneWhen: 'Signed',
+    });
+    if (!added.ok) throw new Error(added.reason);
+    const gateway = new DbGateway(':memory:', db);
+    await gateway.run(neoStallReminderWrite, { now: Date.now() });
+    const [card] = repo.listQuestions('ask').filter((q) => q.cause === 'human_step');
+    expect(card?.state).toBe('open');
+    expect(
+      await call('neo.todo.edit', { todoId: added.todo.id, done: 'reported', evidence: 'Signed' })
+    ).toEqual({
+      ok: false,
+      reason: `card_unanswered: card ${card.id} is still waiting for the human.`,
+    });
+    expect(repo.getQuestion(card.id)?.state).toBe('open');
+    await gateway.close();
   });
 
   test('finishes a todo once its card is answered', async () => {

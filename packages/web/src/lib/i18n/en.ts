@@ -237,8 +237,6 @@ export const en = {
   'chat.wakeLabel': 'Scheduled check-in: {title}',
   'chat.wakeFinished': 'Completed',
   'chat.wakeRunning': 'Running',
-  'chat.sessionMessage': '{from} → {to}',
-  'chat.sessionMessageLabel': 'Message from {from} to {to}',
   'chat.unmute': 'Unmute',
   'chat.muteNamed': 'Mute {name}',
   'chat.unmuteNamed': 'Unmute {name}',
@@ -327,6 +325,7 @@ export const en = {
     '{steps} could not start after {retries} automatic retries: {reason}. Retry, mark done, or remove?',
   'question.checkOverdue':
     "{steps} has waited {hours} hours and its check hasn't passed. Keep waiting, mark it done, or remove it?",
+  'question.humanStep': '{steps} is yours to do now. Do it, then mark it done, or remove it?',
   'question.daemonMarkDone': 'Mark done',
   'question.daemonRemove': 'Remove',
   'question.daemonRetry': 'Retry',

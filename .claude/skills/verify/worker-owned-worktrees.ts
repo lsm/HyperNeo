@@ -8,7 +8,7 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { recordStartedWork, readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordWorkerStarted, readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
@@ -139,14 +139,14 @@ try {
     review: runCodingReview,
   });
   registry = createOperationRegistry([
-    ...createWorkVerbOperations({ adapters: () => [adapter], remote, daemonName: 'synthetic', freeWorkers: id => readFreeWorkers(db, id), recordStarted: ref => recordStartedWork(db, ref) }),
+    ...createWorkVerbOperations({ adapters: () => [adapter], remote, daemonName: 'synthetic', freeWorkers: id => readFreeWorkers(db, id), recordStarted: ref => recordWorkerStarted(db, ref) }),
     createFindWorkOperation({ adapters: () => [adapter], remote }), assignment,
   ]);
   const pack: NeoPack = {
     id: 'coding', describe: 'Synthetic coding outcome; production worker checkout hooks', instructions: () => null,
     workerRules: NEO_PACK_CODING_WORKER_RULES, workerStartBrief: withCodingWorkerStartBrief,
     prepareExecution: prepareCodingExecution,
-    todos: { schema: createCodingPackTables, check: async () => null, statusLine: () => null, waiting: async () => false },
+    todos: { schema: createCodingPackTables, check: async () => null, statusLine: () => null, waiting: async () => new Set<string>() },
   };
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)), store, sessions,

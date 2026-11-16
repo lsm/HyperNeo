@@ -25,14 +25,22 @@ const conversation = opened.sessionId.replace(/^neo:/, '');
 const db = new Database(`${run}/data/daemon.db`);
 db.exec('PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000');
 const insert = db.prepare(`INSERT INTO neo_session_messages
-  (conversation_id,message_id,from_session,to_session,text,created_at) VALUES (?,?,?,?,?,?)`);
+  (conversation_id,message_id,from_session,to_session,text,created_at,kind) VALUES (?,?,?,?,?,?,?)`);
 const count = Number(process.env.VERIFY_HISTORY_ROWS ?? 200000);
-const body = 'Synthetic inbound history. '.repeat(160);
+const body = 'Synthetic hidden history. '.repeat(160);
 for (let offset = 0; process.env.VERIFY_HISTORY_EXISTING !== '1' && offset < count; offset += 1000) {
   db.transaction(() => {
     for (let i = offset; i < Math.min(offset + 1000, count); i++) {
-      insert.run(conversation, `perf-${i}`, i < 30 ? 'neo:synthetic' : 'worker:synthetic',
-        'worker:synthetic', i < 30 ? `Visible outbound ${i}` : body, '2026-10-21T00:00:00.000Z');
+      const batch = i < 30;
+      insert.run(
+        conversation,
+        `perf-${i}`,
+        batch ? 'system:worker-batch' : i % 2 ? opened.sessionId : 'worker:synthetic',
+        batch ? opened.sessionId : i % 2 ? 'worker:synthetic' : opened.sessionId,
+        batch ? `Worker batch ${i}` : body,
+        new Date(Date.parse('2026-10-21T00:00:00.000Z') + i).toISOString(),
+        batch ? 'worker-batch' : 'session'
+      );
     }
   })();
   await Bun.sleep(0);
@@ -41,14 +49,20 @@ db.close();
 const samples = [];
 for (let i = 0; i < 3; i++) {
   const started = performance.now();
-  const snapshot = await rpc('neo.snapshot', {});
+  const page = await rpc('neo.conversation.read', { conversationId: conversation, limit: 50 });
   const ms = performance.now() - started;
-  const messages = snapshot.sessionMessages;
-  if (messages.length !== 30 || messages.some((m: { text: string }, n: number) =>
-    m.text !== `Visible outbound ${n}`)) throw new Error('Visible outbound history changed');
-  samples.push({ ms, visible: messages.length });
+  const rows = page.items.filter((item: { role: string }) => item.role === 'session');
+  if (
+    rows.length !== 30 ||
+    rows.some(
+      (item: { message: { text: string; kind: string } }, n: number) =>
+        item.message.text !== `Worker batch ${n}` || item.message.kind !== 'worker-batch'
+    )
+  )
+    throw new Error('Human history changed');
+  samples.push({ ms, rows: rows.length });
 }
 const evidence = { rows: count, samples, maxMs: Math.max(...samples.map((s) => s.ms)) };
-writeFileSync(`${run}/evidence/history-latency.json`, JSON.stringify(evidence, null, 2));
+writeFileSync(`${run}/evidence/human-history-latency.json`, JSON.stringify(evidence, null, 2));
 console.log(evidence);
-if (evidence.maxMs >= 250) throw new Error('Neo snapshot exceeded 250ms');
+if (evidence.maxMs >= 250) throw new Error('Human history read exceeded 250ms');

@@ -61,6 +61,7 @@ function fixture() {
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),
       prEvents: new CodingPrEventRepository(db),
+      attend: async () => true,
       prSweepDeps: { tell: async () => true, wake: async () => true },
       readPrs: async (urls) =>
         urls.map((url) => ({ url, state: 'MERGED', checks: 'passing', review: 'approved' })),

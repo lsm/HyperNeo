@@ -7,7 +7,10 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readReusableWorkers } from '../../../../src/storage/work-started-sessions';
+import {
+  readReusableWorkers,
+  recordWorkerStarted,
+} from '../../../../src/storage/work-started-sessions';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 
@@ -39,6 +42,7 @@ function setup(gate?: Promise<void>) {
     );
     sessions.create(todoId, { verb: 'start', adapter: 'claude-desktop', place });
     sessions.recordRef(todoId, { adapter: 'claude-desktop', id: worker });
+    recordWorkerStarted(db, { adapter: 'claude-desktop', id: worker });
     store.updateTodo(store.getTodo(todoId)!, { state, startedAt: 1 }, 2);
   };
   bind('finished', 'mine', 'w-idle', 'done');

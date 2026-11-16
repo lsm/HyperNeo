@@ -13,11 +13,15 @@ class CodingPrEventQueries {
   route(row: Pick<CodingPrTransition, 'repo' | 'number'>) {
     return new CodingPrEventRepository(this.db).route(row);
   }
+
+  unowned(now: number) {
+    return new CodingPrEventRepository(this.db).unowned(now);
+  }
 }
 
 export const codingPrEventReads = defineRepositoryOp(
   'coding.prEvent.reads',
   'read',
   CodingPrEventQueries,
-  ['pendingEvents', 'route']
+  ['pendingEvents', 'route', 'unowned']
 );

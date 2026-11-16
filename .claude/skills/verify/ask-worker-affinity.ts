@@ -7,7 +7,7 @@ import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drive
 import type { WorkAdapter, WorkSummary } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
-import { readReusableWorkers, recordStartedWork } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { readReusableWorkers, recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { packWorkerStartFixture } from '../../../packages/daemon/tests/unit/helpers/pack-worker-start.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -38,7 +38,7 @@ try {
   const registry = createOperationRegistry(createWorkVerbOperations({
     adapters: () => [adapter], remote: { list: () => [], invoke: async () => ({}) }, daemonName: 'fixture',
     freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
-    recordStarted: ref => recordStartedWork(db, ref),
+    recordStarted: ref => recordWorkerStarted(db, ref),
     startPlace: input => ({ value: { ...input, place } }),
   }));
   const world = packWorkerStartFixture(db, {
@@ -48,6 +48,7 @@ try {
   const bind = async (askId: string, id: string, at: number) => {
     const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), instruction: null, target: undefined });
     world.bind(result.todo.id, id);
+    recordWorkerStarted(db, { adapter: 'fixture', id });
     world.store.updateTodo(world.store.getTodo(result.todo.id)!, { state: 'done', startedAt: at }, at);
     assert.equal(world.store.getTodo(result.todo.id)?.state, 'done');
     return result.todo.id;
@@ -66,14 +67,14 @@ try {
   const ask = await open();
   await bind(ask, 'follow-older', 10);
   await bind(ask, 'follow-latest', 20);
-  recordStartedWork(db, { adapter: 'fixture', id: 'follow-other' });
+  recordWorkerStarted(db, { adapter: 'fixture', id: 'follow-other' });
   candidates = ['follow-other', 'follow-older', 'follow-latest'].map(worker);
   await start(ask, 'Follow-up', 'follow-latest');
 
   const busyAsk = await open();
   await bind(busyAsk, 'busy-older', 30);
   await bind(busyAsk, 'busy-latest', 40);
-  recordStartedWork(db, { adapter: 'fixture', id: 'busy-other' });
+  recordWorkerStarted(db, { adapter: 'fixture', id: 'busy-other' });
   busy.add('busy-latest');
   candidates = ['busy-other', 'busy-latest', 'busy-older'].map(worker);
   await start(busyAsk, 'Busy follow-up', 'busy-older');

@@ -381,7 +381,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                   : open.idle(todo.id)
                     ? 'idle'
                     : 'unknown',
-                since: Math.max(nudge?.since ?? 0, todo.startedAt ?? todo.createdAt),
+                since: Math.max(
+                  nudge?.since ?? 0,
+                  nudge?.liveSince ?? 0,
+                  todo.startedAt ?? todo.createdAt
+                ),
               }
             : null,
           packWaiting: false,
@@ -407,13 +411,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       }),
       steps: asks.flatMap(({ ask, family, cards }) =>
         family
-          .filter(
-            (todo) =>
-              todo.askId === ask.id &&
-              todo.approvedAt !== null &&
-              ['todo', 'doing', 'blocked', 'failed'].includes(todo.state)
-          )
+          .filter((todo) => todo.askId === ask.id && LIVE_TODO_STATES.includes(todo.state))
           .map((todo) => step(todo, family, cards))
+      ),
+      cards: asks.flatMap(({ ask, cards }) =>
+        cards.filter((card) => card.askId === ask.id && card.state === 'open')
       ),
     };
   }
@@ -455,13 +457,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.recordNudge(todoId, { ...current, nudges });
   }
 
-  noteWorkerStatus(todoId: string, status: string): void {
+  noteWorkerStatus(todoId: string, status: string, now: number): void {
     const prior = this.readNudge(todoId);
     if (prior?.live !== status)
-      this.recordNudge(
-        todoId,
-        prior ? { ...prior, live: status } : { since: 0, nudges: 0, live: status }
-      );
+      this.recordNudge(todoId, {
+        ...(prior ?? { since: 0, nudges: 0 }),
+        live: status,
+        liveSince: now,
+      });
   }
 
   markWorkerUnusable(ref: WorkRef): void {
@@ -490,10 +493,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
-    const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
+    const prior = this.readNudge(todoId);
+    const blockerReport = incident.blockerReport ?? prior?.blockerReport;
+    const liveSince =
+      incident.liveSince ?? (prior?.live === incident.live ? prior?.liveSince : undefined);
     this.writeCoreFact(todoId, 'nudge', {
       ...incident,
       ...(blockerReport ? { blockerReport } : {}),
+      ...(liveSince !== undefined ? { liveSince } : {}),
     });
   }
 

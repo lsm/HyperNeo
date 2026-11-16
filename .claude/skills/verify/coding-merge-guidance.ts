@@ -31,8 +31,9 @@ try {
   seedPrOwner(db, repo, { adapter: 'codex', id: 'synthetic-owner' });
   const transitions = await ledger.write('replace', repo, [{ ...row, state: 'approved_green' }], now);
   const messages: { kind: string; text: string }[] = [];
-  const delivery = { tell: async (_ref: unknown, _key: string, text: string) => { messages.push({ kind: 'owner', text }); return true; },
-    wake: async (_key: string, text: string) => { messages.push({ kind: 'neo', text }); return true; } };
+  const delivery = { host: 'github.com', tell: async (_ref: unknown, _key: string, text: string) => { messages.push({ kind: 'owner', text }); return true; },
+    wake: async (_key: string, text: string) => { messages.push({ kind: 'neo', text }); return true; },
+    attend: async (event: { facts: Record<string, unknown> }) => { messages.push({ kind: 'neo', text: String(event.facts.text) }); return true; } };
   await deliverCodingPrEvents(new CodingPrEventRepository(db), transitions, delivery);
   for (const minute of [20, 40, 60]) {
     const at = now + minute * 60000;

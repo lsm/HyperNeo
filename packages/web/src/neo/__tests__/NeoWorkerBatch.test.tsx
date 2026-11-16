@@ -44,32 +44,17 @@ const synthetic = (size: string): Page => ({
         kind: 'worker-batch',
       },
     },
-    {
-      role: 'session',
-      message: {
-        messageId: 'note',
-        conversationId: id,
-        sequence: 2,
-        fromSession: `neo:${id}`,
-        fromName: 'Neo',
-        toSession: 'session:worker',
-        toName: 'Fix the loader',
-        text: 'Rebase on dev, then tell me.',
-        createdAt: '2026-10-25T12:00:00.100Z',
-        kind: 'session',
-      },
-    },
-    {
-      role: 'human',
+    ...(size === 'large' ? ['small', 'large'] : ['small']).map((each, index) => ({
+      role: 'human' as const,
       ask: {
         conversationId: id,
-        requestId: 'human',
-        askOrigin: { sessionId: `neo:${id}`, messageId: 'human' },
-        sequence: 1,
-        createdAt: '2026-10-25T12:00:00.001Z',
-        content: `  Human ${size}: keep these exact words inline.\n第二行。  `,
+        requestId: `human-${each}`,
+        askOrigin: { sessionId: `neo:${id}`, messageId: `human-${each}` },
+        sequence: index + 1,
+        createdAt: `2026-10-25T12:00:0${index}.001Z`,
+        content: `  Human ${each}: keep these exact words inline.\n第二行。  `,
       },
-    },
+    })),
   ],
 });
 afterEach(cleanup);
@@ -97,34 +82,17 @@ it.each(['small', 'large'])(
     const conversation = projectNeoPublicConversation(
       `neo:${page.conversationId}`,
       { ...state, items: asks },
-      { ...state, items: [] },
-      [],
-      messages
+      { ...state, items: [] }
     );
     expect(
-      conversation.entries.flatMap((entry) =>
-        entry.kind === 'session' ? [entry.message.messageId] : []
-      )
-    ).toEqual(
-      messages.filter((message) => message.kind !== 'worker-batch').map((m) => m.messageId)
-    );
+      conversation.entries.map((entry) => (entry.kind === 'ask' ? entry.ask.requestId : entry.kind))
+    ).toEqual(asks.map((ask) => ask.requestId));
     const first = render(<NeoPublicConversation conversation={conversation} />);
     expect(first.container.textContent).not.toContain('System-forwarded worker messages');
     expect(first.container.textContent).not.toContain('worker note 00');
     expect(first.container.textContent).not.toContain('iVBORw0KGgo');
     expect(first.container.textContent).not.toContain('"type":"image"');
     expect(await screen.findByText(new RegExp(`Human ${size}:`))).toBeTruthy();
-    if (!run) {
-      const note = [
-        ...first.container.querySelectorAll<HTMLDetailsElement>('details[data-public-entry]'),
-      ].find(
-        (row) =>
-          row.getAttribute('data-public-entry') ===
-          JSON.stringify([page.conversationId, 'session', 'note'])
-      );
-      expect(note).toBeDefined();
-      expect(note!.textContent).toContain('Rebase on dev, then tell me.');
-    }
     if (run) await evidence.write(run, `evidence/rendered-${size}.html`, first.container.innerHTML);
     first.unmount();
     const reopened = render(<NeoPublicConversation conversation={conversation} />);

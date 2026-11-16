@@ -43,6 +43,6 @@ This helper proves fact reads and writer durability; it executes no merge comman
 separate coding-daemon-merge-sweep journey proves execution, retry and confirmation
 behavior. Real merge delivery, GUI and deployment are unverified here.
 
-An unsent retry-limit report must survive the real daemon restart with its last
-error. Acknowledgement through the writer removes it from the pending-report
-reader without depending on a live PR candidate.
+A stopped retry budget must survive the real daemon restart with its last
+error. The writer keeps no acknowledgement of the report: the attention entry
+owns telling Neo once, so the stopped head stays listed until a retry reopens it.
