@@ -204,12 +204,18 @@ unopened id gets `unknown_session`. A token request made inside the adapter's
 - The adapter then asks for tokens through the session's ordinary event
   stream and sends `account/login/start` with the answer. The session becomes
   ready only after that login succeeds. A submit before then waits for it.
+- The hub keeps the pending token request until it is answered and delivers
+  it to every subscriber that attaches while it is pending. The pinned hub's
+  `deliverLocked` (`go/serve/session.go`) sends only to current subscribers,
+  so without this a request emitted before HyperNeo subscribes would be lost
+  and the login would time out with valid credentials.
 - Cancellation: if the client closes the session, the connection drops, or
   the request is not answered in time, the hub fails the login, closes the
   adapter session and removes the registration. It records no opened binding.
 
-An upstream integration test runs a real stdio hub with no existing session
-and a first login that needs tokens.
+Upstream integration tests run a real stdio hub with no existing session and
+a first login that needs tokens: one subscribing at once, and one whose
+subscription is deliberately delayed past the first token request.
 
 That request can arrive before any run exists: during `open`, or while the
 chat is idle. Today nothing would hear it. `createOapRuntime` awaits
@@ -219,7 +225,8 @@ subscription is made at submit. Its `readEvent` turns any event without a
 run's stream. So PR 6 adds one session-level auth dispatcher:
 
 - **Installed right after open.** It subscribes as soon as `open` returns,
-  before the session is ready and before any submit. It reads only the
+  before the session is ready and before any submit. A token request emitted
+  before it attaches is replayed to it by the hub. It reads only the
   session-scoped host-auth event, with no `run_id`.
 - **Ignored by the run stream.** If that event arrives mid-run, the submit-time
   subscription also sees it. PR 6 makes `readEvent` skip exactly the host-auth
@@ -437,8 +444,8 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start with one entry per provider, the adapter name switched to `config.provider` in the same PR, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised | daemon | ~20 |
 | 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
-| OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction; two-phase open so the first token request reaches the client, with cancellation cleanup and a real-stdio-hub test | OXAP repo | upstream |
-| 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME`. Session-level auth dispatcher installed before open | daemon | ~110 |
+| OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction; two-phase open, with the pending token request kept and replayed to late subscribers, cancellation cleanup and real-stdio-hub tests including a delayed subscription | OXAP repo | upstream |
+| 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME`. Session-level auth dispatcher subscribed right after open returns | daemon | ~110 |
 | 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine, thinking control hidden and attach/paste/drop disabled with a reason when the row says so | **UI** | ~170 |
 
 Merge order is 1 → 2 → 3 → 4 → 5, then the OXAP change and a new `oxap`
