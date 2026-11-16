@@ -673,6 +673,41 @@ describe('NeoHumanQueue', () => {
     expect(trip.getByText('Book hotel')).toBeTruthy();
   });
 
+  it('opens the full ask only from the validated read, never the summary', async () => {
+    const summarised = {
+      ...entry('trip', 'Plan the trip', [question('q1', 'trip', { document: 'Preview' })]),
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const detailed = entry('trip', 'Plan the trip', [question('q1', 'trip')]);
+    let settle = { resolve: (_: NeoAskEntry) => {}, reject: (_: Error) => {} };
+    const onLoadDetails = vi.fn(
+      () =>
+        new Promise<NeoAskEntry>((resolve, reject) => {
+          settle = { resolve, reject };
+        })
+    );
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={onLoadDetails}
+        renderAsk={(shown) => <p>{shown.summary ? 'Summary ask' : 'Validated ask'}</p>}
+      />
+    );
+    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+    settle.reject(new Error('offline'));
+    expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
+    settle.resolve(detailed);
+    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
+    expect(view.getByText('Validated ask')).toBeTruthy();
+    expect(view.queryByText('Summary ask')).toBeNull();
+  });
+
   it('has no header button when the full ask cannot be shown', () => {
     const { view } = show();
     expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();

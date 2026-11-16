@@ -850,12 +850,14 @@ describe('card reply notice navigation', () => {
   });
 
   it.each([
-    [null, false],
-    ['Money', false],
-    [null, true],
+    [null, false, false],
+    ['Money', false, false],
+    [null, true, false],
+    ['Money', false, true],
+    ['Travel', false, true],
   ])(
-    'opens a child todo quote on its own full todo, topic %s, parent opened %s',
-    async (topic, parentOpened) => {
+    'opens a child todo quote on its own full todo, topic %s, parent opened %s, searching %s',
+    async (topic, parentOpened, searching) => {
       const { model } = mount();
       const card = {
         id: 'qp',
@@ -939,14 +941,24 @@ describe('card reply notice navigation', () => {
             name: 'Open the ask',
           })
         );
-      const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
-      expect(
-        within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
-      ).toBeTruthy();
+      if (topic !== 'Travel') {
+        const child = document.querySelector('article[data-ask="hotel-ask"]') as HTMLElement;
+        expect(
+          within(child).getByRole('button', { name: 'Step actions: Fictional hotel' })
+        ).toBeTruthy();
+      }
+      if (searching) {
+        fireEvent.click(screen.getByRole('button', { name: 'Search work', exact: true }));
+        fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'Fictional' } });
+      }
       fireEvent.click(screen.getByRole('button', { name: /Quoted hotel target/ }));
       await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-hotel'));
       expect(document.activeElement?.closest('[data-ask="hotel-ask"]')).toBeTruthy();
       expect(document.querySelectorAll('[id="neo-ref-todo-hotel"]')).toHaveLength(1);
+      if (topic)
+        expect(
+          screen.getByRole('button', { name: `${topic} 1` }).getAttribute('aria-pressed')
+        ).toBe(topic === 'Money' ? 'true' : 'false');
     }
   );
 
