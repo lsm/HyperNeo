@@ -87,50 +87,55 @@ type HeldTodo = {
   hold: HeldLine;
 };
 
-function readHeldTodos(db: Database, now: number): HeldTodo[] {
+type Cooldown = Record<string, unknown>;
+
+function readCooldowns(db: Database): Cooldown[] {
   return db
     .prepare(`SELECT t.id, t.title, t.named, x.id AS worker,
         json_extract(x.config, '$.provider') AS provider,
         json_extract(x.config, '$.model') AS model,
         json_extract(x.processing_state, '$.reason') AS reason,
         json_extract(x.processing_state, '$.since') AS since,
-        json_extract(x.processing_state, '$.retryAt') AS retryAt
-      FROM neo_todos t
-      JOIN neo_todo_sessions s ON s.todo_id = t.id AND json_valid(s.ref)
-      JOIN sessions x ON x.id = json_extract(s.ref, '$.id')
-      WHERE t.state = 'doing'
+        json_extract(x.processing_state, '$.retryAt') AS retryAt,
+        json_extract(x.processing_state, '$.manualRetry') AS manualRetry
+      FROM sessions x
+      LEFT JOIN neo_todo_sessions s ON json_valid(s.ref)
+        AND json_extract(s.ref, '$.id') = x.id
         AND json_extract(s.ref, '$.adapter') = 'hyperneo' AND json_extract(s.ref, '$.daemon') IS NULL
-        AND x.status NOT IN ('archived', 'ended') AND x.archived_at IS NULL
+      LEFT JOIN neo_todos t ON t.id = s.todo_id AND t.state = 'doing'
+      WHERE x.status NOT IN ('archived', 'ended') AND x.archived_at IS NULL
         AND json_valid(x.processing_state) AND json_valid(x.config)
-        AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'
-        AND (json_extract(x.processing_state, '$.reason') = 'login'
-          OR json_extract(x.processing_state, '$.manualRetry') = 1
-          OR json_extract(x.processing_state, '$.retryAt') IS NULL
-          OR json_extract(x.processing_state, '$.retryAt') > ?)`)
-    .all(now)
-    .flatMap((row) => {
-      const { id, title, named, worker, provider, model, reason, since, retryAt } = row as Record<
-        string,
-        unknown
-      >;
-      return typeof provider === 'string' &&
-        typeof model === 'string' &&
-        typeof reason === 'string' &&
-        typeof since === 'number'
-        ? [
-            {
-              todo: { id: String(id), title: String(title), named: named as string | null },
-              worker: String(worker),
-              hold: {
-                line: { provider, model, harness: 'hyperneo' },
-                reason: reason as RateLimitHoldReason,
-                since,
-                ...(typeof retryAt === 'number' ? { retryAt } : {}),
-              },
+        AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'`)
+    .all() as Cooldown[];
+}
+
+const waitsOnSomeone = ({ reason, manualRetry }: Cooldown) =>
+  reason === 'login' || manualRetry === 1;
+
+function readHeldTodos(db: Database, now: number): HeldTodo[] {
+  return readCooldowns(db).flatMap((row) => {
+    const { id, title, named, worker, provider, model, reason, since, retryAt } = row;
+    const live = waitsOnSomeone(row) || typeof retryAt !== 'number' || retryAt > now;
+    return id !== null &&
+      live &&
+      typeof provider === 'string' &&
+      typeof model === 'string' &&
+      typeof reason === 'string' &&
+      typeof since === 'number'
+      ? [
+          {
+            todo: { id: String(id), title: String(title), named: named as string | null },
+            worker: String(worker),
+            hold: {
+              line: { provider, model, harness: 'hyperneo' },
+              reason: reason as RateLimitHoldReason,
+              since,
+              ...(typeof retryAt === 'number' ? { retryAt } : {}),
             },
-          ]
-        : [];
-    });
+          },
+        ]
+      : [];
+  });
 }
 
 function workOf(named: string | null): { kind: string; scope: NeoLineScope } {
@@ -142,24 +147,11 @@ function workOf(named: string | null): { kind: string; scope: NeoLineScope } {
 }
 
 function readHolds(db: Database): LineHold[] {
-  return db
-    .prepare(`SELECT json_extract(config, '$.provider') AS provider,
-        json_extract(config, '$.model') AS model,
-        json_extract(processing_state, '$.reason') AS reason,
-        json_extract(processing_state, '$.retryAt') AS retryAt
-      FROM sessions
-      WHERE status NOT IN ('archived', 'ended') AND archived_at IS NULL
-        AND json_valid(processing_state) AND json_valid(config)
-        AND json_extract(processing_state, '$.status') = 'rate_limit_cooldown'`)
-    .all()
-    .flatMap((row) => {
-      const { provider, model, reason, retryAt } = row as Record<string, unknown>;
-      return typeof provider === 'string' &&
-        typeof model === 'string' &&
-        typeof retryAt === 'number'
-        ? [{ provider, model, retryAt, ...(typeof reason === 'string' ? { reason } : {}) }]
-        : [];
-    });
+  return readCooldowns(db).flatMap(({ provider, model, reason, retryAt }) =>
+    typeof provider === 'string' && typeof model === 'string' && typeof retryAt === 'number'
+      ? [{ provider, model, retryAt, ...(typeof reason === 'string' ? { reason } : {}) }]
+      : []
+  );
 }
 
 async function readAvailability(provider: Provider | undefined): Promise<Availability> {
