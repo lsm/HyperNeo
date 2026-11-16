@@ -11,7 +11,7 @@ import { readReusableWorkers } from '../../../../src/storage/work-started-sessio
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 
-function setup() {
+function setup(gate?: Promise<void>) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -43,6 +43,14 @@ function setup() {
   };
   bind('finished', 'mine', 'w-idle', 'done');
   bind('foreign', 'theirs', 'w-foreign', 'doing');
+  bind('finished-2', 'mine', 'w-idle-2', 'done');
+  store.addTodo(
+    'owned',
+    'mine',
+    { title: 'owned', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+    3
+  );
+  sessions.create('owned', { verb: 'start', adapter: 'claude-desktop', place });
   const sent: string[] = [];
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
@@ -54,15 +62,13 @@ function setup() {
         openCount: 1,
         archivedCount: 0,
         adapters: ['claude-desktop'],
-        work: [
-          {
-            ref: { adapter: 'claude-desktop', id: 'w-idle' },
-            title: 'w-idle',
-            place,
-            status: 'done',
-            lastActivityAt: 1,
-          },
-        ],
+        work: ['w-idle', 'w-idle-2'].map((id) => ({
+          ref: { adapter: 'claude-desktop', id },
+          title: id,
+          place,
+          status: 'done' as const,
+          lastActivityAt: 1,
+        })),
       },
     ],
     start: async (request) => ({
@@ -77,6 +83,7 @@ function setup() {
     }),
     send: async (ref) => {
       sent.push(ref.id);
+      if (sent.length === 1) await gate;
       return { ok: true, value: { delivered: true, receipt: { executionId: 'e', inputId: 'i' } } };
     },
   };
@@ -87,7 +94,7 @@ function setup() {
       daemonName: 'imac',
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
-      unclaimWorker: async (todoId, ref, previous) => sessions.unclaimWorker(todoId, ref, previous),
+      unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
       isOpenTodo: (todoId, sessionId) => {
         const todo = store.getTodo(todoId);
         const ask = todo ? store.getAsk(todo.askId) : null;
@@ -101,6 +108,15 @@ function setup() {
     })
   );
   return { db, sessions, sent, registry };
+}
+
+function start(registry: ReturnType<typeof setup>['registry'], todoId: string) {
+  return invokeOperation(
+    registry,
+    'work.start',
+    { adapter: 'claude-desktop', place, title: 'repo', message: 'Fix it.', todoId },
+    { source: 'mcp', sessionId: 'neo-a', role: 'neo' }
+  );
 }
 
 describe('work.start reuse binds only a todo the caller owns', () => {
@@ -122,6 +138,26 @@ describe('work.start reuse binds only a todo the caller owns', () => {
       expect(outcome.kind).toBe('completed');
       expect((outcome as { value: { ok: boolean } }).value.ok).toBe(true);
       expect(h.sessions.readRef('foreign')).toMatchObject({ id: 'w-foreign' });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a second start for the same todo cannot take another worker while the first send waits', async () => {
+    let open = () => {};
+    const h = setup(new Promise<void>((done) => (open = done)));
+    try {
+      const first = start(h.registry, 'owned');
+      while (!h.sent.length) await Promise.resolve();
+      const second = await start(h.registry, 'owned');
+      expect((second as { value: { value: { ref: { id: string } } } }).value.value.ref.id).toBe(
+        'fresh'
+      );
+      expect(
+        h.sessions.fenceRelease({ adapter: 'claude-desktop', id: h.sent[0] }, Date.now())
+      ).toBe(false);
+      open();
+      await first;
     } finally {
       h.db.close();
     }

@@ -252,6 +252,15 @@ describe('procFolderInUse', () => {
     ).toBe(false);
   });
 
+  test('skips a process the user started that runs as root, like sudo', async () => {
+    expect(
+      await procFolderInUse(
+        '/w',
+        proc({ '1': { status: `Uid:\t${uid}\t0\t0\t0\n`, cwd: failure('EACCES') } })
+      )
+    ).toBe(false);
+  });
+
   test('skips processes of other users', async () => {
     expect(
       await procFolderInUse('/w', proc({ '1': { uid: uid + 1, cwd: failure('EACCES') } }))

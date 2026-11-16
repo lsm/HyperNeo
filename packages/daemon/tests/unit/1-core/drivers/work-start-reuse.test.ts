@@ -167,7 +167,18 @@ function harness(
 }
 
 describe('work.start against a worker release', () => {
-  test('binds the picked worker before its first message', async () => {
+  const claims = () => {
+    const undone: string[] = [];
+    return {
+      undone,
+      deps: {
+        claimWorker: async () => true,
+        unclaimWorker: async (_todoId: string, ref: WorkRef) => void undone.push(ref.id),
+      },
+    };
+  };
+
+  test('claims the picked worker before its first message', async () => {
     const order: string[] = [];
     let sent: string[] = [];
     const run = harness(
@@ -178,7 +189,7 @@ describe('work.start against a worker release', () => {
       {
         claimWorker: async (ref) => {
           order.push(`claim ${ref.id} after ${sent.length} sends`);
-          return { previous: null };
+          return true;
         },
       }
     );
@@ -189,7 +200,7 @@ describe('work.start against a worker release', () => {
 
   test('starts fresh when the release won the worker first', async () => {
     const run = harness([{ id: 'released', status: 'done' }], ['released'], undefined, undefined, {
-      claimWorker: async () => null,
+      claimWorker: async () => false,
     });
     expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
     expect(run.sent).toEqual([]);
@@ -207,7 +218,7 @@ describe('work.start against a worker release', () => {
         claimWorker: async () => {
           calls += 1;
           if (calls === 1) throw new Error('db gateway write queue full');
-          return { previous: null };
+          return true;
         },
       }
     );
@@ -216,20 +227,44 @@ describe('work.start against a worker release', () => {
     expect(run.sent).toEqual(['claim-throws']);
   });
 
-  test('gives the binding back when the first message is refused', async () => {
-    const undone: string[] = [];
+  test('gives the claim back only when the first message was proven unsent', async () => {
+    const claim = claims();
     const run = harness(
       [{ id: 'closed', status: 'done', refusal: 'not_open' }],
       ['closed'],
       undefined,
       undefined,
-      {
-        claimWorker: async () => ({ previous: null }),
-        unclaimWorker: async (_todoId, ref) => void undone.push(ref.id),
-      }
+      claim.deps
     );
     expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
-    expect(undone).toEqual(['closed']);
+    expect(claim.undone).toEqual(['closed']);
+  });
+
+  test('keeps the claim when the worker may have accepted the message but the reply was lost', async () => {
+    const claim = claims();
+    const run = harness(
+      [{ id: 'lost-reply', status: 'done', refusal: 'uncertain' }],
+      ['lost-reply'],
+      undefined,
+      undefined,
+      claim.deps
+    );
+    await run.start(neo, false, { todoId: 'next' });
+    expect(run.sent).toEqual(['lost-reply']);
+    expect(claim.undone).toEqual([]);
+  });
+
+  test('keeps the claim when the first message throws', async () => {
+    const claim = claims();
+    const run = harness(
+      [{ id: 'send-throws', status: 'done', refusal: 'throws' }],
+      ['send-throws'],
+      undefined,
+      undefined,
+      claim.deps
+    );
+    await run.start(neo, false, { todoId: 'next' }).catch(() => null);
+    expect(claim.undone).toEqual([]);
   });
 });
 
