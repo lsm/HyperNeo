@@ -61,6 +61,7 @@ import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
+import { neoDerivedId } from './derived-id.ts';
 
 const log = new Logger('neo-todo-runner');
 
@@ -97,6 +98,7 @@ export interface NeoTodoRunnerDeps {
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
   enabledPacks?(): readonly NeoPack[];
+  tell(ask: NeoAsk, todo: NeoTodo, note: string, key: string, kind: 'event'): Promise<void>;
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
   limits(): { running: number; perGroup: number };
@@ -963,10 +965,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ref,
           readDriverLive(outcome),
           { ...turn, humanInput: origin.humanInput },
-          deps.attend,
-          sessions.turnReports,
-          undefined,
-          latestAt
+          ({ facts }) =>
+            deps.tell(
+              ask,
+              todo,
+              String(facts.text),
+              neoDerivedId(JSON.stringify(['neo-human-turn', ref, turn.id, facts.text])),
+              'event'
+            ),
+          sessions.turnReports
         );
         await sessions.write('recordFollowAnchor', id, turn.at);
         continue;

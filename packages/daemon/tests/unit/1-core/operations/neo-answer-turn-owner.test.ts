@@ -120,6 +120,7 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
     sessions,
     invoke,
     packs: () => [],
+    tell: async () => {},
     attend: neoAttentionNotes(db, store, (text) => {
       const todo = /^Worker turn report \(todo ([^,]+),/.exec(text)?.[1];
       if (todo) reported.push(todo);

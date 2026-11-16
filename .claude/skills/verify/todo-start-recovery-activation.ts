@@ -35,6 +35,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
   try { return await app.db.gateway.run(op,args); }
   finally { if((args as {method?:string}).method==='recover') admission=false; }
 },packs:()=>[],changed:()=>{effects.push('changed');},
+  tell: async () => {},
   attend:async(event)=>{ effects.push('tell'); notes.push(String(event.facts.text)); },
   invoke:async(_caller,name)=>{
     calls.push(name); assert.equal(name,'work.status','Recovery must never dispatch work');

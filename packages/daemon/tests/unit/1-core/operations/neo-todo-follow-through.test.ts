@@ -122,6 +122,7 @@ function world(packs: NeoPack[] = []) {
       });
     },
     packs: () => packs,
+    tell: async () => {},
     attend: async (event) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
       knobs.onTell?.();

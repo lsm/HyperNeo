@@ -76,6 +76,7 @@ function world(
       });
     },
     packs: () => [],
+    tell: async () => {},
     attend: (event) => notes.attend(event),
     changed: () => {},
     limits: () => {

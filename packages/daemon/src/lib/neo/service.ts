@@ -337,6 +337,8 @@ export class NeoService {
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
       enabledPacks: () => this.packs(),
+      tell: (ask, _todo, note, key, kind) =>
+        this.deliverForward(ask.sessionId, key, note, ask.sessionId, kind),
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),

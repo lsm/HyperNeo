@@ -40,6 +40,7 @@ function world() {
       return completed({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
     },
     packs: () => [],
+    tell: async () => {},
     attend: async () => {},
     changed: () => {},
   });

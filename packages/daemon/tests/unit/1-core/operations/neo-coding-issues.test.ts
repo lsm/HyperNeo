@@ -89,6 +89,7 @@ function fixture() {
       sessions,
       packs: () => [pack],
       changed: () => {},
+      tell: async () => {},
       attend: async (event) => {
         notes.push(String(event.facts.text));
       },

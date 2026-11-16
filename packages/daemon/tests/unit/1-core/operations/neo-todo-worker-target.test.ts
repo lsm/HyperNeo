@@ -87,6 +87,7 @@ function world(coding = false) {
       return completed({ ok: true, value: { status: 'done', lastActivityAt: Date.now() } });
     },
     packs: () => [coding ? real : pack],
+    tell: async () => {},
     attend: async (event) => {
       told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
     },

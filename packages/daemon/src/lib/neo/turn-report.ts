@@ -87,7 +87,8 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       observation: { facts?: NeoTurnReportFacts },
       ref: WorkRef,
       live: Live,
-      turn: Turn
+      turn: Turn,
+      statusOnly: boolean
     ) => {
       const name = (live?.title ?? '')
         .replace(/[\s\p{Cc}\p{Cf}]+/gu, ' ')
@@ -103,18 +104,20 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       if (turn.humanInput !== undefined)
         return `The human worked directly in ${ref.adapter}:${ref.id} (ask ${ask.title}, todo ${todo.id}).\n\n${worker}\n\nThe human said: ${turn.humanInput}\n\nThe worker replied: ${turn.message || 'worker ended its turn with no reply'}\n\nWorker status: ${live?.status ?? 'unknown'}${live?.waitingFor ? `; waiting for: ${live.waitingFor}` : ''}`;
       return [
-        `Worker turn report (${context}):`,
+        statusOnly
+          ? `Focused discussion status only (ask ${ask.id}, ${context}). Do not act, reply, forward or treat this as approval.`
+          : `Worker turn report (${context}):`,
         worker,
         live?.waitingFor ? `Waiting for: ${live.waitingFor}` : '',
         turn.message || 'worker ended its turn with no reply',
-        !turn.notice && observation.facts?.blockedBy === 'needs-human'
+        !statusOnly && !turn.notice && observation.facts?.blockedBy === 'needs-human'
           ? 'If you can answer this, reply to the worker and continue the todo; if only the human can decide, use neo.question.ask with kind relay for a worker question waiting on this todo, otherwise ask them with neo.question.ask (a choice with one option to confirm or several to choose, or a reply) linked to this todo.'
           : '',
       ]
         .filter(Boolean)
         .join('\n\n');
     },
-    ['ask', 'todo', 'dispatchId', 'observation', 'ref', 'live', 'turn'],
+    ['ask', 'todo', 'dispatchId', 'observation', 'ref', 'live', 'turn', 'statusOnly'],
     'text'
   )
   .pipe(
@@ -135,15 +138,14 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         kind: 'turn.report',
         subject: turn.notice ? { type: 'worker', id: fullRef(ref) } : { type: 'todo', id: todo.id },
         since: 0,
-        facts: statusOnly
-          ? { text, focused: true }
-          : {
-              text,
-              latestAt: latestAt !== undefined && latestAt > turn.at ? latestAt : undefined,
-              status: live?.status,
-              question: !!live?.turnQuestion,
-              todoState: turn.notice ? undefined : todo.state,
-            },
+        facts: {
+          text,
+          latestAt: latestAt !== undefined && latestAt > turn.at ? latestAt : undefined,
+          status: live?.status,
+          question: !!live?.turnQuestion,
+          todoState: turn.notice ? undefined : todo.state,
+          focused: statusOnly,
+        },
       });
     },
     [

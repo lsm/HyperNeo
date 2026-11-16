@@ -36,6 +36,7 @@ function setup() {
     store,
     sessions,
     packs: () => packs,
+    tell: async () => {},
     attend: async (event) => {
       told.push({ todo: event.subject.id, note: String(event.facts.text) });
     },

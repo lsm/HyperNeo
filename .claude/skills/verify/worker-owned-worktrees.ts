@@ -151,6 +151,7 @@ try {
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)), store, sessions,
     invoke: (actor, name, input) => invoke(name, input, actor), packs: () => [pack],
+    tell: async () => {},
     attend: async () => {}, changed: () => {}, limits: () => ({ running: 2, perGroup: 2 }),
   });
   const place = { machine: 'synthetic', folder: source, name: 'Synthetic project' };

@@ -146,6 +146,7 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
         write: gatewayFor(db).run.bind(gatewayFor(db)),
         invoke: (caller, name, input) => invokeOperation(registry, name, input, caller),
         packs: () => [],
+        tell: async () => {},
         attend: async () => {},
         changed: () => {},
         limits: () => ({ running: 1, perGroup: 1 }),

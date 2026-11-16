@@ -304,6 +304,7 @@ describe('owned Copilot lifecycle', () => {
             ),
           };
         },
+        tell: async (_ask, _todo, note) => void told.push(note),
         attend: neoAttentionNotes(db, store, (text) => told.push(text)).attend,
       });
       await runner.refresh(() => {});

@@ -2238,6 +2238,7 @@ describe('neo todo runner', () => {
         return completed({ ok: true, value: { status: 'running' } });
       },
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -2334,6 +2335,7 @@ describe('neo todo runner', () => {
         return completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
       },
       packs: () => [],
+      tell: async () => {},
       attend: async (event) => {
         told.push(String(event.facts.text));
       },
@@ -2380,6 +2382,7 @@ describe('neo todo runner', () => {
           h.store.updateTodo(current, { report: 'Concurrent start report' }, current.updatedAt + 1);
           return completed({ ok: false, reason: 'unavailable', detail: 'Synthetic refusal' });
         },
+        tell: async () => {},
         attend: async () => {},
         changed: () => {},
       });
@@ -2413,6 +2416,7 @@ describe('neo todo runner', () => {
           },
         }),
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -2446,6 +2450,7 @@ describe('neo todo runner', () => {
           },
         }),
       packs: () => [],
+      tell: async () => {},
       attend: async (event) => {
         told.push(String(event.facts.text));
       },
@@ -2625,6 +2630,7 @@ describe('neo todo runner uncertainty', () => {
         return { kind: 'failed', code: 'execution_failed', message: 'socket hang up' } as never;
       },
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -2656,6 +2662,7 @@ describe('neo todo runner uncertainty', () => {
       invoke: async () =>
         completed({ ok: false, reason: 'unsupported', detail: 'This adapter cannot stop.' }),
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -2667,6 +2674,7 @@ describe('neo todo runner uncertainty', () => {
       sessions,
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -2874,6 +2882,7 @@ describe('a todo sent to an existing session', () => {
             })
           : completed({ ok: true, value: { status: 'done', lastActivityAt: lastActivity } }),
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -3040,6 +3049,7 @@ describe('blocked todos', () => {
           : completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
       },
       packs: () => [],
+      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });
@@ -3100,6 +3110,7 @@ describe('blocked todos', () => {
         return completed({ ok: false, reason: 'unavailable', detail: 'login expired' });
       },
       packs: () => [],
+      tell: async () => {},
       attend: async (event) => {
         told.push(String(event.facts.text));
       },
@@ -3124,6 +3135,7 @@ describe('blocked todos', () => {
       sessions: new NeoTodoSessionRepository(db),
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
       packs: () => [],
+      tell: async () => {},
       attend: async (event) => {
         told.push(String(event.facts.text));
       },
@@ -3556,6 +3568,7 @@ describe('current explicit removal behavior before recompute', () => {
               value: { status: 'running', lastActivityAt: Date.now() },
             });
           },
+          tell: async () => {},
           attend: async () => {},
           changed: () => {},
         });
