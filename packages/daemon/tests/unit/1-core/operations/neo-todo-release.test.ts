@@ -145,7 +145,8 @@ function setup() {
     setOnStatus: (next: () => void) => {
       onStatus = next;
     },
-    release: () => releaseNeoTodoWorkers(sessions, invoke, () => {}),
+    sessions,
+    invoke,
     released: () =>
       db.prepare("SELECT todo_id FROM pack_facts WHERE pack = 'core' AND key = 'released'").all(),
     queueOn: (todoId: string) => sessions.queueOn(todoId, worker, 'Next step.'),
@@ -299,7 +300,7 @@ describe('releaseNeoTodoWorkers', () => {
         (caller) =>
           admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
       );
-      await h.release();
+      await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
       expect(h.released()).toEqual([]);
     } finally {
       h.db.close();
