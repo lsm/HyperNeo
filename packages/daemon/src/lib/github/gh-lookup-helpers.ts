@@ -161,6 +161,36 @@ export async function fetchRateLimitResetEpoch(
   return pickRateLimitResetEpoch(parsed, resource);
 }
 
+// The daemon and every agent share one REST budget; the last core quota a response
+// reported is the current estimate until its reset.
+let coreBudget: { remaining: number; limit: number; resetAt: number } | null = null;
+export function recordGithubBudget(headers: Headers): void {
+  const [remaining, limit, reset] = ['remaining', 'limit', 'reset'].map((name) => {
+    const value = headers.get(`x-ratelimit-${name}`);
+    return value && /^\d+$/.test(value) ? Number(value) : null;
+  });
+  if (headers.get('x-ratelimit-resource') === 'core' && remaining !== null && limit && reset)
+    coreBudget = { remaining, limit, resetAt: reset * 1000 };
+}
+export function readGithubBudget(now = Date.now()): {
+  level: 'ok' | 'low' | 'critical';
+  resetAt: number | null;
+} {
+  if (!coreBudget || now >= coreBudget.resetAt) return { level: 'ok', resetAt: null };
+  const share = coreBudget.remaining / coreBudget.limit;
+  const level = share < 0.05 ? 'critical' : share < 0.2 ? 'low' : 'ok';
+  return { level, resetAt: coreBudget.resetAt };
+}
+
+// A matching If-None-Match gets a 304, which does not count against the core limit.
+const conditional = new Map<string, { etag: string; data: unknown }>();
+const isRestGet = (args: string[]) =>
+  args[1] === 'api' &&
+  !args.includes('graphql') &&
+  !args.includes('--input') &&
+  (args.some((arg, i) => ['-X', '--method'].includes(arg) && args[i + 1] === 'GET') ||
+    !args.some((arg) => ['-X', '--method', '-f', '-F', '--field', '--raw-field'].includes(arg)));
+
 export async function runGhJson(
   args: string[],
   cwd: string,
@@ -172,9 +202,37 @@ export async function runGhJson(
     stripGHRepo?: boolean;
     maxBufferBytes?: number;
     onResponse?: (quota: GhResponseQuota) => void;
+    // A `--paginate --slurp` read first asks for one conditional page of 100 and
+    // falls back to the full paginated read only when GitHub links a next page.
+    firstPage?: boolean;
+    onLink?: (link: string | null) => void;
   }
 ): Promise<ConnectorOutcome> {
+  if (
+    options?.firstPage &&
+    isRestGet(args) &&
+    args.includes('--paginate') &&
+    args.includes('--slurp')
+  ) {
+    let more = true;
+    const page = await runGhJson(
+      [
+        ...args.filter((arg) => arg !== '--paginate' && arg !== '--slurp'),
+        '--method',
+        'GET',
+        '-F',
+        'per_page=100',
+      ],
+      cwd,
+      spawnImpl,
+      { ...options, firstPage: false, onLink: (link) => (more = /rel="next"/.test(link ?? '')) }
+    );
+    if (!page.ok) return page;
+    if (!more) return { ok: true, data: [page.data] };
+  }
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
+  const key = isRestGet(args) ? JSON.stringify(args) : null;
+  const cached = key ? conditional.get(key) : undefined;
 
   log.info('gh lookup', {
     resource: options?.resourceHint ?? null,
@@ -193,12 +251,15 @@ export async function runGhJson(
       args[1] === 'api' && !['--slurp', '--include', '-i'].some((flag) => args.includes(flag))
         ? [...args, '--include']
         : args;
-    proc = spawnImpl(requestArgs, {
-      cwd,
-      env: ghEnv,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    proc = spawnImpl(
+      cached ? [...requestArgs, '-H', `If-None-Match: ${cached.etag}`] : requestArgs,
+      {
+        cwd,
+        env: ghEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
+    );
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -247,7 +308,10 @@ export async function runGhJson(
       retryAfterMs,
       requestId: response.headers.get('x-github-request-id'),
     });
+    recordGithubBudget(response.headers);
+    options?.onLink?.(response.headers.get('link'));
   }
+  if (cached && response?.status === 304) return { ok: true, data: cached.data };
 
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
@@ -306,6 +370,12 @@ export async function runGhJson(
       retryable: true,
       retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
     };
+  }
+  const etag = response?.headers.get('etag');
+  if (key && etag) {
+    conditional.delete(key);
+    conditional.set(key, { etag, data: parsed });
+    if (conditional.size > 500) conditional.delete(conditional.keys().next().value!);
   }
   return { ok: true, data: parsed };
 }

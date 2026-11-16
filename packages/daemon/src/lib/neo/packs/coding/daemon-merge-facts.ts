@@ -90,7 +90,7 @@ export async function readCodingRequiredChecks(
 }
 const collect = async (db: Database, url: string, spawn: SpawnFn) => {
   const meta = parsePrUrl(url.toLowerCase())!;
-  const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn);
+  const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn, { firstPage: true });
   const pull = await gh([
     'pr',
     'view',

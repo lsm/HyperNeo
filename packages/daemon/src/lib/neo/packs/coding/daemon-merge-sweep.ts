@@ -11,6 +11,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
+import { readGithubBudget } from '../../../github/gh-lookup-helpers.ts';
 import {
   CODING_LEDGER_MIN_RATE,
   type CodingPrLedgerRepository,
@@ -146,6 +147,11 @@ export function createCodingDaemonMergeSweep(
         commit: outcome.commit,
         at: now,
       });
+      log.info('Daemon merge confirmed', {
+        url: receipt.url,
+        head: receipt.head,
+        commit: outcome.commit,
+      });
       if (merged) await notify(merged, now);
     } else if (pr.ok && (await notify(receipt, now)) && pr.state !== 'OPEN') {
       await record({ ...receipt, kind: 'void', at: receipt.startedAt });
@@ -204,8 +210,25 @@ export function createCodingDaemonMergeSweep(
       if (health && health.reason === 'complete' && health.cycleAt === now)
         await retryLimit(url, head);
     }
+    // Below 20% of the shared REST budget only PRs ready to merge are read, so the
+    // budget left goes to merges and review comments; below 5% Neo is told once.
+    const budget = readGithubBudget();
+    if (budget.level === 'critical')
+      await delivery
+        .attend({
+          kind: 'coding.github_budget',
+          subject: { type: 'github_budget', id: 'core' },
+          since: budget.resetAt!,
+          facts: {
+            text: `GitHub REST budget is below 5% for the shared account; it resets at ${new Date(budget.resetAt!).toISOString()}. The daemon sweep now reads only PRs ready to merge. Hold GitHub-heavy work until the reset.`,
+          },
+        })
+        .catch(() => false);
     const rows = open.filter((row) =>
-      ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
+      (budget.level === 'ok'
+        ? ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human']
+        : ['approved_green']
+      ).includes(row.state)
     );
     const handedOff = await ledger.read('humanHandoffs');
     const observed = await Promise.all(
