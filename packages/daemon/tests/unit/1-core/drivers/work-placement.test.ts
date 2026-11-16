@@ -252,13 +252,21 @@ describe('procFolderInUse', () => {
     ).toBe(false);
   });
 
-  test('skips a process the user started that runs as root, like sudo', async () => {
+  test('keeps the folder for a process the user started that runs as root, like sudo', async () => {
+    const sudo = `Uid:\t${uid}\t0\t0\t0\n`;
+    expect(await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: '/w/sub' } }))).toBe(true);
     expect(
-      await procFolderInUse(
-        '/w',
-        proc({ '1': { status: `Uid:\t${uid}\t0\t0\t0\n`, cwd: failure('EACCES') } })
-      )
-    ).toBe(false);
+      await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: failure('EACCES') } }))
+    ).toBe(true);
+    expect(await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: '/wx' } }))).toBe(false);
+  });
+
+  test('keeps the folder for a setuid process that runs as the user', async () => {
+    const setuid = `Uid:\t${uid + 1}\t${uid}\t${uid}\t${uid}\n`;
+    expect(await procFolderInUse('/w', proc({ '1': { status: setuid, cwd: '/w' } }))).toBe(true);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: setuid, cwd: failure('EACCES') } }))
+    ).toBe(true);
   });
 
   test('skips processes of other users', async () => {
