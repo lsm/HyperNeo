@@ -67,6 +67,7 @@ import { SPACE_SCHEMA } from '../../src/storage/schema/space-schema';
 process.env.HYPERNEO_SPACE ??= 'on';
 const isolatedDataDir = mkdtempSync(join(tmpdir(), 'hyperneo-unit-data-'));
 process.env.HYPERNEO_DATA_DIR = isolatedDataDir;
+process.env.CODEX_HOME = join(isolatedDataDir, 'codex-home');
 process.on('exit', () => rmSync(isolatedDataDir, { recursive: true, force: true }));
 registerSchemaExtension(SPACE_SCHEMA);
 

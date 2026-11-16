@@ -12,8 +12,13 @@ import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 process.env.HYPERNEO_SPACE ??= 'on';
 const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
 process.env.HOME = isolatedHome;
-if ('Bun' in globalThis) process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
-else delete process.env.HYPERNEO_DATA_DIR;
+if ('Bun' in globalThis) {
+  process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
+  process.env.CODEX_HOME = join(isolatedHome, '.codex');
+} else {
+  delete process.env.HYPERNEO_DATA_DIR;
+  delete process.env.CODEX_HOME;
+}
 afterAll(() => rmSync(isolatedHome, { recursive: true, force: true }));
 registerSchemaExtension(SPACE_SCHEMA);
 

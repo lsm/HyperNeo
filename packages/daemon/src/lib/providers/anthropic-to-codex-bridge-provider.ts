@@ -254,7 +254,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     > = startCodexBootstrapServer
   ) {
     this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
-    this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
+    this.codexAuthPath = path.join(
+      codexAuthDir ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'),
+      'auth.json'
+    );
     this.modelsCache = new CodexModelsCache(
       path.join(authDir ?? getDataDir(), CODEX_MODELS_CACHE_FILE_NAME)
     );
@@ -266,11 +269,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): Promise<void> {
     this.resetDiscoveryState();
+    const previous = this.cachedCredentials;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
-      return this.persistSuppliedCredentials(this.cachedCredentials);
+      return this.persistSuppliedCredentials(this.cachedCredentials, previous);
     }
 
     const raw = credentials.raw ?? {};
@@ -288,12 +292,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
-    return this.persistSuppliedCredentials(stored);
+    return this.persistSuppliedCredentials(stored, previous);
   }
 
-  private persistSuppliedCredentials(credentials: StoredCredentials): Promise<void> {
+  private persistSuppliedCredentials(
+    credentials: StoredCredentials,
+    previous: StoredCredentials | null
+  ): Promise<void> {
     return this.saveCredentials(credentials).catch((error) => {
-      logger.warn('AnthropicToCodexBridgeProvider: failed to save supplied credentials:', error);
+      if (this.cachedCredentials === credentials) {
+        this.cachedCredentials = previous;
+        this.cachedBridgeAuth = undefined;
+        this.cachedApiKey = undefined;
+      }
+      throw error;
     });
   }
 
@@ -430,7 +442,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.discoveryAttemptAt = Date.now();
     if (!auth) return;
     const bridgeKey = `responses:${this.bridgeAuthCacheKey(auth)}`;
-    const bridgeServer = this.bridgeServers.get(bridgeKey);
+    let bridgeServer = this.bridgeServers.get(bridgeKey);
     bridgeServer?.updateModels?.(
       this.responsesBridgeModels(auth.source === 'chatgpt_oauth'),
       this.modelAliases()
@@ -884,7 +896,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
-    let bridgeServer = this.bridgeServers.get(bridgeKey);
+    const bridgeServer = this.bridgeServers.get(bridgeKey);
     for (const [key, server] of this.bridgeServers) {
       if (key === bridgeKey) continue;
       server.stop();
