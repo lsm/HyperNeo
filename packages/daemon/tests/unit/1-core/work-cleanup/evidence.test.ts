@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,8 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
+const realNow = Date.now;
+let clock = 0;
 const UNCOMMITTED = 'The worktree has uncommitted changes; kept.';
 
 describe('createWorkCleanupRuntime', () => {
@@ -30,7 +32,7 @@ describe('createWorkCleanupRuntime', () => {
   const present = join(root, 'elsewhere', 'present');
   const db = new Database(':memory:');
   const told: string[] = [];
-  let sweep: () => Promise<unknown>;
+  let context: FamilyOperationContext;
 
   beforeAll(() => {
     process.env.HOME = join(root, 'home');
@@ -38,7 +40,8 @@ describe('createWorkCleanupRuntime', () => {
     process.env.CODEX_HOME = join(root, 'codex');
     process.env.HYPERNEO_TEST_OWN_PROCESSES = '1';
     process.env.NODE_ENV = 'test';
-    setSystemTime(new Date(start));
+    Date.now = () => clock;
+    clock = start;
     runMigrations(db, () => {});
     const todos = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
@@ -69,7 +72,14 @@ describe('createWorkCleanupRuntime', () => {
     todos.askQuestion(
       'card',
       'ask',
-      { kind: 'reply', text: `See ${evidence('old-card')}/result.md` },
+      {
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        text: `See ${evidence('old-card')}/result.md`,
+      },
       start
     );
     mkdirSync(evidence('stranger'), { recursive: true });
@@ -140,7 +150,7 @@ describe('createWorkCleanupRuntime', () => {
         }),
       }),
     ]);
-    const context = {
+    context = {
       deps: {
         config: getConfig({ dbPath: join(root, 'database', 'daemon.db') }),
         db: { getDatabase: () => db, gateway: gatewayFor(db) },
@@ -152,18 +162,18 @@ describe('createWorkCleanupRuntime', () => {
         told.push(entry.facts.text);
       },
     } as unknown as FamilyOperationContext;
-    const runtime = createWorkCleanupRuntime(context);
-    sweep = () => runtime.execute({}, { source: 'rpc', principal: 'local' });
   });
 
   afterAll(() => {
-    setSystemTime();
+    Date.now = realNow;
     db.close();
     process.env = saved;
     rmSync(root, { recursive: true, force: true });
   });
 
   test('removes evidence only after its time and references allow it, and tells unsaved work once', async () => {
+    const runtime = createWorkCleanupRuntime(context);
+    const sweep = () => runtime.execute({}, { source: 'rpc', principal: 'local' });
     await sweep();
     expect(existsSync(evidence('old-done'))).toBe(false);
     for (const kept of ['fresh-done', 'old-card', 'old-live-ref', 'live', 'stranger'])
@@ -177,14 +187,14 @@ describe('createWorkCleanupRuntime', () => {
     ).toBeNull();
     expect(told.join('\n')).not.toContain('unsaved-todo');
 
-    setSystemTime(new Date(start + 4 * DAY));
+    clock = start + 4 * DAY;
     await sweep();
     expect(existsSync(evidence(workerWorkKey(join(root, 'removed', 'gone-new'))))).toBe(true);
     const notice = told.at(-1)!;
     expect(notice).toContain('unsaved-todo');
     expect(notice).toContain(unsaved);
 
-    setSystemTime(new Date(start + 8 * DAY));
+    clock = start + 8 * DAY;
     await sweep();
     expect(told.at(-1)).not.toContain('unsaved-todo');
     expect(existsSync(evidence(workerWorkKey(join(root, 'removed', 'gone-new'))))).toBe(false);
