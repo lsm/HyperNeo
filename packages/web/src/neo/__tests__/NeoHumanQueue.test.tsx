@@ -1,6 +1,6 @@
 import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-ask';
 import type { NeoHumanQueue as Queue } from '@hyperneo/shared/types/neo-snapshot';
-import { cleanup, fireEvent, render, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoHumanQueue } from '../NeoHumanQueue.tsx';
 import { locale } from '../../lib/i18n/index.ts';
@@ -196,7 +196,7 @@ describe('NeoHumanQueue', () => {
         entries={entries}
         onHold={vi.fn()}
         onAnswer={vi.fn()}
-        focusQuestionId="q2"
+        focus={{ askId: 'trip', questionId: 'q2' }}
       />
     );
     const states = within(view.getByRole('group', { name: 'State' }));
@@ -204,6 +204,55 @@ describe('NeoHumanQueue', () => {
       'true'
     );
     expect(await view.findByText('Question q2')).toBeTruthy();
+  });
+
+  it('says when the full card failed to load, retries, and only then offers a decision', async () => {
+    const summarised = {
+      ...entry('trip', 'Plan the trip', [question('q1', 'trip', { document: 'Preview' })]),
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const detailed = entry('trip', 'Plan the trip', [question('q1', 'trip')]);
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(detailed);
+    const props = {
+      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+      onLoadDetails,
+    };
+    const view = render(<NeoHumanQueue {...props} entries={[summarised]} />);
+    expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Agree' })).toBeNull();
+    view.rerender(<NeoHumanQueue {...props} entries={[{ ...summarised }]} />);
+    await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
+    expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
+    fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+    expect(await view.findByRole('button', { name: 'Agree' })).toBeTruthy();
+    expect(onLoadDetails).toHaveBeenCalledTimes(3);
+    expect(view.queryByText('Couldn’t load the full card.')).toBeNull();
+  });
+
+  it.each([
+    [{ askId: 'car', todoId: 't4' }, 'In progress 2', 'neo-ref-todo-t4'],
+    [{ askId: 'trip', todoId: 't1' }, 'Waiting on you 2', 'neo-ref-todo-t1'],
+    [{ askId: 'trip', questionId: 'q2' }, 'Held 1', 'neo-ref-question-q2'],
+    [{ askId: 'car' }, 'In progress 2', 'neo-ref-ask-car'],
+  ])('reveals and focuses the referenced %o', async (focus, chip, anchor) => {
+    const view = render(
+      <NeoHumanQueue
+        queue={queue}
+        entries={entries}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        focus={focus}
+      />
+    );
+    const states = within(view.getByRole('group', { name: 'State' }));
+    expect(states.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(document.activeElement?.id).toBe(anchor));
   });
 
   it('shows nothing when nothing waits', () => {

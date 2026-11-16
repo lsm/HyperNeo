@@ -654,6 +654,80 @@ describe('card reply notice navigation', () => {
     }
   });
 
+  it.each([
+    ['an uncovered todo in progress', 'garage', 'In progress 1'],
+    ['a finished todo of an open ask', 'oil', null],
+  ])('opens a quoted reference to %s from the queue', async (_name, todoId, chip) => {
+    const { model } = mount();
+    const oil = testTodo('oil', { title: 'Fictional oil', state: 'done' });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.doneTodos'
+          ? { ok: true, todos: [oil], doneCount: 1, nextOffset: null }
+          : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('car', 'Fictional car service', {
+              state: 'doing',
+              todos: [testTodo('garage', { title: 'Fictional garage', state: 'doing' }), oil],
+              doneCount: 1,
+            }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'waiting',
+                askId: 'tax',
+                questionId: 'qt',
+                text: 'Fictional tax?',
+                todos: [],
+              },
+              {
+                state: 'progress',
+                askId: 'car',
+                todoId: 'garage',
+                title: 'Fictional garage',
+                owner: 'worker',
+              },
+            ],
+            counts: {
+              tax: { waiting: 1, held: 0, progress: 0 },
+              car: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'todo-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000007',
+                askOrigin: { sessionId: root, messageId: 'quoted-todo' },
+                content: 'About this step',
+                replyTo: { kind: 'todo', id: todoId, excerpt: 'Quoted step target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Quoted step target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe(`neo-ref-todo-${todoId}`));
+    if (chip)
+      expect(screen.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
+  });
+
   it.each(['answered', 'retired'] as const)(
     'loads an off-window %s question into All',
     async (state) => {
