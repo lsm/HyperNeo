@@ -7,6 +7,7 @@ import { CodingAssignmentsRepository, type CodingAssignment } from '../../../pac
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -33,7 +34,7 @@ try {
       assert.notEqual(app.server.port, 8399);
       const db = app.db.getDatabase(); createCodingPackTables(db);
       const assignments = new CodingAssignmentsRepository(db), ledger = new CodingPrLedgerRepository(db);
-      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+      ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
       const rpc = (input: unknown) => new Promise<unknown>((done, fail) => {
         const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
