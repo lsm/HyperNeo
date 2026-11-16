@@ -1106,7 +1106,12 @@ export function NeoLive() {
               onOpen={openSession}
               focus={cardTarget}
               reveal={reveal}
-              onStale={() => void neo.refresh()}
+              onStale={() =>
+                neo.refresh().catch((cause: unknown) => {
+                  neo.setError(cause instanceof Error ? cause.message : t('queue.refreshFailed'));
+                  throw cause;
+                })
+              }
               onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
               onReply={
                 ready

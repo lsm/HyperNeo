@@ -60,7 +60,7 @@ export function NeoHumanQueue({
   onOpen?: (link: string, title: string) => void;
   focus?: NeoWorkFocus | null;
   reveal?: number;
-  onStale?: () => void;
+  onStale?: () => Promise<unknown>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
@@ -175,11 +175,14 @@ export function NeoHumanQueue({
       )
   );
   const staleQueue = useRef<Queue | null>(null);
+  const [staleFailed, setStaleFailed] = useState(false);
   useEffect(() => {
-    if (!closed || !onStale || staleQueue.current === queue) return;
+    if (!closed || !onStale || staleFailed || staleQueue.current === queue) return;
     staleQueue.current = queue;
-    onStale();
-  }, [closed, queue, onStale]);
+    Promise.resolve()
+      .then(onStale)
+      .catch(() => setStaleFailed(true));
+  }, [closed, queue, onStale, staleFailed]);
   const anchored = new Set<string>();
   const anchor = (todoId: string) => {
     if (anchored.has(todoId)) return undefined;
@@ -189,6 +192,21 @@ export function NeoHumanQueue({
   if (!queue.items.length) return null;
   return (
     <div data-human-queue class="mt-6 space-y-3">
+      {staleFailed && (
+        <p role="alert" class="text-sm text-danger">
+          {t('queue.refreshFailed')}{' '}
+          <button
+            type="button"
+            class={neoPlainClass}
+            onClick={() => {
+              staleQueue.current = null;
+              setStaleFailed(false);
+            }}
+          >
+            {t('chat.retry')}
+          </button>
+        </p>
+      )}
       <div role="group" aria-label={t('queue.state')} class="flex flex-wrap gap-2">
         {STATES.map((s) => (
           <button
