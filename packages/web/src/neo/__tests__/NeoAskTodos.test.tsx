@@ -496,6 +496,31 @@ describe('NeoAskTodos', () => {
     expect(onOpen.mock.calls[0][0]).toBe('/session/source');
   });
 
+  it('does not add a session opener for a card shown in the promoted list', () => {
+    locale.value = 'en';
+    const source = {
+      adapter: 'hyperneo',
+      id: 'source',
+      name: 'Session source',
+      label: 'HyperNeo · Session source',
+      provider: 'Anthropic',
+      link: '/session/source',
+    };
+    const value = entry({
+      state: 'waiting',
+      questions: [question('q', { state: 'open', sourceSession: source })],
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...value, ask: { ...value.ask, focusedSession: source } }}
+        hideOpenCards
+        onAnswer={vi.fn()}
+        onOpen={vi.fn()}
+      />
+    );
+    expect(app.queryAllByRole('button', { name: /^Open / })).toHaveLength(0);
+  });
+
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
     'opens a question source through the existing opener: %s',
     async (link) => {
