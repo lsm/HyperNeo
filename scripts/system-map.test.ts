@@ -134,6 +134,29 @@ test('where sees a handler registered with long type arguments', () => {
   ]);
 });
 
+test('where links both names of a ternary inside a call', () => {
+  const map = buildSystemMap(
+    new Map([
+      [
+        HANDLER,
+        "export const setup = (hub) => {\n  hub.onRequest('todo.enable', () => 1);\n  hub.onRequest('todo.disable', () => 0);\n};",
+      ],
+      [
+        CONTROLS,
+        "export const toggle = (hub, enabled) =>\n  hub.request(enabled ? 'todo.enable' : 'todo.disable', {});",
+      ],
+    ])
+  );
+  expect(where(map, 'todo.enable').map((link) => [link.role, link.path])).toEqual([
+    ['calls', CONTROLS],
+    ['handles', HANDLER],
+  ]);
+  expect(where(map, 'todo.disable').map((link) => [link.role, link.path])).toEqual([
+    ['calls', CONTROLS],
+    ['handles', HANDLER],
+  ]);
+});
+
 test('where separates the definition of an operation from its callers', () => {
   expect(formatWhere(where(fixture(), 'todo.remove'))).toBe(
     [`op todo.remove  defines  ${OPERATIONS}`, `op todo.remove  uses  ${CONTROLS}`].join('\n')
