@@ -87,10 +87,10 @@ open card is the hold, as today, and it survives a restart because it is a card.
 `decideNeoAttention` renders the new reason as "its check has not passed for 24 hours.
 Ask whoever it waits on, keep it waiting with a note, mark it done, or remove it."
 
-**When the first wake is due.** A `todo.neo_step` wakes Neo at the first ladder rung, 1 h
-after its `since`, then 4 h and 24 h, then every 24 h while Neo still owns it. `since` is
-the reason's own time: the failure, the prerequisite's end, the card's close (for an
-answered or retired card), or the check deadline.
+**When Neo is woken.** As built (`decideNeoAttention`), a `todo.neo_step` wakes Neo at
+once when Neo becomes the owner, then again at 1 h, 4 h and 24 h after its `since`, then
+every 24 h while Neo still owns it. `since` is the reason's own time, as `nextStepOwner`
+computes it today; for `check_overdue` it is the deadline.
 
 **Human holds win.** A card the human held (`heldAt`, `neo-inbox.md`) is the human's
 decision to wait. It still covers its todos, so they belong to the human and nothing wakes
@@ -122,8 +122,9 @@ Slice 2 deploys with daemon cards still open. Each keeps working as it is:
   (`neoDaemonCardChoice`), so a human who was about to answer loses nothing, and its todos
   stay the human's while it is open.
 - A held one stays held, with no wake.
-- When one closes (answered, retired by its prune, or by its check), its todos go to
-  `nextStepOwner`, with the close time as `since`.
+- When one closes, its todos go to `nextStepOwner` with the `since` it already computes
+  (for example the failure time for a retries card). Neo is woken once at the rung that
+  time has reached, then at the later rungs. No close time is added.
 
 The answer path for daemon causes is deleted in a later cleanup, once no such card is
 open.
@@ -147,9 +148,9 @@ Acceptance, as tests on the pure functions and one integration case per row:
 |---|---|
 | A worker sends a question envelope | staged, Neo told, no card until Neo relays it (unchanged) |
 | Each former daemon-card trigger (blocker, retries, removed prerequisite) | no card; owner `neo` with the matching reason |
-| Check-only todo before / after its deadline | `daemon` / `neo` `check_overdue`, first wake 1 h after the deadline |
+| Check-only todo before / after its deadline | `daemon` / `neo` `check_overdue`, Neo woken when the deadline passes, then on the ladder |
 | Neo holds a todo | one card with Neo's text; a running worker stops; after a restart the card still holds it |
-| An open daemon card at deploy | stays open, its answer still applies; its todos wake Neo only after it closes |
+| An open daemon card at deploy | stays open, its answer still applies; its todos wake Neo once when it closes, then on the ladder |
 | A human-held card | no wake while held |
 | Repeated sweeps with nothing changed | one wake per rung, never two for the same rung |
 
