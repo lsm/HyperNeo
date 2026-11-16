@@ -112,7 +112,8 @@ describe('the attention sweep with model-routing on', () => {
   const heldTodo = (
     sinceMinutes: number,
     status = 'active',
-    retryAt: number | null = NOW + 10 * MINUTE
+    retryAt: number | null = NOW + 10 * MINUTE,
+    reason = 'limit'
   ) => {
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
@@ -155,7 +156,7 @@ describe('the attention sweep with model-routing on', () => {
         retryCount: 0,
         maxRetries: 0,
         ...(retryAt === null ? {} : { retryAt }),
-        reason: 'limit',
+        reason,
         since: NOW - sinceMinutes * MINUTE,
       })
     );
@@ -236,6 +237,18 @@ describe('the attention sweep with model-routing on', () => {
         .run();
     await sweep(NOW);
     expect(wakes()).toEqual([]);
+  });
+
+  test('a short overloaded hold on the only line its route lists tells Neo it is stuck, once', async () => {
+    db.prepare(
+      `UPDATE neo_pack_preferences SET value_json = ? WHERE pack = 'model-routing' AND key = 'routes'`
+    ).run(JSON.stringify([{ kind: 'general', lines: [HELD] }]));
+    heldTodo(1, 'active', NOW + 5 * MINUTE, 'overloaded');
+    await sweep(NOW);
+    await sweep(NOW + MINUTE);
+    expect(wakes()).toEqual([
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (overloaded) since 2026-11-16T11:59:00.000Z. No other line is usable for it. Decide whether it waits or moves.',
+    ]);
   });
 
   test('a hold left on an archived worker tells Neo nothing', async () => {
