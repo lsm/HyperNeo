@@ -61,9 +61,10 @@ class WorkCleanupRepository {
     const sessions = this.db
       .prepare(`${removed} SELECT id, status, COALESCE(worktree_path, workspace_path) AS path,
       main_repo_path AS repo FROM sessions WHERE (worktree_path IS NOT NULL
-          OR workspace_path = ?2 AND status != 'archived')
+          OR ?2 IS NOT NULL AND status != 'archived')
         AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = 'hyperneo' AND removed.id = sessions.id)
-        AND (?1 IS NULL OR COALESCE(worktree_path, workspace_path) = ?2 OR EXISTS (SELECT 1 FROM json_each(?1) requested
+        AND (?1 IS NULL OR COALESCE(worktree_path, workspace_path) = ?2
+          OR ?2 IS NOT NULL AND status != 'archived' OR EXISTS (SELECT 1 FROM json_each(?1) requested
           WHERE json_extract(requested.value, '$.adapter') = 'hyperneo'
             AND json_extract(requested.value, '$.id') = sessions.id))`)
       .all(selected, folder ?? null) as {

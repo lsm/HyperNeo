@@ -10,6 +10,11 @@ type Dependencies = {
   tell(digest: Digest): Promise<void>;
 };
 
+export function insideFolder(root: string, path: string): boolean {
+  const child = relative(resolve(root), resolve(path));
+  return !isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`);
+}
+
 export function listWorkCleanupFolders(
   folders: readonly string[],
   owned: readonly { path: string }[],
@@ -18,11 +23,7 @@ export function listWorkCleanupFolders(
   const known = new Set(owned.map(({ path }) => resolve(path)));
   return [...new Set(folders)].filter(
     (folder) =>
-      known.has(resolve(folder)) ||
-      !sharedRoots.some((root) => {
-        const child = relative(resolve(root), resolve(folder));
-        return !isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`);
-      })
+      known.has(resolve(folder)) || !sharedRoots.some((root) => insideFolder(root, folder))
   );
 }
 

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readdir, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -15,12 +15,15 @@ import { isLocalUser } from '../operations/caller.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
-import { planWorkRelease, type WorkFolderFacts } from './plan.ts';
-import { listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
+import { planWorkRelease, type WorkFolderFacts, type WorkOwner } from './plan.ts';
+import { insideFolder, listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
 import { releaseWorkCleanup } from './release.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const caller = { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL } as const;
+const canonical = (path: string) => (existsSync(path) ? realpathSync(path) : path);
+const isLive = ({ owner }: { owner: WorkOwner }) =>
+  owner.kind === 'session' ? !owner.archived : owner.boundToLiveTodo;
 
 async function children(root: string, errors: Set<string>): Promise<string[]> {
   try {
@@ -147,13 +150,17 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
                 ],
                 new Map()
               )
-            ).filter((row) => row.path === folder || !row.readable)
+            ).filter(
+              (row) =>
+                row.path === folder ||
+                !row.readable ||
+                (isLive(row) &&
+                  row.path !== null &&
+                  insideFolder(canonical(folder), canonical(row.path)))
+            )
           : matched;
         read.add(folder);
-        const live = owners.find(({ owner }) =>
-          owner.kind === 'session' ? !owner.archived : owner.boundToLiveTodo
-        );
-        const row = live ?? owners[0];
+        const row = owners.find(isLive) ?? owners[0];
         if (!row) return { owner: null, inUse: false, unsaved: false };
         refs.set(folder, row.ref);
         todos.set(
