@@ -7,6 +7,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { releaseNeoTodoWorkers } from '../../../../src/lib/neo/todo-release.ts';
 import { admitSessionArchive } from '../../../../src/lib/neo/session-archive-operation.ts';
+import { WorktreeManager } from '../../../../src/lib/worktree-manager.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -67,7 +68,7 @@ function setup() {
     value: { archived: true },
   });
   let onStatus = () => {};
-  const folder = pushedCheckout();
+  let folder = pushedCheckout();
   const invoke = recordedWorkInvoke(sessions.inputs, async (caller, name, input) => {
     if (name === 'work.start')
       return completed({
@@ -141,6 +142,9 @@ function setup() {
     archived,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
+    },
+    setFolder: (next: string) => {
+      folder = next;
     },
     setOnStatus: (next: () => void) => {
       onStatus = next;
@@ -327,21 +331,6 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
     }
   });
 
-  test('archives a worker whose only local commits are on a branch that stays', async () => {
-    const h = setup();
-    try {
-      await h.finishTodo(h.add(started));
-      writeFileSync(join(h.folder(), 'base.txt'), 'base');
-      git(h.folder(), 'add', 'base.txt');
-      git(h.folder(), 'commit', '-q', '--no-gpg-sign', '-m', 'local base');
-      git(h.folder(), 'checkout', '-q', '-b', 'worker');
-      await h.refresh();
-      expect(h.archived).toEqual([worker]);
-    } finally {
-      h.db.close();
-    }
-  });
-
   test('keeps a worker a failed todo is still bound to', async () => {
     const h = setup();
     try {
@@ -355,6 +344,60 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
       expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toMatchObject({
         reason: 'live_todo',
       });
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('neo todo runner refresh keeps commits only the session branch holds', () => {
+  const sessionWorktree = async (main: string) => {
+    process.env.TEST_WORKTREE_BASE_DIR = join(scratch, 'worktrees');
+    const manager = new WorktreeManager();
+    const metadata = await manager.createWorktree({
+      sessionId: crypto.randomUUID(),
+      repoPath: main,
+    });
+    return { manager, metadata: metadata! };
+  };
+
+  test('keeps a detached worker whose commit lives only on its session branch', async () => {
+    const h = setup();
+    try {
+      const { manager, metadata } = await sessionWorktree(h.folder());
+      writeFileSync(join(metadata.worktreePath, 'w.txt'), 'w');
+      git(metadata.worktreePath, 'add', 'w.txt');
+      git(metadata.worktreePath, 'commit', '-q', '--no-gpg-sign', '-m', 'w');
+      git(metadata.worktreePath, 'checkout', '-q', '--detach');
+      h.setFolder(metadata.worktreePath);
+      h.setArchive(async () => {
+        await manager.removeWorktree(metadata, true);
+        return { ok: true, value: { archived: true } };
+      });
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('archives a detached worker whose commit a branch checked out elsewhere holds', async () => {
+    const h = setup();
+    try {
+      writeFileSync(join(h.folder(), 'base.txt'), 'base');
+      git(h.folder(), 'add', 'base.txt');
+      git(h.folder(), 'commit', '-q', '--no-gpg-sign', '-m', 'local base');
+      const { manager, metadata } = await sessionWorktree(h.folder());
+      git(metadata.worktreePath, 'checkout', '-q', '--detach');
+      h.setFolder(metadata.worktreePath);
+      h.setArchive(async () => {
+        await manager.removeWorktree(metadata, true);
+        return { ok: true, value: { archived: true } };
+      });
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
     } finally {
       h.db.close();
     }
