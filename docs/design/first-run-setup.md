@@ -39,7 +39,7 @@ separate choice, and that is where a code and an approval belong.
 `pairing-v2-approval.md` is open (no human phone has ever paired, or a lost-phone reset from
 `hyperneo devices reset-human` is open), the daemon makes a one-time setup token when it
 starts. Minting and redeeming both check that same window, so after a reset and a restart
-the daemon prints a new setup link. It writes the token to `<data-dir>/setup-token` with owner-only file mode
+the daemon prints a new setup link. It writes the token to `<data-dir>/setup-token` as an owner-only file, checked the way `daemon/src/lib/pairing/local-credential.ts` checks the local credential (no group or other permission bits and the owner uid on POSIX, file ACLs through `checkWindowsCredential` on Windows),
 and prints `Open http://localhost:<port>/setup#<token>` on the terminal that started it.
 The daemon log records only that a setup link exists. Opening the link grants the browser
 the first human device, the same grant as a first-device pairing today. The token stops
@@ -102,7 +102,7 @@ Acceptance, one integration case per row:
 | The same link after a human device has paired | refused; the pairing page with the "already has an owner" wording |
 | `hyperneo devices reset-human`, then a restart | a new setup link is printed and grants the first device |
 | New desktop install | the window opens the setup steps with no code typed |
-| `setup-token` file | readable only by its owner |
+| `setup-token` file, on POSIX and on Windows | readable only by its owner |
 | Desktop "Connect to another computer" with a link or code made on the other server's paired device | binds, waits for that owner's Allow, then lists that server |
 | The same with only the server's address | no pairing starts; the app asks for a link or code from a paired device |
 | Second browser on a daemon with an owner | pairing page, as today |
