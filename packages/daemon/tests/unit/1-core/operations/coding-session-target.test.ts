@@ -118,9 +118,10 @@ function setup() {
     async () => {}
   );
   const asks: unknown[] = [];
-  const failing = { ask: false };
+  const failing = { ask: false, before: null as null | (() => void) };
   const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
     decideCodingSessionTarget(db, item, target, status, async (input) => {
+      failing.before?.();
       if (failing.ask) {
         asks.push('failed');
         return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'synthetic' };
@@ -316,6 +317,21 @@ describe('coding session target decision', () => {
     const [asked] = questions('other');
     expect(asked).toMatchObject({ state: 'open', kind: 'choice', todos: [] });
     expect(asks).toEqual(['failed', 'failed', { ok: true, questionId: asked!.id }]);
+  });
+
+  test('a strategy saved while the question is being asked is not asked again', async () => {
+    const { db, todo, decide, questions, asks, failing } = setup();
+    failing.ask = true;
+    failing.before = () =>
+      db
+        .prepare(
+          `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+           VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
+        )
+        .run(repo);
+    await decide(todo(), start('dev'));
+    expect(asks).toEqual(['failed']);
+    expect(questions('feature')).toEqual([]);
   });
 
   test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
