@@ -133,7 +133,8 @@ impl Channel {
         stream.get_mut().write_all(&line).await?;
         self.sent = true;
         let mut reply = String::new();
-        (&mut *stream).take(1 << 20).read_line(&mut reply).await?;
+        // Room for a full-window Retina screenshot.
+        (&mut *stream).take(8 << 20).read_line(&mut reply).await?;
         let response: ChannelResponse = serde_json::from_str(&reply)?;
         if response.request_id != request.request_id || response.generation != self.generation {
             return Err("Driver response does not match its request".into());

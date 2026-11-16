@@ -41,7 +41,7 @@ export function dispatchDesktopCall(
     client.once('end', () => fail(new Error('Desktop host closed without a reply.')));
     client.on('data', (chunk) => {
       text += chunk.toString();
-      if (Buffer.byteLength(text) > 2 << 20)
+      if (Buffer.byteLength(text) > 9 << 20)
         return fail(new Error('Desktop host reply too large.'));
       if (!text.includes('\n')) return;
       try {

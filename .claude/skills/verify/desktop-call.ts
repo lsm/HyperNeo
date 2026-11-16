@@ -77,6 +77,9 @@ try {
   assert.equal(failure.reason, 'driver_error');
   assert.deepEqual(failure.structuredContent, driverError.structuredContent);
   assert.deepEqual(failed.content.slice(1), driverError.content);
+  const audited = sql.prepare("SELECT params_summary FROM mcp_audit_log WHERE tool_name='desktop.call' ORDER BY rowid").all() as Array<{ params_summary: string }>;
+  assert.equal(audited.length, 2);
+  assert.deepEqual(JSON.parse(audited[1].params_summary), { todo: 'todo', session: worker, tool: 'get_window_state', app: 'org.example.fixture', class: 'pointer', decision: 'allowed', reason: 'driver_error', dispatched: true });
   const registry = app.sessionManager.getOperationRegistry();
   const rpc = await invokeOperation(registry, 'desktop.call', input, { source: 'rpc', principal: 'local', sessionId: worker, role: 'direct_task_worker' });
   assert(!('value' in rpc) || !(rpc.value as { dispatched?: boolean }).dispatched);
@@ -87,8 +90,8 @@ try {
   sql.prepare("UPDATE neo_todos SET approved_at=NULL WHERE id='todo'").run();
   await call({ name: 'desktop.call', input });
   assert.equal(requests.length, 2);
-  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audit.length, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
-  console.log(`desktop.call journey PASS host_requests=2 audit_rows=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
+  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
+  console.log(`desktop.call journey PASS host_requests=2 audit_rows=2 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();

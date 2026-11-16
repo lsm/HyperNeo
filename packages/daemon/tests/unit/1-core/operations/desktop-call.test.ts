@@ -171,6 +171,17 @@ test('a driver error reaches the session with the driver message and screenshot'
   expect(response.content.slice(1)).toEqual(body.content);
 });
 
+test('a full-window screenshot larger than 2 MiB reaches the session', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(3 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true });
+  expect(response.content[1]).toEqual(body.content[0]);
+});
+
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
