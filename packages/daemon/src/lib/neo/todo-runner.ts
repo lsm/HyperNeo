@@ -543,9 +543,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null,
     });
     sessions.clearRetries(todo.id);
-    if (moved) await note('todo.line_moved', todo, Date.now(), moved);
     if (!committed.askOpen)
       await deps.invoke(caller(ask), 'work.stop', { ref: result.ref }).catch(() => null);
+    if (moved)
+      await note('todo.line_moved', todo, Date.now(), moved).catch((error) =>
+        log.warn('Line-moved note not recorded', { todoId: todo.id }, error)
+      );
     deps.changed();
     return { ok: true as const, todo: committed.todo ?? todo };
   };

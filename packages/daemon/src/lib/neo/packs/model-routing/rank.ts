@@ -28,9 +28,12 @@ export const names = (route: NeoLine, line: NeoLine) =>
   (route.harness === undefined || route.harness === line.harness) &&
   (route.effort === undefined || route.effort === line.effort);
 
+const hasRepo = (repos: readonly string[], repo: string | undefined) =>
+  repo !== undefined && repos.some((entry) => entry.toLowerCase() === repo.toLowerCase());
+
 const matches = (filter: LineFilter, kind: string, scope: NeoLineScope) =>
   (!filter.kinds || filter.kinds.includes(kind)) &&
-  (!filter.repos || (scope.repo !== undefined && filter.repos.includes(scope.repo))) &&
+  (!filter.repos || hasRepo(filter.repos, scope.repo)) &&
   (!filter.projects ||
     (scope.projectId !== undefined && filter.projects.includes(scope.projectId)));
 
@@ -87,7 +90,7 @@ export function routeFor(
 ): Route | undefined {
   const routes = all.filter((route) => route.kind === kind);
   return (
-    routes.find((entry) => entry.repos && scope.repo && entry.repos.includes(scope.repo)) ??
+    routes.find((entry) => entry.repos && hasRepo(entry.repos, scope.repo)) ??
     routes.find((entry) => !entry.repos)
   );
 }

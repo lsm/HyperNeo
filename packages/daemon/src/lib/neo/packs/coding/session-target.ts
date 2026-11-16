@@ -148,7 +148,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       const ranked = await rankCodingTargets(
         lines,
         typeof kind === 'string' ? kind : 'coding.write',
-        codingStartAlternatives(start, lines.models()),
+        await codingStartAlternatives(start, lines),
         codingLineScope(db, todo.id, facts?.repo)
       );
       if ('reason' in ranked) return { reason: { reason: ranked.reason } };

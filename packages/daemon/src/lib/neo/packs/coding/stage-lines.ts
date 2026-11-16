@@ -62,19 +62,20 @@ export async function codingCandidateLine<T extends Candidate>(
 export const rankedHere = (target: Candidate) =>
   target.adapter === 'hyperneo' && !target.place?.daemon;
 
-export function codingStartAlternatives<T extends Candidate>(
+export async function codingStartAlternatives<T extends Candidate>(
   target: T,
-  models: readonly ModelInfo[]
-): T[] {
+  lines: CodingLines
+): Promise<T[]> {
   if (!rankedHere(target)) return [target];
-  const usable = usableModels(models);
-  const selectors = usable.map((model, index) =>
-    usable.findIndex((other) => other.id === model.id) === index ? model.id : model.name
+  const selectors = await Promise.all(
+    usableModels(lines.models()).map((model) =>
+      pinnedModel(lines, target.adapter, model.provider, model.id)
+    )
   );
   return [
     target,
     ...[...new Set(selectors)]
-      .filter((model) => model !== target.model)
+      .filter((model): model is string => !!model && model !== target.model)
       .map((model) => ({ ...target, model })),
   ];
 }
