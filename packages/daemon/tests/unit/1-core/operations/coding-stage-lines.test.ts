@@ -364,3 +364,53 @@ describe('rankCodingTargets with real catalog efforts', () => {
     ).toMatchObject({ value: [{ ...hyperneo, effort: 'extra high' }] });
   });
 });
+
+describe('rankCodingTargets with executed efforts', () => {
+  const graded = (effortLevels: ModelInfo['effortLevels']) =>
+    [{ ...catalogModel('claude-opus-5-5', 'anthropic'), effortLevels }] as ModelInfo[];
+  const never = (efforts: string[]) =>
+    efforts.map((effort) => ({
+      line: { ...opusLine, effort },
+      never: { kinds: ['coding.write'] },
+    }));
+
+  test('ultra on a model whose top level is max ranks as max, so a max rule catches it', async () => {
+    const result = await rankCodingTargets(
+      driverCodingLines(graded(['low', 'medium', 'high', 'max']), { rules: never(['max']) }),
+      'coding.write',
+      [{ ...hyperneo, effort: 'ultra' }],
+      {}
+    );
+    expect(result).toMatchObject({
+      value: [{ ...hyperneo, effort: 'high' }],
+      skipped: ['anthropic/claude-opus-5-5 via hyperneo: excluded by a rule'],
+    });
+  });
+
+  test('an inherited medium on a model without medium ranks as the low it runs at', async () => {
+    const lines = driverCodingLines(graded(['low', 'high', 'max']), {
+      rules: never(['low']),
+      effort: 'medium',
+    });
+    const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    expect(await rankCodingTargets(lines, 'coding.write', [target], {})).toMatchObject({
+      value: [{ ...target, effort: 'high' }],
+    });
+  });
+
+  test('a route can select off, and off is the fallback when every effort is excluded', async () => {
+    const routes = [{ kind: 'coding.write', lines: [{ ...opusLine, effort: 'off' }] }];
+    const levels = graded(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(
+      await rankCodingTargets(driverCodingLines(levels, { routes }), 'coding.write', [hyperneo], {})
+    ).toMatchObject({ value: [{ ...hyperneo, effort: 'off' }] });
+    expect(
+      await rankCodingTargets(
+        driverCodingLines(levels, { rules: never(['low', 'medium', 'high', 'xhigh', 'max']) }),
+        'coding.write',
+        [hyperneo],
+        {}
+      )
+    ).toMatchObject({ value: [{ ...hyperneo, effort: 'off' }] });
+  });
+});
