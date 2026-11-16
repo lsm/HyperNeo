@@ -19,6 +19,7 @@ type Facts = {
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   owner: { todoId: string; session: Pooled | null } | null;
   feature: { todoId: string; session: Pooled | null } | null;
+  successors: { todoId: string; session: Pooled | null }[];
   pool: Pooled[];
 } | null;
 type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
@@ -73,6 +74,14 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
       let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
+      for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
+        if (!next.session || next.todoId === owner?.todoId) continue;
+        const nextState = await sessionState(next.session, status);
+        if (nextState.state === 'archived') continue;
+        owner = next;
+        ownerState = nextState;
+        break;
+      }
       if (
         ownerState?.state === 'archived' &&
         facts.feature &&

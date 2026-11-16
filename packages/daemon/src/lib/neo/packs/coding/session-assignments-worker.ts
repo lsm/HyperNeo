@@ -5,6 +5,7 @@ import { codingPrKey } from './pr-key.ts';
 import { type CodingSessionStrategy, codingSessionStrategy } from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
+type Holder = Owner & { assignedAt: number };
 type PoolSession = { ref: WorkRef; name: string; held: boolean };
 const workKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? ''}:${ref.id}`;
 
@@ -72,10 +73,11 @@ class CodingSessionAssignments {
     todoId: string;
     prUrl?: string;
   }): Owner | null {
-    const held = input.prUrl ? this.prHolder(input.prUrl) : null;
-    if (held) return held;
+    const held = input.prUrl ? this.prHolders(input.prUrl)[0] : undefined;
+    if (held) return { todoId: held.todoId, ref: held.ref };
     if (input.strategy === 'long_lived') return this.feature(input.repo, input.featureKey);
-    return this.session(input.todoId);
+    const own = this.session(input.todoId);
+    return own && { todoId: own.todoId, ref: own.ref };
   }
 
   dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
@@ -112,13 +114,10 @@ class CodingSessionAssignments {
       repo,
       strategy,
       owner: pooled(this.owner({ ...input, repo, strategy })),
-      feature: pooled(
-        strategy === 'long_lived'
-          ? this.feature(repo, input.featureKey)
-          : input.prUrl
-            ? this.prHolder(input.prUrl, true)
-            : null
-      ),
+      feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
+      successors: (input.prUrl ? this.prHolders(input.prUrl) : [])
+        .sort((a, b) => b.assignedAt - a.assignedAt)
+        .map(pooled),
       pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
     };
   }
@@ -134,30 +133,33 @@ class CodingSessionAssignments {
     return row ? { todoId: row.todoId, ref: row.ref ? JSON.parse(row.ref) : null } : null;
   }
 
-  private session(todoId: string): Owner | null {
+  private session(todoId: string): Holder | null {
     const row = this.db
-      .prepare(`SELECT ${SESSION_OF} FROM neo_todo_sessions s WHERE s.todo_id = ?`)
-      .get(todoId) as { ref: string | null } | null;
-    return row?.ref ? { todoId, ref: JSON.parse(row.ref) } : null;
+      .prepare(
+        `SELECT ${SESSION_OF}, COALESCE(s.started_at, 0) AS assignedAt
+         FROM neo_todo_sessions s WHERE s.todo_id = ?`
+      )
+      .get(todoId) as { ref: string | null; assignedAt: number } | null;
+    return row?.ref ? { todoId, ref: JSON.parse(row.ref), assignedAt: row.assignedAt } : null;
   }
 
-  private prHolder(url: string, latest = false): Owner | null {
+  private prHolders(url: string): Holder[] {
     const key = codingPrKey(url);
-    if (!key) return null;
+    if (!key) return [];
     const rows = this.db
       .prepare(
         `SELECT p.todo_id AS todoId, p.prs_json AS prs FROM pack_coding_todo_prs p
          JOIN neo_todos t ON t.id = p.todo_id AND t.state <> 'removed'
-         ORDER BY t.created_at ${latest ? 'DESC' : 'ASC'}, t.position ${latest ? 'DESC' : 'ASC'}`
+         ORDER BY t.created_at, t.position`
       )
       .all() as { todoId: string; prs: string }[];
-    for (const row of rows) {
-      if (!(JSON.parse(row.prs) as { url: string }[]).some((pr) => codingPrKey(pr.url) === key))
-        continue;
-      const owner = this.session(row.todoId);
-      if (owner) return owner;
-    }
-    return null;
+    return rows.flatMap((row) => {
+      const named = (JSON.parse(row.prs) as { url: string }[]).some(
+        (pr) => codingPrKey(pr.url) === key
+      );
+      const holder = named ? this.session(row.todoId) : null;
+      return holder ? [holder] : [];
+    });
   }
 }
 
