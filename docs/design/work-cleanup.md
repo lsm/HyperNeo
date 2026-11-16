@@ -20,6 +20,7 @@ Every folder here is created by core (work placement, sessions, the todo runner)
 
 - `workerWorkLocations(root)` (`lib/work-locations.ts`) derives, per worktree root, `work/builds`, `work/scratch` and `work/gh-config` folders keyed `hn-<hash(root)>`, and a worker evidence folder `work/evidence/hn-<hash(root)>`. Todo evidence lives in `work/evidence/<todoId>`.
 - Worker worktrees live in several roots: the data dir's `worktrees`, `projects/*/worktrees`, `claude-worktrees/<repo>/<session>` (`claude-desktop-adapter.ts`) and `copilot-workers/worktrees` (`drivers.ts`); the Codex worktrees root; and `<repo>/.claude/worktrees/neo-*`. The Claude Desktop archive passes no root for its prepared folders, so those are never removed today.
+- A sandboxed worker's prepared folder (`claude-worktrees/<repo>/<session>`, `<Codex worktrees>/<id>/<repo>`) is a dissociated clone, not a linked worktree (`prepareCodingExecution`, `packs/coding/prepare-execution.ts`), marked by `.git/hyperneo-source-checkout`. `cleanupOwnedWorktree` keeps any non-linked folder, so these clones, the heaviest per-worker folders, are never removed today.
 - `WorktreeManager.removeWorktree` (`worktree-manager.ts`) runs `git worktree remove --force`, on a HyperNeo session's archive and delete, with no unsaved-work check.
 - The start path can reuse a finished worker (`storage/work-started-sessions.ts`). The `unusable` mark that excludes it expires after an hour, and a start that already picked a worker is not fenced.
 - `cleanupOwnedWorktree` (`lib/drivers/work-placement.ts`) removes a linked worktree only under a known root and only when it is clean, pushed and has no submodule risk; otherwise it keeps it with a reason. The Codex, Claude Desktop and Copilot adapters call it from their `archive`. `releaseWorkerSandbox` (`worker-sandbox.ts`) removes only `scratch`.
@@ -54,7 +55,9 @@ All facts are read through the daemon's own database interface. The live `daemon
 
 ## Release at the end
 
-#10735's release runs for `done` and `removed` todos alike, and checks for a running process before the archive. **Release fence.** One new nullable column, `work_started_sessions.released_at`, ends a worker for good (the existing `unusable` mark expires after an hour). Two conditional writes, serialized by the single database writer, decide who wins:
+#10735's release runs for `done` and `removed` todos alike, and checks for a running process before the archive. `cleanupOwnedWorktree` gains one case: a folder under a worker root whose `.git/hyperneo-source-checkout` marker is present is an owned clone. It is removed with `rm -rf` after the same checks as a worktree (clean, nothing unpushed against its origin, no submodule risk); without the marker a non-linked folder is still kept.
+
+**Release fence.** One new nullable column, `work_started_sessions.released_at`, ends a worker for good (the existing `unusable` mark expires after an hour). Two conditional writes, serialized by the single database writer, decide who wins:
 - the release sets `released_at` only while no todo in `todo`, `doing`, `blocked` or `failed` is bound to the worker;
 - a start that picked a worker, reused or new, writes its binding only while `released_at` is empty, and writes it before its first send. A start that loses retries the normal start path and starts fresh.
 After the release wins, it archives, and the archive's cleanup removes the worktree; #10733 then removes its work folders. Step 4 passes the `claude-worktrees` root to the Claude Desktop archive so its prepared folders go too.
@@ -89,7 +92,7 @@ packages/daemon/src/lib/work-cleanup/
   plan.ts            pure planWorkRelease
   sweep.ts           work.cleanup.sweep superpipe
   disk-guard.ts      pure decideDiskGuard(freeBytes, preference)
-packages/daemon/src/lib/drivers/work-placement.ts   clears a key's gone row on placement
+packages/daemon/src/lib/drivers/work-placement.ts   clears a key's gone row on placement; removes owned clones
 packages/daemon/src/lib/neo/todo-release.ts   removed todos; process check (on #10735)
 packages/daemon/src/lib/neo/todo-runner.ts    disk guard on the 5-minute sweep; start hold
 packages/daemon/src/lib/neo/attention/        kind work.cleanup
@@ -101,7 +104,7 @@ Each step is one PR within the repo's slice budget.
 1. **#10733** (in flight): a worker's work folders go with its worktree.
 2. **#10735** (in flight): a `done` todo archives the worker it started.
 3. **Build + wire:** release for `removed` todos, `failed` in the final internal admission, the `released_at` fence and the binding write that respects it, and the process check before every removal. Tests: a removed todo's clean worker is archived; a start that picked the worker before the release either binds first (the release refuses) or loses and starts fresh; a released worker is never reused, also after an hour; a folder with a running process inside is kept and retried; a worker bound to a `failed` todo is refused at final admission.
-4. **Build + wire:** the `claude-worktrees` root for the Claude Desktop archive, and `cleanupOwnedWorktree` instead of the forced removal for daemon-driven session archive and delete. Tests: a prepared Claude Desktop folder is removed on archive; a daemon-archived session with uncommitted changes keeps its worktree; a human's own delete still removes it.
+4. **Build + wire:** owned-clone removal in `cleanupOwnedWorktree`, the `claude-worktrees` root for the Claude Desktop archive, and `cleanupOwnedWorktree` instead of the forced removal for daemon-driven session archive and delete. Tests: a prepared Claude Desktop folder is removed on archive; a clean clone with the marker is removed, a dirty or unpushed one is kept, a non-linked folder without the marker is kept; a daemon-archived session with uncommitted changes keeps its worktree; a human's own delete still removes it.
 5. **Build:** `planWorkRelease` and `work.cleanup.sweep` with the digest. **Wire:** run it daily. Tests: each rule; a folder with no owner is never removed; a human Codex thread under the Codex root is never listed; evidence older than 7 days goes, younger stays, and old evidence referenced by an open card or a live todo stays; a todo rebound between the read and the removal keeps its folder; `hn-*` evidence stays while its worktree exists, and with no `gone_at` row; it goes 7 days after `gone_at`; a worktree placed again at the same root clears the old row, so its new evidence is not aged by it; a human Claude worktree under `<repo>/.claude/worktrees` is never listed; unsaved work is kept and told after 3 days, once.
 6. **Build + wire:** the disk guard and the start hold. Tests: warning, floor, recovery above the floor releases the hold; running work is not stopped.
 
