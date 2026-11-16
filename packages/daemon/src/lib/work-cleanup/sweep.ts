@@ -1,0 +1,60 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { planWorkRelease, type WorkFolderFacts } from './plan.ts';
+
+type Digest = { removed: string[]; kept: Record<string, string[]> };
+type Dependencies = {
+  list(): Promise<string[]>;
+  read(folder: string): Promise<WorkFolderFacts>;
+  release(folder: string): Promise<boolean>;
+  tell(digest: Digest): Promise<void>;
+};
+
+export function listWorkCleanupFolders(
+  folders: readonly string[],
+  owned: readonly { path: string }[],
+  sharedRoots: readonly string[]
+): string[] {
+  const known = new Set(owned.map(({ path }) => resolve(path)));
+  return [...new Set(folders)].filter(
+    (folder) =>
+      known.has(resolve(folder)) ||
+      !sharedRoots.some((root) => {
+        const child = relative(resolve(root), resolve(folder));
+        return !isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`);
+      })
+  );
+}
+
+export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as PipelineAPI)
+  .input('deps')
+  .pipe((deps: Dependencies) => deps.list(), 'deps', 'folders')
+  .pipe(
+    async (folders: string[], deps: Dependencies) => {
+      const digest: Digest = { removed: [], kept: {} };
+      const initial = await Promise.all(
+        folders.map(async (folder) => ({
+          folder,
+          plan: planWorkRelease(await deps.read(folder), Date.now()),
+        }))
+      );
+      for (const { folder, plan } of initial) {
+        const fresh =
+          'remove' in plan ? planWorkRelease(await deps.read(folder), Date.now()) : plan;
+        if ('remove' in fresh && (await deps.release(folder))) digest.removed.push(folder);
+        else (digest.kept['keep' in fresh ? fresh.keep : 'live'] ??= []).push(folder);
+      }
+      return digest;
+    },
+    ['folders', 'deps'],
+    'digest'
+  )
+  .pipe(
+    async (digest: Digest, deps: Dependencies) => {
+      await deps.tell(digest);
+      return digest;
+    },
+    ['digest', 'deps'],
+    'digest'
+  )
+  .endAsync('digest') as (deps: Dependencies) => Promise<Digest>;

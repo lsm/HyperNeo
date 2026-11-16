@@ -87,6 +87,7 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   { id: 'worker.session_error', render: carried, decide: always('wake') },
   { id: 'request.reply_failed', render: carried, decide: always('wake') },
   { id: 'driver.health', render: carried, decide: always('digest'), ladder: [DAY] },
+  { id: 'work.cleanup', render: carried, decide: always('digest') },
   {
     id: 'todo.follow_up_missing',
     decide: always('wake'),

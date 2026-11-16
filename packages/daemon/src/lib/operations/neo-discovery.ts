@@ -77,6 +77,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'schedule.session.pause',
   'schedule.session.resume',
   'work.health',
+  'work.cleanup.sweep',
   'work.project.addFolder',
   'work.queue',
   'work.start',

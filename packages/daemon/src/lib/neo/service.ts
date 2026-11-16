@@ -155,7 +155,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
-  private readonly attention: ReturnType<typeof createNeoAttention>;
+  readonly attention: ReturnType<typeof createNeoAttention>;
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {

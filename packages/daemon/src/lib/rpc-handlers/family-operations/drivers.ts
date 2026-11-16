@@ -15,6 +15,7 @@ import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
+import { createWorkCleanupRuntime } from '../../work-cleanup/runtime.ts';
 import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
@@ -772,6 +773,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   };
   return [
     createFindWorkOperation(deps),
+    createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),
