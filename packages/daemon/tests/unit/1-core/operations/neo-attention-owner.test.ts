@@ -15,6 +15,7 @@ const facts = (change: Partial<NeoStepFacts> = {}): NeoStepFacts => ({
   prerequisites: [],
   answerPending: false,
   cardClosedAt: null,
+  failedAt: null,
   worker: null,
   packWaiting: false,
   start: null,
@@ -49,6 +50,30 @@ describe('nextStepOwner', () => {
       'an old failed row',
       facts({ todo: { ...doing, state: 'failed', finishedAt: 40 } }),
       { owner: 'neo', reason: 'failed', since: 40 },
+    ],
+    [
+      'a failure long after its worker went idle',
+      facts({
+        todo: blocked('failure'),
+        failedAt: 72 * 3_600_000,
+        worker: { status: 'idle', since: 0 },
+      }),
+      { owner: 'neo', reason: 'failed', since: 72 * 3_600_000 },
+    ],
+    [
+      'an old failed row that finished long after its worker went idle',
+      facts({
+        todo: { ...doing, state: 'failed', finishedAt: 72 * 3_600_000 },
+        worker: { status: 'idle', since: 0 },
+      }),
+      { owner: 'neo', reason: 'failed', since: 72 * 3_600_000 },
+    ],
+    [
+      'a prerequisite that failed later',
+      facts({
+        prerequisites: [{ state: 'blocked', blockedBy: 'failure', finishedAt: null, failedAt: 90 }],
+      }),
+      { owner: 'neo', reason: 'prerequisite_gone', since: 90 },
     ],
     [
       'a removed prerequisite',
@@ -104,6 +129,15 @@ describe('nextStepOwner', () => {
     ],
   ])('%s', (_name, input, owner) => {
     expect(nextStepOwner(input)).toEqual(owner);
+  });
+
+  test('a second failure with the worker unchanged is a new incident', () => {
+    const first = nextStepOwner(facts({ todo: blocked('failure'), failedAt: 100, worker: idle }));
+    const second = nextStepOwner(facts({ todo: blocked('failure'), failedAt: 200, worker: idle }));
+    expect([first, second]).toEqual([
+      { owner: 'neo', reason: 'failed', since: 100 },
+      { owner: 'neo', reason: 'failed', since: 200 },
+    ]);
   });
 
   test('a later daemon write to the todo does not move since', () => {

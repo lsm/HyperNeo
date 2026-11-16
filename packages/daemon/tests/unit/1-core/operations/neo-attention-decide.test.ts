@@ -56,6 +56,21 @@ describe('the attention decision', () => {
       { value: { action: 'wake', step: 0 } },
     ],
     [
+      'a focused report with a question wakes',
+      event('turn.report', { status: 'done', focused: true, question: true }),
+      { value: { action: 'wake', step: 0 } },
+    ],
+    [
+      'a focused report with a Blocked line wakes',
+      event('turn.report', { status: 'running', focused: true, blocked: true }),
+      { value: { action: 'wake', step: 0 } },
+    ],
+    [
+      'a focused report on a blocked todo wakes',
+      event('turn.report', { status: 'running', focused: true, todoState: 'blocked' }),
+      { value: { action: 'wake', step: 0 } },
+    ],
+    [
       'a focused status report is dropped',
       event('turn.report', { status: 'running', focused: true }),
       { reason: 'status only, focused' },
