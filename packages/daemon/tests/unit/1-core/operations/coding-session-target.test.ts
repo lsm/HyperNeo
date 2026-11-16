@@ -295,4 +295,49 @@ describe('coding session target decision', () => {
       value: { verb: 'send', ref: ref('b') },
     });
   });
+
+  test('a PR follows its live replacement holder from another ask, and queues there', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    await decide(first, start('backend'));
+    worked(first, 'a', 'backend', 'done');
+    live.a = 'archived';
+    const fix = todo('other', repo, url);
+    db.prepare('UPDATE neo_todos SET created_at = 2 WHERE id = ?').run(fix.id);
+    expect(await decide(fix, start('backend'))).toMatchObject({ value: { verb: 'start' } });
+    worked(fix, 'b', 'backend-2', 'doing');
+    live.b = 'running';
+    expect(await decide(todo('feature', repo, url), start())).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+  });
+
+  test('per-PR slices follow the latest dispatched live holder, not the latest created', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    db.prepare(
+      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
+    ).run(repo);
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const ran = (item: NeoTodo, session: string, at: number) => {
+      worked(item, session, 'dev', 'done');
+      db.prepare('UPDATE neo_todo_sessions SET started_at = ? WHERE todo_id = ?').run(at, item.id);
+    };
+    const [x, y, z] = [
+      todo('feature', repo, url),
+      todo('feature', repo, url),
+      todo('feature', repo, url),
+    ];
+    ran(x, 'a', 1);
+    live.a = 'archived';
+    expect(await decide(z, start('dev'))).toEqual({ value: start('dev') });
+    ran(z, 'b', 2);
+    live.b = 'archived';
+    expect(await decide(y, start('dev'))).toEqual({ value: start('dev') });
+    ran(y, 'c', 3);
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('c') },
+    });
+  });
 });
