@@ -31,7 +31,11 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
   const binding = caller.sessionId
     ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
     : null;
-  if (!isLocalUser(caller) && !isNeoConversationSession(caller, binding))
+  if (
+    caller.source !== 'internal' &&
+    !isLocalUser(caller) &&
+    !isNeoConversationSession(caller, binding)
+  )
     return reject('human_only', 'This action needs the user or a bound Neo session.');
   const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(ref);
   return todo

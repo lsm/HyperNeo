@@ -89,8 +89,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ref: WorkRef
   ): Promise<ReturnType<NeoTodoSessionRepository['syncedLive']>>;
   read(
+    method: 'finishedWorkers',
+    since: number
+  ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(
     method: (typeof neoTodoSessionReads.methods)[number],
-    key?: string | WorkRef | Record<string, string | null>
+    key?: string | number | WorkRef | Record<string, string | null>
   ) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
@@ -624,6 +628,44 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => row.todoId);
   }
 
+  finishedWorkers(since: number): {
+    todoId: string;
+    target: NeoDriverTarget;
+    ref: WorkRef;
+    shared: boolean;
+  }[] {
+    const match = (column: string, key: string) =>
+      `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
+    return (
+      this.db
+        .prepare(
+          `SELECT s.todo_id AS todoId, s.target, s.ref,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS shared
+             FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+            WHERE t.state = 'done' AND t.finished_at > ? AND s.ref IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM pack_facts f
+                WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
+        )
+        .all(since) as { todoId: string; target: string; ref: string; shared: number }[]
+    ).map((row) => ({
+      todoId: row.todoId,
+      target: JSON.parse(row.target) as NeoDriverTarget,
+      ref: JSON.parse(row.ref) as WorkRef,
+      shared: row.shared === 1,
+    }));
+  }
+
+  recordReleased(todoId: string, released: unknown): void {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'released', ?)"
+      )
+      .run(todoId, JSON.stringify(released));
+  }
+
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
     return (
       this.db
@@ -652,6 +694,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'finishedWorkers',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -671,5 +714,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'noteWorkerStatus',
     'markWorkerUnusable',
     'queueOn',
+    'recordReleased',
   ]
 );
