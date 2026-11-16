@@ -155,6 +155,17 @@ export function NeoHumanQueue({
     (item) => item.state === state && (ask === null || item.askId === ask)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
+  const runs: { id: string; first: boolean; items: NeoHumanQueueItem[] }[] = [];
+  for (const item of items) {
+    const last = runs.at(-1);
+    if (last?.id === item.askId) last.items.push(item);
+    else
+      runs.push({
+        id: item.askId,
+        first: !runs.some((run) => run.id === item.askId),
+        items: [item],
+      });
+  }
   const stale = groups.filter((id) => !card(id));
   useEffect(() => {
     if (!onLoadDetails) return;
@@ -267,7 +278,7 @@ export function NeoHumanQueue({
           </select>
         )}
       </div>
-      {groups.map((id) => {
+      {runs.map(({ id, first, items: run }) => {
         const validated = renderAsk && id !== outside ? card(id) : undefined;
         if (validated) shown.current[id] = validated;
         const full =
@@ -275,17 +286,18 @@ export function NeoHumanQueue({
           id !== outside &&
           (validated ?? (opened.has(id) ? shown.current[id] : undefined));
         const showFull = !!full && opened.has(id);
+        if (showFull && !first) return null;
         return (
           <section
-            key={id}
-            id={id === outside || showFull ? undefined : `neo-ref-ask-${id}`}
+            key={`${id}:${'questionId' in run[0] ? run[0].questionId : run[0].todoId}`}
+            id={id === outside || showFull || !first ? undefined : `neo-ref-ask-${id}`}
             data-queue-ask={id}
             aria-label={title(id)}
             class="rounded-2xl border border-line p-4"
           >
             <div class="flex items-center justify-between gap-2">
               <h3 class="text-sm font-medium">{title(id)}</h3>
-              {full && (
+              {full && first && (
                 <button
                   type="button"
                   data-queue-open
@@ -305,26 +317,24 @@ export function NeoHumanQueue({
             </div>
             {showFull
               ? renderAsk(full, !validated)
-              : items
-                  .filter((item) => item.askId === id)
-                  .map((item) => (
-                    <QueueItem
-                      key={'questionId' in item ? item.questionId : item.todoId}
-                      item={item}
-                      entry={card(id) ?? details[id]}
-                      listed={entries.find((candidate) => candidate.ask.id === id)}
-                      refreshing={!card(id)}
-                      onDesktopControl={onDesktopControl}
-                      failed={failed(id)}
-                      onRetry={() => setAttempt((value) => value + 1)}
-                      anchor={anchor}
-                      disabled={disabled}
-                      onAnswer={onAnswer}
-                      onHold={onHold}
-                      onReply={onReply}
-                      onOpen={onOpen}
-                    />
-                  ))}
+              : run.map((item) => (
+                  <QueueItem
+                    key={'questionId' in item ? item.questionId : item.todoId}
+                    item={item}
+                    entry={card(id) ?? details[id]}
+                    listed={entries.find((candidate) => candidate.ask.id === id)}
+                    refreshing={!card(id)}
+                    onDesktopControl={onDesktopControl}
+                    failed={failed(id)}
+                    onRetry={() => setAttempt((value) => value + 1)}
+                    anchor={anchor}
+                    disabled={disabled}
+                    onAnswer={onAnswer}
+                    onHold={onHold}
+                    onReply={onReply}
+                    onOpen={onOpen}
+                  />
+                ))}
           </section>
         );
       })}
