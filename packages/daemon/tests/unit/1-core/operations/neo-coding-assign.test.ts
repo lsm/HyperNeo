@@ -2,8 +2,9 @@ import { WorkDeliveryInputRepository } from '../../../../src/storage/repositorie
 import { configureWorkerSandbox } from '../../../../src/lib/drivers/worker-sandbox';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import { afterEach, describe, test, expect } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { hostname, tmpdir } from 'node:os';
 import { z } from 'zod';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -47,8 +48,8 @@ function fixture(
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
   process.env.HYPERNEO_DATA_DIR = join(root, 'data');
   const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
-  mkdirSync(join(view, '.git'), { recursive: true });
-  writeFileSync(join(view, '.git', 'index'), '');
+  execFileSync('git', ['init', '-q', view]);
+  execFileSync('git', ['-C', view, 'read-tree', '--empty']);
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -586,7 +587,13 @@ describe('review place', () => {
     const notReady = { ok: false, reason: expect.stringContaining('has no read-only view yet') };
     expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
     expect(f.starts).toHaveLength(0);
-    writeFileSync(join(f.view, '.git', 'index'), '');
+    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
+    rmSync(join(f.view, '.git', 'HEAD'));
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
+    expect(f.starts).toHaveLength(0);
+    rmSync(f.view, { recursive: true, force: true });
+    execFileSync('git', ['init', '-q', f.view]);
+    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
     expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
     rmSync(f.view, { recursive: true, force: true });
     expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(notReady);
