@@ -286,6 +286,33 @@ test('a replacement worker with a different report does not take over the open c
   }
 });
 
+test('a worker repeat finds its own card behind an older Neo card on the todo', async () => {
+  const f = await fixture();
+  try {
+    f.store.askQuestion(
+      'neo-card',
+      'ask',
+      {
+        text: 'Which branch?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: 'todo',
+      },
+      0
+    );
+    expect(await f.write(f.source, f.report)).toMatchObject({
+      ok: true,
+      question: { id: f.question.id },
+    });
+    expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
+  } finally {
+    f.db.close();
+  }
+});
+
 test('question reads stay coherent when a peer connection tries to answer between projections', async () => {
   const run = mkdtempSync(join(tmpdir(), 'answer-read-race-'));
   const f = await fixture(join(run, 'daemon.db'));
