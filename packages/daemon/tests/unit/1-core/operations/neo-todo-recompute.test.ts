@@ -182,7 +182,11 @@ describe('ordered ask progression from facts', () => {
     await f.runner.checkNow(['first'], (_message, error) => {
       throw error;
     });
-    expect(f.store.getTodo('first')).toMatchObject({ state: 'failed', reason: 'Observed failure' });
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: 'Observed failure',
+    });
     expect(f.starts).toHaveLength(0);
   });
   test('a legacy pack check also supersedes a stale human hold', async () => {

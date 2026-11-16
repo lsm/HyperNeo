@@ -112,7 +112,7 @@ describe('Neo as one session', () => {
     service.todos.claimStart(service.todos.getTodo(id)!, 6);
     service.todoSessions.create(id, { verb: 'start' } as never);
     await service.todoRunner.refresh(() => {});
-    expect(service.todos.getTodo(id)).toMatchObject({ state: 'failed' });
+    expect(service.todos.getTodo(id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
     expect(told.filter((note) => note.messageId.startsWith(`neo-todo:${id}:`))).toEqual([
       { sessionId: root, messageId: expect.stringContaining(id) },
     ]);

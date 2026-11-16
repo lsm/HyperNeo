@@ -3,6 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoJudgement } from './pack-contract.ts';
 
+export const NEO_TODO_FAILURE_NEXT = 'Ask the human how to go on, or take another approach.';
+
 export interface TodoStateFacts {
   todo: NeoTodo;
   order: readonly (Pick<NeoTodo, 'id' | 'state' | 'startedAt'> & { questionOpen?: number })[];
@@ -112,9 +114,10 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     else if (judgement.state === 'failed' && !held)
       patch = {
         ...patch,
-        state: 'failed',
-        reason: judgement.reason,
-        finishedAt: todo.finishedAt ?? now,
+        state: 'blocked',
+        blockedBy: 'failure',
+        blockedReason: judgement.reason,
+        nextAction: NEO_TODO_FAILURE_NEXT,
       };
     else if (judgement.state === 'blocked' && !held)
       patch = {

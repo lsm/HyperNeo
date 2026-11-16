@@ -106,17 +106,17 @@ try {
   const intake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[];
   const workerIntake = intake.map(row => JSON.parse(row.payload)).filter(entry => entry.to?.sessionId === defaultReply.todo?.worker?.id);
   const checks = {
-    refusedModelNoFolder: rejectedReply.todo?.state === 'failed' && !existsSync(rejectedFolder) && !starts.some(start => start.title === 'refused-model'),
-    namedParentGuard: nestedReply.todo?.state === 'failed' && !existsSync(missingParent),
+    refusedModelNoFolder: rejectedReply.todo?.state === 'blocked' && !existsSync(rejectedFolder) && !starts.some(start => start.title === 'refused-model'),
+    namedParentGuard: nestedReply.todo?.state === 'blocked' && !existsSync(missingParent),
     coordinatorGuidance: coordinatorPrompt.includes(NEO_ROOT_PROMPT) && coordinatorPrompt.includes(NEO_FOCUSED_DISCUSSION) && coordinatorPrompt.includes('~/HyperNeo') && coordinatorPrompt.includes('旅行/2026圣诞') && NEO_ROOT_PROMPT.split(/\s+/).length < 300 && NEO_FOCUSED_DISCUSSION.split(/\s+/).length < 250,
     coordinatorSeparate: app.db.getSession(sender)?.workspacePath === join(run, 'data/Neo') && expectedHome !== join(run, 'data/Neo'),
     codingUnchanged: codingReply.ok === true && codingStart?.folder === codingFolder && codingStart?.mode === 'worktree',
     nonCodingFileGuidance: workerIntake.length === 1 && JSON.stringify(workerIntake[0]).includes('Most non-coding tasks write nothing') && JSON.stringify(workerIntake[0]).includes('旅行/2026圣诞'),
     sharedHomeInPlace: defaultStart?.mode === 'direct' && secondStart?.mode === 'direct',
     sharedDefault: defaultReply.ok === true && homePath === null && defaultStart?.folder === expectedHome && existsSync(defaultStart.folder) && secondReply.ok === true && secondStart?.folder === defaultStart.folder,
-    inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
+    inventedRefused: !existsSync(invented) && !starts.some(start => start.title === 'invented') && /user.named|user.*path|path.*user/i.test(String(store.getTodo(inventedReply.todo?.id)?.blockedReason ?? store.getTodo(inventedReply.todo?.id)?.reason ?? inventedReply.reason)),
     namedAllowed: namedReply.ok === true && existsSync(named) && starts.some(start => start.folder === named),
-    differentWorkspaceRefused: !existsSync(workspace) && !starts.some(start => start.folder === workspace) && workspaceReply.todo?.state === 'failed',
+    differentWorkspaceRefused: !existsSync(workspace) && !starts.some(start => start.folder === workspace) && workspaceReply.todo?.state === 'blocked',
   };
   evidence.push({ homePath, starts, checks, workerIntake });
   console.log(JSON.stringify(checks));
