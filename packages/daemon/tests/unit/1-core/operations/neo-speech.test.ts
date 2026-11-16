@@ -411,6 +411,142 @@ describe('spoken replies separate from publications', () => {
     }
   });
 
+  describe('speech part from voice settings', () => {
+    type Seen = { url: string; headers: Record<string, string>; body?: Record<string, unknown> };
+    const fakeServer = (respond: (url: URL) => Response) => {
+      const seen: Seen[] = [];
+      const request = (async (url: URL | string, init?: RequestInit) => {
+        seen.push({
+          url: url.toString(),
+          headers: (init?.headers ?? {}) as Record<string, string>,
+          body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+        });
+        return respond(new URL(url.toString()));
+      }) as typeof fetch;
+      return { seen, request };
+    };
+    const pcm = () =>
+      new Response(new Uint8Array([1, 0, 2, 0]), { headers: { 'content-type': 'audio/pcm' } });
+    const withPart = (
+      part: { endpoint: string; key?: string; model?: string } | undefined,
+      request: typeof fetch
+    ) =>
+      new NeoSpeech(
+        hub,
+        runDbOpOn(mailbox.db),
+        (id) => id.startsWith('neo:'),
+        'http://127.0.0.1:18555',
+        request,
+        undefined,
+        (id) => !!mailbox.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => part
+      );
+    const speakOnce = async (speaker: NeoSpeech) => {
+      const parts = createOperationRegistry(speaker.operations);
+      await invokeOperation(
+        parts,
+        'neo.speech.listen',
+        { sessionId, enabled: true, audio: true, voice: 'alloy' },
+        human
+      );
+      await invokeOperation(parts, 'neo.speech.say', { requestId: 'part', text: 'Hello.' }, neo);
+      for (let i = 0; i < 200 && !messages.some((item) => item.message.data.type === 'end'); i++)
+        await new Promise((done) => setTimeout(done, 1));
+    };
+    const catalogOf = async (speaker: NeoSpeech) =>
+      invokeOperation(createOperationRegistry(speaker.operations), 'neo.speech.catalog', {}, human);
+
+    test('synthesis posts the OpenAI shape with the key to the speech part', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(
+        { endpoint: 'https://api.openai.com', key: 'sk-speech', model: 'gpt-4o-mini-tts' },
+        server.request
+      );
+      try {
+        await speakOnce(speaker);
+        expect(server.seen).toHaveLength(1);
+        expect(server.seen[0].url).toBe('https://api.openai.com/v1/audio/speech');
+        expect(server.seen[0].headers.Authorization).toBe('Bearer sk-speech');
+        expect(server.seen[0].body).toEqual({
+          model: 'gpt-4o-mini-tts',
+          input: 'Hello.',
+          voice: 'alloy',
+          response_format: 'pcm',
+        });
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('an empty speech part falls back to the configured base as today', async () => {
+      const server = fakeServer(() => pcm());
+      const speaker = withPart(undefined, server.request);
+      try {
+        await speakOnce(speaker);
+        expect(server.seen[0].url).toBe('http://127.0.0.1:18555/v1/audio/speech');
+        expect(server.seen[0].headers.Authorization).toBeUndefined();
+        expect(server.seen[0].body).toEqual({
+          input: 'Hello.',
+          voice: 'alloy',
+          language: 'auto',
+          response_format: 'pcm',
+        });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('the voice list comes from the part server when it answers', async () => {
+      const server = fakeServer(() => Response.json({ data: [{ id: 'own-voice' }] }));
+      const speaker = withPart({ endpoint: 'https://tts.example.com', key: 'k' }, server.request);
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: { ok: true, catalog: { data: [{ id: 'own-voice' }] } },
+        });
+        expect(server.seen[0].url).toBe('https://tts.example.com/v1/audio/voices');
+        expect(server.seen[0].headers.Authorization).toBe('Bearer k');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test("the voice list falls back to OpenAI's published voices", async () => {
+      const server = fakeServer(() => new Response('not found', { status: 404 }));
+      const speaker = withPart({ endpoint: 'https://api.openai.com', key: 'k' }, server.request);
+      try {
+        const result = await catalogOf(speaker);
+        expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+        const ids = (
+          (result as { value: { catalog: { data: { id: string }[] } } }).value.catalog.data ?? []
+        ).map((voice) => voice.id);
+        expect(ids).toContain('alloy');
+        expect(ids).toContain('nova');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a key is never sent to a plain HTTP speech part', async () => {
+      const server = fakeServer(() => Response.json({ data: [] }));
+      const speaker = withPart({ endpoint: 'http://127.0.0.1:18556', key: 'k' }, server.request);
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: { ok: false, reason: 'invalid_speech_backend' },
+        });
+        expect(server.seen).toEqual([]);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+  });
+
   test('server sends audio before synthesis finishes without blocking MCP or replaying it', async () => {
     await call('listen', { sessionId, enabled: true, audio: true, voice: 'ryan' });
     const saved = await say();
