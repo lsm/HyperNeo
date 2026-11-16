@@ -106,13 +106,32 @@ try {
   };
 
   add('unapproved-step', { approvedAt: null });
-  add('confirmed-step', {
-    instruction: null,
-    check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'confirm' } },
+  todos.openAsk({
+    id: 'finished-ask',
+    sessionId: root,
+    projectId: null,
+    originMessageId: null,
+    title: 'Finished ask',
+    request: 'Synthetic work',
+    createdAt: at,
   });
+  todos.addTodo(
+    'confirmed-step',
+    'finished-ask',
+    {
+      title: 'confirmed-step',
+      doneWhen: 'Observed',
+      named: null,
+      approvedAt: at,
+      dependsOn: [],
+      instruction: null,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'confirm' } },
+    },
+    at
+  );
   todos.askQuestion(
     'confirm',
-    'ask',
+    'finished-ask',
     {
       text: 'Is the synthetic step done?',
       kind: 'yesno',
@@ -140,6 +159,13 @@ try {
   );
   assert.deepEqual(runner, { wakes: [], digest: [] }, 'the runner itself sends Neo nothing');
 
+  const finished =
+    'Ask: Finished ask (finished-ask)\nAll todos are finished: write the outcome with neo.ask.settle, or add the next todo.';
+  const driver = await pass('two driver refreshes after the last todo finished', 0, () =>
+    service!.refreshDriverWork()
+  );
+  assert.deepEqual(driver, { wakes: [], digest: [finished] }, 'the finished ask is told once');
+
   const unapproved =
     'Todo "unapproved-step" (unapproved-step) cannot start: it was not approved. Review it with neo.todo.read.';
   const first = await pass('two sweeps at the start', 0, () => service!.sweepPacks());
@@ -149,12 +175,16 @@ try {
       'Todo "interrupted-step" (interrupted-step) needs your next step: it failed: Start was interrupted'
     )
   );
-  assert.deepEqual(first.digest, [unapproved], 'the unapproved todo is one digest line');
+  assert.deepEqual(first.digest, [finished, unapproved], 'the unapproved todo is one digest line');
   assert(![...first.wakes, ...first.digest].some((text) => text.includes('confirmed-step')));
 
   todos.updateTodo(todos.getTodo('interrupted-step')!, { state: 'removed', reason: 'Synthetic' }, at);
   const later = await pass('two sweeps a day later', 24, () => service!.sweepPacks());
-  assert.deepEqual(later.digest, [unapproved, unapproved], 'and one more line a day later');
+  assert.deepEqual(
+    later.digest.filter((text) => text === unapproved),
+    [unapproved, unapproved],
+    'and one more line a day later'
+  );
   assert.equal(later.wakes.length, 1, 'a removed todo is no longer told');
   evidence.passed = true;
   console.log('PASS');

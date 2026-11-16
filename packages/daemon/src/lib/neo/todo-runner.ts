@@ -1376,20 +1376,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   ) => Promise<NudgeClaim | null>;
 
   type Stalled = { todo: NeoTodo; ask: NeoAsk; ref: WorkRef };
-  const handled = ({ todo, ask }: Stalled) =>
-    sessions.readNudge(todo.id)?.unreachableToldAt === todo.updatedAt ||
+  const carded = ({ todo, ask }: Stalled) =>
     store
       .listQuestions(ask.id)
       .some((q) => q.todoId === todo.id && (q.state === 'open' || q.createdAt >= todo.updatedAt));
+  const rescued = ({ todo }: Stalled) =>
+    sessions.readNudge(todo.id)?.unreachableToldAt === todo.updatedAt;
 
   const tellUnreachable = async (stalled: Stalled, now: number) => {
-    if (handled(stalled)) return;
+    if (carded(stalled)) return;
     const { todo } = stalled;
     await note('todo.stalled', todo, todo.updatedAt, neoTodoUnreachableNote(todo));
-    sessions.recordNudge(todo.id, {
-      ...(sessions.readNudge(todo.id) ?? { since: now, nudges: 0 }),
-      unreachableToldAt: todo.updatedAt,
-    });
+    if (!rescued(stalled))
+      sessions.recordNudge(todo.id, {
+        ...(sessions.readNudge(todo.id) ?? { since: now, nudges: 0 }),
+        unreachableToldAt: todo.updatedAt,
+      });
   };
 
   const findPlace = async ({ ask, ref }: Stalled) => {
@@ -1427,7 +1429,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .pipe(
       async (stalled: Stalled, now: number): Promise<{ value: Stalled } | { reason: null }> => {
-        if (handled(stalled)) return { reason: null };
+        if (rescued(stalled)) await tellUnreachable(stalled, now);
+        if (carded(stalled) || rescued(stalled)) return { reason: null };
         if (
           !stalled.ask.originMessageId?.startsWith('neo-track:') &&
           !sessions.readNudge(stalled.todo.id)?.redispatched
