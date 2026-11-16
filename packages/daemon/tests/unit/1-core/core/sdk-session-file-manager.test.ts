@@ -715,15 +715,15 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
 
-      const check = await validateAndRepairSDKSession(
+      const result = await repairSDKSessionFile(
         testWorkspacePath,
         testSdkSessionId,
         'hyperneo-session-1',
         createMockDb([])
       );
 
-      expect(check.valid).toBe(false);
-      expect(check.repairError).toContain('Could not find tool_use message for mix_b');
+      expect(result.success).toBe(false);
+      expect(result.errors.join('; ')).toContain('Could not find tool_use message for mix_b');
       expect((await validateSDKSessionFile(testWorkspacePath, testSdkSessionId)).valid).toBe(false);
     });
 
