@@ -66,7 +66,12 @@ describe('voice stream settings', () => {
       voiceStreamRoute({ ...voice, endpoint: 'not a url', streamEndpoint: undefined })
     ).toBeNull();
     expect(voiceStreamRoute({ ...voice, streamEndpoint: 'https://ai0:8011/v1/listen' })).toBeNull();
-    expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
+    expect(voiceStreamRoute({ ...voice, streamProtocol: 'unsupported' as never })).toBeNull();
+    expect(
+      voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })?.url.searchParams.get(
+        'intent'
+      )
+    ).toBe('transcription');
   });
 
   test('voiceStreamRoute never infers a live endpoint from the batch URL', () => {
@@ -777,7 +782,7 @@ describe('VoiceStream against a fake OpenAI Realtime server', () => {
     expect(await stream.stop()).toEqual({ text: 'hello there', via: 'streaming' });
     expect(Date.now() - began).toBeLessThan(2_000);
     expect(await socketClosed()).toBe(true);
-    expect(appended).toBe(4800);
+    expect(appended).toBe(4798);
     expect(opening).toMatchObject([{ type: 'session.update' }]);
     expect(batches).toEqual([]);
   }, 4_000);
@@ -791,6 +796,41 @@ describe('VoiceStream against a fake OpenAI Realtime server', () => {
     expect(Date.now() - began).toBeLessThan(2_000);
     expect(await socketClosed()).toBe(true);
   }, 4_000);
+
+  test('a delta then a close without completed falls back to batch', async () => {
+    onCommit = (socket) => {
+      socket.send(
+        JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', delta: 'hal' })
+      );
+      socket.close(1000);
+    };
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+  }, 4_000);
+
+  test('resampling gives the same 24 kHz audio however the capture is split', () => {
+    const pcm = (...samples: number[]) => {
+      const view = new DataView(new ArrayBuffer(samples.length * 2));
+      samples.forEach((sample, i) => view.setInt16(i * 2, sample, true));
+      return new Uint8Array(view.buffer);
+    };
+    const sent = (frames: Uint8Array[]) => {
+      const protocol = streamProtocol('openai-realtime')!;
+      const out = frames.flatMap((frame) => [
+        ...Buffer.from(
+          (JSON.parse(protocol.audio(frame) as string) as { audio: string }).audio,
+          'base64'
+        ),
+      ]);
+      const view = new DataView(new Uint8Array(out).buffer);
+      return Array.from({ length: out.length / 2 }, (_, i) => view.getInt16(i * 2, true));
+    };
+    const whole = sent([pcm(300, 600, 900, 1200, 1500)]);
+    expect(whole).toEqual([300, 500, 700, 900, 1100, 1300, 1500]);
+    expect(sent([pcm(300), pcm(600), pcm(900, 1200), pcm(1500)])).toEqual(whole);
+    expect(sent([pcm(300), pcm(600)])).toEqual(sent([pcm(300, 600)]));
+  });
 
   test('a server that never completes falls back to batch and the socket is closed', async () => {
     onCommit = () => {};
