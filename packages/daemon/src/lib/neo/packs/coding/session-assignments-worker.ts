@@ -2,7 +2,7 @@ import type { WorkRef } from '../../../drivers/types.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import { type CodingSessionStrategy, codingSessionStrategy } from './session-strategy.ts';
+import { type CodingSessionStrategy, savedCodingSessionStrategy } from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
 type PoolSession = { ref: WorkRef; name: string; held: boolean };
@@ -65,7 +65,8 @@ class CodingSessionAssignments {
       } | null
     )?.repo;
     if (!repo) return null;
-    const strategy = codingSessionStrategy(this.db, repo);
+    const saved = savedCodingSessionStrategy(this.db, repo);
+    const strategy = saved ?? 'long_lived';
     const rows = this.db
       .prepare(
         `SELECT t.id, t.state, ${SESSION_OF}, json_extract(s.target, '$.name') AS name
@@ -86,6 +87,7 @@ class CodingSessionAssignments {
     return {
       repo,
       strategy,
+      strategySaved: saved !== null,
       owner: owner && {
         todoId: owner.todoId,
         session:

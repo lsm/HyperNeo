@@ -21,14 +21,31 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
 
 /** @public */
 export function codingSessionStrategy(db: Database, repo: string): CodingSessionStrategy {
+  return savedCodingSessionStrategy(db, repo) ?? 'long_lived';
+}
+
+export function savedCodingSessionStrategy(db: Database, repo: string) {
   const saved = listPackPreferences(db, 'coding').filter((row) => row.key === 'sessionStrategy');
   const value = (
     saved.find(
       (row) => row.scope.kind === 'repo' && row.scope.key.toLowerCase() === repo.toLowerCase()
     ) ?? saved.find((row) => row.scope.kind === 'global')
   )?.value;
-  return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
+  return STRATEGIES.find((strategy) => strategy === value) ?? null;
 }
+
+export const codingSessionStrategyQuestion = (repo: string) => ({
+  requestId: `coding.sessionStrategy:${repo.toLowerCase()}`,
+  hold: false as const,
+  alternatives: STRATEGIES.map((value) => [
+    {
+      pack: 'coding',
+      scope: { kind: 'repo' as const, key: repo.toLowerCase() },
+      key: 'sessionStrategy',
+      value,
+    },
+  ]),
+});
 
 type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' };
 type Plan =

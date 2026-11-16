@@ -5,18 +5,20 @@ import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
-import type { NeoWorkerTargetDecision } from '../../pack-contract.ts';
+import type { NeoPack, NeoWorkerTargetDecision } from '../../pack-contract.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
-import { planCodingSessionDispatch } from './session-strategy.ts';
+import { codingSessionStrategyQuestion, planCodingSessionDispatch } from './session-strategy.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
+type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
 type Pooled = { ref: WorkRef; name: string; held: boolean };
 type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
+  strategySaved: boolean;
   owner: { todoId: string; session: Pooled | null } | null;
   pool: Pooled[];
 } | null;
@@ -50,7 +52,7 @@ const prUrl = (todo: NeoTodo) => {
 };
 
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
-  .input(['db', 'todo', 'target', 'status'])
+  .input(['db', 'todo', 'target', 'status', 'askSetting'])
   .pipe(
     (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
       gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
@@ -61,6 +63,15 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       }),
     ['db', 'todo', 'target'],
     'facts'
+  )
+  .pipe(
+    async (facts: Facts, askSetting: AskSetting) => {
+      if (facts && !facts.strategySaved)
+        await askSetting(codingSessionStrategyQuestion(facts.repo));
+      return true;
+    },
+    ['facts', 'askSetting'],
+    'strategyAsked'
   )
   .pipe(
     async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {
@@ -117,5 +128,6 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   db: Database,
   todo: NeoTodo,
   target: NeoTodoTarget,
-  status: Status
+  status: Status,
+  askSetting: AskSetting
 ) => Promise<NeoWorkerTargetDecision>;

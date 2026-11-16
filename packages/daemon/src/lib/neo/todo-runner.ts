@@ -674,8 +674,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
     )
       return { value: null };
-    const decision = await pack.workerTarget(todo, target, (ref) =>
-      deps.invoke(caller(ask), 'work.status', { ref })
+    const decision = await pack.workerTarget(
+      todo,
+      target,
+      (ref) => deps.invoke(caller(ask), 'work.status', { ref }),
+      (input) => deps.invoke(caller(ask), 'pack.preferences.ask', { askId: ask.id, ...input })
     );
     if ('reason' in decision) {
       const reason = `${TARGET_WAIT}${decision.reason}`;
