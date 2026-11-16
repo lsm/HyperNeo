@@ -73,13 +73,15 @@ function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
           repo
         ),
       });
-    const first = await plan();
-    if (!first?.ask) return first;
-    const outcome = await askSetting(first.ask);
-    const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
-    if (reply?.ok) return first;
-    const winner = await plan();
-    return winner?.reuse ? winner : { refused: outcome };
+    let outcome: Awaited<ReturnType<AskSetting>> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const next = await plan();
+      if (!next?.ask) return next;
+      outcome = await askSetting(next.ask);
+      const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
+      if (reply?.ok) return next;
+    }
+    return { refused: outcome };
   });
   strategyAsks.set(
     key,
