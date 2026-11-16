@@ -17,9 +17,12 @@ with one uncovered todo. No key or model is used.
 End state, in `$RUN/evidence/`:
 
 - `human-queue-web.json` has `passed: true`, states `Waiting on you 2`, `Held 1`,
-  `In progress 2`, and the asks row starting `All 2`. The old attention group is gone.
-- Hold on a waiting card moves it to Held through `neo.question.hold`; Take back returns it,
+  `In progress 2`, and the asks row starting `All 2`. The old attention and running groups
+  are gone, so the queue is the only list of open work.
+- Hold on a waiting card moves it to Held through `neo.question.hold`, where held cards read
+  "On hold"; Take back returns it,
   and the counts survive reload. In progress lists each uncovered todo with whose step it
   is, and choosing an ask narrows the list and the state counts.
-- `queue-1280-{light,dark}.png`, `queue-1280-held.png` and `queue-390-{light,dark}.png`:
+- `queue-{1280,390}-{light,dark}.png`, `queue-1280-held.png` and
+  `queue-{1280,390}-progress-{light,dark}.png` (In progress, with whose step each item is):
   at 390 px the filter rows wrap and the page does not scroll sideways.
