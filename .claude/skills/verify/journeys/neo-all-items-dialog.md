@@ -26,8 +26,10 @@ versions dialogs, links, final text, bounded previews and unchanged open answers
 
 Import verifyAllReadError and verifyAllSession from neo-all-read-error-web.mjs
 and run each in separate contexts at both widths, with phase after. A refused
-full-card read must show one error in the dialog and restore the card error
-after closing. Opening the last completed todo's session must dismiss All,
+full-card read keeps the ask in the inbox queue as its queued items with the load
+error and Retry, and no Open the ask button, since the full view needs a good
+read. The summarised card is then reached through work search: it must show one
+error in the dialog and restore the card error after closing. Opening the last completed todo's session must dismiss All,
 show its session pane, and allow Back. Preserve separate before evidence for
 the duplicate error and dialog remaining over the session. Completed-todo
 artifact and worker navigation tests must open All first.

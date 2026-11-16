@@ -8,6 +8,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [phase,readyPath,directory]=process.argv.slice(2),run=resolve(directory);
@@ -16,7 +17,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,createSocket:(url)=>createLocalSocket(url)});hub.registerTransport(transport);
 let front:ReturnType<typeof Bun.serve>|undefined;
 const evidence:Record<string,unknown>={phase,passed:false,syntheticOnly:true};
 try{

@@ -30,15 +30,32 @@ try {
       };
       const cards = () => page.locator('[data-ask]:visible').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-ask')));
       const groups = () => page.locator('[data-human-queue]:visible [data-queue-ask]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-queue-ask')));
+      const shown = (selector, attribute) => page.locator(`[data-human-queue]:visible ${selector}`).evaluateAll((nodes, name) => nodes.map(node => node.getAttribute(name)), attribute);
       const order = async () => {
         if (phase !== 'after') return cards();
         const queue = page.locator('[data-human-queue]:visible');
         await queue.locator('[data-queue-state="waiting"]').click();
         const waiting = await groups();
+        const waitingCards = await shown('[data-queue-card]', 'data-queue-card');
         await queue.locator('[data-queue-state="progress"]').click();
         const progress = await groups();
+        const progressTodos = await shown('[data-ask-todo]', 'data-ask-todo');
         await queue.locator('[data-queue-state="waiting"]').click();
-        return { waiting, progress, cards: await cards() };
+        return { waiting, progress, cards: await cards(), waitingCards, progressTodos };
+      };
+      const daemonQueue = () => {
+        const output = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'neo.snapshot', '{}'], {
+          encoding: 'utf8',
+          env: { ...process.env, VERIFY_PORT: String(port), HYPERNEO_DATA_DIR: `${run}/data` },
+        });
+        const find = value => value && typeof value === 'object'
+          ? (value.humanQueue ?? Object.values(value).map(find).find(Boolean)) : undefined;
+        const queue = find(JSON.parse(output).reply);
+        assert(queue, 'the snapshot carries the human queue');
+        return {
+          waitingCards: queue.items.filter(item => item.state === 'waiting').map(item => item.questionId),
+          progressTodos: queue.items.filter(item => item.state === 'progress').map(item => item.todoId),
+        };
       };
       await openWork();
       const initial = await order();
@@ -56,7 +73,8 @@ try {
       assert(fits, 'no horizontal overflow');
       if (phase === 'after') {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
-        for (const key of ['waiting', 'progress', 'cards']) assert.deepEqual([...initial[key]].sort(), [...expected[key]].sort(), key);
+        for (const key of ['waiting', 'progress', 'cards']) assert.deepEqual([...new Set(initial[key])].sort(), [...expected[key]].sort(), key);
+        assert.deepEqual({ waitingCards: reloaded.waitingCards, progressTodos: reloaded.progressTodos }, daemonQueue(), 'cards and work render in the daemon queue order');
       }
       else assert(initial.indexOf('blocked') < initial.indexOf('waiting-a'), 'reproduce waiting below in-progress work');
     } finally { await context.close(); }
