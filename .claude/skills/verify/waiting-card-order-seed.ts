@@ -45,6 +45,7 @@ try {
     store.openAsk({ id, title, sessionId: root, projectId: null, originMessageId: null, request: 'Synthetic ordering verification.', createdAt: now });
     const todo = store.addTodo(`${id}-step`, id, { title: `${title} step`, doneWhen: 'Observed result', check: null, instruction: null, named: null }, now);
     store.updateTodo(todo, { state, ...(state === 'blocked' ? { blockedReason: 'Synthetic dependency' } : {}) }, now);
-    if (id.startsWith('waiting-')) store.askQuestion(`${id}-question`, id, { kind: 'choice', text: `Choose for ${title}`, options: ['Continue', 'Revise'] }, now);
+    const askedAt = id === 'waiting-old' ? base + 7000 : now;
+    if (id.startsWith('waiting-')) store.askQuestion(`${id}-question`, id, { kind: 'choice', text: `Choose for ${title}`, options: ['Continue', 'Revise'] }, askedAt);
   }
 } finally { db.close(); }

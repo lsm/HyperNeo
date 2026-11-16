@@ -9,7 +9,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
-const expected = ['waiting-a', 'waiting-b', 'waiting-old', 'blocked', 'queued', 'running', 'done'];
+const expected = ['waiting-old', 'waiting-a', 'waiting-b', 'blocked', 'queued', 'running', 'done'];
 const observations = [];
 try {
   for (const width of [1280, 390]) {
@@ -28,7 +28,11 @@ try {
       await openWork();
       const initial = await order();
       assert.equal(await page.locator('[data-ask="waiting-a"]:visible').getByText('Waiting on you', { exact: true }).count(), 1);
-      await page.screenshot({ path: `${out}/waiting-order-${width}.png` });
+      for (const scheme of ['light', 'dark']) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}.png` });
+      }
+      await page.emulateMedia({ colorScheme: 'light' });
       execFileSync('bun', ['.claude/skills/verify/waiting-card-order-seed.ts', run, 'update'], {
         env: { PATH: process.env.PATH, HOME: `${run}/home`, HYPERNEO_DATA_DIR: `${run}/data`, NODE_ENV: 'test' },
       });
@@ -43,7 +47,7 @@ try {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
         assert.deepEqual(initial, expected);
       }
-      else assert(initial.indexOf('blocked') < initial.indexOf('waiting-a'), 'reproduce waiting below in-progress work');
+      else assert(initial.indexOf('waiting-old') > initial.indexOf('waiting-a'), 'reproduce the newest card buried under older cards');
     } finally { await context.close(); }
   }
 } finally { await browser.close(); }

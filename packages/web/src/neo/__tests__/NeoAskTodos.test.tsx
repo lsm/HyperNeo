@@ -1315,6 +1315,25 @@ describe('neoAskEntryGroup', () => {
       expect.objectContaining({ state: 'doing' }),
     ]);
   });
+
+  it('puts the newest unanswered card first, whatever its ask was created', () => {
+    const waitingOn = (id: string, askedAt: number, cardAt: number, heldAt: number | null = null) =>
+      entry({
+        ask: { ...entry({}).ask, id, createdAt: askedAt },
+        state: 'waiting',
+        questions: [
+          question(`${id}-card`, { askId: id, state: 'open', createdAt: cardAt, heldAt }),
+        ],
+      });
+    const stale = waitingOn('new-ask-stale-card', 50, 60);
+    const fresh = waitingOn('old-ask-fresh-card', 10, 90);
+    const held = waitingOn('held-newest', 80, 95, 96);
+    expect(neoAskEntriesInOrder([held, stale, fresh]).map((item) => item.ask.id)).toEqual([
+      'old-ask-fresh-card',
+      'new-ask-stale-card',
+      'held-newest',
+    ]);
+  });
 });
 
 describe('neoDonePageMerge', () => {

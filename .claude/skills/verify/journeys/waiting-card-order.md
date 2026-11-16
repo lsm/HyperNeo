@@ -21,18 +21,20 @@ NODE_PATH=<known-playwright-node_modules> VERIFY_BROWSER=<known-Chromium-executa
 Keep the launch process alive. Run `before` before the production fix, and `after`
 after rebuilding web. The seed creates seven synthetic cards: three waiting on a
 human (including one with a blocked todo), blocked work, running work, queued work,
-and finished work. The two newest waiting cards have equal creation timestamps.
+and finished work. The oldest waiting ask holds the newest card; the two newer asks
+hold older cards with equal timestamps.
 
 The browser helper opens the mobile work sheet, records card IDs in rendered
-order, screenshots each viewport, and uses the seed's guarded update mode to
+order, screenshots each viewport in light and dark, and uses the seed's guarded update mode to
 change only an older fixture card's outcome/activity time. It reloads the actual
 snapshot and records the resulting order. No model runs or production DB writes.
-Before proves in-progress blocked work precedes some waiting cards. After requires
-all waiting cards first, creation time descending, ID ascending for equal times,
+Before proves the newest card sits under older cards because its ask is older.
+After requires all waiting cards first, newest unanswered card first, ID ascending
+for equal times,
 and the previous order for everything else. The unrelated outcome update and
 reload must leave the order unchanged. Neither viewport may overflow horizontally.
 
-Inspect evidence/{before,after}/waiting-order-{1280,390}.png and waiting-order.json.
+Inspect evidence/{before,after}/waiting-order-{1280,390}-{light,dark}.png and waiting-order.json.
 Component coverage also changes snapshot input order and moves a waiting card back
 to doing, asserting the visible card order after each live rerender. A failed
 assertion or unreadable/clipped screenshot fails the journey.
