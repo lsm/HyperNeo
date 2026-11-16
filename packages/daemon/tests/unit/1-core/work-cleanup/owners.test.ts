@@ -49,7 +49,7 @@ function setup() {
   return { db, bind, owners };
 }
 
-describe('workCleanupReads', () => {
+describe('owners', () => {
   test('named and non-start bindings do not grant folder ownership', () => {
     const { db, bind, owners } = setup();
     try {

@@ -6,7 +6,7 @@ type Digest = { removed: string[]; kept: Record<string, string[]> };
 type Dependencies = {
   list(): Promise<string[]>;
   read(folder: string): Promise<WorkFolderFacts>;
-  release(folder: string): Promise<boolean>;
+  release(folder: string): Promise<true | { keep: string }>;
   tell(digest: Digest): Promise<void>;
 };
 
@@ -41,8 +41,9 @@ export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as Pipeline
       for (const { folder, plan } of initial) {
         const fresh =
           'remove' in plan ? planWorkRelease(await deps.read(folder), Date.now()) : plan;
-        if ('remove' in fresh && (await deps.release(folder))) digest.removed.push(folder);
-        else (digest.kept['keep' in fresh ? fresh.keep : 'live'] ??= []).push(folder);
+        const outcome = 'remove' in fresh ? await deps.release(folder) : fresh;
+        if (outcome === true) digest.removed.push(folder);
+        else (digest.kept[outcome.keep] ??= []).push(folder);
       }
       return digest;
     },

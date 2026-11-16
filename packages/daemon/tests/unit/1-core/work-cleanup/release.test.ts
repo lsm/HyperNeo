@@ -20,7 +20,7 @@ describe('releaseWorkCleanup', () => {
           ok: true,
           value: {
             archived: true,
-            worktree: { removed: false, reason: 'Unpublished branch; kept.' },
+            worktree: { directory: root, removed: false, reason: 'Unpublished branch; kept.' },
           },
         },
       }),
@@ -42,7 +42,7 @@ describe('releaseWorkCleanup', () => {
         async () => false,
         async () => {
           archives++;
-          return { kind: 'failed', code: 'unexpected', message: 'Unexpected archive' };
+          return { kind: 'failed', code: 'execution_failed', message: 'Unexpected archive' };
         },
         async () => {}
       )

@@ -18,6 +18,7 @@ import { defineOperation } from '../operations/registry.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
 import type { WorkFolderFacts } from './plan.ts';
 import { listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
+import { releaseWorkCleanup } from './release.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const caller = { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL } as const;
@@ -39,21 +40,34 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     invokeOperation(sessionManager.getOperationRegistry(), name, input, caller);
   const snapshot = async () => {
     const owners = await db.gateway.call(workCleanupReads, 'owners');
-    return Promise.all(
-      owners.map(async (row) => {
-        const result = await invoke('work.status', { ref: row.ref });
-        const parsed =
-          result.kind === 'completed'
-            ? z.object({ ok: z.literal(true), value: WorkSummarySchema }).safeParse(result.value)
-            : null;
-        return {
-          ...row,
-          path: parsed?.success ? (parsed.data.value.execution?.directory ?? row.path) : row.path,
-          repo: row.repo ?? (parsed?.success ? parsed.data.value.place.folder : null),
-          readable: parsed?.success === true,
-        };
-      })
-    );
+    const rows: ((typeof owners)[number] & { readable: boolean })[] = [];
+    const statuses = new Map<string, ReturnType<typeof invoke>>();
+    for (let offset = 0; offset < owners.length; offset += 4) {
+      rows.push(
+        ...(await Promise.all(
+          owners.slice(offset, offset + 4).map(async (row) => {
+            const key = JSON.stringify([row.ref.adapter, row.ref.id]);
+            if (!statuses.has(key)) statuses.set(key, invoke('work.status', { ref: row.ref }));
+            const result = await statuses.get(key)!;
+            const parsed =
+              result.kind === 'completed'
+                ? z
+                    .object({ ok: z.literal(true), value: WorkSummarySchema })
+                    .safeParse(result.value)
+                : null;
+            return {
+              ...row,
+              path: parsed?.success
+                ? (parsed.data.value.execution?.directory ?? row.path)
+                : row.path,
+              repo: row.repo ?? (parsed?.success ? (parsed.data.value.place.folder ?? null) : null),
+              readable: parsed?.success === true,
+            };
+          })
+        ))
+      );
+    }
+    return rows;
   };
   const execute = async () => {
     const refs = new Map<string, WorkRef>();
@@ -90,9 +104,27 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         );
       },
       read: async (folder): Promise<WorkFolderFacts> => {
-        const owners = (read.has(folder) ? await snapshot() : initial).filter(
-          (row) => row.path === folder
-        );
+        const matched = initial.filter((row) => row.path === folder);
+        const owners = read.has(folder)
+          ? (
+              await db.gateway.call(
+                workCleanupReads,
+                'owners',
+                matched.map(({ ref }) => ref)
+              )
+            )
+              .map((row) => {
+                const known = matched.find(
+                  ({ ref }) => ref.adapter === row.ref.adapter && ref.id === row.ref.id
+                );
+                return {
+                  ...row,
+                  path: row.path ?? known?.path,
+                  readable: known?.readable === true,
+                };
+              })
+              .filter((row) => row.path === folder)
+          : matched;
         read.add(folder);
         const live = owners.find(({ owner }) =>
           owner.kind === 'session' ? !owner.archived : owner.boundToLiveTodo
@@ -124,13 +156,15 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       },
       release: async (folder) => {
         const ref = refs.get(folder);
-        if (!ref || !(await db.gateway.call(neoTodoSessionWrites, 'fenceRelease', ref, Date.now())))
-          return false;
-        const result = await invoke('neo.session.archive', { ref });
-        if (result.kind !== 'completed' || existsSync(folder)) return false;
-        for (const todoId of todos.get(folder) ?? [])
-          await db.gateway.call(neoTodoSessionWrites, 'recordReleased', todoId, result.value);
-        return true;
+        if (!ref) return { keep: 'unknown' };
+        return releaseWorkCleanup(
+          folder,
+          todos.get(folder) ?? [],
+          () => db.gateway.call(neoTodoSessionWrites, 'fenceRelease', ref, Date.now()),
+          () => invoke('neo.session.archive', { ref }),
+          (todoId, receipt) =>
+            db.gateway.call(neoTodoSessionWrites, 'recordReleased', todoId, receipt)
+        );
       },
       tell: async (digest) => {
         const after = await statfs(data);

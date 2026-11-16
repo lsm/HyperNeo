@@ -7,48 +7,47 @@ import type { Database } from '../sqlite-compat.ts';
 class WorkCleanupRepository {
   constructor(private db: Database) {}
 
-  owners(): {
+  owners(refs?: readonly WorkRef[]): {
     ref: WorkRef;
     owner: WorkOwner;
     path: string | null;
     repo: string | null;
     todoId: string | null;
   }[] {
+    const selected = refs ? JSON.stringify(refs) : null;
     const bindings = this.db
-      .prepare(`SELECT s.ref, t.state, s.target, t.id AS todoId
+      .prepare(`SELECT s.ref, t.state, t.id AS todoId,
+        EXISTS (SELECT 1 FROM neo_todo_sessions peer JOIN neo_todos live ON live.id = peer.todo_id
+          WHERE live.state IN ('todo', 'doing', 'blocked', 'failed')
+            AND COALESCE(json_extract(peer.ref, '$.adapter'), json_extract(peer.target, '$.ref.adapter')) = json_extract(s.ref, '$.adapter')
+            AND COALESCE(json_extract(peer.ref, '$.id'), json_extract(peer.target, '$.ref.id')) = json_extract(s.ref, '$.id')
+            AND COALESCE(json_extract(peer.ref, '$.daemon'), json_extract(peer.target, '$.ref.daemon')) IS NULL
+        ) AS live
       FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-      WHERE s.ref IS NOT NULL AND json_extract(s.ref, '$.daemon') IS NULL`)
-      .all() as {
-      ref: string;
-      state: NeoTodo['state'];
-      target: string;
-      todoId: string;
-    }[];
-    const live = ['todo', 'doing', 'blocked', 'failed'];
-    const owned = bindings
-      .filter(({ target }) => {
-        const start = JSON.parse(target) as { verb: string; name?: string };
-        return start.verb === 'start' && !start.name;
-      })
-      .map(({ ref, state, todoId }) => ({
-        todoId,
-        ref: JSON.parse(ref) as WorkRef,
-        owner: {
-          kind: 'todo' as const,
-          state,
-          boundToLiveTodo: bindings.some((other) => {
-            const peer = JSON.parse(other.ref) as WorkRef;
-            const own = JSON.parse(ref) as WorkRef;
-            return peer.adapter === own.adapter && peer.id === own.id && live.includes(other.state);
-          }),
-        },
-        path: null as string | null,
-        repo: null as string | null,
-      }));
+      WHERE s.ref IS NOT NULL AND json_extract(s.ref, '$.daemon') IS NULL
+        AND json_extract(s.target, '$.verb') = 'start'
+        AND COALESCE(json_extract(s.target, '$.name'), '') = ''
+        AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
+          WHERE json_extract(requested.value, '$.adapter') = json_extract(s.ref, '$.adapter')
+            AND json_extract(requested.value, '$.id') = json_extract(s.ref, '$.id')))`)
+      .all(selected) as { ref: string; state: NeoTodo['state']; todoId: string; live: number }[];
+    const owned = bindings.map(({ ref, state, todoId, live }) => ({
+      todoId,
+      ref: JSON.parse(ref) as WorkRef,
+      owner: { kind: 'todo' as const, state, boundToLiveTodo: live === 1 },
+      path: null as string | null,
+      repo: null as string | null,
+    }));
+    const workers = new Set(
+      owned.filter(({ ref }) => ref.adapter === 'hyperneo').map(({ ref }) => ref.id)
+    );
     const sessions = this.db
       .prepare(`SELECT id, status, worktree_path AS path,
-      main_repo_path AS repo FROM sessions WHERE worktree_path IS NOT NULL`)
-      .all() as {
+      main_repo_path AS repo FROM sessions WHERE worktree_path IS NOT NULL
+        AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
+          WHERE json_extract(requested.value, '$.adapter') = 'hyperneo'
+            AND json_extract(requested.value, '$.id') = sessions.id))`)
+      .all(selected) as {
       id: string;
       status: string;
       path: string;
@@ -57,9 +56,7 @@ class WorkCleanupRepository {
     return [
       ...owned,
       ...sessions
-        .filter(
-          (session) => !owned.some(({ ref }) => ref.adapter === 'hyperneo' && ref.id === session.id)
-        )
+        .filter((session) => !workers.has(session.id))
         .map((session) => ({
           todoId: null,
           ref: { adapter: 'hyperneo', id: session.id },

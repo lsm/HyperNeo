@@ -56,11 +56,21 @@ describe('sweepWorkCleanup', () => {
     const digest = await sweepWorkCleanup({
       list: async () => ['/work/worker'],
       read: async () => done,
-      release: async () => false,
+      release: async () => ({ keep: 'live' }),
       tell: async () => {},
     });
     expect(digest.removed).toEqual([]);
     expect(digest.kept).toEqual({ live: ['/work/worker'] });
+  });
+
+  test('the digest preserves the archive refusal instead of reporting a live owner', async () => {
+    const digest = await sweepWorkCleanup({
+      list: async () => ['/work/worker'],
+      read: async () => done,
+      release: async () => ({ keep: 'Unpublished branch; kept.' }),
+      tell: async () => {},
+    });
+    expect(digest.kept).toEqual({ 'Unpublished branch; kept.': ['/work/worker'] });
   });
 });
 

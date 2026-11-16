@@ -17,5 +17,6 @@ entry records a cleanup digest, and a second sweep is safe.
 It then runs the registered cleanup job once and observes one pending next-day run.
 
 `work-cleanup-sweep.json` records both RPC receipts and the delivered digest.
-Focused tests cover rebinding before the fresh plan and refusal by the release
-fence. This proof does not exercise native Desktop clients or a day of elapsed time.
+Focused tests cover owner selection, scoped refreshes, bounded status concurrency,
+rebinding, the release fence and archive refusals preserved in the digest.
+This proof does not exercise native Desktop clients or a day of elapsed time.
