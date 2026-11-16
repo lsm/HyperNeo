@@ -476,6 +476,54 @@ describe('schedule target lifecycle and external delivery', () => {
       pendingJobId: null,
     });
   });
+  test('a one-shot reminder whose send may have gone out without a receipt ends without resending', async () => {
+    const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
+    const row = scheduler.create({
+      target: { adapter: 'codex-desktop', id: 'recipient' },
+      sourceKind: 'reminder',
+      sourceId: 'venue',
+      note: 'Call the venue',
+      nudgeEvery: 1,
+      cadence: { kind: 'once', at: Date.now() + 60_000 },
+      createdBySession: null,
+    });
+    scheduler.registerSource({
+      kind: 'reminder',
+      facts: async () => ({ digest: 'venue', summary: 'Call the venue' }),
+      message: (_id, change) => change.summary,
+    });
+    let attempts = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic send whose outcome is unknown',
+        inputSchema: z.object({ message: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          attempts++;
+          return { ok: false, reason: 'unreachable', detail: 'remote daemon timed out' };
+        },
+      }),
+    ]);
+    const job = db.getJobQueueRepo().getJob(row.pendingJobId!)!;
+    const fire = () =>
+      createSessionScheduleFire({
+        scheduler,
+        status: async () => 'done',
+        deliver: createScheduleDelivery(db, () => registry).deliver,
+      })(job);
+
+    await expect(fire()).rejects.toThrow('remote daemon timed out');
+    expect(await fire()).toEqual({ outcome: 'skipped_delivery_unconfirmed' });
+
+    expect(attempts).toBe(1);
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'done',
+      lastOutcome: 'skipped_delivery_unconfirmed',
+      pendingJobId: null,
+      nextRunAt: null,
+    });
+  });
   test('a one-shot reminder whose external send is acknowledged late is sent once and then done', async () => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
     const row = scheduler.create({
