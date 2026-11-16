@@ -316,3 +316,41 @@ describe('sweepCodingPrs cross-model review without an owner', () => {
     db.close();
   });
 });
+
+describe('sweepCodingPrs failed cross-model review', () => {
+  test('the author is reminded with the review findings, and Neo is not asked for another reviewer', async () => {
+    const { insert, told, woken, at, db } = setup();
+    insert(11, 'changes_requested');
+    const url = 'https://github.com/lsm/hyperneo/pull/11';
+    db.prepare('INSERT INTO pack_coding_stage_heads (url, head, observed_at) VALUES (?, ?, 0)').run(
+      url,
+      'abc1234def'
+    );
+    db.prepare(
+      'INSERT INTO pack_coding_stage_facts (url, head, stage, fact_json) VALUES (?, ?, ?, ?)'
+    ).run(
+      url,
+      'abc1234def',
+      'review',
+      JSON.stringify({
+        url,
+        head: 'abc1234def',
+        stage: 'review',
+        actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+        verdict: 'fail',
+        acceptanceContract: 'contract',
+        evidence: ['P1 the retry loop never stops.'],
+      })
+    );
+    await at(20);
+    expect(told).toEqual([
+      {
+        ref: owner,
+        key: 'neo-pr-sweep:lsm/hyperneo#11:abc1234def:changes_requested:1',
+        text: 'lsm/hyperneo#11 "Fix login" has been waiting on requested changes for 20 min on head abc1234. Address the review and push. Review findings: P1 the retry loop never stops.',
+      },
+    ]);
+    expect(woken).toEqual([]);
+    db.close();
+  });
+});

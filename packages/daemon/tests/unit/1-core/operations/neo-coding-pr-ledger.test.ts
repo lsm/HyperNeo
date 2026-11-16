@@ -11,6 +11,7 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import { planCodingPrEvent } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
 import { decideCodingDaemonMerge } from '../../../../src/lib/neo/packs/coding/daemon-merge-gates.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
@@ -465,6 +466,46 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       ['live', 'other/repo#7', 'merged'],
       [null, 'lsm/hyperneo#1', tracked?.state],
     ]);
+    db.close();
+  });
+
+  test('a cross-model fail on the head asks its author for changes, with the findings', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'lsm/hyperneo', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    const author = { adapter: 'claude-desktop', id: 'author-1' };
+    claim(db, 'live', 'doing', 10, url, author);
+    const pr = node(1, {
+      body: 'Fix it.\n\nAgent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const read = async () => response([pr]);
+    await reconcile(ledger, ['lsm/hyperneo'], read, 100);
+    expect(ledger.list()[0].state).toBe('waiting_cross_review');
+    ledger.stageFacts.record({
+      url,
+      head: 'h1',
+      stage: 'review',
+      actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+      verdict: 'fail',
+      acceptanceContract: 'contract',
+      evidence: ['P1 the retry loop never stops.'],
+    });
+    const [moved] = await reconcile(ledger, ['lsm/hyperneo'], read, 200);
+    expect(ledger.list()[0].state).toBe('changes_requested');
+    expect(
+      ledger.snapshot(null, 200).map((row) => [row.pr, row.state, row.ownerAdapter, row.ownerId])
+    ).toEqual([['lsm/hyperneo#1', 'changes_requested', 'claude-desktop', 'author-1']]);
+    expect(planCodingPrEvent(moved!)?.text).toBe(
+      'lsm/hyperneo#1 "PR 1" has requested changes on head h1. Address the review and push. Review findings: P1 the retry loop never stops.'
+    );
     db.close();
   });
 
