@@ -138,6 +138,28 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByText('Call the garage')).toBeNull();
   });
 
+  it('keeps the chosen ask visible after a state switch empties it', () => {
+    const { states, asks } = show();
+    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    fireEvent.click(asks.getByRole('button', { name: 'Service the car 1' }));
+    fireEvent.click(states.getByRole('button', { name: 'Waiting on you 0' }));
+    expect(
+      asks.getByRole('button', { name: 'Service the car 0' }).getAttribute('aria-pressed')
+    ).toBe('true');
+  });
+
+  it('shows nothing when nothing waits', () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [], counts: {} }}
+        entries={[]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(view.container.textContent).toBe('');
+  });
+
   it('puts asks that do not fit under More', () => {
     const many: Queue = {
       items: Array.from({ length: 6 }, (_, i) => ({
