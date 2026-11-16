@@ -4,7 +4,7 @@ import { runMigration510 } from './m510-neo-card-actions-applied.ts';
 import { runMigration511 } from './m511-provider-needs-login.ts';
 import { runMigration512 } from './m512-neo-todo-produces-follow-up.ts';
 import { runMigration513 } from './m513-drop-neo-question-start-todos.ts';
-import { runMigration516 } from './m516-work-released.ts';
+import { runMigration517 } from './m517-work-released.ts';
 import { runMigration514 } from './m514-neo-todo-closed-unverified-rows.ts';
 import { runMigration515 } from './m515-neo-question-held.ts';
 import { runMigration507 } from './m507-neo-question-option-labels.ts';
@@ -1066,7 +1066,7 @@ export function runMigrations(
   run(migrationMarkerKey(513), () => runMigration513(db));
   run(migrationMarkerKey(514), () => runMigration514(db));
   run(migrationMarkerKey(515), () => runMigration515(db));
-  run(migrationMarkerKey(516), () => runMigration516(db));
+  run(migrationMarkerKey(517), () => runMigration517(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
