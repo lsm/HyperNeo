@@ -168,6 +168,7 @@ async function readAvailability(provider: Provider | undefined): Promise<Availab
 export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
   const now = deps.now ?? Date.now;
   const readings = new Map<string, UsageReading>();
+  const inFlight = new Set<string>();
   const providers = (candidates: readonly NeoLine[]) => [
     ...new Set(candidates.map((line) => line.provider)),
   ];
@@ -254,62 +255,52 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
       'ranked'
     )
     .pipe(
-      (ranked: unknown[], at: number) => (ranked.length ? readHeldTodos(deps.database(), at) : []),
-      ['ranked', 'now'],
-      'current'
-    )
-    .pipe(
       (
         ranked: (HeldTodo & { ranking: NeoLineRanking })[],
-        current: HeldTodo[],
         rules: HoldRule[],
         at: number
-      ): NeoAttentionEvent[] =>
-        ranked.flatMap(({ todo, worker, told, hold, ranking }) =>
-          current.some(
-            (live) =>
-              live.todo.id === todo.id && live.worker === worker && live.hold.since === hold.since
-          ) && onLineHeld({ hold, rules, ranking, now: at, told }).action === 'tellNeo'
-            ? [
-                {
-                  kind: LINE_HELD,
-                  subject: { type: 'todo', id: todo.id },
-                  since: hold.since,
-                  facts: { text: lineHeldText(todo, hold, ranking) },
-                },
-              ]
-            : []
-        ),
-      ['ranked', 'current', 'rules', 'now'],
+      ): NeoAttentionEvent[] => {
+        const current = ranked.length ? readHeldTodos(deps.database(), at) : [];
+        return ranked.flatMap(({ todo, worker, hold, ranking }) => {
+          const live = current.find(
+            (entry) =>
+              entry.todo.id === todo.id &&
+              entry.worker === worker &&
+              entry.hold.since === hold.since
+          );
+          const claim = `${todo.id}:${hold.since}`;
+          if (
+            !live ||
+            inFlight.has(claim) ||
+            onLineHeld({ hold, rules, ranking, now: at, told: live.told }).action !== 'tellNeo'
+          )
+            return [];
+          inFlight.add(claim);
+          return [
+            {
+              kind: LINE_HELD,
+              subject: { type: 'todo', id: todo.id },
+              since: hold.since,
+              facts: { text: lineHeldText(todo, hold, ranking) },
+            },
+          ];
+        });
+      },
+      ['ranked', 'rules', 'now'],
       'events'
     )
-    .pipe(
-      (events: NeoAttentionEvent[]) => {
-        const db = deps.database();
-        return events.filter(
-          (event) =>
-            db.run(
-              `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
-               ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json
-               WHERE json_extract(pack_facts.value_json, '$.since')
-                 IS NOT json_extract(excluded.value_json, '$.since')`,
-              event.subject.id,
-              JSON.stringify({ since: event.since })
-            ).changes === 1
-        );
-      },
-      'events',
-      'claimed'
-    )
-    .endAsync('claimed') as (now: number) => Promise<NeoAttentionEvent[]>;
+    .endAsync('events') as (now: number) => Promise<NeoAttentionEvent[]>;
 
-  const release = (event: NeoAttentionEvent) =>
-    deps.database().run(
-      `DELETE FROM pack_facts WHERE todo_id = ? AND pack = '${PACK}' AND key = 'told'
-           AND json_extract(value_json, '$.since') = ?`,
-      event.subject.id,
-      event.since
-    );
+  const settled = (event: NeoAttentionEvent, told: boolean) => {
+    inFlight.delete(`${event.subject.id}:${event.since}`);
+    if (told)
+      deps.database().run(
+        `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
+           ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json`,
+        event.subject.id,
+        JSON.stringify({ since: event.since })
+      );
+  };
 
   return {
     ...MODEL_ROUTING_PACK_BRIEF,
@@ -321,7 +312,7 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
           id: LINE_HELD,
           decide: () => 'wake',
           render: ({ facts }) => String(facts.text),
-          released: release,
+          settled,
         },
       ],
       scan,

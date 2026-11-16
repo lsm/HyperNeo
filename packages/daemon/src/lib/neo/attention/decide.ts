@@ -16,7 +16,7 @@ export interface NeoAttentionKind {
   id: string;
   decide(event: NeoAttentionEvent, known: NeoAttentionKnown): Verdict;
   render(event: NeoAttentionEvent): string;
-  released?(event: NeoAttentionEvent): void;
+  settled?(event: NeoAttentionEvent, told: boolean): void;
   ladder?: readonly number[];
   every?: number;
   latestOnly?: true;
