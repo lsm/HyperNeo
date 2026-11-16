@@ -12,7 +12,8 @@ processing state. The real driver-refresh job runs through the job processor.
 An authenticated WebSocket reads `neo.snapshot` and observes `neo.session.notice`,
 the existing phone-alert event.
 
-Observe one `needs_you` event for login, one for a limit whose reset is over
+Observe one `needs_you` event for a login hold shared by Neo and its front,
+including when the front recovers first, and one for a limit whose reset is over
 30 minutes after its start, no duplicate event on repeated refresh, and no
 current notice after recovery. A five-minute limit sends no alert. The helper
 prints explicit counts and saves `model-hold-notices.json`. Unit contracts also

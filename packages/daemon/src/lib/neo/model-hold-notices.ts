@@ -13,25 +13,37 @@ export function planModelHoldNotices(
   const seen = new Map<string, NeoSessionSeen>();
   const active: NeoSessionNotice[] = [];
   const added: NeoSessionNotice[] = [];
+  const groups = new Map<string, NeoWorkingSession[]>();
   for (const session of working) {
     const hold = session.role && session.modelHold;
     if (!hold) continue;
-    const key = `${MODEL_HOLD_NOTICE_PREFIX}${session.sessionId}`;
-    const listed = JSON.stringify([root, hold.provider, hold.reason, hold.since]);
-    const known = previous.get(key)?.listed === listed;
+    const key = `${MODEL_HOLD_NOTICE_PREFIX}${hold.provider}:${hold.reason}`;
+    const group = groups.get(key) ?? [];
+    group.push(session);
+    groups.set(key, group);
+  }
+  for (const [key, group] of groups) {
+    const session = group.find((entry) => entry.role === 'neo') ?? group[0];
+    const holds = group.map((entry) => entry.modelHold!);
+    const episodes = group.map((entry) =>
+      JSON.stringify([root, entry.sessionId, entry.modelHold!.since])
+    );
+    const recorded = JSON.parse(previous.get(key)?.listed ?? '[]') as string[];
+    const known = episodes.some((episode) => recorded.includes(episode));
     const qualifies =
-      hold.reason === 'login' ||
-      (hold.reason === 'limit' &&
-        (known || Math.max(now, hold.resetAt ?? now) - hold.since > LONG_HOLD_MS));
+      holds[0].reason === 'login' ||
+      (holds[0].reason === 'limit' &&
+        (known ||
+          holds.some((hold) => Math.max(now, hold.resetAt ?? now) - hold.since > LONG_HOLD_MS)));
     if (!qualifies) continue;
     const notice: NeoSessionNotice = {
       key,
       ref: { adapter: 'hyperneo', id: root },
       title: session.title,
       kind: 'needs_you',
-      at: hold.since,
+      at: Math.min(...holds.map((hold) => hold.since)),
     };
-    seen.set(key, { listed, status: 'needs_you' });
+    seen.set(key, { listed: JSON.stringify(episodes), status: 'needs_you' });
     active.push(notice);
     if (!known) added.push(notice);
   }

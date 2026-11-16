@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -53,6 +54,12 @@ try {
       '{}'
     );
   raw.prepare("INSERT INTO neo_session_bindings (session_id,kind) VALUES (?,'neo')").run(root);
+  const front = frontSessionId(root.slice(4));
+  raw
+    .prepare(
+      'INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) SELECT ?,title,workspace_path,created_at,last_active_at,status,config,metadata FROM sessions WHERE id = ?'
+    )
+    .run(front, root);
   ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
   await new Promise<void>((done, fail) => {
     ws!.onopen = () => done();
@@ -108,9 +115,16 @@ try {
       .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
       .run(JSON.stringify(value), root);
   const since = Date.now();
+  await rpc('neo.snapshot');
   state({ status: 'rate_limit_cooldown', reason: 'login', since });
+  raw
+    .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+    .run(JSON.stringify({ status: 'rate_limit_cooldown', reason: 'login', since: since - 1 }), front);
   assert.equal((await refresh('login hold')).length, 1);
   assert.equal(notices.length, 1);
+  raw
+    .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+    .run(JSON.stringify({ status: 'idle' }), front);
   assert.equal((await refresh('same hold')).length, 1);
   assert.equal(notices.length, 1);
   state({ status: 'idle' });
