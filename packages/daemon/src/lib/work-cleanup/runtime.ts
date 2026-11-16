@@ -8,7 +8,7 @@ import {
 } from '../../storage/repositories/work-cleanup-worker.ts';
 import { neoTodoSessionWrites } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { getDataDir } from '../data-dir.ts';
-import { folderInUse, WORKTREE_UNSAVED, WORKTREE_UNVERIFIED } from '../drivers/work-placement.ts';
+import { folderInUse, worktreeKeptUnsaved } from '../drivers/work-placement.ts';
 import { workerWorkKey } from '../work-locations.ts';
 import { codexWorkerHome, copilotWorkerDirectory } from '../drivers/worker-directories.ts';
 import { WorkSummarySchema, type WorkRef } from '../drivers/types.ts';
@@ -26,6 +26,11 @@ import { releaseWorkCleanup } from './release.ts';
 const DAY = 24 * 60 * 60 * 1000;
 const caller = { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL } as const;
 const canonical = (path: string) => (existsSync(path) ? realpathSync(path) : path);
+const presence = (path: string) =>
+  lstat(path).then(
+    () => 'present' as const,
+    (error: NodeJS.ErrnoException) => (error.code === 'ENOENT' ? 'absent' : 'unreadable')
+  );
 const isLive = ({ owner }: { owner: WorkOwner }) =>
   owner.kind === 'todo' ? owner.boundToLiveTodo : owner.kind === 'session' && !owner.archived;
 
@@ -116,10 +121,12 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           : { ...settled, owner: null };
       const paths = worktrees.get(name);
       if (!paths) return { ...settled, owner: null };
-      if (paths.some((path) => existsSync(path))) {
+      const states = await Promise.all(paths.map(presence));
+      if (states.includes('present')) {
         await db.gateway.call(workCleanupWrites, 'forgetGone', [name]);
         return { ...settled, owner: { kind: 'worktree', present: true } };
       }
+      if (states.includes('unreadable')) return { ...settled, owner: 'unreadable' };
       if (facts.goneAt === null)
         await db.gateway.call(workCleanupWrites, 'markGone', name, Date.now());
       return {
@@ -132,6 +139,61 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       await insideEvidence(folder);
       const facts = await evidenceOwner(folder);
       if ('keep' in planWorkRelease(facts, Date.now())) return facts;
+      return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
+    };
+    const unreadable = new Set<string>();
+    const readFolder = async (folder: string): Promise<WorkFolderFacts> => {
+      if (errors.has(folder)) throw new Error('Folder listing failed');
+      if (insideFolder(evidenceRoot, folder)) return readEvidence(folder);
+      const matched = initial.filter((row) => row.path === folder);
+      const fresh = read.has(folder);
+      const bound = fresh ? await db.gateway.call(workCleanupReads, 'liveBindings') : [];
+      if (bound.some(({ ref }) => !ref))
+        return { owner: 'unreadable', inUse: false, unsaved: false };
+      const owners = fresh
+        ? (
+            await resolveOwners(
+              [
+                ...(await readOwners(
+                  matched.map(({ ref }) => ref),
+                  folder
+                )),
+                ...bound.flatMap(({ ref, todoId, state }) =>
+                  ref
+                    ? [
+                        {
+                          ref,
+                          todoId,
+                          path: null,
+                          repo: null,
+                          owner: { kind: 'todo' as const, state, boundToLiveTodo: true },
+                        },
+                      ]
+                    : []
+                ),
+              ],
+              new Map()
+            )
+          ).filter(
+            (row) =>
+              row.path === folder ||
+              !row.readable ||
+              (isLive(row) &&
+                row.path !== null &&
+                insideFolder(canonical(folder), canonical(row.path)))
+          )
+        : matched;
+      read.add(folder);
+      const row = owners.find(isLive) ?? owners[0];
+      if (!row) return { owner: null, inUse: false, unsaved: false };
+      refs.set(folder, row.ref);
+      todos.set(
+        folder,
+        owners.flatMap(({ todoId }) => (todoId ? [todoId] : []))
+      );
+      if (!row.readable) return { owner: 'unreadable', inUse: false, unsaved: false };
+      const facts = { owner: row.owner, inUse: false, unsaved: false };
+      if ('keep' in planWorkRelease(facts, Date.now()) || !existsSync(folder)) return facts;
       return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
     };
     const digest = await sweepWorkCleanup({
@@ -174,59 +236,11 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           ...errors,
         ];
       },
-      read: async (folder): Promise<WorkFolderFacts> => {
-        if (errors.has(folder)) throw new Error('Folder listing failed');
-        if (insideFolder(evidenceRoot, folder)) return readEvidence(folder);
-        const matched = initial.filter((row) => row.path === folder);
-        const fresh = read.has(folder);
-        const bound = fresh ? await db.gateway.call(workCleanupReads, 'liveBindings') : [];
-        if (bound.some(({ ref }) => !ref))
-          return { owner: 'unreadable', inUse: false, unsaved: false };
-        const owners = fresh
-          ? (
-              await resolveOwners(
-                [
-                  ...(await readOwners(
-                    matched.map(({ ref }) => ref),
-                    folder
-                  )),
-                  ...bound.flatMap(({ ref, todoId, state }) =>
-                    ref
-                      ? [
-                          {
-                            ref,
-                            todoId,
-                            path: null,
-                            repo: null,
-                            owner: { kind: 'todo' as const, state, boundToLiveTodo: true },
-                          },
-                        ]
-                      : []
-                  ),
-                ],
-                new Map()
-              )
-            ).filter(
-              (row) =>
-                row.path === folder ||
-                !row.readable ||
-                (isLive(row) &&
-                  row.path !== null &&
-                  insideFolder(canonical(folder), canonical(row.path)))
-            )
-          : matched;
-        read.add(folder);
-        const row = owners.find(isLive) ?? owners[0];
-        if (!row) return { owner: null, inUse: false, unsaved: false };
-        refs.set(folder, row.ref);
-        todos.set(
-          folder,
-          owners.flatMap(({ todoId }) => (todoId ? [todoId] : []))
-        );
-        if (!row.readable) return { owner: 'unreadable', inUse: false, unsaved: false };
-        const facts = { owner: row.owner, inUse: false, unsaved: false };
-        if ('keep' in planWorkRelease(facts, Date.now()) || !existsSync(folder)) return facts;
-        return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
+      read: async (folder) => {
+        const facts = await readFolder(folder);
+        if (facts.owner === 'unreadable') unreadable.add(folder);
+        else unreadable.delete(folder);
+        return facts;
       },
       release: async (folder) => {
         if (insideFolder(evidenceRoot, folder)) {
@@ -249,14 +263,11 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         const after = await statfs(data);
         const now = Date.now();
         const unsaved = Object.entries(digest.kept).flatMap(([reason, folders]) =>
-          (WORKTREE_UNSAVED as readonly string[]).includes(reason) ||
-          reason.startsWith(WORKTREE_UNVERIFIED)
-            ? folders
-            : []
+          worktreeKeptUnsaved(reason) ? folders : []
         );
         const settled = new Set([
           ...digest.removed.map(({ directory }) => directory),
-          ...(digest.kept.live ?? []),
+          ...(digest.kept.live ?? []).filter((folder) => !unreadable.has(folder)),
         ]);
         const rows = new Map(
           (await db.gateway.call(workCleanupReads, 'gone')).map(({ key, goneAt }) => [key, goneAt])
@@ -264,14 +275,18 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         await db.gateway.call(
           workCleanupWrites,
           'forgetGone',
-          [...rows.keys()].filter((key) => {
-            const folder = key.slice(key.indexOf(':') + 1);
-            return (
-              /^(unsaved|told):/.test(key) &&
-              !unsaved.includes(folder) &&
-              (settled.has(folder) || !existsSync(folder))
-            );
-          })
+          (
+            await Promise.all(
+              [...rows.keys()].map(async (key) => {
+                const folder = key.slice(key.indexOf(':') + 1);
+                return /^(unsaved|told):/.test(key) &&
+                  !unsaved.includes(folder) &&
+                  (settled.has(folder) || (await presence(folder)) === 'absent')
+                  ? [key]
+                  : [];
+              })
+            )
+          ).flat()
         );
         for (const folder of unsaved)
           await db.gateway.call(workCleanupWrites, 'markGone', `unsaved:${folder}`, now);

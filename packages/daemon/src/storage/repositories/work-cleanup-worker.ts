@@ -1,12 +1,11 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { WorkOwner } from '../../lib/work-cleanup/plan.ts';
+import { mentionsFolder } from '../../lib/work-cleanup/references.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-const text = (columns: string[]) =>
-  columns.map((column) => `COALESCE(${column}, '')`).join(' || char(10) || ');
-const QUESTION_TEXT = text([
+const QUESTION_COLUMNS = [
   'text',
   'options',
   'labels',
@@ -24,8 +23,8 @@ const QUESTION_TEXT = text([
   'answer',
   'cause',
   'hold_requests',
-]);
-const TODO_TEXT = text([
+].join(', ');
+const TODO_COLUMNS = [
   'title',
   'done_when',
   'check_json',
@@ -39,7 +38,7 @@ const TODO_TEXT = text([
   'blocked_by',
   'artifacts_json',
   'depends_on',
-]);
+].join(', ');
 
 class WorkCleanupRepository {
   constructor(private db: Database) {}
@@ -140,13 +139,20 @@ class WorkCleanupRepository {
     const gone = this.db
       .prepare('SELECT gone_at AS goneAt FROM work_cleanup_gone WHERE key = ?')
       .get(name) as { goneAt: number } | null;
-    const referenced = this.db
-      .prepare(`SELECT EXISTS (SELECT 1 FROM neo_questions WHERE state = 'open'
-          AND instr(${QUESTION_TEXT}, ?1) > 0)
-        OR EXISTS (SELECT 1 FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')
-          AND instr(${TODO_TEXT}, ?1) > 0) AS referenced`)
-      .get(path) as { referenced: number };
-    return { todo, goneAt: gone?.goneAt ?? null, referenced: referenced.referenced === 1 };
+    const stored = [
+      ...this.db
+        .prepare(`SELECT ${QUESTION_COLUMNS} FROM neo_questions WHERE state = 'open'`)
+        .all(),
+      ...this.db
+        .prepare(
+          `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')`
+        )
+        .all(),
+    ].flatMap((row) => Object.values(row as Record<string, unknown>));
+    const referenced = stored.some(
+      (value) => typeof value === 'string' && mentionsFolder(value, path)
+    );
+    return { todo, goneAt: gone?.goneAt ?? null, referenced };
   }
 
   workerFolders(): string[] {

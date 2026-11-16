@@ -12,7 +12,9 @@ import { resolveNewSessionModel } from '../../session/new-session-model.ts';
 import {
   cleanupOwnedWorktree,
   workerWorktreeHasSubmodules,
+  WORKTREE_SUBMODULES,
   WORKTREE_UNSAVED,
+  worktreeUnverified,
 } from '../../drivers/work-placement.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
@@ -236,14 +238,15 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (context.deps.db.listChildSessions(ref.id).length)
         return reject('unsupported', 'Archive sessions with clones in the session UI.');
       if (session.worktree) {
-        const manager = sessionManager.getWorktreeManager();
-        const commits = await manager.getCommitsAhead(session.worktree);
-        const directory = session.worktree.worktreePath ?? session.workspacePath!;
-        if (await workerWorktreeHasSubmodules(directory))
-          return reject('unsupported', 'Submodule worktrees require manual verification; kept.');
-        const git = await simpleGit(directory).status(['--ignore-submodules=none']);
-        if (commits.hasCommitsAhead || !git.isClean())
-          return reject('unsupported', WORKTREE_UNSAVED[3]);
+        const worktree = session.worktree;
+        const directory = worktree.worktreePath ?? session.workspacePath!;
+        const kept = await (async () => {
+          const commits = await sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+          if (await workerWorktreeHasSubmodules(directory)) return WORKTREE_SUBMODULES;
+          const git = await simpleGit(directory).status(['--ignore-submodules=none']);
+          return commits.hasCommitsAhead || !git.isClean() ? WORKTREE_UNSAVED[3] : null;
+        })().catch(worktreeUnverified);
+        if (kept) return reject('unsupported', kept);
       }
       const refused = admit();
       if (refused) return refused;

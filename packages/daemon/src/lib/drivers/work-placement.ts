@@ -85,6 +85,7 @@ export const WORKTREE_UNSAVED = [
   'The clone has a stash or another worktree; kept.',
   'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.',
 ] as const;
+export const WORKTREE_SUBMODULES = 'Submodule worktrees require manual verification; kept.';
 type Facts = { dirty: boolean; unpushed: string; submodules: boolean };
 export async function workerWorktreeHasSubmodules(directory: string): Promise<boolean> {
   return (await simpleGit(directory).raw(['submodule', 'status', '--recursive'])).trim() !== '';
@@ -93,9 +94,7 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   .input(['facts'])
   .pipe(
     (facts: Facts) =>
-      facts.submodules
-        ? { reason: { reason: 'Submodule worktrees require manual verification; kept.' } }
-        : { value: true },
+      facts.submodules ? { reason: { reason: WORKTREE_SUBMODULES } } : { value: true },
     'facts',
     'result:ready'
   )
@@ -115,6 +114,10 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
 export const WORKTREE_UNVERIFIED = 'Could not verify or remove the worktree; kept';
 export const worktreeUnverified = (error: unknown) =>
   `${WORKTREE_UNVERIFIED}: ${error instanceof Error ? error.message : String(error)}`;
+export const worktreeKeptUnsaved = (reason: string) =>
+  (WORKTREE_UNSAVED as readonly string[]).includes(reason) ||
+  reason === WORKTREE_SUBMODULES ||
+  reason.startsWith(WORKTREE_UNVERIFIED);
 
 export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
