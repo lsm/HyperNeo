@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -35,16 +43,19 @@ describe('createWorkCleanupRuntime', () => {
   const present = join(root, 'elsewhere', 'present');
   const restored = join(root, 'elsewhere', 'restored');
   const archivedOnly = join(root, 'removed', 'archived-only');
+  const locked = join(root, 'locked');
   const db = new Database(':memory:');
   const delivered: string[] = [];
   const attempts: string[] = [];
   let deliver = true;
   let unsavedReason = UNCOMMITTED;
+  let statusCalls = 0;
+  let failStatusFrom = Number.POSITIVE_INFINITY;
   let busy: ChildProcess | undefined;
   let context: FamilyOperationContext;
 
   beforeAll(() => {
-    process.env.HOME = join(root, 'home');
+    process.env.HOME = root;
     process.env.HYPERNEO_DATA_DIR = root;
     process.env.CODEX_HOME = join(root, 'codex');
     process.env.HYPERNEO_TEST_OWN_PROCESSES = '1';
@@ -81,6 +92,9 @@ describe('createWorkCleanupRuntime', () => {
     todo('old-option', 'done', start - 8 * DAY);
     todo('old-retire', 'done', start - 8 * DAY);
     todo('old-busy', 'done', start - 8 * DAY);
+    todo('old"quote', 'done', start - 8 * DAY);
+    todo('old file', 'done', start - 8 * DAY);
+    todo('old-home', 'done', start - 8 * DAY);
     todo('live', 'doing', start, `Read ${evidence('old-live-ref')}`);
     const card = {
       options: null,
@@ -110,6 +124,37 @@ describe('createWorkCleanupRuntime', () => {
       },
       start
     );
+    todos.askQuestion(
+      'quoted',
+      'ask',
+      {
+        ...card,
+        kind: 'reply',
+        text: 'Retire when the result exists.',
+        retireWhen: {
+          pack: 'core',
+          kind: 'file',
+          params: { path: join(evidence('old"quote'), 'result.md') },
+        },
+      },
+      start
+    );
+    todos.askQuestion(
+      'linked',
+      'ask',
+      {
+        ...card,
+        kind: 'reply',
+        text: `[Result](file://${evidence('old file').replaceAll(' ', '%20')}/result.md)`,
+      },
+      start
+    );
+    todos.askQuestion(
+      'home',
+      'ask',
+      { ...card, kind: 'reply', text: 'See ~/work/evidence/old-home/result.md' },
+      start
+    );
     mkdirSync(evidence('stranger'), { recursive: true });
     const session = (id: string, worktree: string | null, metadata = '{}') =>
       db
@@ -121,6 +166,7 @@ describe('createWorkCleanupRuntime', () => {
     session('gone-new', join(root, 'removed', 'gone-new'));
     session('gone-old', join(root, 'removed', 'gone-old'));
     session('restored', restored);
+    session('locked', join(locked, 'tree'));
     session(
       'archived-only',
       null,
@@ -132,6 +178,7 @@ describe('createWorkCleanupRuntime', () => {
       join(root, 'removed', 'gone-old'),
       restored,
       archivedOnly,
+      join(locked, 'tree'),
     ])
       mkdirSync(evidence(workerWorkKey(path)), { recursive: true });
     mkdirSync(evidence('hn-000000000000'), { recursive: true });
@@ -140,6 +187,9 @@ describe('createWorkCleanupRuntime', () => {
     gone.run(workerWorkKey(join(root, 'removed', 'gone-old')), start - 8 * DAY);
     gone.run(workerWorkKey(restored), start - 8 * DAY);
     gone.run(workerWorkKey(archivedOnly), start - 8 * DAY);
+    gone.run(workerWorkKey(join(locked, 'tree')), start - 8 * DAY);
+    mkdirSync(join(locked, 'tree'), { recursive: true });
+    chmodSync(locked, 0o000);
     const worker = (todoId: string, id: string, directory: string) => {
       mkdirSync(directory, { recursive: true });
       const finished = todos.addTodo(
@@ -164,17 +214,20 @@ describe('createWorkCleanupRuntime', () => {
         description: 'Synthetic status',
         inputSchema: z.object({ ref: WorkRefSchema }),
         resultSchema: z.unknown(),
-        execute: async ({ ref }) => ({
-          ok: true,
-          value: {
-            ref,
-            title: ref.id,
-            status: 'stopped',
-            lastActivityAt: 1,
-            place: { machine: 'fixture', folder: join(root, 'source'), name: 'Fixture' },
-            execution: { directory: directory(ref.id), machine: 'fixture' },
-          },
-        }),
+        execute: async ({ ref }) =>
+          ref.id === 'unsaved-worker' && ++statusCalls >= failStatusFrom
+            ? { ok: false }
+            : {
+                ok: true,
+                value: {
+                  ref,
+                  title: ref.id,
+                  status: 'stopped',
+                  lastActivityAt: 1,
+                  place: { machine: 'fixture', folder: join(root, 'source'), name: 'Fixture' },
+                  execution: { directory: directory(ref.id), machine: 'fixture' },
+                },
+              },
       }),
       defineOperation({
         name: 'neo.session.archive',
@@ -232,6 +285,7 @@ describe('createWorkCleanupRuntime', () => {
 
   afterAll(() => {
     busy?.kill();
+    chmodSync(locked, 0o755);
     Date.now = realNow;
     db.close();
     process.env = saved;
@@ -253,6 +307,9 @@ describe('createWorkCleanupRuntime', () => {
       'old-option',
       'old-retire',
       'old-busy',
+      'old"quote',
+      'old file',
+      'old-home',
       'live',
       'stranger',
     ])
@@ -262,6 +319,7 @@ describe('createWorkCleanupRuntime', () => {
     expect(existsSync(evidence(workerWorkKey(join(root, 'removed', 'gone-old'))))).toBe(false);
     expect(existsSync(evidence(workerWorkKey(archivedOnly)))).toBe(false);
     expect(existsSync(evidence(workerWorkKey(restored)))).toBe(true);
+    expect(existsSync(evidence(workerWorkKey(join(locked, 'tree'))))).toBe(true);
     expect(existsSync(evidence('hn-000000000000'))).toBe(true);
     const goneRow = db.prepare('SELECT key FROM work_cleanup_gone WHERE key = ?');
     expect(goneRow.get(workerWorkKey(present))).toBeNull();
@@ -272,6 +330,12 @@ describe('createWorkCleanupRuntime', () => {
     clock = start + DAY;
     unsavedReason = WORKTREE_IN_USE;
     await sweep();
+
+    clock = start + 2 * DAY;
+    unsavedReason = UNCOMMITTED;
+    failStatusFrom = statusCalls + 2;
+    await sweep();
+    failStatusFrom = Number.POSITIVE_INFINITY;
 
     clock = start + 3.5 * DAY;
     unsavedReason = UNCOMMITTED;
@@ -301,7 +365,16 @@ describe('createWorkCleanupRuntime', () => {
     expect(existsSync(evidence(workerWorkKey(join(root, 'removed', 'gone-new'))))).toBe(false);
     expect(existsSync(evidence('fresh-done'))).toBe(false);
     expect(existsSync(evidence('old-busy'))).toBe(false);
-    for (const kept of ['live', 'old-card', 'old-option', 'old-retire', 'stranger'])
+    for (const kept of [
+      'live',
+      'old-card',
+      'old-option',
+      'old-retire',
+      'old"quote',
+      'old file',
+      'old-home',
+      'stranger',
+    ])
       expect(existsSync(evidence(kept))).toBe(true);
     expect(existsSync(unsaved)).toBe(true);
     expect(existsSync(unverifiable)).toBe(true);
