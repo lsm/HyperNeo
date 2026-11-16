@@ -65,6 +65,9 @@ request todo sends nothing more: the close reply already said nothing was added.
   attention ladder until it is closed.
 - Human requests, worker reports and worker questions keep their paths: a sender that works
   an open todo records no request todo, as today.
+- Only a session message of kind `question` or `blocked` is a request
+  (`handleWorkerQuestion` in `service.ts`). Other kinds stay notices without a request todo,
+  so a session that wants something done sends it as `question`.
 - The sender may still ask again; a closed request is refused as today
   (`request_closed`).
 
