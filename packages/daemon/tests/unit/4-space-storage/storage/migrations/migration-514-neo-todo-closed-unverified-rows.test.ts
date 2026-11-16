@@ -46,6 +46,22 @@ describe('runMigration514', () => {
     db.close();
   });
 
+  test('a removed row with no reason gets one, so its ask can still settle done', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE neo_todos (id TEXT PRIMARY KEY, state TEXT NOT NULL, reason TEXT, started_at INTEGER);
+      INSERT INTO neo_todos VALUES
+        ('unstarted', 'closed_unverified', NULL, NULL),
+        ('started', 'closed_unverified', NULL, 5);
+    `);
+    runMigration514(db);
+    expect(db.prepare('SELECT id, state, reason FROM neo_todos ORDER BY id').all()).toEqual([
+      { id: 'started', state: 'done', reason: null },
+      { id: 'unstarted', state: 'removed', reason: 'Closed without a verified outcome.' },
+    ]);
+    db.close();
+  });
+
   test('leaves a database without the neo_todos table untouched', () => {
     const db = new Database(':memory:');
     runMigration514(db);
