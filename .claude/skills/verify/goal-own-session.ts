@@ -46,24 +46,40 @@ evidence.session = session;
 assert(owner !== root && session?.parent_session_id === root && session.title === 'Goal: Market the adapter guide', 'Goal did not start its own session under Neo');
 const schedule = () => db.query("SELECT * FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(goalId) as Record<string, string> | null;
 assert(JSON.parse(schedule()!.target).id === owner, 'Schedule does not target the goal session');
-for (let index = 0; index < 10; index++)
+const isWake = (row: { sdk_uuid: string }) => row.sdk_uuid?.startsWith('schedule:');
+const returns = () => transcript(root).filter((row) => row.content.includes('分身 returned'));
+const journaled = (runId: string) => until(() => db.query('SELECT * FROM goal_journal WHERE goal_id = ? AND run_id = ?').get(goalId, runId) as Record<string, string> | null, `Goal session did not journal ${runId}`);
+const finished = (text: string) => until(() => transcript(owner).find((row) => row.content.includes(text)), `Goal session turn did not end with "${text}"`);
+assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
+
+const work = await until(() => transcript(owner).find(isWake), 'No work wake reached the goal session');
+evidence.workWake = work;
+assert(work.content.includes('This session owns the goal below.') && work.content.includes(`runId ${work.sdk_uuid}`) && !work.content.includes('neo.home.read') && !work.content.includes('Read the journal pages and rewrite'), 'First wake was not a plain goal-session work wake');
+const workEntry = await journaled(work.sdk_uuid);
+evidence.workEntry = workEntry;
+assert(workEntry.session_id === owner, 'Work journal entry is not from the goal session');
+await finished('Journaled the work run.');
+evidence.returnsAfterWork = returns().length;
+assert(returns().length === 0, 'An ordinary work run reported to Neo');
+
+for (let index = 0; index < 9; index++)
   await rpc('goal.journal.append', { ownerSessionId: owner, goalId, runId: `seed-${index}`, done: `Seed ${index}`, effect: 'None yet', worked: 'Unknown' });
-
-const wake = await until(() => transcript(owner).find((row) => row.sdk_uuid?.startsWith('schedule:') && row.content.includes('rewrite the what-works note')), 'No review wake reached the goal session');
-evidence.wake = wake;
+const wake = await until(() => transcript(owner).find((row) => isWake(row) && row.content.includes('Read the journal pages and rewrite')), 'No review wake reached the goal session');
+evidence.reviewWake = wake;
 const runId = wake.sdk_uuid;
-assert(wake.content.includes('This session owns the goal below.') && wake.content.includes(`runId ${runId}`) && !wake.content.includes('neo.home.read'), 'Wake did not carry the goal-session cycle');
+assert(wake.content.includes(`runId ${runId}`) && !wake.content.includes('neo.home.read'), 'Review wake did not carry the goal-session cycle');
 evidence.schedule = schedule();
-assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'The wake reached root Neo');
-
-const entry = await until(() => db.query('SELECT * FROM goal_journal WHERE goal_id = ? AND run_id = ?').get(goalId, runId) as Record<string, string> | null, 'Goal session did not journal its run');
+const entry = await journaled(runId);
 evidence.entry = entry;
-assert(entry.session_id === owner && entry.effect === 'Three readers arrived', 'Journal entry is not from the goal session');
+assert(entry.session_id === owner && entry.effect === 'Three readers arrived', 'Review journal entry is not from the goal session');
 const note = await until(() => db.query('SELECT works_note FROM neo_goals WHERE id = ? AND works_note IS NOT NULL').get(goalId) as { works_note: string } | null, 'Goal session did not rewrite its what-works note');
 evidence.note = note;
 const review = await until(() => transcript(root).find((row) => row.content.includes(`Review of goal ${goalId}`)), 'Neo did not receive the review summary');
 evidence.review = review;
-assert(review.content.includes(owner), 'Review summary does not name the goal session');
+await finished('Journaled the run; review sent to Neo.');
+evidence.returnsAfterReview = returns().length;
+assert(review.content.includes(owner) && returns().length === 1, 'Neo did not receive exactly the review summary');
+assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
 
 const closed = await rpc('goal.session.update', { ownerSessionId: owner, goalId, status: 'completed' });
 evidence.closed = closed;
@@ -72,5 +88,5 @@ const released = db.query('SELECT id, status FROM sessions WHERE id = ?').get(ow
 evidence.released = released;
 assert(released?.status === 'active', 'Closing the goal removed its session');
 await save();
-console.log(`PASS: own goal session ${owner} woke, journaled ${runId}, rewrote its note, sent Neo the review; closing stopped wakes and kept the session. ${run}/evidence/goal-own-session.json`);
+console.log(`PASS: own goal session ${owner} ran a work wake with nothing sent to Neo, then a review wake (${runId}) that rewrote its note and sent Neo only the review; closing stopped wakes and kept the session. ${run}/evidence/goal-own-session.json`);
 db.close();

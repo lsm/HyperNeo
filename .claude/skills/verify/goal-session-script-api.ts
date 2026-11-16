@@ -15,9 +15,10 @@ function nextBlock(body: Body) {
   const [, goalId, runId] = /goal\.journal\.append entry for goalId ([^,]+), runId ([^.\\"]+?)\./.exec(wake) ?? [];
   const step = messages.slice(wakeAt).flatMap((message) => (message.role === 'assistant' && Array.isArray(message.content) ? message.content : []))
     .filter((block) => block?.type === 'tool_use' && String(block.name).endsWith('hyperneo-operations__invoke')).length;
+  const review = wake.includes('Read the journal pages and rewrite');
   const calls = [
     { name: 'goal.journal.append', input: { goalId, runId, done: 'Posted the guide in two forums', effect: 'Three readers arrived', worked: 'Forum posts with one example' } },
-    ...(wake.includes('rewrite the what-works note')
+    ...(review
       ? [
           { name: 'goal.session.update', input: { goalId, worksNote: 'Forum posts with one example bring readers.' } },
           { name: 'session.clone.return', input: { summary: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } },
@@ -27,7 +28,7 @@ function nextBlock(body: Body) {
   const call = calls[step];
   return call
     ? { type: 'tool_use', id: `toolu_${Date.now()}_${step}`, name: invoke.name, input: call }
-    : { type: 'text', text: 'Journaled the run; review sent to Neo.' };
+    : { type: 'text', text: review ? 'Journaled the run; review sent to Neo.' : 'Journaled the work run.' };
 }
 
 createServer(async (req, res) => {
