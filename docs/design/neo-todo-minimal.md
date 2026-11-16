@@ -98,9 +98,13 @@ direct dependents, with those two options and a free reply. Later steps stay que
 them. A removed todo that names a live replacement (`replaced_by`) hands its dependents to
 it instead, as `neoTodoDependenciesAfterApproval` does today.
 
+> Changed by `neo-asks-the-human.md`: the daemon no longer opens the dependents card; a removed prerequisite wakes Neo (`todo.neo_step`, `prerequisite_gone`).
+
 **5. Hold.** Holding is a card, not a state. Hold on an unstarted todo opens a card with
 the reason and the options Start and Remove. Pause on a running todo stops its worker and
 opens the same card with Resume. An unanswered card is the hold.
+
+> Changed by `neo-asks-the-human.md`: the hold card's text is Neo's own question, not a daemon template.
 
 **6. Every live todo has a place.** A live todo is in exactly one of three places:
 
@@ -116,6 +120,8 @@ once. Neo answers the worker, marks the todo done, removes it, or asks the human
 todo is still out of place when that turn ends, the daemon opens the card itself, with the
 worker's own words as the card's document. Progress events never wake Neo.
 
+> Changed by `neo-asks-the-human.md`: the daemon no longer opens this card; the step stays Neo's and the attention ladder keeps waking Neo.
+
 `neo.todo.add` refuses a todo with neither an instruction and target nor a check, since
 nothing could ever move it.
 
@@ -125,6 +131,8 @@ Remove. Todos failing for the same cause share one card, keyed by the failure co
 place; the answer applies to all of them. A todo that only waits on its check gets a card
 once the check has not passed within its deadline, with Keep waiting, Mark done and
 Remove.
+
+> Changed by `neo-asks-the-human.md`: after the retries the todo is still marked failed, but no card opens; Neo is woken with reason `failed`.
 
 **8. One ask per matter.** `neo.ask.open` refuses a second open ask for the same matter
 and returns the existing one. A pack supplies the matter key (the coding pack: the pull
@@ -182,6 +190,8 @@ control flow is the thing being removed.
   facts in and plan out, before it is wired.
 
 ## Cards the daemon opens
+
+> Changed by `neo-asks-the-human.md`: the daemon stops opening these cards for todos; open ones keep working until they close.
 
 A daemon card is an ordinary choice card. Its text and options are status codes the
 client localizes; Neo may replace it with a better worded one. The daemon applies the
