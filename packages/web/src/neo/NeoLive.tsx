@@ -41,7 +41,7 @@ import {
   type NeoDoneTodosPage,
   neoAskEntriesInOrder,
   neoAskEntryGroup,
-  neoUnansweredCards,
+  neoOpenCards,
 } from './neo-asks.ts';
 import { invokeOperation } from '../lib/operations.ts';
 import {
@@ -133,6 +133,7 @@ export function NeoLive() {
   );
   const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 2400px)').matches);
   const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
+  const [cardDetails, setCardDetails] = useState<Record<string, NeoAskEntry>>({});
   const [cardUnavailable, setCardUnavailable] = useState(false);
   const [cardOpening, setCardOpening] = useState(false);
   const referenceRequest = useRef<object | null>(null);
@@ -318,8 +319,15 @@ export function NeoLive() {
     }
   });
   const topic = sceneEntries.some((entry) => entry.ask.topic === savedTopic) ? savedTopic : null;
-  const unanswered = neoUnansweredCards(
-    sceneGroups[0].entries.filter((entry) => !topic || entry.ask.topic === topic)
+  const openCards = neoOpenCards(
+    sceneGroups[0].entries
+      .filter((entry) => !topic || entry.ask.topic === topic)
+      .map((entry) => {
+        const read = cardDetails[entry.ask.id];
+        return read && read.ask.updatedAt >= entry.ask.updatedAt
+          ? { ...entry, questions: read.questions }
+          : entry;
+      })
   );
   const chooseTopic = (next: string | null) => {
     setSavedTopic(next);
@@ -1069,12 +1077,12 @@ export function NeoLive() {
           {!workQuery.trim() && (
             <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
           )}
-          {!workQuery.trim() && unanswered.length > 0 && (
+          {!workQuery.trim() && openCards.length > 0 && (
             <section aria-label={t('live.group.cards')} class="mt-6 space-y-3" data-neo-cards>
               <h2 class="text-xs font-medium text-fg-muted">
-                {t('live.group.cards')} · {unanswered.length}
+                {t('live.group.cards')} · {openCards.length}
               </h2>
-              {unanswered.map(({ entry, question }) => (
+              {openCards.map(({ entry, question }) => (
                 <div key={question.id} class="rounded-2xl border border-line p-4">
                   <p class="break-words text-xs text-fg-muted">{entry.ask.title}</p>
                   <QuestionBox
@@ -1117,7 +1125,10 @@ export function NeoLive() {
                     onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
                     onControl={(todo, control) => neo.controlTodo(todo, control)}
                     onReply={replyToQuestion}
-                    hideUnanswered={group.key === 'attention'}
+                    hideOpenCards={group.key === 'attention'}
+                    onDetails={(read) =>
+                      setCardDetails((known) => ({ ...known, [read.ask.id]: read }))
+                    }
                     onReplyAsk={
                       ready
                         ? () =>

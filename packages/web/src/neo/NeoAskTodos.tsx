@@ -644,10 +644,12 @@ export function NeoAskTodos({
   onTopic,
   onControl,
   onDesktopControl,
-  hideUnanswered,
+  hideOpenCards,
+  onDetails,
 }: {
   entry: NeoAskEntry;
-  hideUnanswered?: boolean;
+  hideOpenCards?: boolean;
+  onDetails?: (entry: NeoAskEntry) => void;
   onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
@@ -734,6 +736,7 @@ export function NeoAskTodos({
         if (pendingDetail.current !== ticket) return;
         pendingDetail.current = null;
         setDetails(value);
+        onDetails?.(value);
         setReadRevision(Math.max(ticket.revision, value.ask.updatedAt));
       },
       (cause) => {
@@ -752,7 +755,7 @@ export function NeoAskTodos({
     readRevision,
   ]);
   const asked = entry.questions
-    .filter((question) => question.state === 'open' && (!hideUnanswered || !!question.heldAt))
+    .filter((question) => question.state === 'open' && !hideOpenCards)
     .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt);
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
