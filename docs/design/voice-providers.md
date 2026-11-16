@@ -21,7 +21,8 @@ all.
 
 Keys: there is one key, stored as the credential `voice-transcription` and sent only to
 the batch endpoint it was saved for (`resolveApiKey`). The live stream reuses that key
-(`voice/stream-relay.ts`), so a live service on another host gets no key. Text to speech
+(`voice/stream-relay.ts` checks it against the batch endpoint, not the live address), so a live
+service on another host is sent the batch host's key. Text to speech
 sends none.
 
 So today a Deepgram user cannot transcribe recordings, an OpenAI user has no live voice,
@@ -39,11 +40,16 @@ provider, address and model or voice:
 | Live voice to text | `deepgram` (exists) | as today |
 | | `openai-realtime` | the Realtime API in transcription mode: `input_audio_buffer.append` frames, transcript delta and completed events. It takes 24 kHz PCM, so the daemon resamples the 16 kHz capture. |
 | Text to speech | `openai` (OpenAI and self-hosted servers that copy it) | `POST /v1/audio/speech`, `response_format: pcm` (24 kHz, the rate clients already play, `neo/speech.ts`) |
-| | `deepgram` | `POST /v1/speak?model=…&encoding=linear16&sample_rate=24000` |
+| | `deepgram` | `POST /v1/speak?model=…&encoding=linear16&sample_rate=24000&container=none`, so the body is raw PCM like the `openai` adapter's, not WAV (`neo/speech-audio.ts` accepts only `audio/pcm`) |
 
 Each provider is one small adapter in the daemon behind the seam that already exists for
 live voice (`StreamProtocol` in `voice/stream-protocols.ts`). There is one adapter
-interface for recorded voice and one for speech. An adapter sends only the fields its
+interface for recorded voice and one for speech. The live seam gains one optional hook: a
+protocol can mark a message as the end of the utterance. Today a stream finishes only when
+the service closes the socket (`voice/asr-relay-core.ts`); the Realtime API instead sends
+`conversation.item.input_audio_transcription.completed` and stays open, so without the hook
+every final transcript would time out and fall back to batch. On that message the relay
+settles the request and closes the socket itself. An adapter sends only the fields its
 service defines; fields that only one self-hosted server knows, like `language: 'auto'`,
 stay in that server's preset.
 
@@ -51,7 +57,10 @@ stay in that server's preset.
 that host uses it. One OpenAI key then serves all three OpenAI parts, and one Deepgram key
 serves Deepgram's recorded, live and speech addresses. A key is still never sent to another
 host, and never over plain HTTP or WS. The existing `voice-transcription` credential is read
-as the key for the host of the current batch endpoint, so a saved key keeps working.
+as the key for the host of its saved `apiKeyEndpoint`, not of the current batch endpoint:
+the two can already differ (the endpoint can change without a new key), and today such a
+key is not sent. A legacy key stored inline in the settings belongs to the current batch
+endpoint's host, as it does today.
 
 **Voices.** The speech part has a voice field. The adapter offers a list: OpenAI's published
 voices; Deepgram's from its model names; for a self-hosted server, its own
@@ -92,19 +101,25 @@ Each slice is one PR from `dev` (the repository's default and target branch), ab
 to 200 production lines, failing tests first.
 
 1. **Settings shape and keys by host.** The three parts in `VoiceSettings`, the upgrade
-   mapping, and key lookup by host. No new providers yet; behaviour is unchanged.
+   mapping, and key lookup by host. No new providers yet; behaviour is unchanged except that the live
+   stream is sent a key only when its host matches the key's host.
 2. **Speech from settings.** Text to speech reads the speech part (OpenAI shape, with
-   key), the environment variable becomes the fallback, and the voice list comes from the
-   adapter.
+   key), the environment variable becomes the fallback, the voice list comes from the
+   adapter, and the `speech_backend_not_configured` refusal points to the voice settings
+   instead of the variable.
 3. **Deepgram recorded voice and Deepgram speech.** Two adapters.
-4. **OpenAI Realtime live voice.** One adapter, with 16 to 24 kHz resampling.
+4. **OpenAI Realtime live voice.** One adapter, with 16 to 24 kHz resampling, and the
+   end-of-utterance hook in the live relay.
 5. **The settings page.** Three blocks, presets, the three tests.
 
 Acceptance, as tests against local fake servers, one per row:
 
 | Case | Expected |
 |---|---|
-| Settings saved before this change | same requests to the same addresses with the same key |
+| Settings saved before this change | same requests to the same addresses with the same key, except a live address on another host, which gets no key |
+| Saved key whose `apiKeyEndpoint` host differs from the current batch endpoint | after the upgrade the key is still not sent to the batch endpoint |
+| Fake Realtime socket that sends `completed` and stays open | the final transcript arrives without the timeout and the relay closes the socket; an error or a missing `completed` still cleans up |
+| Deepgram speech against a fake server | clients receive raw PCM, no `RIFF` header |
 | Each provider of each part | the request shape and auth header that service documents |
 | One key, three OpenAI parts | the key is sent to all three; never to a part on another host |
 | Speech part empty, `HYPERNEO_SPEECH_URL` set | speech works as today |
