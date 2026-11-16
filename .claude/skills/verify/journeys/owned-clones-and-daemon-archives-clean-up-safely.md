@@ -13,7 +13,7 @@ the coding pack's real execution preparation twice into the data dir's
 clone pushes its worker branch; the other keeps a commit on a local branch while
 HEAD sits on the published target. Both go through `cleanupOwnedWorktree`.
 
-It then boots an isolated daemon with its job processor running, places two
+It then boots an isolated daemon with its job processor running, places three
 HyperNeo session worktrees through the daemon's own worktree manager, and seeds a
 done todo for each. One worktree is clean, one has an uncommitted file, and one is
 clean with a running process inside. It moves the pending driver refresh job to now
