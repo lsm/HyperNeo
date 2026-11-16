@@ -231,6 +231,31 @@ test('the snapshot makes the same number of reads however many cards are open', 
   expect(many.reads).toBe(one.reads);
 });
 
+test('the snapshot makes the same number of reads however many approved todos await Neo', async () => {
+  const sql = db.getDatabase();
+  const readsWith = async (awaiting: number) => {
+    sql.exec("UPDATE neo_todos SET state = 'done', approved_at = 1");
+    sql
+      .prepare("UPDATE neo_todos SET state = 'todo' WHERE id IN (SELECT value FROM json_each(?))")
+      .run(JSON.stringify(Array.from({ length: awaiting }, (_, i) => `todo-${i}`)));
+    observer.reset();
+    const value = read(await snapshot());
+    return {
+      reads: observer.queries.length,
+      packReads: observer.queries.filter((query) =>
+        query.sql.includes('from pack_coding_todo_prs where todo_id in')
+      ).length,
+      neo: value.humanQueue?.items.filter((item) => 'owner' in item && item.owner === 'neo').length,
+    };
+  };
+  await readsWith(0);
+  const one = await readsWith(1);
+  const many = await readsWith(19);
+  expect([one.neo, many.neo]).toEqual([1, 19]);
+  expect([one.packReads, many.packReads]).toEqual([1, 1]);
+  expect(many.reads).toBe(one.reads);
+});
+
 test('overlapping snapshots build once and the next read sees later edits', async () => {
   const values = (await Promise.all(Array.from({ length: 8 }, () => snapshot()))).map(read);
   expect(

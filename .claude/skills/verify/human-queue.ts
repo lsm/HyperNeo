@@ -34,7 +34,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
   const store = new NeoAskTodoRepository(db);
   const ask = (id: string, createdAt: number) => store.openAsk({ id, sessionId: 'synthetic-neo', projectId: null, originMessageId: null, title: id, request: 'Synthetic request', createdAt });
-  const todo = (id: string, askId: string, dependsOn: string[] = []) => store.addTodo(id, askId, { approvedAt: 1, title: `Title ${id}`, doneWhen: 'Done', instruction: null, check: null, named: null, dependsOn }, 1);
+  const todo = (id: string, askId: string, dependsOn: string[] = [], approvedAt: number | null = 1) => store.addTodo(id, askId, { approvedAt, title: `Title ${id}`, doneWhen: 'Done', instruction: null, check: null, named: null, dependsOn }, 1);
   const card = (id: string, askId: string, todoId: string) => store.askQuestion(id, askId, { text: `Question ${id}?`, kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null, todoId }, 2);
   ask('ask-a', 1);
   ask('ask-b', 2);
@@ -42,19 +42,21 @@ try {
   todo('first', 'ask-a');
   todo('second', 'ask-a', ['first']);
   todo('aside', 'ask-b');
+  todo('unapproved', 'ask-b', [], null);
   card('waiting-card', 'ask-a', 'asked');
   card('held-card', 'ask-b', 'aside');
   await rpc('neo.question.hold', { questionId: 'held-card', held: true, requestId: crypto.randomUUID() });
   const { humanQueue } = await rpc('neo.snapshot', {});
   const items = Object.fromEntries(humanQueue.items.map((item: { questionId?: string; todoId?: string }) => [item.questionId ?? item.todoId, item]));
-  assert.deepEqual(Object.keys(items).sort(), ['first', 'held-card', 'second', 'waiting-card'], 'covered todos appear only under their cards');
+  assert.deepEqual(Object.keys(items).sort(), ['first', 'held-card', 'second', 'unapproved', 'waiting-card'], 'covered todos appear only under their cards');
   assert.deepEqual(items['waiting-card'], { state: 'waiting', askId: 'ask-a', questionId: 'waiting-card', text: 'Question waiting-card?', todos: [{ id: 'asked', title: 'Title asked' }] });
   assert.equal(items['held-card'].state, 'held');
   assert.deepEqual(items.first, { state: 'progress', askId: 'ask-a', todoId: 'first', title: 'Title first', owner: 'neo' });
   assert.equal(items.second.owner, 'prerequisite', "a todo waiting on an unfinished prerequisite is the prerequisite's step");
-  assert.deepEqual(humanQueue.counts, { 'ask-a': { waiting: 1, held: 0, progress: 2 }, 'ask-b': { waiting: 0, held: 1, progress: 0 } });
+  assert.equal(items.unapproved.owner, 'neo', 'an unapproved todo is Neo\'s to review');
+  assert.deepEqual(humanQueue.counts, { 'ask-a': { waiting: 1, held: 0, progress: 2 }, 'ask-b': { waiting: 0, held: 1, progress: 1 } });
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts }, null, 2));
-  console.log('PASS: the RPC snapshot lists the waiting card, the held card and each uncovered todo with its next-step owner (neo, prerequisite), counted by ask');
+  console.log('PASS: the RPC snapshot lists the waiting card, the held card and each uncovered todo with its next-step owner (neo, prerequisite, unapproved is neo), counted by ask');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));

@@ -7,12 +7,13 @@ mock, or 8000/8001 preflight is needed.
 The helper owns a real daemon on an ephemeral port and a fresh synthetic DB.
 It seeds two asks: one with a card on one todo, a todo with no worker and a
 todo that depends on it; the other with a card the human holds through
-`neo.question.hold`. It reads `neo.snapshot` over actual WebSocket RPC as the
-local user.
+`neo.question.hold` and a todo nobody approved yet. It reads `neo.snapshot`
+over actual WebSocket RPC as the local user.
 
 `humanQueue.items` lists the waiting card with its todo, the held card, and
 each uncovered todo as in progress: the one with no worker is Neo's step, the
-dependent one is its prerequisite's. A todo under a card is not listed again.
+dependent one is its prerequisite's, and the unapproved one is Neo's to
+review. A todo under a card is not listed again.
 `humanQueue.counts` gives waiting, held and progress per ask.
 
 `evidence/observed.json` keeps every RPC reply; `evidence/cleanup.json`

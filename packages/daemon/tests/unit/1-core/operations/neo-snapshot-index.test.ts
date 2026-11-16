@@ -353,3 +353,42 @@ test('the RPC snapshot carries the human queue with each in-progress todo owner'
   });
   expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
 });
+
+test('an unapproved todo in the human queue is Neo’s step to review', async () => {
+  seed(1);
+  const { humanQueue } = await snapshot(rpc);
+  expect(humanQueue?.items).toMatchObject([{ state: 'progress', todoId: 'todo-0', owner: 'neo' }]);
+});
+
+test('a card written during the snapshot does not leave its todo owned by the human', async () => {
+  seed(1);
+  db.getDatabase().exec("UPDATE neo_todos SET approved_at = 1 WHERE id = 'todo-0'");
+  const read = service.readWorker.bind(service);
+  let wrote = false;
+  spyOn(service, 'readWorker').mockImplementation(async (ref) => {
+    if (!wrote) {
+      wrote = true;
+      service.todos.askQuestion(
+        'late-card',
+        'index-0',
+        {
+          text: 'Late?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          document: null,
+          todoId: 'todo-0',
+        },
+        2
+      );
+    }
+    return read(ref);
+  });
+  const { humanQueue } = await snapshot(rpc);
+  expect(wrote).toBe(true);
+  expect(humanQueue?.items).toEqual([
+    expect.objectContaining({ state: 'progress', todoId: 'todo-0', owner: 'neo' }),
+  ]);
+});

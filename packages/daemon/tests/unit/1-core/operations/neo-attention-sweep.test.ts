@@ -143,7 +143,12 @@ describe('the Neo attention sweep', () => {
 
   test('an idle worker with an open pull request is the pack’s', async () => {
     started(add('todo-1'), 'done');
-    packs = [{ id: 'coding', todos: { waiting: () => true } } as never];
+    packs = [
+      {
+        id: 'coding',
+        todos: { waiting: async (todos: NeoTodo[]) => new Set(todos.map((todo) => todo.id)) },
+      } as never,
+    ];
     await sweep(T0);
     expect(wakes()).toEqual([]);
   });

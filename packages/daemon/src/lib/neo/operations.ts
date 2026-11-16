@@ -95,7 +95,6 @@ import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
-import { neoHumanQueue } from './human-queue.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -447,6 +446,7 @@ export function createNeoOperations(
       10,
       true
     );
+    const humanQueue = detailed ? await service.humanQueue() : null;
     const { todoAsks, pinned } = neoSnapshotAskEntries(
       projectNeoAskEntries(asks, facts, service.installedPacks()),
       detailed ? 20 : undefined
@@ -566,9 +566,7 @@ export function createNeoOperations(
       preferences: service.modelPreference(),
       ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
-      ...(detailed
-        ? { humanQueue: neoHumanQueue({ ...openWork, owners: await service.stepOwners() }) }
-        : {}),
+      ...(humanQueue ? { humanQueue } : {}),
       ...counts,
       historyCursor,
       ...(!detailed && Object.keys(more).length ? { more } : {}),
