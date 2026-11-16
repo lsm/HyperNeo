@@ -34,7 +34,7 @@ const Owner = {
     .min(1)
     .optional()
     .describe(
-      'Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.'
+      'Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.'
     ),
 };
 
@@ -237,6 +237,7 @@ export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
+  readonly isChildSession: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
@@ -245,6 +246,7 @@ export function createSessionGoalOperations({
   goals,
   schedules,
   sessionExists,
+  isChildSession,
   startSession,
   audit,
 }: SessionGoalDependencies) {
@@ -271,6 +273,14 @@ export function createSessionGoalOperations({
         const cadence = requireValidCadence(input.cadence);
         return 'reason' in cadence ? refuse(cadence.reason) : { value: owned };
       },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (parent: string, input: z.infer<typeof Create>) =>
+        input.ownSession && isChildSession(parent)
+          ? refuse('parent_is_child: a goal session must start under a top-level session.')
+          : { value: parent },
       ['outcome', 'input'],
       'result:outcome'
     )

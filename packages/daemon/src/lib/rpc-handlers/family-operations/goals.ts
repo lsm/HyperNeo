@@ -23,6 +23,7 @@ export function registerSessionGoalOperations(
     goals,
     schedules,
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
+    isChildSession: (sessionId) => !!context.deps.db.getSession(sessionId)?.parentSessionId,
     startSession: (parentSessionId, title) =>
       context.deps.sessionManager.createSession({
         workspacePath: context.deps.db.getSession(parentSessionId)?.workspacePath,
