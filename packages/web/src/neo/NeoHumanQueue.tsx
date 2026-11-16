@@ -18,14 +18,13 @@ const STATES: NeoHumanQueueState[] = ['waiting', 'held', 'progress'];
 const SHOWN_ASKS = 3;
 const chip = 'rounded-full border px-3 py-1 text-sm';
 const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
-  item.askId === focus.askId &&
-  (focus.questionId
+  focus.questionId
     ? 'questionId' in item && item.questionId === focus.questionId
     : focus.todoId
       ? 'todoId' in item
         ? item.todoId === focus.todoId
         : item.todos.some((todo) => todo.id === focus.todoId)
-      : true);
+      : item.askId === focus.askId;
 
 export const neoHumanQueueHolds = (queue: Queue, focus: NeoWorkFocus) =>
   queue.items.some((item) => holds(item, focus));
@@ -85,8 +84,8 @@ export function NeoHumanQueue({
     const request = requests.current.get(askId);
     return !!request && !request.pending && current(request) && !card(askId);
   };
-  const focusReady = !!focus && !!card(focus.askId);
   const focused = focus && queue.items.find((item) => holds(item, focus));
+  const focusReady = !!focused && !!card(focused.askId);
   const outside = focus && !focused ? focus.askId : null;
   useEffect(() => {
     if (ask !== null && !queue.counts[ask]) setAsk(null);
@@ -117,7 +116,7 @@ export function NeoHumanQueue({
       target.classList.add('ring-2', 'ring-accent');
       target.focus({ preventScroll: true });
       target.scrollIntoView?.({ block: 'center' });
-      if (focusReady || failed(focus.askId)) request.done = true;
+      if (focusReady || failed(focused.askId)) request.done = true;
       restore = () => {
         target.classList.remove('ring-2', 'ring-accent');
         if (prior === null) target.removeAttribute('tabindex');

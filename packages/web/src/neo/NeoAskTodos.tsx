@@ -529,7 +529,7 @@ export function QuestionBox({
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
       <div class="neo-time-line neo-question-time">
-        <span>{t(hold?.held ? 'queue.onHold' : 'time.waiting')}</span>
+        <span>{t((hold ? hold.held : question.heldAt) ? 'queue.onHold' : 'time.waiting')}</span>
         <NeoTime at={question.createdAt} />
       </div>
       {question.sourceSession?.link && onOpen && (
@@ -643,6 +643,7 @@ export function NeoAskTodos({
   disabled,
   onAnswer,
   onReply,
+  onHold,
   onReplyAsk,
   onOpen,
   onSettle,
@@ -659,6 +660,7 @@ export function NeoAskTodos({
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
+  onHold?: (questionId: string, held: boolean) => void;
   onReplyAsk?: () => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
@@ -985,6 +987,12 @@ export function NeoAskTodos({
           disabled={disabled}
           onAnswer={(answer) => onAnswer(question.id, answer)}
           onReply={onReply ? () => onReply(question) : undefined}
+          hold={
+            onHold && {
+              held: !!question.heldAt,
+              toggle: () => onHold(question.id, !question.heldAt),
+            }
+          }
         />
       ))}
       {listed.length > 0 && (
