@@ -172,7 +172,13 @@ function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
   return outcome.value as NeoSnapshot & { todoAsks: NonNullable<NeoSnapshot['todoAsks']> };
 }
 
-test('a 231-todo snapshot reads its rows and step owners in six child reads', async () => {
+const childTables = () =>
+  observer.queries
+    .filter((query) => query.child)
+    .map((query) => query.sql.match(/from (neo_\w+) where/)?.[1])
+    .sort();
+
+test('a 231-todo snapshot reads todos, cards and sessions once for its rows and once for step owners', async () => {
   const value = read(await snapshot());
   const todos = value.todoAsks.flatMap((entry) => entry.todos);
   expect(value.todoAsks).toHaveLength(60);
@@ -183,7 +189,46 @@ test('a 231-todo snapshot reads its rows and step owners in six child reads', as
     link: '/session/synthetic-230',
     instruction: null,
   });
-  expect(observer.queries.filter((query) => query.child)).toHaveLength(6);
+  expect(childTables()).toEqual([
+    'neo_questions',
+    'neo_questions',
+    'neo_todo_sessions',
+    'neo_todo_sessions',
+    'neo_todos',
+    'neo_todos',
+  ]);
+});
+
+test('the snapshot makes the same number of reads however many cards are open', async () => {
+  const readsWith = async (cards: number) => {
+    for (let i = 0; i < cards; i++)
+      service.todos.askQuestion(
+        `open-card-${cards}-${i}`,
+        `ask-${18 - i}`,
+        {
+          text: 'Synthetic open card?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          document: null,
+          todoId: `todo-${i}`,
+        },
+        2000
+      );
+    observer.reset();
+    const value = read(await snapshot());
+    return {
+      reads: observer.queries.length,
+      cards: value.humanQueue?.items.filter((item) => 'questionId' in item).length,
+    };
+  };
+  await readsWith(0);
+  const one = await readsWith(1);
+  const many = await readsWith(19);
+  expect([one.cards, many.cards]).toEqual([1, 20]);
+  expect(many.reads).toBe(one.reads);
 });
 
 test('overlapping snapshots build once and the next read sees later edits', async () => {
