@@ -7,6 +7,9 @@ import {
 } from '../../storage/repositories/neo-todo-move-worker.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+
+type RetargetResult = { ok: false; reason: string } | { ok: true; todo?: NeoTodo };
 
 export function createNeoTodoRetarget(
   write: RunDbOp,
@@ -57,16 +60,14 @@ export function createNeoTodoRetarget(
       ['move', 'reopened'],
       'move'
     )
-    .endAsync('move') as (
-    move: NeoTodoMove
-  ) => Promise<{ ok: boolean; reason?: string; todo?: unknown } | null>;
+    .endAsync('move') as (move: NeoTodoMove) => Promise<RetargetResult | null>;
   return {
-    async retarget(todoId: string, fromRef: WorkRef) {
+    async retarget(todoId: string, fromRef: WorkRef): Promise<RetargetResult> {
       const claim = (await write(neoTodoMoveWrites, {
         method: 'claim',
         args: [todoId, fromRef, Date.now()],
       })) as ReturnType<InstanceType<typeof neoTodoMoveWrites.Repository>['claim']>;
-      if ('reason' in claim) return { ok: false, reason: claim.reason };
+      if (claim.reason) return { ok: false, reason: claim.reason };
       return (
         (claim.move && (await resume(claim.move))) ?? {
           ok: true,
