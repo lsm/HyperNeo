@@ -91,9 +91,11 @@ The install writes the binary's path, version and hash into global settings.
 There is no package-manager path. OXAP is not published on npm, PyPI or
 crates.io, so the GitHub release is the only source.
 
-This closes a gap the old path had. Before, the human picked a file and its
-hash was read on save. That only noticed a binary swapped later; it could not
-prove the first file came from the OXAP release. Now the first download must
+This closes a gap the old path had. Today the human supplies the binary path,
+version and SHA-256 by hand through the `HYPERNEO_OAP_*` env vars
+(`config.ts`), and `prepareOapBinary` re-checks that hash on each hub start.
+That only notices a binary swapped later; it cannot prove the first file came
+from the OXAP release. Now the first download must
 match the checksum that release publishes.
 
 ### Adding a harness
