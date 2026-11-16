@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import {
   cleanupOwnedWorktree,
@@ -180,5 +180,16 @@ describe('archive removes the worker work folders', () => {
     expect(await cleanupOwnedWorktree(folder, [workers])).toMatchObject({ removed: true });
     expect(existsSync(places.builds)).toBe(false);
     expect(readFileSync(join(outside, 'kept'), 'utf8')).toBe('kept');
+  });
+
+  test('a linked parent folder never leads cleanup into evidence', async () => {
+    const { workers, folder, places } = setup('parent-linked');
+    const buildsParent = dirname(places.builds);
+    rmSync(buildsParent, { recursive: true, force: true });
+    symlinkSync(dirname(places.evidence), buildsParent);
+    expect(await cleanupOwnedWorktree(folder, [workers])).toMatchObject({ removed: true });
+    expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
+    expect(existsSync(places.scratch)).toBe(false);
+    expect(existsSync(places.ghConfig)).toBe(false);
   });
 });
