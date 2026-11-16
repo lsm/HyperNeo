@@ -1,5 +1,6 @@
 process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -20,8 +21,16 @@ const evidence: Record<string, unknown> = {};
 try {
   assert.notEqual(app.server.port, 8399);
   const now = new Date().toISOString();
-  const workers = { released: crypto.randomUUID(), named: crypto.randomUUID() };
-  for (const id of Object.values(workers)) await app.db.createSession({ id, title: 'Release proof', workspacePath: run,
+  const workers = { released: crypto.randomUUID(), named: crypto.randomUUID(), unsaved: crypto.randomUUID() };
+  const unsaved = join(run, 'unsaved');
+  mkdirSync(unsaved);
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Proof', '-c', 'user.email=proof@example.com', ...args], { cwd: unsaved, stdio: 'ignore' });
+  git('init', '-q');
+  writeFileSync(join(unsaved, 'a.txt'), 'a');
+  git('add', 'a.txt');
+  git('commit', '-q', '--no-gpg-sign', '-m', 'a');
+  writeFileSync(join(unsaved, 'draft.txt'), 'draft');
+  for (const [key, id] of Object.entries(workers)) await app.db.createSession({ id, title: 'Release proof', workspacePath: key === 'unsaved' ? unsaved : run,
     createdAt: now, lastActiveAt: now, status: 'active', config: { model: 'claude-sonnet-4-5-20250929', maxTokens: 8192, temperature: 1 },
     metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const todos = new NeoAskTodoRepository(raw);
@@ -41,11 +50,13 @@ try {
     await new Promise((done) => setTimeout(done, 500));
   evidence.releasedStatus = await status(workers.released);
   evidence.namedStatus = await status(workers.named);
+  evidence.unsavedStatus = await status(workers.unsaved);
   evidence.releasedFacts = raw.prepare("SELECT todo_id, value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'").all();
   assert.equal(evidence.releasedStatus, 'archived');
   assert.equal(evidence.namedStatus, 'active');
+  assert.equal(evidence.unsavedStatus, 'active');
   assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id), ['todo-released']);
-  console.log('PASS: the daemon refresh job archived the worker a finished todo started, recorded it once, and kept the human-named worker active.');
+  console.log('PASS: the daemon refresh job archived the worker a finished todo started, recorded it once, and kept the human-named worker and the worker with unsaved work active.');
 } finally {
   writeFileSync(join(run, 'evidence/todo-release.json'), JSON.stringify(evidence, null, 2));
   await app.cleanup();
