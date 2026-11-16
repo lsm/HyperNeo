@@ -11,6 +11,10 @@ const place = { machine: 'fixture', name: 'Fixture' };
 const standard = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
 const preferred = { adapter: 'codex-desktop', place, model: 'gpt-6', effort: 'high' };
 const repo = 'synthetic/preferences';
+const plan = (...args: Parameters<typeof planCodingStageTarget>) => {
+  const result = planCodingStageTarget(...args);
+  return result.ok ? { ok: true, ...result.choices[0] } : result;
+};
 function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -35,7 +39,7 @@ describe('coding stage target preferences', () => {
           candidates: [standard, preferred],
           body: 'Agent: claude-sonnet-5-5 (effort: high) via claude-code',
         };
-        expect(planCodingStageTarget(db, input, true)).toEqual({
+        expect(plan(db, input, true)).toEqual({
           ok: true,
           target: standard,
           fallback: [],
@@ -49,7 +53,7 @@ describe('coding stage target preferences', () => {
           effort: preferred.effort,
         }))
           set(`${stage}.${field}`, value);
-        expect(planCodingStageTarget(db, input, true)).toEqual({
+        expect(plan(db, input, true)).toEqual({
           ok: true,
           target: preferred,
           fallback: [],
@@ -63,7 +67,7 @@ describe('coding stage target preferences', () => {
     const { db, set } = setup();
     try {
       set('verify.model', 'not-available');
-      const result = planCodingStageTarget(
+      const result = plan(
         db,
         { repo, stage: 'verify', candidates: [standard, preferred], body: '' },
         true
@@ -88,14 +92,14 @@ describe('coding stage target preferences', () => {
       set('write.model', standard.model, '');
       set('write.model', preferred.model, 'Synthetic/Preferences');
       expect(
-        planCodingStageTarget(
+        plan(
           db,
           { repo, stage: 'write', candidates: [standard, preferred], body: '' },
           true
         )
       ).toEqual({ ok: true, target: preferred, fallback: [] });
       expect(
-        planCodingStageTarget(
+        plan(
           db,
           { repo: 'other/repo', stage: 'write', candidates: [preferred, standard], body: '' },
           true
@@ -110,7 +114,7 @@ describe('coding stage target preferences', () => {
     try {
       set('review.model', preferred.model);
       const otherHarness = { ...standard, adapter: 'claude-code' };
-      const result = planCodingStageTarget(
+      const result = plan(
         db,
         {
           repo,
@@ -133,6 +137,25 @@ describe('coding stage target preferences', () => {
           {
             repo,
             stage: 'review',
+            candidates: [preferred, otherHarness, { ...standard, adapter: 'claude-desktop' }],
+            body: '',
+          },
+          false
+        )
+      ).toMatchObject({
+        ok: true,
+        choices: [
+          { target: preferred, fallback: [] },
+          { target: otherHarness },
+          { target: { ...standard, adapter: 'claude-desktop' } },
+        ],
+      });
+      expect(
+        plan(
+          db,
+          {
+            repo,
+            stage: 'review',
             candidates: [preferred],
             body: 'Agent: gpt-6-sol (effort: high) via other',
           },
@@ -140,14 +163,14 @@ describe('coding stage target preferences', () => {
         )
       ).toMatchObject({ ok: false, reason: expect.stringContaining('same_model') });
       expect(
-        planCodingStageTarget(
+        plan(
           db,
           { repo, stage: 'review', candidates: [preferred], body: '' },
           true
         )
       ).toMatchObject({ ok: false, reason: expect.stringContaining('author_provenance_required') });
       expect(
-        planCodingStageTarget(
+        plan(
           db,
           { repo, stage: 'review', candidates: [preferred], body: '' },
           false
@@ -157,14 +180,18 @@ describe('coding stage target preferences', () => {
       db.close();
     }
   });
-  test('declares all nine fields as bounded text, including vendor model IDs and explicit defaults', () => {
+  test('declares only the three harness fields as bounded text; model and effort moved to routes', () => {
     const pack = {
       id: 'coding',
       describe: '',
       instructions: () => null,
       preferences: CODING_STAGE_PREFERENCES,
     };
-    expect(Object.keys(pack.preferences)).toHaveLength(9);
+    expect(Object.keys(pack.preferences)).toEqual([
+      'write.harness',
+      'review.harness',
+      'verify.harness',
+    ]);
     for (const key of Object.keys(pack.preferences)) {
       for (const value of ['', 'openai/gpt-6', 'high'])
         expect(

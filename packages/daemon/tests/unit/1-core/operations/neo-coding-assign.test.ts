@@ -15,6 +15,8 @@ import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/p
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
 import { createCodingAssignmentOperation } from '../../../../src/lib/neo/packs/coding/assign-operation.ts';
+import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
+import type { NeoLine, NeoLineScope } from '../../../../src/lib/neo/pack-contract.ts';
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
 import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
@@ -37,7 +39,8 @@ const author = { adapter: write.adapter, place, model: 'gpt-6' };
 const reviewer = { adapter: 'claude-code', place, model: 'claude-opus-5-5' };
 type Start = z.infer<typeof StartWorkInputSchema>;
 function fixture(
-  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome
+  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome,
+  lines?: CodingLines
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
   const pr = {
@@ -97,6 +100,7 @@ function fixture(
       ledger,
       todos,
       review: runCodingReview,
+      ...(lines ? { lines } : {}),
       invoke: async (name, input) => {
         if (name === 'work.stop') {
           stops.push(input);
@@ -142,6 +146,46 @@ function fixture(
 }
 
 describe('coding actor assignments', () => {
+  test('review ranks only the eligible candidates as coding.review and starts the first ranked one', async () => {
+    const second = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' };
+    const calls: { kind: string; candidates: readonly NeoLine[]; scope: NeoLineScope }[] = [];
+    const f = fixture(undefined, {
+      models: () => [],
+      rank: async (kind, candidates, scope) => {
+        calls.push({ kind, candidates, scope });
+        return {
+          ranked: [...candidates].reverse().map((line) => ({ line })),
+          skipped: [],
+          exhausted: false,
+        };
+      },
+    });
+    expect(await f.assign({ candidates: [author, reviewer, second] })).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].kind).toBe('coding.review');
+    expect(calls[0].scope).toEqual({ repo: 'synthetic/actors' });
+    expect(calls[0].candidates.map((line) => line.model).sort()).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+    ]);
+    expect(f.starts.map((start) => start.model)).toEqual([calls[0].candidates.at(-1)!.model]);
+  });
+  test('a review with no usable model line is refused with the skip reasons and starts nothing', async () => {
+    const f = fixture(undefined, {
+      models: () => [],
+      rank: async (_kind, candidates) => ({
+        ranked: [],
+        skipped: candidates.map((line) => ({ line, reason: 'held until later' })),
+        exhausted: true,
+      }),
+    });
+    expect(await f.assign()).toEqual({
+      ok: false,
+      reason:
+        'No usable model line for coding.review: claude-code/claude-opus-5-5 via claude-code: held until later.',
+    });
+    expect(f.starts).toEqual([]);
+  });
   test.each([
     'unsupported_model',
     'unsupported_effort',

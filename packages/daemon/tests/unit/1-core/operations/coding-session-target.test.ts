@@ -9,6 +9,8 @@ import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/s
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
+import { rankLines } from '../../../../src/lib/neo/packs/model-routing/rank.ts';
 import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
@@ -90,12 +92,58 @@ function setup() {
       },
     };
   };
-  const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
-    decideCodingSessionTarget(db, item, target, status);
+  const decide = (
+    item: NeoTodo,
+    target: Parameters<typeof decideCodingSessionTarget>[2],
+    lines?: CodingLines
+  ) => decideCodingSessionTarget(db, item, target, status, lines);
   return { db, todo, worked, live, decide };
 }
 
 describe('coding session target decision', () => {
+  const routed = (kinds: string[], held: boolean): CodingLines => ({
+    models: () => [],
+    rank: async (kind, candidates, scope) => {
+      kinds.push(`${kind} ${scope.repo ?? ''}`);
+      return rankLines({
+        kind,
+        candidates,
+        scope,
+        prefs: { routes: [], rules: [] },
+        holds: held
+          ? [{ provider: 'claude-desktop', model: '', reason: 'rate_limit', retryAt: 9e15 }]
+          : [],
+        usage: {},
+        availability: { 'claude-desktop': 'ready' },
+        now: 1,
+      });
+    },
+  });
+
+  test('a start is ranked again as coding.write, and a held line waits with the reason', async () => {
+    const { todo, decide } = setup();
+    const kinds: string[] = [];
+    expect(await decide(todo(), start('backend'), routed(kinds, false))).toEqual({
+      value: start('backend'),
+    });
+    expect(await decide(todo(), start('backend'), routed(kinds, true))).toEqual({
+      reason: `No usable model line for coding.write: claude-desktop via claude-desktop: held (rate_limit) until ${new Date(9e15).toISOString()}.`,
+    });
+    expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
+  });
+
+  test('a send to an existing session is not ranked', async () => {
+    const { todo, worked, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    const kinds: string[] = [];
+    expect(await decide(todo(), start(), routed(kinds, true))).toEqual({
+      value: { verb: 'send', ref: ref('backend-1') },
+    });
+    expect(kinds).toEqual([]);
+  });
+
   test('leaves a todo outside any coding repository to the target Neo chose', async () => {
     const { todo, decide } = setup();
     expect(await decide(todo('feature', ''), start('docs'))).toEqual({ value: start('docs') });
