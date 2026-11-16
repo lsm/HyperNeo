@@ -99,7 +99,10 @@ try {
   );
   assert.deepEqual(incident, { since: 99, nudges: 0 });
   evidence.newerActivityPreserved = true;
-  assert.equal(await gateway.call(codingTodoPrReads, 'isWaiting', 'bun-waiting-missing'), false);
+  assert.deepEqual(
+    [...(await gateway.call(codingTodoPrReads, 'waiting', ['bun-waiting-missing']))],
+    []
+  );
   for (const state of ['OPEN', 'CLOSED', 'MERGED']) {
     const prs = [
       { url: 'https://github.com/example/synthetic/pull/1', state, checks: 'none', review: 'none' },
@@ -107,7 +110,10 @@ try {
     db.prepare(
       'INSERT OR REPLACE INTO pack_coding_todo_prs(todo_id,prs_json,read_at) VALUES(?,?,1)'
     ).run(id, JSON.stringify(prs));
-    assert.equal(await gateway.call(codingTodoPrReads, 'isWaiting', id), state === 'OPEN');
+    assert.deepEqual(
+      [...(await gateway.call(codingTodoPrReads, 'waiting', [id]))],
+      state === 'OPEN' ? [id] : []
+    );
   }
   evidence.waitingDecisions = true;
   evidence.pass = true;

@@ -120,7 +120,8 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
-import { createNeoAttentionSweep } from './attention/sweep.ts';
+import { createNeoAttentionSweep, neoStepOwners, readNeoSteps } from './attention/sweep.ts';
+import { neoHumanQueue } from './human-queue.ts';
 import { driverHealthEvents } from '../drivers/driver-health.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -1431,6 +1432,24 @@ export class NeoService {
         this.defaultPacks
       ),
     });
+  }
+
+  async humanQueue() {
+    const facts = await this.todoSessions.read('neoStepFacts');
+    const steps = await readNeoSteps(facts, {
+      packs: () => this.installedPacks(),
+      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+    }).catch((error) => {
+      this.log.warn('Human queue pack waits failed', error);
+      return null;
+    });
+    return steps
+      ? neoHumanQueue({
+          questions: facts.cards,
+          todos: steps.map((row) => row.todo),
+          owners: neoStepOwners(steps),
+        })
+      : null;
   }
 
   installedPacks(): NeoPack[] {
