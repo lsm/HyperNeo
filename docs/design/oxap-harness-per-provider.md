@@ -6,8 +6,9 @@ Status: proposal. Design only; no code in this PR.
 
 This doc says OXAP for the protocol throughout. Code in HyperNeo today still
 uses the old name OAP (`lib/oap/`, the `oapx` binary, the `HYPERNEO_OAP_*`
-variables), and a separate plan renames it. Everything this design stores or
-shows already says OXAP, so that rename needs no data migration here.
+variables). A mechanical rename PR renames them (see "Pull requests"), and the
+`HYPERNEO_OAP_*` variables are removed earlier by PR 3. Everything this design
+stores or shows already says OXAP, so the rename needs no data migration.
 
 Rule: every harness that runs through OXAP is shown as **OXAP <name>**
 (**OXAP Codex**, **OXAP DeepSeek**) and stored with an `oxap-` prefix
@@ -49,11 +50,9 @@ without changing this shape.
 - The provider record's `configJson` gains `harness`. A missing value means
   Claude Code, so every existing provider keeps working with no migration.
   Otherwise the value is a harness id such as `oxap-codex`.
-- Global settings gain the hub binary: its path, plus the version and SHA-256
-  read when the setting is saved. These are never typed by hand. The existing
-  `prepareOapBinary` check pins that file on every hub start. This is trust on
-  first use: it catches a file that changes later, but it does not prove the
-  file is a genuine release.
+- Global settings gain the hub binary: its path, version and SHA-256, all
+  written by the install (see "How OXAP is installed"). None is typed by hand.
+  The existing `prepareOapBinary` check pins that file on every hub start.
 - A session's `harness` stays creation-only. It is copied from its provider
   when the chat is created, so a later settings change never moves a running
   chat to another engine. The values are `sdk` or a harness id. Today's
@@ -63,11 +62,27 @@ without changing this shape.
   stored. Neither field changes after creation. An OXAP chat may switch models
   only within its own provider, so a cached open session can never carry
   another provider's credentials.
-- The five `HYPERNEO_OAP_*` variables and the `oap` block in `config.ts` are
-  removed. Settings are the only source, so what Settings shows is what runs.
+- PR 3 removes the five `HYPERNEO_OAP_*` variables and the `oap` block in
+  `config.ts`. Settings are the only source, so what Settings shows is what runs.
   The config test and the verify skill's OXAP wire script write settings
   instead. The hub's state directory stays derived as
   `join(getDataDir(), 'oap')`.
+
+### How OXAP is installed
+
+HyperNeo pins one OXAP version. The daemon downloads that version's build for
+its platform from the OXAP project's own GitHub release, for example
+`oxap-0.1.0-alpha.33-macos-arm64.tar.gz`. It then checks the file against
+`SHA256SUMS.txt` from that same release, and uses it only if the hash matches.
+The install writes the binary's path, version and hash into global settings.
+
+There is no package-manager path. OXAP is not published on npm, PyPI or
+crates.io, so the GitHub release is the only source.
+
+This closes a gap the old path had. Before, the human picked a file and its
+hash was read on save. That only noticed a binary swapped later; it could not
+prove the first file was genuine. Now the first download must match the hash
+the release itself published.
 
 ### Adding a harness
 
@@ -275,15 +290,17 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | --- | --- | --- | --- |
 | 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check, `'codex'` → `oxap-codex` | daemon | ~80 |
 | 2 | `engineForProvider`, session create copies `harness`, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
-| 3 | Hub from settings: hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~170 |
+| 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
+| 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`, the `oap` state directory. Moves and renames only, no behavior change | daemon | rename |
 | OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction | OXAP repo | upstream |
-| 5 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME` | daemon | ~60 |
-| 6 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
+| 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME` | daemon | ~60 |
+| 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
 
-Merge order is 1 → 2 → 3 → 4, then the OXAP change and a new `oapx` release,
-then 5 → 6. PRs 1–4 do not wait on OXAP. Only PR 6 changes what the human
-sees, and it lands once sign-in works. Before it, the daemon PRs are reachable
+Merge order is 1 → 2 → 3 → 4 → 5, then the OXAP change and a new `oxap`
+release, then 6 → 7. The rename lands after PR 4 and before the UI PR. PRs 1–5
+do not wait on OXAP. Only PR 7 changes what the human sees, and it lands once
+sign-in works. Before it, the daemon PRs are reachable
 through RPC and the verify skill. Each later
 harness, such as DeepSeek, is its own small PR: one table row and its fields.
 
@@ -308,14 +325,14 @@ Limits users will see, from code that already exists:
 Waiting:
 
 - Sign-in. OXAP Codex reaches users only after the upstream host-auth change
-  and an `oapx` release that carries it (see "How OXAP Codex signs in").
+  and an OXAP release that carries it (see "How OXAP Codex signs in").
 
 - More harness rows. Each needs a check on how that harness takes the
   provider's key and endpoint.
 - The Rust port. The Rust Codex adapter can already open, submit, stream and
   settle a run, and resolve approvals and user questions. Runtime parity
   (OXAP #1438) waits on the adapters lane reaching C8 (OXAP #1439). Switching to
-  a Rust `oapx` is a new pin in Settings, not a design change.
+  a Rust build is a new pinned version, not a design change.
 - Permission and question requests. These need HyperNeo's approval UI mapped
   onto `action.permission.requested` and `user.input.requested`.
 
