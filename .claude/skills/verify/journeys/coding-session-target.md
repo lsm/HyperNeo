@@ -32,3 +32,10 @@ Last, it checks reservations that never got a session:
   slice wait;
 - the pack's `workerTargetRefused` hook drops an unstarted todo's unbound
   reservation, and leaves a started todo's reservation in place.
+
+Then it archives both sessions over RPC (`session.archive`):
+
+- with only archived sessions in the repository, dispatch starts a new session
+  and that todo becomes the feature's owner;
+- when the owner's own session is then archived and a live idle session
+  exists, dispatch sends to the live one and its todo takes the feature over.

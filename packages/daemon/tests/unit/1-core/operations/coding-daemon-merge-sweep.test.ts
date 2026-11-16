@@ -296,9 +296,31 @@ describe('daemon merge sweep behavior', () => {
       );
     if (scenario === 'file-signoff') files = ['docs/design/change.md'];
     if (scenario === 'human-policy') policy('mergePolicy', 'human');
-    await sweep()(10);
+    const run = sweep();
+    await run(10);
     expect(merges()).toEqual([]);
     expect(notices).toHaveLength(scenario === 'covered' ? 0 : 1);
+    if (scenario === 'covered') {
+      await run(11);
+      expect(notices).toHaveLength(0);
+      store.askQuestion(
+        'later-decision',
+        'review-ask',
+        {
+          todoId: todo.id,
+          kind: 'reply',
+          text: 'Choose the next step',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        12
+      );
+      await run(13);
+      expect(notices).toHaveLength(1);
+      expect(merges()).toEqual([]);
+    }
   });
 
   test('an unavailable review lookup preserves this hold notice and the next candidate', async () => {
@@ -880,6 +902,61 @@ test.each(['human', undefined])(
     expect(merges()).toHaveLength(0);
   }
 );
+
+test('label invalidation during a facts read cannot be overwritten by that sweep', async () => {
+  labels = ['human-merge'];
+  let invalidated = false;
+  const racing: SpawnFn = (args, options) => {
+    const result = spawn(args, options);
+    if (!invalidated && args.some((arg) => arg.includes('/labels'))) {
+      invalidated = true;
+      labels = [];
+      run.invalidate(url);
+    }
+    return result;
+  };
+  const run = sweep(racing);
+  await run(10);
+  expect(invalidated).toBe(true);
+  expect(merges()).toHaveLength(0);
+  await run(11);
+  expect(merges()).toHaveLength(1);
+});
+
+test('same-head sign-off holds skip reads for ten minutes then refresh every gate', async () => {
+  labels = ['human-merge'];
+  const run = sweep();
+  await run(10);
+  const firstReads = calls.length;
+  expect(firstReads).toBeGreaterThan(0);
+  labels = [];
+  reviewHead = 'b'.repeat(40);
+  await run(600_009);
+  expect(calls).toHaveLength(firstReads);
+  expect(merges()).toHaveLength(0);
+  await run(600_010);
+  expect(calls.length).toBeGreaterThan(firstReads);
+  expect(merges()).toHaveLength(0);
+  reviewHead = head;
+  await run(600_011);
+  expect(merges()).toHaveLength(1);
+});
+
+test('a new head immediately refreshes a cached human sign-off hold', async () => {
+  labels = ['human-merge'];
+  const run = sweep();
+  await run(10);
+  const firstReads = calls.length;
+  await run(11);
+  expect(calls).toHaveLength(firstReads);
+  actualHead = reviewHead = 'b'.repeat(40);
+  labels = [];
+  const rows = await ledger.read('list');
+  await ledger.write('replace', 'synthetic/merge', [{ ...rows[0], head: actualHead }], 12);
+  await run(12);
+  expect(calls.length).toBeGreaterThan(firstReads);
+  expect(merges()).toHaveLength(1);
+});
 
 test('a rejected sign-off delivery holds merging but lets the sweep finish and retry', async () => {
   labels = ['human-merge'];
