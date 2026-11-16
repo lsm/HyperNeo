@@ -48,6 +48,7 @@ import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { closedNeoRequest, recordNeoRequestTodo } from './request-todo.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -348,6 +349,17 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      scan: async (now) =>
+        (
+          await Promise.all(
+            this.packs().map((pack) =>
+              (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
+                this.log.warn(`Attention scan ${pack.id} failed`, error);
+                return [];
+              })
+            )
+          )
+        ).flat(),
       tell: (this.attention = createNeoAttention({
         kinds: () => [
           ...NEO_ATTENTION_KINDS,
@@ -897,14 +909,38 @@ export class NeoService {
             : submit();
         };
         if (!input.question) {
-          wake(
-            neoDerivedId(
-              JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
-            ),
-            input.handoff && typeof content !== 'string'
-              ? (content.find((b) => b.type === 'text')?.text ?? text)
-              : text
+          const incident = neoDerivedId(
+            JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
           );
+          const request = !this.todoSessions.doingTodoOn(
+            sessionWorkerRef(sender, !!this.db.getSession(sender)),
+            null,
+            ['todo', 'doing', 'blocked']
+          );
+          const closed = request ? closedNeoRequest(this.todos, incident) : null;
+          if (closed)
+            return {
+              kind: 'rejected',
+              reason: `request_closed: Neo already closed this request (todo ${closed}). Send a new request if something changed.`,
+            };
+          this.todos.inTransaction(() => {
+            wake(
+              incident,
+              input.handoff && typeof content !== 'string'
+                ? (content.find((b) => b.type === 'text')?.text ?? text)
+                : text
+            );
+            const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
+            if (request && sent?.kind === 'accepted')
+              recordNeoRequestTodo(this.todos, {
+                incident,
+                neoSession: input.sessionId,
+                sender,
+                text,
+                messageId: sent.messageId,
+                now: Date.now(),
+              });
+          });
           return receipt;
         }
         const todo = this.todos.getTodo(input.question.todoId);

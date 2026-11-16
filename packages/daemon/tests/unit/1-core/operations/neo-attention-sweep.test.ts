@@ -86,6 +86,7 @@ describe('the Neo attention sweep', () => {
       sessions,
       packs: () => packs,
       limits: () => limits,
+      scan: async () => [],
       tell: createNeoAttention({
         kinds: () => NEO_ATTENTION_KINDS,
         read: () => ({ covered: false, latestReportAt: null }),
