@@ -68,6 +68,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.hold',
   'neo.todo.read',
   'neo.todo.remove',
+  'neo.todo.retarget',
   'pack.preferences.applyAnswer',
   'pack.preferences.ask',
   'pack.preferences.get',

@@ -38,6 +38,7 @@ import {
 import { neoTodoMutationReads } from '../repositories/neo-todo-mutation-planning.ts';
 import { neoTodoMutations } from '../repositories/neo-todo-mutation-commit.ts';
 import { neoTodoRunnerWrites } from '../repositories/neo-todo-runner-state.ts';
+import { neoTodoMoveReads, neoTodoMoveWrites } from '../repositories/neo-todo-move-worker.ts';
 import {
   neoSessionTrackWrites,
   neoSessionTrackRootRead,
@@ -241,6 +242,8 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoTodoMutationReads,
     neoTodoMutations,
     neoTodoRunnerWrites,
+    neoTodoMoveReads,
+    neoTodoMoveWrites,
     neoSessionTrackWrites,
     neoSessionTrackRootRead,
     neoTodoAddWrites,
