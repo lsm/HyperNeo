@@ -1214,6 +1214,7 @@ test('an undelivered retry-limit notice survives removal from the candidate set'
   for (const at of [10, 11, 12]) await sweep(spawn, { attend: async () => false })(at);
   expect(merges()).toHaveLength(3);
   policy('mergeBy', 'owner');
+  await ledger.write('recordHealth', 'synthetic/merge', { at: 13, outcome: 'complete' });
   await run(14);
   await run(15);
   expect(merges()).toHaveLength(3);
@@ -1351,6 +1352,38 @@ test('a failed fresh read sends no ready cue and each report repeats once', asyn
   ]);
   expect(merges()).toHaveLength(3);
 });
+
+test.each(['failed', 'partial', 'cooldown'] as const)(
+  'an undelivered stopped report is not sent for a pull request closed behind a %s ledger read',
+  async (outcome) => {
+    mergeFailed = true;
+    const { run, wakes } = entry();
+    for (const at of [10, 11, 12]) await sweep(spawn, { attend: async () => false })(at);
+    expect(merges()).toHaveLength(3);
+    state = 'CLOSED';
+    await ledger.write('recordHealth', 'synthetic/merge', {
+      at: 13,
+      outcome,
+      ...(outcome === 'cooldown' ? { retryAt: 1_000_000 } : {}),
+    });
+    expect((await ledger.read('list'))[0].closedAt).toBeNull();
+    await run(14);
+    await run(15);
+    expect(wakes()).toEqual([]);
+    const rows = await ledger.read('list');
+    await ledger.write('recordHealth', 'synthetic/merge', { at: 16, outcome: 'complete' });
+    await ledger.write(
+      'replace',
+      'synthetic/merge',
+      [{ ...rows[0], state: 'closed', closedAt: 16 }],
+      16
+    );
+    await run(17);
+    await run(12 + FOUR_HOURS);
+    expect(wakes()).toEqual([]);
+    expect(merges()).toHaveLength(3);
+  }
+);
 
 test('the merge sweep keeps no record of what it told Neo', () => {
   db.exec(
