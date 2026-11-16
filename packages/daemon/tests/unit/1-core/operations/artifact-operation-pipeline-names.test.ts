@@ -36,6 +36,28 @@ vi.mock('../../../../src/lib/runtime-spawn/index', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../../src/lib/runtime-artifact-open', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../../src/lib/runtime-artifact-open')>();
+  const { closeSync, fstatSync, openSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  return {
+    ...real,
+    withStoredArtifactDescriptor: async <Value>(
+      root: string,
+      sha256: string,
+      consume: (fd: number, initial: import('node:fs').Stats) => Value | Promise<Value>
+    ) => {
+      const fd = openSync(join(root, 'blobs', sha256), 'r');
+      try {
+        return { accepted: true as const, value: await consume(fd, fstatSync(fd)) };
+      } finally {
+        closeSync(fd);
+      }
+    },
+  };
+});
+
+const DB_WRITE_OP = 'artifact.file.row.write.publish';
 const noDatabase = () => {
   throw new Error('no database in this test');
 };
@@ -49,7 +71,7 @@ const operations = [
 
 function expectNamedFor(operation: string) {
   expect(entered[0]).toBe(operation);
-  for (const helper of entered.slice(1)) {
+  for (const helper of entered.slice(1).filter((name) => name !== DB_WRITE_OP)) {
     expect(helper.startsWith(`${operation}.`)).toBe(true);
   }
 }
@@ -189,10 +211,13 @@ describe('artifact.reference.resolve for the local human', () => {
     expectNamedFor('artifact.reference.resolve');
   });
 
-  test('reads and admits a bound Git file in steps of the operation', async () => {
-    await resolve(`https://github.com/example/demo/blob/${sha}/report.md`);
+  test('captures a bound Git file in steps of the operation', async () => {
+    expect(await resolve(`https://github.com/example/demo/blob/${sha}/report.md`)).toMatchObject({
+      accepted: true,
+    });
     for (const step of ['plan', 'capture', 'blob', 'admission'])
       expect(entered).toContain(`artifact.reference.resolve.${step}`);
+    expect(entered).toContain(DB_WRITE_OP);
     expectNamedFor('artifact.reference.resolve');
   });
 });
