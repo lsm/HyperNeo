@@ -48,6 +48,7 @@ import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import { neoDerivedId } from './derived-id.ts';
+import { recordNeoRequestTodo } from './request-todo.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -894,14 +895,28 @@ export class NeoService {
             : submit();
         };
         if (!input.question) {
+          const incident = neoDerivedId(
+            JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
+          );
           wake(
-            neoDerivedId(
-              JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
-            ),
+            incident,
             input.handoff && typeof content !== 'string'
               ? (content.find((b) => b.type === 'text')?.text ?? text)
               : text
           );
+          const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
+          if (
+            sent?.kind === 'accepted' &&
+            !this.todoSessions.worksOpenTodo(sessionWorkerRef(sender, !!this.db.getSession(sender)))
+          )
+            recordNeoRequestTodo(this.todos, {
+              incident,
+              neoSession: input.sessionId,
+              sender,
+              text,
+              messageId: sent.messageId,
+              now: Date.now(),
+            });
           return receipt;
         }
         const todo = this.todos.getTodo(input.question.todoId);

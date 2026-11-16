@@ -469,6 +469,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
+  worksOpenTodo(ref: WorkRef): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+          WHERE t.state IN ('todo', 'doing', 'blocked')
+            AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
+            AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
+            AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
+          LIMIT 1`
+      )
+      .get(ref.adapter, ref.id, ref.daemon ?? null);
+  }
+
   sendsNow(todoId: string, ref: WorkRef): boolean {
     const target = this.get(todoId);
     const state = new NeoAskTodoRepository(this.db).getTodo(todoId)?.state;
