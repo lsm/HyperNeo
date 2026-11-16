@@ -78,10 +78,7 @@ class WorkCleanupRepository {
         .map((session) => ({
           todoId: null,
           ref: { adapter: 'hyperneo', id: session.id },
-          owner: {
-            kind: 'session' as const,
-            archived: session.status === 'archived' || session.status === 'ended',
-          },
+          owner: { kind: 'session' as const, archived: session.status === 'archived' },
           path: session.path,
           repo: session.repo,
         })),
