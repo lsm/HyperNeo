@@ -67,7 +67,7 @@ try {
     request: 'Synthetic work',
     createdAt: at,
   });
-  const add = (id: string, change: Record<string, unknown> = {}) =>
+  const add = (id: string, change: Record<string, unknown> = {}, when = at) =>
     todos.addTodo(
       id,
       'ask',
@@ -81,7 +81,7 @@ try {
         dependsOn: [],
         ...change,
       },
-      at
+      when
     );
   const worker = { adapter: 'hyperneo', id: 'synthetic-worker' };
   const fail = (id: string) => {
@@ -150,6 +150,33 @@ try {
   const fourth = await sweep('the plan step is last and nothing follows it', 5);
   assert.equal(fourth.length, 3, 'the missing follow-up is told through the same entry');
   assert(fourth[2]!.includes('"plan-step" (plan-step) in ask "Synthetic ask" (ask) finished'));
+  add(
+    'check-step',
+    {
+      instruction: null,
+      dependsOn: ['plan-step'],
+      check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-evidence') } },
+    },
+    clock
+  );
+  const checkWakes = (told: string[]) => told.filter((text) => text.startsWith(step('check-step')));
+  assert.equal(
+    checkWakes(await sweep('a check-only todo just before its 24 h deadline', 28.9)).length,
+    0,
+    'a check-only todo is the daemon’s to poll before its deadline'
+  );
+  const overdue = checkWakes(await sweep('the check-only todo at its deadline', 29));
+  assert.equal(overdue.length, 1, 'the overdue check wakes Neo once');
+  assert(
+    overdue[0]!.endsWith(
+      'its check has not passed for 24 hours. Ask whoever it waits on, mark it done, or remove it.'
+    )
+  );
+  assert.equal(
+    checkWakes(await sweep('the overdue check after its 1 h rung', 30)).length,
+    2,
+    'the overdue check is told again on the ladder'
+  );
   evidence.passed = true;
   console.log('PASS');
 } catch (error) {
