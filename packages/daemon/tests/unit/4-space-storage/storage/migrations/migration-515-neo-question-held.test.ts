@@ -3,7 +3,7 @@ import { runMigration515 } from '../../../../../src/storage/schema/m515-neo-ques
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 describe('runMigration515', () => {
-  test('adds the held_at column once and leaves existing rows alone', () => {
+  test('adds the hold columns once and leaves existing rows alone', () => {
     const db = new Database(':memory:');
     db.exec(`
       CREATE TABLE neo_questions (id TEXT PRIMARY KEY, ask_id TEXT, text TEXT);
@@ -11,8 +11,8 @@ describe('runMigration515', () => {
     `);
     runMigration515(db);
     runMigration515(db);
-    expect(db.prepare('SELECT id, text, held_at FROM neo_questions').all()).toEqual([
-      { id: 'q', text: 'Ship it?', held_at: null },
+    expect(db.prepare('SELECT id, text, held_at, hold_requests FROM neo_questions').all()).toEqual([
+      { id: 'q', text: 'Ship it?', held_at: null, hold_requests: null },
     ]);
     db.close();
   });

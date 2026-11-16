@@ -262,6 +262,8 @@ type QuestionReceipt = { ok: true; question: NeoQuestion; records?: string[] };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 const QUESTION_CLOSED = 'question_closed: this question is no longer open.';
+const QUESTION_HELD =
+  'question_held: the human put this card aside; leave it until they answer it or take it back.';
 
 const Text = z.string().trim().min(1);
 
@@ -344,7 +346,7 @@ const RelayAsk = z
 type Bound = z.infer<typeof Ask> & { askId: string };
 
 const Retire = z.object({ questionId: Text, reason: Text });
-const Hold = z.object({ questionId: Text, held: z.boolean() });
+const Hold = z.object({ questionId: Text, held: z.boolean(), requestId: z.uuid() });
 type Relay = { todoId?: string; session?: string; title: string; options: string[] };
 
 const Answer = z.object({
@@ -819,6 +821,10 @@ export function createNeoQuestionOperations(
             reason = card.reason.reason;
             return null;
           }
+          if (plan.replaced && store.getQuestion(plan.replaced.id)?.heldAt) {
+            reason = QUESTION_HELD;
+            return null;
+          }
           const id = reply.mutationId;
           return plan.replaced
             ? replaceHumanCard(store, plan.replaced, id, plan.draft, Date.now())
@@ -860,6 +866,7 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
         if (question.state !== 'open') return { reason: { ok: true, question } };
+        if (question.heldAt) return fail(QUESTION_HELD);
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };
       },
@@ -973,7 +980,7 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (question: NeoQuestion, input: z.infer<typeof Hold>): QuestionReceipt | Rejection => {
-        const held = store.holdQuestion(question, input.held, Date.now());
+        const held = store.holdQuestion(question.id, input.held, input.requestId, Date.now());
         return held ? { ok: true, question: held } : { ok: false, reason: QUESTION_CLOSED };
       },
       ['outcome', 'input'],

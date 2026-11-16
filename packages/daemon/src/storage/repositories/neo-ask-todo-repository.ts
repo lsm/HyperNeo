@@ -992,11 +992,27 @@ export class NeoAskTodoRepository {
     return row ? toQuestion(row) : null;
   }
 
-  holdQuestion(question: NeoQuestion, held: boolean, now: number): NeoQuestion | null {
-    if (!!question.heldAt === held) return question;
-    if (!this.changeQuestion(question.id, { held_at: held ? now : null }, 'open')) return null;
-    this.touchAsk(question.askId, now);
-    return this.getQuestion(question.id);
+  holdQuestion(id: string, held: boolean, requestId: string, now: number): NeoQuestion | null {
+    const changed = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT held_at AS heldAt, hold_requests AS requests FROM neo_questions WHERE id = ? AND state = 'open'"
+        )
+        .get(id) as { heldAt: number | null; requests: string | null } | null;
+      if (!row) return null;
+      const requests = JSON.parse(row.requests ?? '[]') as string[];
+      if (requests.includes(requestId)) return false;
+      const heldAt = held ? (row.heldAt ?? now) : null;
+      this.changeQuestion(id, {
+        held_at: heldAt,
+        hold_requests: JSON.stringify([...requests, requestId]),
+      });
+      return heldAt !== row.heldAt;
+    })();
+    if (changed === null) return null;
+    const question = this.getQuestion(id);
+    if (changed && question) this.touchAsk(question.askId, now);
+    return question;
   }
 
   markCardActionsApplied(id: string, now: number): void {

@@ -11,7 +11,8 @@ It seeds one ask, one todo and one open card on that todo, then drives
 
 The open card makes `needsYou` 1. Holding it sets `heldAt` and drops
 `needsYou` to 0; holding again returns the same `heldAt`. Taking it back
-removes `heldAt`, twice, and `needsYou` is 1 again. Answering a held card
+removes `heldAt`, twice. Replaying the first hold's `requestId` after that
+changes nothing, and `needsYou` is 1 again. Answering a held card
 works and the answered card has no `heldAt`. Holding an answered card is
 refused with `question_closed`.
 
