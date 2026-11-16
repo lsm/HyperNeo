@@ -460,11 +460,19 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     const draft = { doneWhen: 'Answered', check: null, instruction: null };
     store.addTodo('req', 'ask', { ...draft, title: 'Q', named: { requestFrom: 'worker-1' } }, 1);
     store.addTodo('repo', 'ask', { ...draft, title: 'R', named: { repository: 'o/r' } }, 1);
+    store.addTodo('flag', 'ask', { ...draft, title: 'F', named: { requestFrom: true } }, 1);
+    store.addTodo('obj', 'ask', { ...draft, title: 'O', named: { requestFrom: { id: 'x' } } }, 1);
     const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
     const named = Object.fromEntries(
       summarizeNeoAskEntry(entry).todos.map((todo) => [todo.id, todo.named])
     );
-    expect(named).toEqual({ t0: null, req: { requestFrom: 'worker-1' }, repo: null });
+    expect(named).toEqual({
+      t0: null,
+      req: { requestFrom: 'worker-1' },
+      repo: null,
+      flag: null,
+      obj: null,
+    });
   });
 
   test('neo.ask.read returns an exact card and refuses missing or denied reads', async () => {
