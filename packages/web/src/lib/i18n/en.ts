@@ -197,6 +197,7 @@ export const en = {
   'queue.wholeAsk': 'The whole ask',
   'queue.hold': 'Hold',
   'queue.loadFailed': 'Couldn’t load the full card.',
+  'queue.stepFailed': 'Couldn’t load this step.',
   'queue.refreshFailed': 'Couldn’t refresh the queue.',
   'queue.openAsk': 'Open the ask',
   'queue.takeBack': 'Take back',

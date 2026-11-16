@@ -25,7 +25,7 @@ const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
     : focus.todoId
       ? 'todoId' in item
         ? item.todoId === focus.todoId
-        : item.todos.some((todo) => todo.id === focus.todoId)
+        : item.askId === focus.askId && item.todos.some((todo) => todo.id === focus.todoId)
       : item.askId === focus.askId;
 
 export const neoHumanQueueHolds = (queue: Queue, focus: NeoWorkFocus) =>
@@ -193,8 +193,11 @@ export function NeoHumanQueue({
       .catch(() => setStaleFailed(true));
   }, [closed, queue, onStale, staleFailed]);
   const anchored = new Set<string>();
-  const anchor = (todoId: string) => {
-    if (anchored.has(todoId)) return undefined;
+  const anchor = (todoId: string, askId?: string) => {
+    const elsewhere = entries.some(
+      (entry) => entry.ask.id !== askId && entry.todos.some((todo) => todo.id === todoId)
+    );
+    if ((askId && elsewhere) || anchored.has(todoId)) return undefined;
     anchored.add(todoId);
     return `neo-ref-todo-${todoId}`;
   };
@@ -351,7 +354,7 @@ function QueueItem({
   refreshing?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   onRetry: () => void;
-  anchor: (todoId: string) => string | undefined;
+  anchor: (todoId: string, askId?: string) => string | undefined;
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onHold: (questionId: string, held: boolean) => void;
@@ -402,6 +405,14 @@ function QueueItem({
             {t('todo.desktopControl')}
           </label>
         )}
+        {desktop && open && failed && (
+          <p role="alert" class="mt-1 text-xs text-danger">
+            {t('queue.stepFailed')}{' '}
+            <button type="button" class={neoPlainClass} onClick={onRetry}>
+              {t('chat.retry')}
+            </button>
+          </p>
+        )}
       </div>
     );
   }
@@ -414,7 +425,7 @@ function QueueItem({
       <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-fg-muted">
         {item.todos.length ? (
           item.todos.map((todo) => (
-            <span key={todo.id} id={anchor(todo.id)}>
+            <span key={todo.id} id={anchor(todo.id, item.askId)}>
               {todo.title}
             </span>
           ))
