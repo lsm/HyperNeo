@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -279,54 +279,51 @@ describe('neo todo runner refresh releases removed todos and busy folders', () =
 });
 
 describe('neo todo runner refresh retries a folder whose process check failed', () => {
-  test('keeps the folder and leaves the worker releasable when lsof fails', async () => {
-    const h = setup();
-    const root = join(scratch, `probe-${crypto.randomUUID()}`);
-    const bin = join(scratch, `bin-${crypto.randomUUID()}`);
-    mkdirSync(root);
-    mkdirSync(bin);
-    writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-    const linked = join(root, 'worker');
-    git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
-    h.setFolder(linked);
-    h.setArchive(async () => ({
-      ok: true,
-      value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
-    }));
-    const path = process.env.PATH;
-    try {
-      await h.finishTodo(h.add(started));
-      process.env.PATH = `${bin}:${path}`;
-      await h.refresh();
-      expect(existsSync(linked)).toBe(true);
-      expect(h.released()).toEqual([]);
-      process.env.PATH = path;
-      await h.refresh();
-      expect(existsSync(linked)).toBe(false);
-      expect(h.released()).toHaveLength(1);
-    } finally {
-      process.env.PATH = path;
-      h.db.close();
+  test.if(process.platform !== 'linux')(
+    'keeps the folder and leaves the worker releasable when lsof fails',
+    async () => {
+      const h = setup();
+      const root = join(scratch, `probe-${crypto.randomUUID()}`);
+      const bin = join(scratch, `bin-${crypto.randomUUID()}`);
+      mkdirSync(root);
+      mkdirSync(bin);
+      writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const linked = join(root, 'worker');
+      git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+      h.setFolder(linked);
+      h.setArchive(async () => ({
+        ok: true,
+        value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+      }));
+      const path = process.env.PATH;
+      try {
+        await h.finishTodo(h.add(started));
+        process.env.PATH = `${bin}:${path}`;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(true);
+        expect(h.released()).toEqual([]);
+        process.env.PATH = path;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(false);
+        expect(h.released()).toHaveLength(1);
+      } finally {
+        process.env.PATH = path;
+        h.db.close();
+      }
     }
-  });
+  );
 });
 
-describe('neo todo runner refresh without lsof', () => {
+describe('neo todo runner refresh on Linux', () => {
   test.if(process.platform === 'linux')(
-    'still finds a process inside the folder and removes it once the process exits',
+    'finds a process inside the folder without lsof and removes it once the process exits',
     async () => {
       const h = setup();
       const root = join(scratch, `nolsof-${crypto.randomUUID()}`);
       const bin = join(scratch, `bin-${crypto.randomUUID()}`);
       mkdirSync(root);
       mkdirSync(bin);
-      for (const tool of ['git', 'sleep'])
-        symlinkSync(
-          execFileSync('sh', ['-c', `command -v ${tool}`])
-            .toString()
-            .trim(),
-          join(bin, tool)
-        );
+      writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
       const linked = join(root, 'worker');
       git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
       h.setFolder(linked);
@@ -338,7 +335,7 @@ describe('neo todo runner refresh without lsof', () => {
       const path = process.env.PATH;
       try {
         await h.finishTodo(h.add(started));
-        process.env.PATH = bin;
+        process.env.PATH = `${bin}:${path}`;
         await h.refresh();
         expect(existsSync(linked)).toBe(true);
         expect(h.released()).toEqual([]);
