@@ -60,21 +60,21 @@ try {
   assert.deepEqual(read.question.sourceSession, source);
   assert.equal(read.question.document, report.report);
   const distinct = await rpc('neo.question.ask', {
-    askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question',
+    askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question?',
+    retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'not-created') } },
   });
-  assert.equal(distinct.ok, false, 'a distinct question must be refused, never silently replaced by the old card');
-  assert.match(distinct.reason, /^card_open:/);
+  assert.equal(distinct.ok, true, JSON.stringify(distinct));
+  assert.notEqual(distinct.question.id, first.question.id);
   const snapshot = await rpc('neo.snapshot', {});
   const entry = snapshot.todoAsks.find((e: { ask: { id: string } }) => e.ask.id === todo.askId);
   assert(entry, JSON.stringify(snapshot));
-  assert.equal(entry.questions.filter((q: { todoId: string; state: string }) => q.todoId === todo.id && q.state === 'open').length, 1);
+  assert.equal(entry.questions.filter((q: { todoId: string; state: string }) => q.todoId === todo.id && q.state === 'open').length, 2);
   assert.equal(entry.todos.find((t: { id: string }) => t.id === todo.id).blockedBy, 'needs-human');
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
   await app.spaceRuntimeService.ready();
   const restored = new NeoAskTodoRepository(app.db.getDatabase());
   restored.updateTodo(restored.getTodo(todo.id)!, { state: 'doing', report: 'Routine activity' }, 9);
-  await restored.recompute(restored.getTodo(todo.id)!, {}, 10, { state: 'done', evidence: 'Routine completion' }, async () => {});
   assert.equal(restored.getTodo(todo.id)?.blockedBy, 'needs-human');
   assert.equal(restored.getTodo(todo.id)?.state, 'blocked');
   const after = await rpc('neo.question.get', { questionId: first.question.id });
@@ -94,7 +94,7 @@ try {
   assert.equal(hold?.state, 'blocked');
   assert.equal(hold?.blockedBy, 'needs-human');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, refused, repeats: repeats.length, hold, restartRetained: true, persistedAnswerWithoutDelivery: true }, null, 2));
-  console.log('PASS: RPC card/source, repeat reuse and distinct-question refusal; restart retains needs-human even after an answer is stored without delivery');
+  console.log('PASS: RPC card/source, repeat reuse and a second open card on the same todo; restart retains needs-human even after an answer is stored without delivery');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));

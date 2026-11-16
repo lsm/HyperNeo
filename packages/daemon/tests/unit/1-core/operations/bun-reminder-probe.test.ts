@@ -40,7 +40,6 @@ describe('Bun reminder parity probe', () => {
       ).toMatchObject({
         runtime: 'bun',
         startupBodyCopyComplete: true,
-        bootstrapReceipt: true,
         reminderContext: true,
         singleReservation: true,
         reservationReleased: true,

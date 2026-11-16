@@ -70,9 +70,7 @@ function setup(stop: () => Promise<string | null> = async () => null, judged = f
     sessions,
     invoke: async () => ({ kind: 'completed', value: null }) as never,
     packs: () => [coding],
-    tell: async (_ask, _todo, note) => {
-      told.push(note);
-    },
+    tell: async () => {},
     attend: async (event) => {
       told.push(String(event.facts.text));
     },

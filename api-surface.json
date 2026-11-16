@@ -6601,25 +6601,644 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "args": {
-            "additionalProperties": {},
-            "propertyNames": {
-              "type": "string"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "app": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "tool": {
+                "const": "list_windows",
+                "description": "List windows belonging to the authorized target app.",
+                "type": "string"
+              }
             },
+            "required": [
+              "tool",
+              "args"
+            ],
             "type": "object"
           },
-          "tool": {
-            "minLength": 1,
-            "type": "string"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "capture_mode": {
+                    "enum": [
+                      "ax",
+                      "vision"
+                    ],
+                    "type": "string"
+                  },
+                  "max_depth": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_elements": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "max_image_dimension": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "query": {
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "default": 1000,
+                    "maximum": 120000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pid",
+                  "window_id"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "get_window_state",
+                "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Use fresh element handles for subsequent actions.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "bundle_id": {
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "bundle_id"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "launch_app",
+                "description": "Launch only the authorized target application when human input has been idle for at least 60 seconds. Arbitrary arguments, URLs and helper-process launches are refused.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "button": {
+                    "enum": [
+                      "left",
+                      "right",
+                      "middle"
+                    ],
+                    "type": "string"
+                  },
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "tool": {
+                "const": "click",
+                "description": "Click or focus an element or point inside the authorized target window. Secure and credential surfaces are refused.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "tool": {
+                "const": "double_click",
+                "description": "Double-click inside the authorized target window after target and sensitive-surface checks.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "tool": {
+                "const": "right_click",
+                "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "duration_ms": {
+                    "maximum": 10000,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "from_x": {
+                    "type": "number"
+                  },
+                  "from_y": {
+                    "type": "number"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "to_x": {
+                    "type": "number"
+                  },
+                  "to_y": {
+                    "type": "number"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "from_x",
+                  "from_y",
+                  "to_x",
+                  "to_y"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "drag",
+                "description": "Drag between points inside the authorized target window after target and sensitive-surface checks.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "type_text",
+                "description": "Insert ordinary text into a verified nonsecure field in the authorized target window. Credentials and fields whose safety cannot be established are refused.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "modifiers": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "key"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "press_key",
+                "description": "Send a key to the authorized target window after checking the focused field and requested effect. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "value"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "set_value",
+                "description": "Set an ordinary control value in the authorized target window. Secure fields and credential values are refused.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "maximum": 50,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "by": {
+                    "enum": [
+                      "line",
+                      "page"
+                    ],
+                    "type": "string"
+                  },
+                  "delivery_mode": {
+                    "enum": [
+                      "background",
+                      "foreground"
+                    ],
+                    "type": "string"
+                  },
+                  "direction": {
+                    "enum": [
+                      "up",
+                      "down",
+                      "left",
+                      "right"
+                    ],
+                    "type": "string"
+                  },
+                  "element_token": {
+                    "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "direction"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "scroll",
+                "description": "Scroll within the authorized target window after target and sensitive-surface checks.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "additionalProperties": false,
+                "properties": {
+                  "pid": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "session": {
+                    "type": "string"
+                  },
+                  "window_id": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "x1": {
+                    "type": "number"
+                  },
+                  "x2": {
+                    "type": "number"
+                  },
+                  "y1": {
+                    "type": "number"
+                  },
+                  "y2": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "window_id",
+                  "x1",
+                  "x2",
+                  "y1",
+                  "y2"
+                ],
+                "type": "object"
+              },
+              "tool": {
+                "const": "zoom",
+                "description": "Inspect a cropped region of the authorized target window after the required grants and sensitive-surface checks.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "args"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "tool",
-          "args"
-        ],
-        "type": "object"
+        ]
       },
       "name": "desktop.call",
       "resultSchema": {
@@ -21170,6 +21789,12 @@
                               "null"
                             ]
                           },
+                          "heldAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -23688,6 +24313,12 @@
                         "document": {
                           "type": [
                             "string",
+                            "null"
+                          ]
+                        },
+                        "heldAt": {
+                          "type": [
+                            "number",
                             "null"
                           ]
                         },
@@ -30576,6 +31207,12 @@
                               "null"
                             ]
                           },
+                          "heldAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -31321,11 +31958,47 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "modelHold": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "network",
+                            "login",
+                            "limit",
+                            "overloaded"
+                          ],
+                          "type": "string"
+                        },
+                        "resetAt": {
+                          "type": "number"
+                        },
+                        "since": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "reason",
+                        "since"
+                      ],
+                      "type": "object"
+                    },
                     "projectId": {
                       "type": [
                         "string",
                         "null"
                       ]
+                    },
+                    "role": {
+                      "enum": [
+                        "neo",
+                        "front"
+                      ],
+                      "type": "string"
                     },
                     "sessionId": {
                       "type": "string"
@@ -34133,6 +34806,12 @@
                       "null"
                     ]
                   },
+                  "heldAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "id": {
                     "type": "string"
                   },
@@ -34611,7 +35290,7 @@
                     "type": "string"
                   },
                   "todoId": {
-                    "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
+                    "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
                   }
@@ -34832,7 +35511,7 @@
                     "type": "string"
                   },
                   "todoId": {
-                    "description": "The todo this card belongs to. One card may be open per ask; a second returns card_open, and replaces changes the open one.",
+                    "description": "The todo this card belongs to.",
                     "minLength": 1,
                     "type": "string"
                   }
@@ -35093,6 +35772,12 @@
                   "document": {
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "heldAt": {
+                    "type": [
+                      "number",
                       "null"
                     ]
                   },
@@ -35671,6 +36356,12 @@
                       "null"
                     ]
                   },
+                  "heldAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
                   "id": {
                     "type": "string"
                   },
@@ -35802,6 +36493,485 @@
               "question",
               "answeredByHuman",
               "resolvedByAgent"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "held": {
+            "type": "boolean"
+          },
+          "questionId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "requestId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "questionId",
+          "held",
+          "requestId"
+        ],
+        "type": "object"
+      },
+      "name": "neo.question.hold",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "question": {
+                "additionalProperties": false,
+                "properties": {
+                  "answer": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "answerProvenance": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "number"
+                      },
+                      "via": {
+                        "type": "string"
+                      },
+                      "viaName": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "where": {
+                        "type": "string"
+                      },
+                      "words": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "words",
+                      "via",
+                      "viaName",
+                      "where",
+                      "when",
+                      "at"
+                    ],
+                    "type": "object"
+                  },
+                  "answeredAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "answeredBy": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "button",
+                          "chat"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "artifacts": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,159}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "kind": {
+                              "enum": [
+                                "markdown",
+                                "html",
+                                "image",
+                                "json",
+                                "log",
+                                "text",
+                                "video"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "daemonId",
+                            "artifactId",
+                            "title",
+                            "kind",
+                            "byteLength"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "artifactId": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "byteLength": {
+                              "maximum": 9007199254740991,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "daemonId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "name": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[\\w][\\w .-]*$",
+                              "type": "string"
+                            },
+                            "sessionId": {
+                              "maxLength": 200,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "pattern": "^[a-f0-9]{64}$",
+                              "type": "string"
+                            },
+                            "type": {
+                              "const": "handoff",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "artifactId",
+                            "daemonId",
+                            "sessionId",
+                            "name",
+                            "byteLength",
+                            "sha256",
+                            "type"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "maxItems": 16,
+                    "readOnly": true,
+                    "type": "array"
+                  },
+                  "askId": {
+                    "type": "string"
+                  },
+                  "cause": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "confirm": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "path": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "maxLength": 64,
+                            "minLength": 64,
+                            "pattern": "^[a-f0-9]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "number"
+                  },
+                  "document": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "heldAt": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "yesno",
+                      "choice",
+                      "reply"
+                    ],
+                    "type": "string"
+                  },
+                  "labels": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "multiple": {
+                    "type": "boolean"
+                  },
+                  "noLabel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "options": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "replacedBy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "replyTo": {
+                    "items": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "retireWhen": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "pack": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "params": {
+                        "additionalProperties": {},
+                        "default": {},
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "pack",
+                      "kind",
+                      "params"
+                    ],
+                    "type": "object"
+                  },
+                  "retiredReason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sourceSession": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "adapter": {
+                        "type": "string"
+                      },
+                      "daemon": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "link": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "provider": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "adapter",
+                      "name",
+                      "label",
+                      "provider",
+                      "link"
+                    ],
+                    "type": "object"
+                  },
+                  "state": {
+                    "enum": [
+                      "open",
+                      "answered",
+                      "retired"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "todoId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "todos": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "yesLabel": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "askId",
+                  "text",
+                  "kind",
+                  "options",
+                  "multiple",
+                  "noLabel",
+                  "yesLabel",
+                  "todos",
+                  "state",
+                  "answer",
+                  "answeredBy",
+                  "answeredAt",
+                  "retiredReason",
+                  "replacedBy",
+                  "createdAt"
+                ],
+                "type": "object"
+              },
+              "records": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ok",
+              "question"
             ],
             "type": "object"
           }
@@ -36073,6 +37243,12 @@
                   "document": {
                     "type": [
                       "string",
+                      "null"
+                    ]
+                  },
+                  "heldAt": {
+                    "type": [
+                      "number",
                       "null"
                     ]
                   },
@@ -38270,6 +39446,12 @@
                               "null"
                             ]
                           },
+                          "heldAt": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -39015,11 +40197,47 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "modelHold": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "network",
+                            "login",
+                            "limit",
+                            "overloaded"
+                          ],
+                          "type": "string"
+                        },
+                        "resetAt": {
+                          "type": "number"
+                        },
+                        "since": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "reason",
+                        "since"
+                      ],
+                      "type": "object"
+                    },
                     "projectId": {
                       "type": [
                         "string",
                         "null"
                       ]
+                    },
+                    "role": {
+                      "enum": [
+                        "neo",
+                        "front"
+                      ],
+                      "type": "string"
                     },
                     "sessionId": {
                       "type": "string"
@@ -42848,6 +44066,56 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "alternatives": {
+            "items": {
+              "items": {
+                "properties": {
+                  "key": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "pack": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "global",
+                          "repo",
+                          "project"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "key"
+                    ],
+                    "type": "object"
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "pack",
+                  "scope",
+                  "key",
+                  "value"
+                ],
+                "type": "object"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxItems": 5,
+            "minItems": 2,
+            "type": "array"
+          },
           "askId": {
             "minLength": 1,
             "type": "string"
@@ -42904,8 +44172,7 @@
         },
         "required": [
           "askId",
-          "requestId",
-          "values"
+          "requestId"
         ],
         "type": "object"
       },

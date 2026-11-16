@@ -87,6 +87,10 @@ export type ProviderUsageResult =
 
 export type TokenRefreshOutcome = 'refreshed' | 'transient' | 'definitive';
 
+export type TokenRefreshResult =
+  | TokenRefreshOutcome
+  | { outcome: 'transient' | 'definitive'; oauthError: string };
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -140,7 +144,7 @@ export interface Provider {
 
   logout?(): Promise<void>;
 
-  refreshToken?(): Promise<TokenRefreshOutcome>;
+  refreshToken?(): Promise<TokenRefreshResult>;
 
   setSessionThinkingConfig?(
     sessionId: string,

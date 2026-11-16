@@ -89,14 +89,20 @@ const refresh = async () => {
   }
   throw new Error('refresh timed out');
 };
-const messages = () =>
-  (
-    db
-      .prepare(
-        `SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`
-      )
-      .all(root) as { body: string }[]
-  ).map((row) => hyperneoInputText(row.body));
+const queued = () =>
+  (db.prepare("SELECT json_extract(payload, '$.message.message.content') AS text FROM job_queue WHERE queue IN ('mailbox', 'neo_notes') AND json_extract(payload, '$.to.sessionId') = ? ORDER BY created_at, rowid").all(root) as { text: string | null }[]).flatMap((row) => (row.text ? [row.text] : []));
+const messages = () => [
+  ...new Set([
+    ...(
+      db
+        .prepare(
+          `SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`
+        )
+        .all(root) as { body: string }[]
+    ).map((row) => hyperneoInputText(row.body)),
+    ...queued(),
+  ]),
+];
 try {
   await seedSession(root);
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
@@ -199,6 +205,16 @@ try {
   assert(reports()[0].includes('worker ended its turn with no reply'));
   await refresh();
   assert.equal(reports().length, 1);
+  const queuedIn = (queue: string) =>
+    (
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM job_queue WHERE queue = ? AND json_extract(payload, '$.message.message.content') LIKE 'Worker turn report%'"
+        )
+        .get(queue) as { n: number }
+    ).n;
+  evidence.queued = { digest: queuedIn('neo_notes'), wakes: queuedIn('mailbox') };
+  assert.deepEqual(evidence.queued, { digest: 1, wakes: 0 });
   evidence.passed = true;
   console.log(
     JSON.stringify({ passed: true, reports: reports().length, fullRef: `hyperneo:${id}` })

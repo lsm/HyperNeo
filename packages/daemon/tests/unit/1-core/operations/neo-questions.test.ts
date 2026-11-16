@@ -7,6 +7,7 @@ import {
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
 import { addNeoTodo, NeoTodoDraftSchema } from '../../../../src/lib/neo/todo-operations.ts';
+import { neoTodoWaitReason } from '../../../../src/lib/neo/todo-start-gate.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -142,7 +143,7 @@ describe('neo.question operations', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
+  test('accepts a second and a third card on one todo and still replaces on request', async () => {
     const h = setup();
     try {
       const first = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
@@ -153,29 +154,53 @@ describe('neo.question operations', () => {
         options: ['SQLite', 'Postgres'],
         todoId: h.fix.id,
       };
-      const refused = await h.call('neo.question.ask', distinct);
-      expect(refused).toMatchObject({
-        ok: false,
-        reason: expect.stringMatching(/^card_open:/),
+      const second = await h.call('neo.question.ask', distinct);
+      const third = await h.call('neo.question.ask', { ...distinct, text: 'Which region?' });
+      expect(second).toMatchObject({ ok: true, question: { text: 'Which database?' } });
+      expect(third).toMatchObject({ ok: true, question: { text: 'Which region?' } });
+      const open = () =>
+        h.store
+          .listQuestions('ask')
+          .filter((q) => q.state === 'open')
+          .map((q) => q.text)
+          .sort();
+      expect(open()).toEqual(['Which database?', 'Which environment?', 'Which region?']);
+      const replacement = await h.call('neo.question.ask', {
+        ...distinct,
+        text: 'Which cache?',
+        replaces: first.id,
       });
-      expect(h.store.listQuestions('ask')).toHaveLength(1);
-      expect(h.store.getQuestion(first.id)).toMatchObject({
-        text: 'Which environment?',
-        state: 'open',
-      });
-      const replacement = await h.call('neo.question.ask', { ...distinct, replaces: first.id });
-      expect(replacement).toMatchObject({
-        ok: true,
-        question: { text: distinct.text, options: distinct.options, state: 'open' },
-      });
+      expect(replacement).toMatchObject({ ok: true, question: { text: 'Which cache?' } });
       expect(h.store.getQuestion(first.id)?.state).toBe('retired');
-      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+      expect(open()).toEqual(['Which cache?', 'Which database?', 'Which region?']);
     } finally {
       h.db.close();
     }
   });
 
-  test('concurrent distinct todo questions produce one card and one explicit refusal', async () => {
+  test('a todo with several cards waits until the last one is answered', async () => {
+    const h = setup();
+    try {
+      const cards = [];
+      for (const text of ['Which environment?', 'Which database?', 'Which region?'])
+        cards.push(await h.asked({ kind: 'reply', text, todoId: h.fix.id }));
+      const wait = () =>
+        neoTodoWaitReason(
+          h.store.getTodo(h.fix.id)!,
+          h.store.listTodos('ask'),
+          h.store.listQuestions('ask')
+        );
+      for (const card of cards) {
+        expect(wait()).toMatch(/^question_open:/);
+        await h.call('neo.question.answer', { questionId: card.id, answer: 'Staging' }, human);
+      }
+      expect(wait()).toBeNull();
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('concurrent distinct todo questions both open', async () => {
     const h = setup();
     try {
       const results = await Promise.all(
@@ -183,12 +208,141 @@ describe('neo.question operations', () => {
           h.call('neo.question.ask', { askId: 'ask', kind: 'reply', text, todoId: h.fix.id })
         )
       );
-      expect(results.filter((result) => result.ok)).toHaveLength(1);
-      expect(results.find((result) => !result.ok)).toMatchObject({
+      expect(results.filter((result) => result.ok)).toHaveLength(2);
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('the human holds a card and takes it back, each repeatable', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const hold = (held: boolean) =>
+        h.call(
+          'neo.question.hold',
+          { questionId: card.id, held, requestId: crypto.randomUUID() },
+          human
+        );
+      const first = await hold(true);
+      expect(first).toMatchObject({ ok: true, question: { state: 'open' } });
+      const heldAt = first.ok ? first.question.heldAt : undefined;
+      expect(heldAt).toBeNumber();
+      expect(await hold(true)).toMatchObject({ ok: true, question: { heldAt } });
+      expect(h.store.getQuestion(card.id)?.heldAt).toBe(heldAt);
+      const back = [await hold(false), await hold(false)];
+      expect(back.map((r) => r.ok && r.question.heldAt)).toEqual([undefined, undefined]);
+      expect(
+        await h.call('neo.question.hold', {
+          questionId: card.id,
+          held: true,
+          requestId: crypto.randomUUID(),
+        })
+      ).toMatchObject({
         ok: false,
-        reason: expect.stringMatching(/^card_open:/),
       });
-      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a held card stays held and keeps its todo waiting until answered', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      await h.call(
+        'neo.question.hold',
+        { questionId: card.id, held: true, requestId: crypto.randomUUID() },
+        human
+      );
+      h.store.updateTodo(h.store.getTodo(h.rows.id)!, { report: 'Routine activity' }, 10);
+      const wait = () =>
+        neoTodoWaitReason(
+          h.store.getTodo(h.fix.id)!,
+          h.store.listTodos('ask'),
+          h.store.listQuestions('ask')
+        );
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeNumber();
+      expect(wait()).toMatch(/^question_open:/);
+      expect(
+        await h.call('neo.question.answer', { questionId: card.id, answer: 'Staging' }, human)
+      ).toMatchObject({ ok: true, question: { state: 'answered' } });
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeUndefined();
+      expect(wait()).toBeNull();
+      expect(
+        await h.call(
+          'neo.question.hold',
+          { questionId: card.id, held: true, requestId: crypto.randomUUID() },
+          human
+        )
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_closed:/) });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a delayed hold replayed after the take-back changes nothing', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const hold = (held: boolean, requestId: string) =>
+        h.call('neo.question.hold', { questionId: card.id, held, requestId }, human);
+      const first = crypto.randomUUID();
+      await hold(true, first);
+      await hold(false, crypto.randomUUID());
+      const replay = await hold(true, first);
+      expect(replay.ok && replay.question.heldAt).toBeUndefined();
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeUndefined();
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a hold that lands after the retire read still keeps the card', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const read = h.store.getQuestion.bind(h.store);
+      h.store.getQuestion = (id) => {
+        const before = read(id);
+        h.store.getQuestion = read;
+        h.store.holdQuestion(id, true, crypto.randomUUID(), 5);
+        return before;
+      };
+      expect(
+        await h.call('neo.question.retire', { questionId: card.id, reason: 'Not needed' })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_held:/) });
+      expect(h.store.getQuestion(card.id)).toMatchObject({ state: 'open', heldAt: 5 });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('Neo cannot retire or replace a card the human holds', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      await h.call(
+        'neo.question.hold',
+        { questionId: card.id, held: true, requestId: crypto.randomUUID() },
+        human
+      );
+      expect(
+        await h.call('neo.question.retire', { questionId: card.id, reason: 'Not needed' })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_held:/) });
+      expect(
+        await h.call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Which region?',
+          todoId: h.fix.id,
+          replaces: card.id,
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_held:/) });
+      expect(h.store.getQuestion(card.id)).toMatchObject({ state: 'open' });
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeNumber();
+      expect(h.store.listQuestions('ask').map((q) => q.text)).toEqual(['Which environment?']);
     } finally {
       h.db.close();
     }

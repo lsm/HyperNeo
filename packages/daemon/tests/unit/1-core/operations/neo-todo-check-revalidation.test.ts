@@ -56,9 +56,7 @@ function setup(result: NeoTodoCheckResult = merged, judgement?: NeoTodoJudgement
     sessions: new NeoTodoSessionRepository(db),
     invoke: async () => ({ kind: 'completed', value: null }) as OperationOutcome,
     packs: () => [pack],
-    tell: async (_ask, _todo, note) => {
-      told.push(note);
-    },
+    tell: async () => {},
     attend: async (event) => {
       told.push(String(event.facts.text));
     },

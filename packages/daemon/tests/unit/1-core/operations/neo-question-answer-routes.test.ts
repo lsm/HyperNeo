@@ -162,7 +162,7 @@ test('upgrade recovers held historical answers once without changing their prove
   }
 });
 
-test('the card write refuses a second card on the ask, however the relay got there', async () => {
+test('a worker card for a second todo opens beside the first card on the ask', async () => {
   const f = await fixture();
   try {
     const todo = f.store.addTodo(
@@ -174,10 +174,10 @@ test('the card write refuses a second card on the ask, however the relay got the
     new NeoTodoSessionRepository(f.db).bind(todo.id, f.source, 2);
     f.store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
     expect(await f.write(f.source, { ...f.report, todoId: todo.id })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('card_open'),
+      ok: true,
+      question: { todoId: todo.id, state: 'open' },
     });
-    expect(f.store.listQuestions('ask')).toHaveLength(1);
+    expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
   } finally {
     f.db.close();
   }
@@ -263,6 +263,51 @@ test('a validated replacement worker receives the existing card answer route', a
         { sourceSession: replacement, receipt: 'accepted-by-replacement', acceptedAt: 5 },
       ],
     });
+  } finally {
+    f.db.close();
+  }
+});
+
+test('a replacement worker with a different report does not take over the open card', async () => {
+  const f = await fixture();
+  try {
+    const replacement = { ...f.source, id: 'replacement' };
+    new NeoTodoSessionRepository(f.db).bind('todo', replacement, 3);
+    expect(
+      await f.write(replacement, { ...f.report, report: 'A different blocker' })
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(f.store.getQuestion(f.question.id)?.document).toBe(f.report.report);
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ sourceSession: f.source }] });
+  } finally {
+    f.db.close();
+  }
+});
+
+test('a worker repeat finds its own card behind an older Neo card on the todo', async () => {
+  const f = await fixture();
+  try {
+    f.store.askQuestion(
+      'neo-card',
+      'ask',
+      {
+        text: 'Which branch?',
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: 'todo',
+      },
+      0
+    );
+    expect(await f.write(f.source, f.report)).toMatchObject({
+      ok: true,
+      question: { id: f.question.id },
+    });
+    expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
   } finally {
     f.db.close();
   }

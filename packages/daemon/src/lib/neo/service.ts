@@ -337,15 +337,8 @@ export class NeoService {
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
       enabledPacks: () => this.packs(),
-      tell: (ask, todo, note, key, kind) => {
-        return this.deliverForward(
-          ask.sessionId,
-          key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
-          note,
-          ask.sessionId,
-          kind
-        );
-      },
+      tell: (ask, _todo, note, key, kind) =>
+        this.deliverForward(ask.sessionId, key, note, ask.sessionId, kind),
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
@@ -371,11 +364,11 @@ export class NeoService {
           ...NEO_ATTENTION_KINDS,
           ...this.installedPacks().flatMap((pack) => pack.attention?.kinds ?? []),
         ],
-        read: ({ subject }) => {
+        read: ({ subject, facts }) => {
           const todo = subject.type === 'todo' ? this.todos.getTodo(subject.id) : null;
           return {
             covered: !!todo && neoTodoCovered(todo, this.todos.todoCards(todo)),
-            latestReportAt: null,
+            latestReportAt: typeof facts.latestAt === 'number' ? facts.latestAt : null,
           };
         },
         ...neoAttentionDelivery(
@@ -400,7 +393,7 @@ export class NeoService {
     };
     this.noteWorking = () => {
       try {
-        const working = readNeoWorking(this.db.getDatabase());
+        const working = readNeoWorking(this.db.getDatabase(), this.repo.readConversationId());
         const key = neoWorkingKey(working);
         if (key === this.workingKey) return;
         this.workingKey = key;
@@ -472,7 +465,10 @@ export class NeoService {
         if (bound?.kind === 'neo') {
           this.noteWorking();
           if (status) this.notifyChanged();
+          return;
         }
+        const conversation = status || session?.status ? this.repo.readConversationId() : null;
+        if (conversation && sessionId === frontSessionId(conversation)) this.noteWorking();
       },
       { subscriberName: 'neo-work-return' }
     );
@@ -727,12 +723,7 @@ export class NeoService {
         reason: 'no_worker_question: this todo has no worker question to relay.',
       };
     const setting = this.db.getGlobalSettings().language;
-    const card = requireHumanCard(
-      { text: input.title, kind: 'choice' },
-      this.todos.listQuestions(todo.askId),
-      null,
-      setting
-    );
+    const card = requireHumanCard({ text: input.title, kind: 'choice' }, setting);
     if ('reason' in card) return card.reason;
     const language = expectedReportLanguage(setting);
     const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
@@ -754,8 +745,6 @@ export class NeoService {
       (notice: NeoSessionNotice, input: { title: string }, sessionId: string | undefined) => {
         const card = requireHumanCard(
           { text: input.title, kind: 'choice' },
-          [],
-          null,
           this.db.getGlobalSettings().language
         );
         if ('reason' in card) return card;

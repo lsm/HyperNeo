@@ -5,7 +5,6 @@ import { neoWakeQueueWrite } from '../../../storage/repositories/neo-wake-queue-
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import { mailSessionEvent } from '../../external-events/session-event-delivery.ts';
 import { renderAddress } from '../../mailbox/address.ts';
-import { rejected } from '../../mailbox/handoff.ts';
 import { createMailboxEntry } from '../../mailbox/entry.ts';
 import {
   decideNeoAttention,
@@ -29,17 +28,15 @@ export const neoAttentionDelivery = (
 ): { wake: Deliver; digest: Deliver } => ({
   wake: async (uuid, text) => {
     const sessionId = session();
-    return (
-      !!sessionId &&
-      !rejected(
-        await mailSessionEvent(new JobQueueRepository(db), {
-          sessionId,
-          messageUuid: uuid,
-          text,
-          mode: busy(sessionId) ? 'defer' : 'immediate',
-        })
-      )
-    );
+    if (!sessionId) return false;
+    const outcome = await mailSessionEvent(new JobQueueRepository(db), {
+      sessionId,
+      messageUuid: uuid,
+      text,
+      mode: busy(sessionId) ? 'defer' : 'immediate',
+    });
+    if (outcome.kind === 'rejected') throw new Error(`Neo wake was not queued: ${outcome.reason}`);
+    return true;
   },
   digest: async (uuid, text) => {
     const sessionId = session();

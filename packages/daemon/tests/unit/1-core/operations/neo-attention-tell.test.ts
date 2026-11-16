@@ -131,4 +131,13 @@ describe('neo.attention.tell', () => {
     await busy(step(), 1_000);
     expect(JSON.parse(mailbox.jobsByQueue('mailbox')[0].payload).deliveryMode).toBe('defer');
   });
+
+  test('a wake that could not be queued fails the tell and is sent when raised again', async () => {
+    mailbox.db.exec('ALTER TABLE job_queue RENAME TO job_queue_away');
+    await expect(tell(step(), 1_000)).rejects.toThrow('Neo wake was not queued');
+    mailbox.db.exec('ALTER TABLE job_queue_away RENAME TO job_queue');
+    expect(wakes()).toBe(0);
+    expect(await tell(step(), 1_000)).toMatchObject({ told: 'wake', step: 0 });
+    expect(wakes()).toBe(1);
+  });
 });

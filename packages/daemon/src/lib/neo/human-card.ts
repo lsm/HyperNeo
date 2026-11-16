@@ -4,7 +4,6 @@ import type {
   NeoAskTodoRepository,
   NeoQuestionDraft,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { isNeoTodoStalledCard } from './todo-state.ts';
 
 export function openHumanCard(
   store: NeoAskTodoRepository,
@@ -17,10 +16,14 @@ export function openHumanCard(
 }
 
 export function applyOrKeepCard(text: string, apply: string, keep: string): NeoQuestionDraft {
+  return choiceCard(text, [apply, keep]);
+}
+
+export function choiceCard(text: string, options: string[]): NeoQuestionDraft {
   return {
     text,
     kind: 'choice',
-    options: [apply, keep],
+    options,
     multiple: false,
     noLabel: null,
     yesLabel: null,
@@ -59,19 +62,6 @@ const asksSomething = (card: Card) =>
     ? null
     : 'card_no_action: a reply card must ask the human something; a notice belongs in chat.';
 
-const onlyCard = (open: readonly NeoQuestion[], replaced: NeoQuestion | null) => {
-  const other = open.find(
-    (question) =>
-      question.state === 'open' &&
-      (question.todoId || question.retireWhen) &&
-      question.id !== replaced?.id &&
-      !isNeoTodoStalledCard(question.text)
-  );
-  return other
-    ? `card_open: card ${other.id} is already open on this ask; wait for its answer, or change it with neo.question.ask replaces.`
-    : null;
-};
-
 const shortEnough = (card: Card) =>
   card.text.length < NEO_CARD_MAX_CHARS + 1
     ? null
@@ -92,15 +82,9 @@ const inLanguage = (card: Card, language: LanguageSetting | undefined) => {
 
 export function requireHumanCard<T extends Card>(
   card: T,
-  open: readonly NeoQuestion[],
-  replaced: NeoQuestion | null,
   language: LanguageSetting | undefined
 ): Gate<T> {
   const reason =
-    asksSomething(card) ??
-    onlyCard(open, replaced) ??
-    shortEnough(card) ??
-    noInternalId(card) ??
-    inLanguage(card, language);
+    asksSomething(card) ?? shortEnough(card) ?? noInternalId(card) ?? inLanguage(card, language);
   return reason ? { reason: { ok: false, reason } } : { value: card };
 }

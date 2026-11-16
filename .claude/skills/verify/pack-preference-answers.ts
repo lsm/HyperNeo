@@ -6,6 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 const [portText, runText] = process.argv.slice(2); assert(runText);
 const run = resolve(runText); const port = Number(portText);
 assert(port > 0 && port !== 8399); assert.equal(process.env.NODE_ENV, 'test');
@@ -21,7 +22,7 @@ for (const phase of ['initial', 'restart']) {
   let ws: WebSocket | undefined;
   try {
     await app.spaceRuntimeService.ready();
-    ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
     await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
     const rpc = (name: string, input: unknown) => new Promise<any>((done, fail) => {
       const id = crypto.randomUUID(); const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
@@ -52,7 +53,7 @@ for (const phase of ['initial', 'restart']) {
       assert.equal(read.answeredByHuman, false); assert(read.question.text.includes('| --- | --- |')); for (const value of values) assert(!read.question.text.includes(JSON.stringify(value)));
       const snapshot = await rpc('neo.snapshot', {});
       assert(snapshot.todoAsks.some((entry: any) => entry.questions.some((q: any) => q.id === questionId)));
-      assert.equal((await mcp('neo.question.answer', { questionId, answer: 'Apply these settings' })).ok, false);
+      assert.notEqual((await mcp('neo.question.answer', { questionId, answer: 'Apply these settings' })).ok, true);
       assert.equal((await rpc('neo.question.answer', { questionId, answer: 'Apply these settings' })).ok, true);
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);

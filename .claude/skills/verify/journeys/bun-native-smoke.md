@@ -45,9 +45,8 @@ mailbox report, exact command/prompt, acknowledgement and committed journal sequ
 plus resource closure; see [bun-outbox-probe.md](bun-outbox-probe.md). The todo
 receipt probe requires recovery/window/live-status results, complete dispatch
 receipts, trigger-refusal rollback and Map snapshot transport; see
-[bun-todo-receipt-probe.md](bun-todo-receipt-probe.md). Preserve its normal
-turn-report cutoff bootstrap prerequisite; this does not prove cold reader
-initialization or startup write ownership. The claim lock probe requires real SQLite
+[bun-todo-receipt-probe.md](bun-todo-receipt-probe.md). This does not prove
+startup write ownership. The claim lock probe requires real SQLite
 lock ownership, a claim pending through barrier release, the holder's commit, a
 complete single claim and resource closure. See
 [bun-claim-lock-probe.md](bun-claim-lock-probe.md). The todo incident probe requires

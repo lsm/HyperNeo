@@ -17,12 +17,14 @@ and a refusing GitHub stub. Its synthetic worker has a recorded notice dispatch
 without a todo. The worker ends with an empty result while its status is running.
 The real driver-refresh job must deliver exactly one input to Neo containing the
 worker name, full hyperneo-prefixed session ref, known link and no-reply fallback.
-A second refresh must retain one report. The wrapper preserves observed.json and
+A second refresh must retain one report. The report reaches Neo through the
+attention entry: it is queued once as a digest line and never as a wake. The
+wrapper preserves observed.json and
 proof.log and removes synthetic daemon data after cleanup.
 
 Before the fix the received report lacks the worker name and ref, so the identity
 assertion fails. Focused runner contracts cover full Codex, Claude and HyperNeo
-refs across todo, notice, focused-discussion and human-directed reports. Those
+refs across todo, notice and human-directed reports. Those
 contracts use synthetic driver outcomes. This journey observes actual recipient
 SDK input bytes through the local HyperNeo adapter and RPC door.
 
