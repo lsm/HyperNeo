@@ -244,6 +244,33 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
       h.db.close();
     }
   });
+
+  test('keeps a worker whose detached HEAD has commits no remote branch holds', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      git(h.folder(), 'checkout', '-q', '--detach');
+      writeFileSync(join(h.folder(), 'c.txt'), 'c');
+      git(h.folder(), 'add', 'c.txt');
+      git(h.folder(), 'commit', '-q', '--no-gpg-sign', '-m', 'c');
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps a worker whose folder cannot be found', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      rmSync(h.folder(), { recursive: true, force: true });
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
 });
 
 describe('admitSessionArchive', () => {
@@ -253,6 +280,20 @@ describe('admitSessionArchive', () => {
       const db = { getDatabase: () => h.db } as never;
       expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toBeNull();
       expect(admitSessionArchive(worker, { source: 'mcp', role: 'neo' }, db)).not.toBeNull();
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('refuses the daemon when a queued todo was bound to the worker after the sweep read', () => {
+    const h = setup();
+    try {
+      const db = { getDatabase: () => h.db } as never;
+      h.queueOn(h.add(started).id);
+      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toMatchObject({
+        ok: false,
+        reason: 'live_todo',
+      });
     } finally {
       h.db.close();
     }
