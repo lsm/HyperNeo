@@ -72,6 +72,7 @@ export const CODING_LEDGER_WARN_SKIPS = 3;
 export const CODING_LEDGER_SNAPSHOT_CLOSED_MS = 24 * 60 * 60_000;
 
 const log = new Logger('NeoCodingLedger');
+const STALE_READ = `(read_at < ? AND NOT (state = 'approved_pending' AND closed_at IS NULL))`;
 
 export const Node = z.object({
   number: z.number().int(),
@@ -894,8 +895,8 @@ export class CodingPrLedgerRepository {
     this.db
       .prepare(
         codingWatchedRepos(this.db) === null
-          ? `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR read_at < ? OR repo NOT IN (SELECT value FROM json_each(?))`
-          : `DELETE FROM pack_coding_pr_ledger WHERE (closed_at < ? OR read_at < ?) AND repo IN (SELECT value FROM json_each(?))`
+          ? `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR ${STALE_READ} OR repo NOT IN (SELECT value FROM json_each(?))`
+          : `DELETE FROM pack_coding_pr_ledger WHERE (closed_at < ? OR ${STALE_READ}) AND repo IN (SELECT value FROM json_each(?))`
       )
       .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
     this.db
