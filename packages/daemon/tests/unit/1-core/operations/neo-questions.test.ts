@@ -215,6 +215,55 @@ describe('neo.question operations', () => {
     }
   });
 
+  test('the human holds a card and takes it back, each repeatable', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const hold = (held: boolean) =>
+        h.call('neo.question.hold', { questionId: card.id, held }, human);
+      const first = await hold(true);
+      expect(first).toMatchObject({ ok: true, question: { state: 'open' } });
+      const heldAt = first.ok ? first.question.heldAt : undefined;
+      expect(heldAt).toBeNumber();
+      expect(await hold(true)).toMatchObject({ ok: true, question: { heldAt } });
+      expect(h.store.getQuestion(card.id)?.heldAt).toBe(heldAt);
+      const back = [await hold(false), await hold(false)];
+      expect(back.map((r) => r.ok && r.question.heldAt)).toEqual([undefined, undefined]);
+      expect(await h.call('neo.question.hold', { questionId: card.id, held: true })).toMatchObject({
+        ok: false,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a held card stays held and keeps its todo waiting until answered', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      await h.call('neo.question.hold', { questionId: card.id, held: true }, human);
+      h.store.updateTodo(h.store.getTodo(h.rows.id)!, { report: 'Routine activity' }, 10);
+      const wait = () =>
+        neoTodoWaitReason(
+          h.store.getTodo(h.fix.id)!,
+          h.store.listTodos('ask'),
+          h.store.listQuestions('ask')
+        );
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeNumber();
+      expect(wait()).toMatch(/^question_open:/);
+      expect(
+        await h.call('neo.question.answer', { questionId: card.id, answer: 'Staging' }, human)
+      ).toMatchObject({ ok: true, question: { state: 'answered' } });
+      expect(h.store.getQuestion(card.id)?.heldAt).toBeUndefined();
+      expect(wait()).toBeNull();
+      expect(
+        await h.call('neo.question.hold', { questionId: card.id, held: true }, human)
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_closed:/) });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test.each(['reply', 'choice'] as const)(
     'refuses a %s question if its ask settles during source lookup',
     async (kind) => {
