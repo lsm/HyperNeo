@@ -391,6 +391,61 @@ describe('NeoHumanQueue', () => {
     expect(document.querySelectorAll('[id="neo-ref-todo-t1"]')).toHaveLength(1);
   });
 
+  it('reveals a reference once and leaves later snapshot changes alone', async () => {
+    const props = { entries, onHold: vi.fn(), onAnswer: vi.fn() };
+    const view = render(
+      <NeoHumanQueue
+        {...props}
+        queue={queue}
+        focus={{ askId: 'trip', questionId: 'q1' }}
+        reveal={1}
+      />
+    );
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q1'));
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    const states = within(view.getByRole('group', { name: 'State' }));
+    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    const held: Queue = {
+      items: queue.items.map((item) =>
+        'questionId' in item && item.questionId === 'q1' ? { ...item, state: 'held' } : item
+      ),
+      counts: { ...queue.counts, trip: { waiting: 0, held: 2, progress: 1 } },
+    };
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={held}
+        focus={{ askId: 'trip', questionId: 'q1' }}
+        reveal={1}
+      />
+    );
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={held}
+        focus={{ askId: 'trip', questionId: 'q2' }}
+        reveal={1}
+      />
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(document.activeElement).toBe(input);
+    expect(states.getByRole('button', { name: 'In progress 2' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={held}
+        focus={{ askId: 'trip', questionId: 'q2' }}
+        reveal={2}
+      />
+    );
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-question-q2'));
+    input.remove();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue

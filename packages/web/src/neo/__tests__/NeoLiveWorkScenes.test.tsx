@@ -737,6 +737,60 @@ describe('card reply notice navigation', () => {
       expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
   });
 
+  it('counts only the reference card it lists under Needs your attention', async () => {
+    const { model } = mount();
+    const oil = testTodo('oil', { title: 'Fictional oil', state: 'done' });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async (_method: string, params: { name: string }) =>
+        params.name === 'neo.ask.doneTodos'
+          ? { ok: true, todos: [oil], doneCount: 1, nextOffset: null }
+          : { ok: true, results: [], schedules: [] }
+      ),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          needsYou: 5,
+          todoAsks: [
+            testAskEntry('car', 'Fictional car service', {
+              state: 'waiting',
+              todos: [oil],
+              doneCount: 1,
+            }),
+          ],
+          humanQueue: {
+            items: [{ state: 'waiting', askId: 'car', questionId: 'qc', text: 'Car?', todos: [] }],
+            counts: { car: { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'oil-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000008',
+                askOrigin: { sessionId: root, messageId: 'quoted-oil' },
+                content: 'About the oil',
+                replyTo: { kind: 'todo', id: 'oil', excerpt: 'Quoted oil target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Quoted oil target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-oil'));
+    const group = screen.getByRole('region', { name: 'Needs your attention' });
+    expect(group.querySelector('h2')?.textContent).toBe('Needs your attention · 1');
+  });
+
   it('applies the chosen topic to the queue', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
