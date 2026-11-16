@@ -21,7 +21,7 @@ shows it. Three facts in the code allow it:
 2. **One request is one todo.** A message with four items still gets a single todo.
    Splitting it is left to Neo, and nothing compares the split with the message.
 3. **The work is not on the request's ask.** Neo is never told the request's ask id: the
-   `<session-message>` envelope carries only the sender (`messaging/session-envelope.ts`).
+   `<session-message>` envelope carries only the sender (`packages/daemon/src/lib/messaging/session-envelope.ts`).
    `neo.todo.add` needs `input` (a `<human-message>` id) or `askId`, so Neo files the work
    under some other ask or a new one. The request's ask then settles while its work is
    still running elsewhere, or missing.
@@ -37,7 +37,7 @@ already derived from the incident before delivery (`neoDerivedId('neo-request-as
 (`resolveNeoInputAsk` in `input-ask.ts`). Their `askId` description gains one sentence:
 for a request from a session, pass the `ask` on its `<session-message>` tag. The work and its
 cards then sit on the request's ask, and the existing settle rule
-(`requireNeoAskTurnedSettle` in `storage/repositories/neo-ask-settlement.ts`) keeps that ask
+(`requireNeoAskTurnedSettle` in `packages/daemon/src/storage/repositories/neo-ask-settlement.ts`) keeps that ask
 open until every todo on it has finished.
 
 **2. The sender sees the split.** When Neo closes the request todo, the reply the daemon
@@ -68,18 +68,18 @@ request todo sends nothing more: the close reply already said nothing was added.
 
 Each slice is one PR from `dev` (the repository's default and target branch), failing tests
 first. `bun run system-map impact` on the touched files: `session-envelope.ts` has 6
-importers, and the attribute is optional, so they are unchanged. `request-todo.ts` has 4
-importers: `service.ts` and `rpc-handlers/index.ts` deliver the reply, and
-`neo-ask-todo-repository.ts` and `neo-todo-mutation-commit.ts` queue it with the todo and the
-database. None of them changes. The settle reply is added where the ask is settled.
+importers, and the attribute is optional, so no importer is forced to change. `request-todo.ts` has 4
+importers: `service.ts` and `packages/daemon/src/lib/rpc-handlers/index.ts` deliver the reply, and
+`neo-ask-todo-repository.ts` and `neo-todo-mutation-commit.ts` (in `packages/daemon/src/storage/repositories/`) queue it with the todo and the
+database. No importer is forced to change; the planned `service.ts` edits are in the slices below. The settle reply is added where the ask is settled.
 
 1. **The ask on the envelope.** `service.ts` passes the request ask id to the envelope for a
    recorded request; `session-envelope.ts` writes the optional attribute; the `askId` text in
    `todo-operations.ts` and `question-operations.ts`. About 40 production lines.
 2. **The two replies.** The close reply lists the ask's todos (`request-todo.ts`); the
-   settle reply on the same queue with its own key (`storage/repositories/neo-ask-settlement.ts`,
+   settle reply on the same queue with its own key (`packages/daemon/src/storage/repositories/neo-ask-settlement.ts`,
    `service.ts` `deliverRequestReply`). About 80 production lines. Checkpoints: cover both
-   settle paths in `neo-ask-settlement.ts`, the explicit settle and the automatic turned
+   settle paths in `packages/daemon/src/storage/repositories/neo-ask-settlement.ts`, the explicit settle and the automatic turned
    settle. Keep the settle reply distinct from the close reply through enqueue dedup
    (`queueNeoRequestReply` matches on `todoId`), the send's idempotency key and the
    deferred re-enqueue in `deliverRequestReply`.
