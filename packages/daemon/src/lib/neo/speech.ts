@@ -59,7 +59,7 @@ type SpeechReceipt = {
   guidance?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
-type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
+type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice?: string };
 
 function spokenReply(text: string): string {
   const plain = text
@@ -472,7 +472,7 @@ export class NeoSpeech {
           clientId,
           pending: new Set(),
           audio: input.audio ?? false,
-          voice: input.voice ?? 'vivian',
+          voice: input.voice,
         });
       return { ok: true };
     }
@@ -494,7 +494,7 @@ export class NeoSpeech {
       if (target?.clientId !== clientId) return { ok: false, reason: 'voice_replies_off' };
       input = {
         requestId: input.requestId,
-        text: ['ryan', 'aiden'].includes(target.voice)
+        text: ['ryan', 'aiden'].includes(target.voice ?? '')
           ? 'Hello. This is Neo speaking.'
           : '你好，这是 Neo 的语音试听。',
       };

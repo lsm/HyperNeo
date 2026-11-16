@@ -23,7 +23,7 @@ const OPENAI_VOICES = [
   'cedar',
 ];
 
-export type SpeechPart = { endpoint: string; model?: string; key?: string };
+export type SpeechPart = { endpoint: string; model?: string; voice?: string; key?: string };
 type SpeechBackend = { base?: string; part?: SpeechPart };
 
 const retryAfterMs = (header: string | null, now: number): number | null => {
@@ -143,7 +143,7 @@ export class NeoSpeechAudio {
     }
   }
 
-  start(target: Target, voice: string): void {
+  start(target: Target, voice: string | undefined): void {
     const timing = { speechId: target.id, sessionId: target.sessionId, clientId: target.clientId };
     voiceDiagnostic('voice.tts.queued', { ...timing, atMs: Date.now() });
     const controller = new AbortController();
@@ -156,6 +156,7 @@ export class NeoSpeechAudio {
         controller.signal.throwIfAborted();
         voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
         const backend = await this.backend();
+        const spoken = voice ?? (backend.part ? backend.part.voice : 'vivian');
         const synthesize = () =>
           this.request(this.url(backend, '/v1/audio/speech'), {
             method: 'POST',
@@ -167,10 +168,10 @@ export class NeoSpeechAudio {
                 ? {
                     ...(backend.part.model ? { model: backend.part.model } : {}),
                     input: target.text,
-                    voice,
+                    ...(spoken ? { voice: spoken } : {}),
                     response_format: 'pcm',
                   }
-                : { input: target.text, voice, language: 'auto', response_format: 'pcm' }
+                : { input: target.text, voice: spoken, language: 'auto', response_format: 'pcm' }
             ),
           });
         let response = await synthesize();
