@@ -817,6 +817,45 @@ describe('NeoHumanQueue', () => {
     expect(onLoadDetails).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps cards in the queue order across asks, in runs labelled by ask', () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={{
+          items: [
+            { state: 'waiting', askId: 'trip', questionId: 'q1', text: 'A new', todos: [] },
+            { state: 'waiting', askId: 'tax', questionId: 'q3', text: 'B middle', todos: [] },
+            { state: 'waiting', askId: 'trip', questionId: 'q2', text: 'A old', todos: [] },
+          ],
+          counts: {
+            trip: { waiting: 2, held: 0, progress: 0 },
+            tax: { waiting: 1, held: 0, progress: 0 },
+          },
+        }}
+        entries={entries}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        renderAsk={(shown) => <p>Full ask {shown.ask.title}</p>}
+      />
+    );
+    const runs = [...view.container.querySelectorAll('[data-queue-ask]')];
+    expect(runs.map((run) => run.getAttribute('aria-label'))).toEqual([
+      'Plan the trip',
+      'File taxes',
+      'Plan the trip',
+    ]);
+    expect(
+      [...view.container.querySelectorAll('[data-queue-card]')].map((card) =>
+        card.getAttribute('data-queue-card')
+      )
+    ).toEqual(['q1', 'q3', 'q2']);
+    expect(view.container.querySelectorAll('[id="neo-ref-ask-trip"]')).toHaveLength(1);
+    expect(view.getAllByRole('button', { name: 'Open the ask' })).toHaveLength(2);
+    fireEvent.click(within(runs[0] as HTMLElement).getByRole('button', { name: 'Open the ask' }));
+    expect(view.getAllByText('Full ask Plan the trip')).toHaveLength(1);
+    expect(view.container.querySelector('[data-queue-card="q2"]')).toBeNull();
+    expect(view.container.querySelector('[data-queue-card="q3"]')).toBeTruthy();
+  });
+
   it('has no header button when the full ask cannot be shown', () => {
     const { view } = show();
     expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
