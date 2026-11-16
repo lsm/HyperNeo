@@ -279,7 +279,7 @@ describe('neo todo runner refresh releases removed todos and busy folders', () =
 });
 
 describe('neo todo runner refresh retries a folder whose process check failed', () => {
-  test.if(process.platform !== 'linux')(
+  test.skipIf(process.platform === 'linux')(
     'keeps the folder and leaves the worker releasable when lsof fails',
     async () => {
       const h = setup();
@@ -315,7 +315,7 @@ describe('neo todo runner refresh retries a folder whose process check failed', 
 });
 
 describe('neo todo runner refresh on Linux', () => {
-  test.if(process.platform === 'linux')(
+  test.skipIf(process.platform !== 'linux')(
     'finds a process inside the folder without lsof and removes it once the process exits',
     async () => {
       const h = setup();
