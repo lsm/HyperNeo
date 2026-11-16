@@ -54,10 +54,10 @@ silently: when a step is nobody's to move, it wakes Neo, not the human.
 
 | Writer today | Card | Becomes |
 |---|---|---|
-| `storage/repositories/neo-daemon-card-write.ts` | worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
-| `storage/repositories/neo-daemon-card-write.ts` | start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
-| `storage/repositories/neo-stall-reminder-write.ts` | human step (`human_step`, which replaced `check_overdue`) | the check rows below |
-| `storage/repositories/neo-todo-mutation-commit.ts` | prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
+| `packages/daemon/src/storage/repositories/neo-daemon-card-write.ts` | worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
+| `packages/daemon/src/storage/repositories/neo-daemon-card-write.ts` | start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
+| `packages/daemon/src/storage/repositories/neo-stall-reminder-write.ts` | human step (`human_step`, which replaced `check_overdue`) | the check rows below |
+| `packages/daemon/src/storage/repositories/neo-todo-mutation-commit.ts` | prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
 
 The automatic retries stay (`NEO_AUTOMATIC_RETRIES`): the daemon still retries a failed
 start twice before the step is Neo's. When they run out, the todo's write to `blocked` /
