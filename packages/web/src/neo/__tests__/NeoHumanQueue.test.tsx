@@ -2,9 +2,10 @@ import type { NeoAskEntry, NeoQuestionEntry } from '@hyperneo/shared/types/neo-a
 import type { NeoHumanQueue as Queue } from '@hyperneo/shared/types/neo-snapshot';
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NeoAskTodos } from '../NeoAskTodos.tsx';
 import { NeoHumanQueue } from '../NeoHumanQueue.tsx';
 import { locale } from '../../lib/i18n/index.ts';
-import { testTodo } from './neo-test-views.ts';
+import { testAskEntry, testTodo } from './neo-test-views.ts';
 
 beforeEach(() => {
   locale.value = 'en';
@@ -706,6 +707,85 @@ describe('NeoHumanQueue', () => {
     fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
     expect(view.getByText('Validated ask')).toBeTruthy();
     expect(view.queryByText('Summary ask')).toBeNull();
+  });
+
+  it('keeps the open full ask and its unsent choice while a newer revision loads', async () => {
+    const choice = question('q1', 'trip', {
+      kind: 'choice',
+      options: ['iPhone', 'iPad'],
+      multiple: true,
+    });
+    const at = (updatedAt: number, summary: boolean) => {
+      const shown = testAskEntry('trip', 'Plan the trip', {
+        state: 'waiting',
+        questions: [choice],
+      });
+      return {
+        ...shown,
+        ask: { ...shown.ask, updatedAt },
+        ...(summary ? { summary: {} } : {}),
+      } as unknown as NeoAskEntry;
+    };
+    const reads: ((value: NeoAskEntry) => void)[] = [];
+    const props = {
+      queue: { items: [queue.items[0]], counts: { trip: { waiting: 1, held: 0, progress: 0 } } },
+      onHold: vi.fn(),
+      onAnswer: vi.fn(),
+      onLoadDetails: () => new Promise<NeoAskEntry>((resolve) => reads.push(resolve)),
+      renderAsk: (shown: NeoAskEntry, refreshing?: boolean) => (
+        <NeoAskTodos entry={shown} disabled={refreshing} onAnswer={vi.fn()} />
+      ),
+    };
+    const view = render(<NeoHumanQueue {...props} entries={[at(1, true)]} />);
+    await waitFor(() => expect(reads).toHaveLength(1));
+    reads[0](at(1, false));
+    fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
+    const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
+    fireEvent.click(pick());
+    expect(pick().checked).toBe(true);
+    view.rerender(<NeoHumanQueue {...props} entries={[at(2, true)]} />);
+    await waitFor(() => expect(reads).toHaveLength(2));
+    expect(pick().checked).toBe(true);
+    expect(pick().disabled).toBe(true);
+    reads[1](at(2, false));
+    await waitFor(() => expect(pick().disabled).toBe(false));
+    expect(pick().checked).toBe(true);
+  });
+
+  it.each([
+    [
+      'a remote worker',
+      { worker: { id: 'w', adapter: 'codex', name: null, label: 'Remote', daemon: 'remote' } },
+      true,
+    ],
+    ['a failed todo', { state: 'failed' }, true],
+    ['a todo the summary leaves out', {}, false],
+  ])('says when the read for %s failed and retries it', async (_name, patch, listed) => {
+    const garage = testTodo('t4', { title: 'Call the garage', state: 'doing', ...patch });
+    const summarised = {
+      ...entry('car', 'Service the car'),
+      todos: listed ? [garage] : [],
+      summary: {},
+    } as unknown as NeoAskEntry;
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ ...entry('car', 'Service the car'), todos: [garage] } as NeoAskEntry);
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={onLoadDetails}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
+    expect((await view.findByRole('alert')).textContent).toContain('Couldn’t load this step.');
+    fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(view.queryByRole('alert')).toBeNull());
+    expect(onLoadDetails).toHaveBeenCalledTimes(2);
   });
 
   it('has no header button when the full ask cannot be shown', () => {
