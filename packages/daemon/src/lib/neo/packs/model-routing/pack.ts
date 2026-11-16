@@ -20,6 +20,7 @@ import {
   type LineRule,
   type RankInput,
   type Route,
+  names,
   rankLines,
   routeFor,
   type UsageReading,
@@ -80,11 +81,15 @@ function readPrefs(db: Database): RankInput['prefs'] {
   };
 }
 
-type HeldTodo = { todo: { id: string; title: string; named: string | null }; hold: HeldLine };
+type HeldTodo = {
+  todo: { id: string; title: string; named: string | null };
+  worker: string;
+  hold: HeldLine;
+};
 
 function readHeldTodos(db: Database): HeldTodo[] {
   return db
-    .prepare(`SELECT t.id, t.title, t.named,
+    .prepare(`SELECT t.id, t.title, t.named, x.id AS worker,
         json_extract(x.config, '$.provider') AS provider,
         json_extract(x.config, '$.model') AS model,
         json_extract(x.processing_state, '$.reason') AS reason,
@@ -100,23 +105,23 @@ function readHeldTodos(db: Database): HeldTodo[] {
         AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'`)
     .all()
     .flatMap((row) => {
-      const { id, title, named, provider, model, reason, since, retryAt } = row as Record<
+      const { id, title, named, worker, provider, model, reason, since, retryAt } = row as Record<
         string,
         unknown
       >;
       return typeof provider === 'string' &&
         typeof model === 'string' &&
         typeof reason === 'string' &&
-        typeof since === 'number' &&
-        typeof retryAt === 'number'
+        typeof since === 'number'
         ? [
             {
               todo: { id: String(id), title: String(title), named: named as string | null },
+              worker: String(worker),
               hold: {
                 line: { provider, model, harness: 'hyperneo' },
                 reason: reason as RateLimitHoldReason,
                 since,
-                retryAt,
+                ...(typeof retryAt === 'number' ? { retryAt } : {}),
               },
             },
           ]
@@ -230,23 +235,30 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     .pipe(
       (held: HeldTodo[], routes: Route[]) =>
         Promise.all(
-          held.map(async ({ todo, hold }) => {
-            const { kind, scope } = workOf(todo.named);
-            const candidates = routeFor(routes, kind, scope)?.lines ?? [];
-            return { todo, hold, ranking: await rank(kind, candidates, scope) };
+          held.map(async (entry) => {
+            const { kind, scope } = workOf(entry.todo.named);
+            const candidates = (routeFor(routes, kind, scope)?.lines ?? []).filter(
+              (line) => !names(line, entry.hold.line)
+            );
+            return { ...entry, ranking: await rank(kind, candidates, scope) };
           })
         ),
       ['held', 'routes'],
       'ranked'
     )
+    .pipe(() => readHeldTodos(deps.database()), 'ranked', 'current')
     .pipe(
       (
         ranked: (HeldTodo & { ranking: NeoLineRanking })[],
+        current: HeldTodo[],
         rules: HoldRule[],
         at: number
       ): NeoAttentionEvent[] =>
-        ranked.flatMap(({ todo, hold, ranking }) =>
-          onLineHeld({ hold, rules, ranking, now: at }).action === 'tellNeo'
+        ranked.flatMap(({ todo, worker, hold, ranking }) =>
+          current.some(
+            (live) =>
+              live.todo.id === todo.id && live.worker === worker && live.hold.since === hold.since
+          ) && onLineHeld({ hold, rules, ranking, now: at }).action === 'tellNeo'
             ? [
                 {
                   kind: LINE_HELD,
@@ -257,7 +269,7 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
               ]
             : []
         ),
-      ['ranked', 'rules', 'now'],
+      ['ranked', 'current', 'rules', 'now'],
       'events'
     )
     .endAsync('events') as (now: number) => Promise<NeoAttentionEvent[]>;

@@ -12,7 +12,7 @@ export type HeldLine = {
   line: NeoLine;
   reason: RateLimitHoldReason;
   since: number;
-  retryAt: number;
+  retryAt?: number;
 };
 export type LineHeldDecision = { action: 'wait' } | { action: 'tellNeo'; exhausted: boolean };
 
@@ -37,7 +37,7 @@ export function onLineHeld(input: {
     forReason.find((entry) => !entry.line);
   if (rule?.action !== 'move') return { action: 'wait' };
   const after = rule.afterMinutes * 60_000;
-  return now - hold.since >= after || hold.retryAt - now > after
+  return now - hold.since >= after || (hold.retryAt !== undefined && hold.retryAt - now > after)
     ? { action: 'tellNeo', exhausted: false }
     : { action: 'wait' };
 }
