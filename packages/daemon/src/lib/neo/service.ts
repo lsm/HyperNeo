@@ -1436,10 +1436,14 @@ export class NeoService {
 
   async humanQueue() {
     const facts = await this.todoSessions.read('neoStepFacts');
-    const steps = await readNeoSteps(facts, {
-      packs: () => this.installedPacks(),
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-    }).catch((error) => {
+    const steps = await readNeoSteps(
+      facts,
+      {
+        packs: () => this.installedPacks(),
+        limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      },
+      Date.now()
+    ).catch((error) => {
       this.log.warn('Human queue pack waits failed', error);
       return null;
     });
