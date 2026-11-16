@@ -749,7 +749,9 @@ export function NeoAskTodos({
     onLoadDetails,
     readRevision,
   ]);
-  const asked = entry.questions.filter((question) => question.state === 'open');
+  const asked = entry.questions
+    .filter((question) => question.state === 'open')
+    .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt);
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
   const knownIds = new Set(
