@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
+import { CODING_SESSION_STRATEGY_PREFERENCE } from '../../../../src/lib/neo/packs/coding/session-strategy.ts';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
+import { listPackPreferences } from '../../../../src/lib/neo/preference-operations.ts';
+import { createPackPreferenceQuestions } from '../../../../src/lib/neo/preference-questions.ts';
 import {
   CodingTodoPrRepository,
   createCodingTodoPack,
@@ -74,9 +78,29 @@ function setup() {
       },
     };
   };
+  const coding = {
+    id: 'coding',
+    describe: 'coding',
+    instructions: () => null,
+    preferences: { sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE },
+  } satisfies NeoPack;
+  const [askSetting] = createPackPreferenceQuestions(
+    db,
+    todos,
+    () => [coding],
+    () => 'en',
+    async () => {}
+  );
   const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
-    decideCodingSessionTarget(db, item, target, status);
-  return { db, todo, worked, live, decide };
+    decideCodingSessionTarget(db, item, target, status, async (input) => ({
+      kind: 'completed' as const,
+      value: await askSetting!.execute(
+        { askId: item.askId, ...input },
+        { source: 'internal', sessionId: 'neo', role: 'neo' }
+      ),
+    }));
+  const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
+  return { db, todos, todo, worked, live, decide, questions };
 }
 
 describe('coding session target decision', () => {
@@ -133,13 +157,46 @@ describe('coding session target decision', () => {
   });
 
   test('per-task work starts its own session even when another is idle', async () => {
-    const { db, todo, worked, decide } = setup();
+    const { db, todo, worked, decide, questions } = setup();
     db.prepare(
       `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
        VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`
     ).run(repo);
     worked(todo('other'), 'idle', 'dev', 'done');
     expect(await decide(todo(), start('dev'))).toEqual({ value: start('dev') });
+    expect(questions('feature')).toEqual([]);
+  });
+
+  test('the first dispatch in a repo asks its session strategy once and stays long-lived until a human answers', async () => {
+    const { db, todos, todo, worked, decide, questions } = setup();
+    worked(todo('other'), 'idle', 'dev', 'done');
+    expect(await decide(todo(), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('idle') },
+    });
+    const [question] = questions('feature');
+    expect(question).toMatchObject({
+      kind: 'choice',
+      state: 'open',
+      todos: [],
+      options: [
+        'Long-lived work-type sessions',
+        'One session per task',
+        'One session per PR',
+        'Keep current settings',
+      ],
+    });
+    expect(await decide(todo(), start('dev'))).toMatchObject({ reason: expect.any(String) });
+    expect(await decide(todo('other'), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('idle') },
+    });
+    expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
+    expect(listPackPreferences(db, 'coding')).toEqual([]);
+    todos.answerQuestion(question!, 'One session per task', 'button', 2);
+    expect(listPackPreferences(db, 'coding')).toMatchObject([
+      { scope: { kind: 'repo', key: repo }, key: 'sessionStrategy', value: 'per_task' },
+    ]);
+    expect(await decide(todo('other'), start('dev'))).toEqual({ value: start('dev') });
+    expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
   });
 
   test('unfinished work on a feature session does not hide an unreadable status', async () => {

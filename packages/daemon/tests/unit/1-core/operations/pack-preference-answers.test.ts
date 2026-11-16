@@ -114,6 +114,27 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('a settings question holds the ask work unless it is asked with hold false', async () => {
+    const work = service.todos.addTodo(
+      'held-work',
+      'ask',
+      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
+      1
+    );
+    const held = service.todos.getQuestion(await propose())!;
+    expect(held.todos).toEqual([work.id]);
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'free-request',
+      values: [values[0]],
+      hold: false,
+    });
+    const free = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(free.todos).toEqual([]);
+  });
+
   test('renders global and project settings without losing false, zero or literal paths', async () => {
     db.updateGlobalSettings({ language: 'en' });
     service.filePacks = [

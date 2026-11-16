@@ -45,6 +45,7 @@ function world(coding = false) {
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: { id: string; note: string; key?: string }[] = [];
   const asked: { todo: string; target: NeoTodoTarget; status: unknown }[] = [];
+  let setting: Parameters<NonNullable<NeoPack['workerTarget']>>[3] | undefined;
   let decide: (target: NeoTodoTarget) => NeoWorkerTargetDecision = (target) => ({
     value: target,
   });
@@ -57,8 +58,9 @@ function world(coding = false) {
     id: 'synthetic',
     describe: 'synthetic',
     instructions: () => null,
-    workerTarget: async (todo, target, status) => {
+    workerTarget: async (todo, target, status, askSetting) => {
       asked.push({ todo: todo.id, target, status: await status(backend) });
+      setting = askSetting;
       return decide(target);
     },
   } satisfies NeoPack;
@@ -66,7 +68,8 @@ function world(coding = false) {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
-    workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
+    workerTarget: (todo, target, status, askSetting) =>
+      decideCodingSessionTarget(db, todo, target, status, askSetting),
     workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
     workerTargetRefused: (todo) =>
       gatewayFor(db).call(codingSessionAssignmentWrites, 'releaseFeature', { todoId: todo.id }),
@@ -133,6 +136,7 @@ function world(coding = false) {
     calls,
     told,
     asked,
+    setting: () => setting,
     runner,
     add,
     failing,
@@ -164,6 +168,19 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       },
     ]);
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+  });
+
+  test('the pack can ask a settings question on the todo ask through the preferences operation', async () => {
+    const w = (current = world());
+    await w.runner.start(w.add());
+    const alternatives = [[{ pack: 'synthetic', scope: { kind: 'global' }, key: 'k', value: 1 }]];
+    await w.setting()!({ requestId: 'synthetic-request', alternatives });
+    expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toEqual([
+      {
+        name: 'pack.preferences.ask',
+        input: { askId: 'ask', requestId: 'synthetic-request', alternatives },
+      },
+    ]);
   });
 
   test('a reuse decision sends to the chosen session and records that send target', async () => {
