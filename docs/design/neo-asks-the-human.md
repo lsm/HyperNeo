@@ -122,9 +122,10 @@ Slice 2 deploys with daemon cards still open. Each keeps working as it is:
   (`neoDaemonCardChoice`), so a human who was about to answer loses nothing, and its todos
   stay the human's while it is open.
 - A held one stays held, with no wake.
-- When one closes, its todos go to `nextStepOwner` with the `since` it already computes
-  (for example the failure time for a retries card). Neo is woken once at the rung that
-  time has reached, then at the later rungs. No close time is added.
+- When one closes, the sweep recomputes each todo's owner. Only a live todo still owned
+  by Neo raises `todo.neo_step`, at the rung its existing `since` has reached (the same
+  dedup applies), then at later rungs. A todo the answer marked done or removed, one whose
+  worker resumed, and one another open card still covers raise nothing.
 
 The answer path for daemon causes is deleted in a later cleanup, once no such card is
 open.
@@ -150,7 +151,7 @@ Acceptance, as tests on the pure functions and one integration case per row:
 | Each former daemon-card trigger (blocker, retries, removed prerequisite) | no card; owner `neo` with the matching reason |
 | Check-only todo before / after its deadline | `daemon` / `neo` `check_overdue`, Neo woken when the deadline passes, then on the ladder |
 | Neo holds a todo | one card with Neo's text; a running worker stops; after a restart the card still holds it |
-| An open daemon card at deploy | stays open, its answer still applies; its todos wake Neo once when it closes, then on the ladder |
+| An open daemon card at deploy | stays open, its answer still applies; after it closes, only a todo still owned by Neo wakes it; done, removed, resumed or still-covered todos do not |
 | A human-held card | no wake while held |
 | Repeated sweeps with nothing changed | one wake per rung, never two for the same rung |
 
