@@ -16,7 +16,9 @@ NODE_PATH=<directory containing playwright> TMPDIR=/private/tmp \
 The helper launches an isolated daemon and seeds synthetic work
 (`desktop-control-where-seed.ts`): one ask with a doing, a blocked and a
 not-started todo, one ask with an open question and a doing todo, and five
-filler asks. It opens `/neo` at 1280px, then at 390px with touch.
+filler asks. It opens `/neo` at 1280px, then at 390px with touch. When the
+work list has an "In progress" state chip, it clicks that chip before opening
+rows.
 
 Pass means the helper exits 0 and `where-observations.json` shows:
 

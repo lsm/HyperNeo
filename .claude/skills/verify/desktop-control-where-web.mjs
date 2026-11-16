@@ -80,6 +80,10 @@ const frame = async (page, selector, name) => {
   await card.scrollIntoViewIfNeeded();
   await card.screenshot({ path: join(out, name) });
 };
+const showInProgress = async (page) => {
+  const chip = page.getByRole('button', { name: /^In progress/ });
+  if (await chip.count()) await chip.first().click();
+};
 const firstRow = (page) =>
   page.locator('[data-ask-todo="dentist"]').first().waitFor({ timeout: 8000 }).catch(() => {});
 try {
@@ -90,6 +94,8 @@ try {
   observations.desktopSwitchesOnLoad = await visibleSwitches(desk.page);
   await desk.page.screenshot({ path: join(out, 'desktop-1280-page.png') });
   await frame(desk.page, 'article[data-ask="errands"]', 'desktop-1280-errands-collapsed.png');
+  await showInProgress(desk.page);
+  await firstRow(desk.page);
   observations.desktopAfterExpand = await expandAll(desk.page);
   observations.desktopSwitchesAfterExpand = await visibleSwitches(desk.page);
   await frame(desk.page, 'article[data-ask="errands"]', 'desktop-1280-errands-expanded.png');
@@ -108,6 +114,8 @@ try {
   await phone.page.waitForTimeout(600);
   observations.phoneSwitchesInSheet = await visibleSwitches(phone.page);
   await phone.page.screenshot({ path: join(out, 'phone-390-work-sheet.png') });
+  await showInProgress(phone.page);
+  await firstRow(phone.page);
   observations.phoneAfterExpand = await expandAll(phone.page);
   observations.phoneSwitchesAfterExpand = await visibleSwitches(phone.page);
   await frame(phone.page, 'article[data-ask="errands"]', 'phone-390-errands-expanded.png');
