@@ -5821,7 +5821,8 @@
                 },
                 "provider": {
                   "enum": [
-                    "google"
+                    "google",
+                    "microsoft"
                   ],
                   "type": "string"
                 },

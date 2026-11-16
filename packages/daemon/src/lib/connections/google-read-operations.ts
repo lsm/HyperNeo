@@ -8,7 +8,7 @@ import {
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { googleConnectionReads } from '../../storage/repositories/google-connections-worker.ts';
-import { connectionStatus } from './status.ts';
+import { connectionStatus, googleConnections } from './status.ts';
 import type { createConnectionLifecycle } from './lifecycle.ts';
 const failure = z.object({ ok: z.literal(false), reason: z.string() });
 export const id = z.string().min(1).max(200);
@@ -110,7 +110,12 @@ export function createGoogleReadOperations(db: () => Database, service: () => Pr
     .pipe(() => gatewayFor(db()).call(googleConnectionReads, 'list'), 'result', 'rows')
     .pipe(
       (rows: z.infer<typeof connectionStatus>[]) => ({
-        connections: rows.map(({ id, email, scopes, health }) => ({ id, email, scopes, health })),
+        connections: googleConnections(rows).map(({ id, email, scopes, health }) => ({
+          id,
+          email,
+          scopes,
+          health,
+        })),
       }),
       'rows',
       'result'
