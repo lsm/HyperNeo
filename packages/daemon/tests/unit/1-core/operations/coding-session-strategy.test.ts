@@ -99,7 +99,7 @@ describe('planCodingSessionDispatch', () => {
     ).toEqual({ verb: 'queue', ref: ref('backend') });
   });
 
-  test('unrelated long-lived work reuses an idle session, preferring its work type', () => {
+  test('unrelated long-lived work reuses an idle session of its work type only', () => {
     const pool = [
       session('frontend', 'frontend', 'available'),
       session('backend', 'backend', 'available'),
@@ -108,9 +108,8 @@ describe('planCodingSessionDispatch', () => {
       planCodingSessionDispatch({ strategy: 'long_lived', workType: 'backend', pool })
     ).toEqual({ verb: 'send', ref: ref('backend'), bind: true });
     expect(planCodingSessionDispatch({ strategy: 'long_lived', workType: 'ios', pool })).toEqual({
-      verb: 'send',
-      ref: ref('frontend'),
-      bind: true,
+      verb: 'start',
+      name: 'ios',
     });
   });
 
