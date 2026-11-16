@@ -325,6 +325,8 @@ describe('createWorkCleanupRuntime', () => {
     const goneRow = db.prepare('SELECT key FROM work_cleanup_gone WHERE key = ?');
     expect(goneRow.get(workerWorkKey(present))).toBeNull();
     expect(goneRow.get(workerWorkKey(restored))).toBeNull();
+    expect(goneRow.get(workerWorkKey(join(root, 'removed', 'gone-old')))).toBeNull();
+    expect(goneRow.get(workerWorkKey(archivedOnly))).toBeNull();
     expect(attempts.join('\n')).not.toContain('Unsaved work kept');
     busy?.kill();
 
