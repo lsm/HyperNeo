@@ -10,29 +10,39 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function world(limits = { running: 6, perGroup: 3 }, broken = false, refuseStart = false) {
-  const db = new Database(':memory:');
-  runMigrations(db, () => {});
-  createTables(db);
-  createCodingPackTables(db);
-  db.prepare(
-    "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
-  ).run();
-  db.exec(
-    "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1), ('q','Q','','',1,1,1)"
-  );
-  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
+function world(
+  limits = { running: 6, perGroup: 3 },
+  broken = false,
+  refuseStart = false,
+  existing?: Database
+) {
+  const db = existing ?? new Database(':memory:');
+  if (!existing) {
+    runMigrations(db, () => {});
+    createTables(db);
+    createCodingPackTables(db);
+    db.prepare(
+      "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
+    ).run();
+    db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1), ('q','Q','','',1,1,1)"
+    );
+    new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
+  }
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
   const started: string[] = [];
   const told: { id: string; note: string; key?: string }[] = [];
+  const notes = neoAttentionNotes(db, store);
   const idle = new Set<string>();
   const unreadable = new Set<string>();
+  const throwStart = { on: false };
   let workers = 0;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -40,6 +50,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false, refuseStart
     sessions,
     invoke: async (_caller, name, input) => {
       if (name === 'work.start') {
+        if (throwStart.on) throw new Error('synthetic start fault');
         if (refuseStart)
           return completed({
             ok: false,
@@ -70,6 +81,7 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false, refuseStart
     tell: async (_ask, todo, note, key) => {
       told.push({ id: todo.id, note, key });
     },
+    attend: (event) => notes.attend(event),
     changed: () => {},
     limits: () => {
       if (broken) throw new Error('synthetic queue failure');
@@ -155,6 +167,8 @@ function world(limits = { running: 6, perGroup: 3 }, broken = false, refuseStart
     clock,
     started,
     told,
+    notes,
+    throwStart,
     ask,
     approved,
     add,
@@ -215,19 +229,16 @@ describe('queued todos start themselves', () => {
     expect([w.state(first), w.state(second)]).toEqual(['doing', 'todo']);
   });
 
-  test('an unapproved ready step tells Neo once without a start card', async () => {
+  test('the runner says nothing about an unapproved ready step and opens no start card', async () => {
     const w = (current = world());
     const todo = w.add(w.ask());
     w.store.updateTodo(w.store.getTodo(todo)!, { approvedAt: null }, 1);
     await w.tick();
+    await w.tick();
     expect(w.state(todo)).toBe('todo');
     expect(w.started).toEqual([]);
     expect(w.store.listQuestions(w.store.getTodo(todo)!.askId)).toEqual([]);
-    expect(w.told).toHaveLength(1);
-    expect(w.told[0]).toMatchObject({ id: todo, key: `neo-todo-unworked:${todo}` });
-    expect(w.told[0].note).toContain('not approved');
-    await w.tick();
-    expect(w.told).toHaveLength(1);
+    expect([w.told, w.notes.told(), w.notes.dropped]).toEqual([[], [], []]);
   });
 
   test('a step waits while its ask has an open question for the human', async () => {
@@ -348,48 +359,56 @@ describe('queued todos start themselves', () => {
     expect(w.started).toEqual([prerequisite, next]);
   });
 
-  test('a ready step held by capacity tells Neo once and starts when a slot opens', async () => {
+  test('a ready step held by capacity is not told, and starts when a slot opens', async () => {
     const w = (current = world({ running: 1, perGroup: 1 }));
     const first = w.add(w.approved());
     const next = w.add(w.approved());
     await w.tick();
-    expect(w.started).toEqual([first]);
-    expect(w.told.filter((note) => note.id === next)).toHaveLength(1);
-    expect(w.told.find((note) => note.id === next)?.note).toContain(
-      '1 worker running; total limit is 1'
-    );
     await w.tick();
-    expect(w.told.filter((note) => note.id === next)).toHaveLength(1);
+    expect(w.started).toEqual([first]);
+    expect([w.told, w.notes.told()]).toEqual([[], []]);
     await w.finish(first);
     await w.tick();
     expect(w.started).toEqual([first, next]);
   });
 
-  test('a refused place tells Neo once and waits on one retries card', async () => {
+  test('a refused place waits on one retries card, and the card is what tells', async () => {
     const w = (current = world({ running: 6, perGroup: 3 }, false, true));
     const todo = w.add(w.approved());
     await w.tick();
+    await w.tick();
     expect(w.started).toEqual([]);
-    expect(w.told.filter((note) => note.id === todo)).toHaveLength(1);
-    expect(w.told.find((note) => note.id === todo)?.note).toContain('place_refused');
     expect(
       w.store
         .listQuestions(w.store.getTodo(todo)!.askId)
         .map(({ cause, todos }) => ({ cause, todos }))
     ).toEqual([{ cause: 'retries_exhausted', todos: [todo] }]);
-    await w.tick();
-    expect(w.told.filter((note) => note.id === todo)).toHaveLength(1);
+    expect([w.told, w.notes.told()]).toEqual([[], []]);
+    expect(w.notes.dropped).toContain(`todo.blocked ${todo}: covered by card`);
   });
 
-  test('a ready step with an instruction but no target tells Neo once', async () => {
+  test('the runner says nothing about a ready step with no target: the sweep owns it', async () => {
     const w = (current = world());
     const todo = w.add(w.approved());
     w.db.prepare('DELETE FROM neo_todo_sessions WHERE todo_id = ?').run(todo);
     await w.tick();
-    expect(w.started).toEqual([]);
-    expect(w.told).toHaveLength(1);
-    expect(w.told[0].note).toContain('target');
     await w.tick();
-    expect(w.told).toHaveLength(1);
+    expect(w.started).toEqual([]);
+    expect([w.told, w.notes.told()]).toEqual([[], []]);
+  });
+
+  test('a start that keeps throwing is one digest line, also after a daemon restart', async () => {
+    const w = (current = world());
+    const todo = w.add(w.approved());
+    w.throwStart.on = true;
+    await w.tick();
+    await w.tick();
+    const again = world({ running: 6, perGroup: 3 }, false, false, w.db);
+    again.throwStart.on = true;
+    await again.tick();
+    expect(w.notes.digests()).toEqual([
+      `Todo "t1" (${todo}) could not start: Error: synthetic start fault`,
+    ]);
+    expect(w.notes.wakes()).toEqual([]);
   });
 });

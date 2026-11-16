@@ -39,6 +39,9 @@ function setup() {
     tell: async (_ask, todo, note, key) => {
       told.push({ todo: todo.id, note, key });
     },
+    attend: async (event) => {
+      told.push({ todo: event.subject.id, note: String(event.facts.text) });
+    },
     changed: () => {},
     invoke: async (_caller, name, input) => {
       if (name === 'work.send') {
@@ -275,10 +278,7 @@ describe('cancelled prerequisites', () => {
       const notes = told.filter((item) => item.todo === dependent.id);
       if (mode === 'legacy-close') {
         expect(store.getTodo(dependent.id)?.state).toBe('todo');
-        expect(notes).toHaveLength(1);
-        expect(notes[0].note).toContain(cancelled.title);
-        expect(notes[0].note).toContain('neo.todo.remove stops it');
-        expect(notes[0].note).not.toContain('neo.todo.proceed');
+        expect(notes).toHaveLength(0);
         await runner.refresh(() => {});
         expect(store.getTodo(dependent.id)?.state).toBe('todo');
         expect(sent).toHaveLength(before);

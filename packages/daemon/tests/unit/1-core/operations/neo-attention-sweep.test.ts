@@ -43,6 +43,12 @@ describe('the Neo attention sweep', () => {
         payload: string;
       }[]
     ).map((row) => String(JSON.parse(row.payload).message.message.content));
+  const digests = () =>
+    (
+      db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes'").all() as {
+        payload: string;
+      }[]
+    ).map((row) => String(JSON.parse(row.payload).message.message.content));
   const add = (id: string, change: Partial<NeoTodoDraft> = {}) =>
     store.addTodo(id, 'ask-1', { ...draft, ...change }, T0);
   const started = (todo: NeoTodo, live: string) => {
@@ -183,6 +189,43 @@ describe('the Neo attention sweep', () => {
     add('unapproved', { approvedAt: null, instruction: null });
     await sweep(T0);
     expect(wakes()).toEqual([]);
+  });
+
+  test('an unapproved todo nobody was asked about is one digest line, and one more a day later', async () => {
+    add('unapproved', { approvedAt: null });
+    const line =
+      'Todo "Ship it" (unapproved) cannot start: it was not approved. Review it with neo.todo.read.';
+    await sweep(T0);
+    await sweep(T0 + 5 * 60_000);
+    expect(digests()).toEqual([line]);
+    for (const hours of [24, 25, 48, 72]) await sweep(T0 + hours * HOUR);
+    expect(digests()).toEqual([line, line]);
+    expect(wakes()).toEqual([]);
+  });
+
+  test('an unapproved todo under an open card, and one the queue will start, are not told', async () => {
+    const asked = add('asked', { approvedAt: null });
+    store.askQuestion(
+      'card',
+      'ask-1',
+      {
+        text: 'Start it?',
+        kind: 'choice',
+        options: ['Start', 'Remove'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todos: [asked.id],
+      },
+      T0
+    );
+    sessions.create(add('queued').id, {
+      verb: 'start',
+      adapter: 'hyperneo',
+      place: { machine: 'laptop', name: 'repo', folder: '/repo' },
+    });
+    await sweep(T0);
+    expect([wakes(), digests()]).toEqual([[], []]);
   });
 
   test('an unchanged Neo-owned todo still wakes after the last ladder step', async () => {

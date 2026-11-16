@@ -11,6 +11,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 
 const MIN = 60_000;
 const completed = (value: unknown): OperationOutcome =>
@@ -55,6 +56,7 @@ function world(packs: NeoPack[] = []) {
   };
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
+  const notes = neoAttentionNotes(db, store, (text) => told.push(text));
   let started = 0;
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 6, perGroup: 3 }),
@@ -123,9 +125,12 @@ function world(packs: NeoPack[] = []) {
     },
     packs: () => packs,
     tell: async (_ask, _todo, note) => {
+      told.push(note);
+    },
+    attend: async (event) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
       knobs.onTell?.();
-      told.push(note);
+      await notes.attend(event);
     },
     changed: () => {},
   });
@@ -558,7 +563,7 @@ describe('a doing todo never sits idle without someone on it', () => {
     }
   );
 
-  test('a stalled todo with no known place tells Neo once and opens no card', async () => {
+  test('a stalled todo with no known place tells Neo once, once more after four hours, and opens no card', async () => {
     const w = (current = world());
     w.knobs.placeKnown = false;
     const todo = w.adopt(null);
@@ -569,6 +574,11 @@ describe('a doing todo never sits idle without someone on it', () => {
       []
     );
     expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(1);
+    expect(w.sessions.readNudge(todo.id)).not.toHaveProperty('unreachableToldAt');
+    await w.at(64 + 4 * 60);
+    expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(2);
+    await w.at(64 + 9 * 60);
+    expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(2);
   });
 
   test("the human's own tracked session goes to Neo, not a fresh worker", async () => {
