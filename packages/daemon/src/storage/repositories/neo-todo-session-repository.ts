@@ -445,11 +445,18 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
     const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
+    this.writeCoreFact(todoId, 'nudge', {
+      ...incident,
+      ...(blockerReport ? { blockerReport } : {}),
+    });
+  }
+
+  private writeCoreFact(todoId: string, key: string, value: unknown): void {
     this.db
       .prepare(
-        "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
+        "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', ?, ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
       )
-      .run(todoId, JSON.stringify({ ...incident, ...(blockerReport ? { blockerReport } : {}) }));
+      .run(todoId, key, JSON.stringify(value));
   }
 
   doingTodoOn(
@@ -680,11 +687,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }
 
   recordReleased(todoId: string, released: unknown): void {
-    this.db
-      .prepare(
-        "INSERT OR REPLACE INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'released', ?)"
-      )
-      .run(todoId, JSON.stringify(released));
+    this.writeCoreFact(todoId, 'released', released);
   }
 
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
