@@ -8,7 +8,7 @@ An ask is an epic: one goal, split into todos that may run in parallel. A card i
 
 This design makes the inbox a small core subsystem:
 - A card is a question about one or more todos (or the whole ask). An ask and a todo can hold any number of cards, like comments on an issue; each card stops only the todos it is about.
-- A card is open, held (the human put it aside until a time, or until they come back to it), answered or retired.
+- A card is open, held (the human put it aside; it stays aside until they answer it or take it back), answered or retired.
 - A human step gets its own card as soon as it can start, asking the human to do it. The "keep waiting?" card goes away.
 - One pure projection, `neoHumanQueue`, gives the clients every item that waits on the human, with two independent filters: state and ask.
 
@@ -40,14 +40,13 @@ Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/human-queue.ts`):
 
 ## Held cards
 
-A held card is an open card with a hold, so old readers still see it as open and no state value is added. Two new nullable columns on `neo_questions`: `held_at` and `held_until` (empty means "until I come back").
+A held card is an open card the human put aside. It is a state, not a timer: it stays held until the human answers it or takes it back. Old readers still see it as open, and no state value is added. One new nullable column on `neo_questions`: `held_at`.
 
-`neo.question.hold {questionId, until?, requestId}` is one superpipe operation:
+`neo.question.hold {questionId, held, requestId}` is one superpipe operation, and the inbox calls it from one button with no confirmation:
 1. read the card; refuse unless it is open;
-2. pure `planHold(card, until, now)`;
-3. one transaction: set `held_at` and `held_until`.
+2. one write: set `held_at` to now when `held` is true, clear it when false. Repeating the same call changes nothing.
 
-The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_until` has passed. Opening a held card from the inbox clears it at once. A held card still covers its todos, so they stay stopped, and the attention subsystem treats it like any open card: no reminders. Answering and retiring work as before and clear the hold.
+A held card still covers its todos, so they stay stopped, and the attention subsystem treats it like any open card: no reminders. Answering and retiring work as before and clear the hold.
 
 ## The inbox projection
 
@@ -65,7 +64,7 @@ It reads only rows that exist. The Neo snapshot carries it next to the ask entri
 One rule everywhere:
 - Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, in progress) and **ask** (all, then each ask). The default is "waiting on you" and "all".
 - Each row shows the choices that fit, and the rest under a final "More" menu. No horizontal scrolling.
-- Items are grouped by ask. Each item says which todo it is about. The agree button is on the right. "Hold" only puts the card aside and offers: tomorrow, next week, until I come back. It never changes a todo.
+- Items are grouped by ask. Each item says which todo it is about. The agree button is on the right. "Hold" is one button that puts the card aside, with no time and no confirmation; on a held card the same button takes it back. It never changes a todo.
 - Removing is not holding. A card that offers "remove" (today the daemon's own cards, `planNeoDaemonCardActions` in `daemon-cards.ts`, and the human-step card of rule 5) shows it as one of its answers, and the answer runs the existing `neo.todo.remove`. The inbox adds no remove action of its own.
 
 ## Files
@@ -73,17 +72,15 @@ One rule everywhere:
 `lib/neo/inbox.ts` already exists and is the default "Inbox" project, so the projection gets its own name.
 
 ```
-packages/shared/src/types/neo-ask.ts          NeoQuestion gains heldAt, heldUntil
+packages/shared/src/types/neo-ask.ts          NeoQuestion gains heldAt
 packages/daemon/src/
-  storage/schema/mNNN-neo-question-holds.ts   held_at, held_until
+  storage/schema/mNNN-neo-question-holds.ts   held_at
   storage/repositories/
     neo-ask-todo-repository.ts                hold write
     neo-stall-reminder-write.ts               opens the human-step card (rule 5)
   lib/neo/
     human-card.ts                             no card_open refusal (rule 2)
-    question-hold.ts                          new: pure planHold
     question-operations.ts                    neo.question.hold superpipe; todoId description without the one-card limit
-    pack-sweep.ts                             clears expired holds
     daemon-cards.ts                           human-step card text
     human-queue.ts                            new: pure neoHumanQueue
     operations.ts                             adds it to the Neo snapshot
@@ -99,14 +96,15 @@ The migration number is taken when its PR lands.
 
 Each step is one PR within the repo's slice budget.
 1. **Build: no limit on cards.** Remove the `card_open` refusal from `onlyCard`, and in the same PR the agent-facing sentence that states it: the `todoId` description of `neo.question.ask` (`question-operations.ts`, "One card may be open per ask; a second returns card_open"), with `api-surface.json` regenerated, and the verify journey that asserts the old refusal (`worker-question-storage.ts` and `journeys/worker-question-storage.md` in `.claude/skills/verify/`) changed to expect the second card accepted and both open. The other `card_open`, which refuses settling an ask while a card is open (`neo-ask-settlement.ts`), stays. Tests: a second and a third card on the same todo are accepted; the todo starts only after the last one is answered; `replaces` still replaces.
-2. **Build + wire: held cards.** The `held_at` and `held_until` columns, `neo.question.hold` (registered in `operation-names/neo.ts`), and the sweep reopen. Tests: hold until a time reopens on the sweep after it; hold with no time stays held; a held card still covers its todos; answering a held card works.
+2. **Build + wire: held cards.** The `held_at` column and `neo.question.hold` (registered in `operation-names/neo.ts`). Tests: hold and take back, each repeatable; a held card stays held with no timer; a held card still covers its todos; answering a held card works and clears the hold; holding an answered card is refused.
 3. **Build: `neoHumanQueue`** with its tests (state × ask counts, several cards on one todo, ask-level cards, held items), after attention step 1 has added `nextStepOwner`. **Wire:** add it to the Neo snapshot.
 4. **Wire: clients.** Web first, then the phone app, each its own PR with light and dark screenshots at a wide and a phone width.
 5. **Build: the human-step card** replaces the `check_overdue` card in the stall reminder sweep (rule 5). Old `check_overdue` rows stay readable. Tests: a check-only todo whose prerequisites are done gets its card at once; one whose prerequisites are unfinished gets none; one that already has a card gets none; replay of a check-only todo that today waits 24 hours.
 
 ## Limits
 
-- Holding a card stops its todos until it reopens. Stopping the work for good is the card's own "remove" answer, where the card offers one, or asking Neo to remove the todo.
+- Holding a card stops its todos until the human answers it or takes it back. Stopping the work for good is the card's own "remove" answer, where the card offers one, or asking Neo to remove the todo.
 - Asks are not cards. An ask-level question is a card written without todos; it stops the ask's waiting todos.
 - The inbox is a view. It adds no new record of what the human was asked.
+- A morning or weekly brief that lists held cards is later work; it reads `held_at` and adds nothing here.
 - Finished work is not listed. A view of all items sorted by time, finished ones included, is later work.
