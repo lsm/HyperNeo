@@ -208,4 +208,22 @@ describe('coding session target decision', () => {
     worked(moved, 'spare');
     expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
   });
+
+  test('an archived session keeps its name taken', async () => {
+    const { todo, worked, live, decide } = setup();
+    worked(todo('other'), 'gone', 'dev', 'done');
+    live.gone = 'archived';
+    expect(await decide(todo(), start())).toEqual({ value: start('dev-2') });
+  });
+
+  test('two dispatches racing to take over an archived owner: only one wins', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    live['backend-1'] = 'archived';
+    const results = await Promise.all([decide(todo(), start()), decide(todo(), start())]);
+    expect(results.filter((result) => 'value' in result)).toHaveLength(1);
+    expect(results.filter((result) => 'reason' in result)).toHaveLength(1);
+  });
 });
