@@ -44,7 +44,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
   .pipe(
     (plan: Plan, args: Input) =>
       args.input.kind === 'done' ||
-      !['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
+      plan.patch.state !== 'done' ||
       !args.checked ||
       sameNeoTodoCheck({ ...plan.todo, check: args.checked.check }, plan.todo)
         ? { value: plan }

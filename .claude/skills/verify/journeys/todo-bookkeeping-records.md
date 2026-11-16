@@ -27,6 +27,6 @@ For the row 5a policy extraction, run this helper before and after the move in
 separate fresh evidence directories. Both runs must retain the same accepted
 bookkeeping records across restart. The focused policy contracts cover the
 runtime pack and standalone synchronous factory, including current claim reads,
-URL normalization, self ownership and `closed_unverified` peers. This extraction
+URL normalization, self ownership and finished peers. This extraction
 does not move the runtime admission or write callers onto the DB worker; those
 remain later slices of #8712.

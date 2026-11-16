@@ -107,6 +107,13 @@ interface StoredCredentials {
   accountId?: string;
   planType?: string;
   isFedrampAccount?: boolean;
+  owner?: CredentialOwner;
+}
+
+type CredentialOwner = 'hyperneo' | 'codex';
+
+function credentialOwner(credentials: StoredCredentials): CredentialOwner {
+  return credentials.owner ?? (credentials.expires === undefined ? 'codex' : 'hyperneo');
 }
 
 type StoredRefreshAttempt = StoredCredentials | 'transient' | 'definitive';
@@ -275,6 +282,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       planType: typeof raw.planType === 'string' ? raw.planType : undefined,
       isFedrampAccount:
         typeof raw.isFedrampAccount === 'boolean' ? raw.isFedrampAccount : undefined,
+      owner: raw.owner === 'codex' ? 'codex' : 'hyperneo',
     };
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
@@ -354,6 +362,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
         accountId: credentials.accountId,
         planType: credentials.planType,
         isFedrampAccount: credentials.isFedrampAccount,
+        owner: credentialOwner(credentials),
       },
     };
   }
@@ -434,7 +443,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     } catch (error) {
       const isAuthRejection = error instanceof Error && error.message.includes('(HTTP 401)');
       if (isAuthRejection && retryOn401 && auth.source === 'chatgpt_oauth') {
-        const refreshed = await this.refreshStoredOauthCredentials();
+        const refreshed = await this.refreshStoredOauthCredentials(auth.apiKey);
         if (typeof refreshed === 'object' && refreshed.access) {
           const refreshedAuth = this.toBridgeAuth(refreshed);
           if (refreshedAuth) {
@@ -543,8 +552,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       accountId,
       isFedrampAccount:
         credentials.isFedrampAccount ?? this.extractIsFedrampAccount(credentials.access),
-      refreshAuthTokens: async () => {
-        const refreshed = await this.refreshStoredOauthCredentials();
+      refreshAuthTokens: async (rejectedAccessToken) => {
+        const refreshed = await this.refreshStoredOauthCredentials(rejectedAccessToken);
         if (typeof refreshed !== 'object' || !refreshed.access) return null;
         const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
         if (!refreshedAccountId) return null;
@@ -598,20 +607,41 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return codexModels;
   }
 
-  private refreshStoredOauthCredentials(): Promise<StoredRefreshAttempt> {
+  private refreshStoredOauthCredentials(
+    rejectedAccessToken?: string
+  ): Promise<StoredRefreshAttempt> {
     if (this.credentialRefreshInFlight) return this.credentialRefreshInFlight;
-    const attempt = this.refreshStoredOauthCredentialsUncached().finally(() => {
+    const attempt = this.refreshStoredOauthCredentialsUncached(rejectedAccessToken).finally(() => {
       if (this.credentialRefreshInFlight === attempt) this.credentialRefreshInFlight = null;
     }) as Promise<StoredRefreshAttempt>;
     this.credentialRefreshInFlight = attempt;
     return attempt;
   }
 
-  private async refreshStoredOauthCredentialsUncached(): Promise<StoredRefreshAttempt> {
+  private async refreshStoredOauthCredentialsUncached(
+    rejectedAccessToken?: string
+  ): Promise<StoredRefreshAttempt> {
     const credentials = await this.loadCredentials();
-    if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
-      return 'definitive';
+    if (!credentials || credentials.type !== 'oauth') return 'definitive';
+    if (rejectedAccessToken && credentials.access && credentials.access !== rejectedAccessToken) {
+      return credentials;
     }
+    if (credentialOwner(credentials) === 'codex') {
+      if (credentials.refresh) {
+        const accessOnly: StoredCredentials = {
+          ...credentials,
+          refresh: undefined,
+          owner: 'codex',
+        };
+        await this.saveCredentials(accessOnly);
+        this.cachedCredentials = accessOnly;
+      }
+      await this.importFromCodexAuth();
+      const reread = await this.loadCredentials();
+      const current = reread?.access !== credentials.access || rejectedAccessToken === undefined;
+      return reread?.access && current ? reread : 'definitive';
+    }
+    if (!credentials.refresh) return 'definitive';
 
     const result = await this.tryRefreshCodexToken(credentials.refresh);
     if (!result.ok) {
@@ -638,6 +668,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       isFedrampAccount:
         this.extractIsFedrampAccount(result.token.id_token ?? result.token.access_token) ??
         credentials.isFedrampAccount,
+      owner: 'hyperneo',
     };
 
     await this.saveCredentials(newCreds);
@@ -1081,6 +1112,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
               isFedrampAccount: this.extractIsFedrampAccount(
                 tokens.id_token ?? tokens.access_token
               ),
+              owner: 'hyperneo',
             };
             return this.saveCredentials(credentials).then(() => {
               this.cachedCredentials = credentials;
@@ -1219,14 +1251,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
   }
 
-  private async importFromCodexAuth(): Promise<void> {
-    let codexData: CodexAuthFile;
+  private async readCodexAuth(): Promise<CodexAuthFile | null> {
     try {
-      const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
-      codexData = JSON.parse(raw) as CodexAuthFile;
+      return JSON.parse(await fs.readFile(this.codexAuthPath, 'utf-8')) as CodexAuthFile;
     } catch {
-      return;
+      return null;
     }
+  }
+
+  private async importFromCodexAuth(): Promise<void> {
+    const codexData = await this.readCodexAuth();
+    if (!codexData) return;
 
     if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
       const creds: StoredCredentials = {
@@ -1244,36 +1279,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
     if (!codexData.tokens?.access_token) return;
 
-    let accessToken = codexData.tokens.access_token;
-    let refreshToken = codexData.tokens.refresh_token;
-    let expires: number | undefined;
-
-    if (refreshToken) {
-      const refreshed = await this.tryRefreshCodexToken(refreshToken);
-      if (refreshed.ok) {
-        accessToken = refreshed.token.access_token;
-        refreshToken = refreshed.token.refresh_token || refreshToken;
-        expires = Date.now() + refreshed.token.expires_in * 1000;
-        logger.info(
-          'AnthropicToCodexBridgeProvider: imported refreshed OAuth token from ~/.codex/auth.json'
-        );
-      } else {
-        logger.warn(
-          'AnthropicToCodexBridgeProvider: Codex token refresh failed; importing existing ~/.codex/auth.json token'
-        );
-      }
-    }
+    const accessToken = codexData.tokens.access_token;
 
     const creds: StoredCredentials = {
       type: 'oauth',
       access: accessToken,
-      refresh: refreshToken,
-      expires,
       accountId: this.extractAccountId(accessToken) ?? codexData.tokens.account_id,
       planType: this.extractPlanType(accessToken),
       isFedrampAccount:
         this.extractIsFedrampAccount(codexData.tokens.id_token) ??
         this.extractIsFedrampAccount(accessToken),
+      owner: 'codex',
     };
     await this.saveCredentials(creds);
     this.cachedCredentials = creds;

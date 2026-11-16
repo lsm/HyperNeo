@@ -182,7 +182,11 @@ describe('ordered ask progression from facts', () => {
     await f.runner.checkNow(['first'], (_message, error) => {
       throw error;
     });
-    expect(f.store.getTodo('first')).toMatchObject({ state: 'failed', reason: 'Observed failure' });
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: 'Observed failure',
+    });
     expect(f.starts).toHaveLength(0);
   });
   test('a legacy pack check also supersedes a stale human hold', async () => {
@@ -233,21 +237,7 @@ describe('ordered ask progression from facts', () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  test('an unverified close advances the recorded next step without calling it done', async () => {
-    const f = fixture();
-    f.add('first');
-    f.add('next');
-    f.store.updateTodo(f.store.getTodo('first')!, { startedAt: 1 }, 1);
-    await f.runner.recompute(f.store.getTodo('first')!, {
-      state: 'closed_unverified',
-      reason: 'Outcome not checked',
-    });
-    expect(f.store.getTodo('first')?.state).toBe('closed_unverified');
-    expect(f.store.getTodo('next')?.state).toBe('doing');
-    expect(f.starts).toHaveLength(1);
-  });
-
-  test.each(['done', 'closed_unverified'] as const)(
+  test.each(['done'] as const)(
     'restart completes a %s handoff exactly once across repeated facts',
     async (state) => {
       const f = fixture();

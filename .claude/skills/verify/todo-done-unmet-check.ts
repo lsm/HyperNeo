@@ -99,7 +99,6 @@ try {
       const read = JSON.stringify(await invoke('neo.snapshot', {}));
       assert(read.includes('Waiting for its result'), read);
       assert(!read.includes('Blocked: check_unmet:'), read);
-      assert(!read.includes('Closed unverified'), read);
       assert(!JSON.stringify(await invoke('neo.snapshot', {})).includes('"doneCount":1'));
       if (phase === 'restart') {
         writeFileSync(present, 'Synthetic result');

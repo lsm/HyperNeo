@@ -13,8 +13,9 @@ wake turn, so auto-settle may take them.
 Observable results, each asserted:
 - after one real `refreshDriverWork` tick the ordinary ask is `done` and the
   plan ask stays `open`;
-- two real pack sweeps queue exactly one mailbox wake for Neo, keyed
-  `neo-follow-up-missing:…`, naming the ask and its finished todo;
+- two real pack sweeps queue exactly one mailbox wake for Neo through the
+  attention entry, naming the ask and its finished todo (its 1 h, 4 h and 24 h
+  repeats are in `neo-attention-sweep.md`);
 - `neo.ask.settle` with status `done` on the plan ask is refused with
   `follow_up_missing`, and accepted once a later todo exists.
 

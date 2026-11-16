@@ -159,7 +159,7 @@ describe('one completion rule for Neo todos', () => {
     }
   );
 
-  test('a required PR closed unmerged with no replacement fails the todo for Neo to redo or drop', async () => {
+  test('a required PR closed unmerged with no replacement blocks the todo for Neo to redo or drop', async () => {
     const { db, store, states, runner, call } = setup();
     const todo = store.addTodo(
       't',
@@ -187,7 +187,11 @@ describe('one completion rule for Neo todos', () => {
       }),
     });
     await runner.checkNow([todo.id], () => {});
-    expect(store.getTodo(todo.id)).toMatchObject({ state: 'failed', reason });
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: reason,
+    });
     db.close();
   });
 
@@ -329,7 +333,7 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['done', 'closed_unverified', 'failed', 'removed'] as const)(
+  test.each(['done', 'failed', 'removed'] as const)(
     'a %s todo does not reserve the PR',
     async (state) => {
       const { db, store, call } = setup();

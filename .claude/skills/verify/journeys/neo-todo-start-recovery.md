@@ -24,7 +24,7 @@ must not acquire an interrupted flag. Repeated, missing and competing recovery
 calls must produce at most one transition. The build sends no Neo event or
 worker dispatch, and recovery admission/state SQL must not execute on main.
 
-Units also cover current todo/done/blocked/failed/removed/closed-unverified states,
+Units also cover current todo/done/blocked/failed/removed states,
 failure escalation and the existing settled-ask removal policy. Run these alongside
 runner/state-writer and recovery controls, then the full check.
 

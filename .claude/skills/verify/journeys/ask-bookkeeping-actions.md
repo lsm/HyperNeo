@@ -20,8 +20,7 @@ absolute evidence path. It explicitly replaces the fixture's existing worker que
 level with a todo_closed record, without a stale todo link. Settling done with
 unfinished todos must return a todos_unfinished refusal and leave the ask,
 todos and questions unchanged. Explicit reasoned todo removals then permit done. Removed failed work keeps
-its recorded diagnostic, and a historical closed_unverified row retains its
-label. The daemon settlement journey separately covers dropped cleanup. Retired questions have no
+its recorded diagnostic. The daemon settlement journey separately covers dropped cleanup. Retired questions have no
 invented answer or answerer. Done counts exclude all those rows before and
 after reopening the database. The refusal and accepted bookkeeping records
 remain in the operation audit. Retain observed.json and proof.log.
@@ -39,6 +38,5 @@ stale todo behavior and the settled-ask record omits the different-title remedy.
 This uses the real MCP handler, operation registry, ask/question operations,
 public card reader and migrated SQLite/audit repositories. No listener,
 provider, worker or network is used. It proves the data consumed by web/mobile
-readers, not native iOS rendering or browser layout. The existing web todo status
-component contracts must retain the Closed unverified label and exclude Done.
+readers, not native iOS rendering or browser layout.
 The mark-done-settle journey separately covers the human menu and stop errors.

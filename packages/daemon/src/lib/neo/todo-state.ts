@@ -3,6 +3,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoTodoPatch } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoJudgement } from './pack-contract.ts';
 
+export const NEO_TODO_FAILURE_NEXT = 'Ask the human how to go on, or take another approach.';
+
 export interface TodoStateFacts {
   todo: NeoTodo;
   order: readonly (Pick<NeoTodo, 'id' | 'state' | 'startedAt'> & { questionOpen?: number })[];
@@ -112,9 +114,10 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
     else if (judgement.state === 'failed' && !held)
       patch = {
         ...patch,
-        state: 'failed',
-        reason: judgement.reason,
-        finishedAt: todo.finishedAt ?? now,
+        state: 'blocked',
+        blockedBy: 'failure',
+        blockedReason: judgement.reason,
+        nextAction: NEO_TODO_FAILURE_NEXT,
       };
     else if (judgement.state === 'blocked' && !held)
       patch = {
@@ -126,7 +129,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       };
     else if (
       !Object.keys(change).length &&
-      !['done', 'closed_unverified', 'failed'].includes(todo.state) &&
+      !['done', 'failed'].includes(todo.state) &&
       !(
         todo.state === 'blocked' &&
         ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')
@@ -165,11 +168,8 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       Object.entries(patch).filter(([key, value]) => value !== todo[key as keyof NeoTodo])
     ) as NeoTodoPatch;
   const next =
-    facts.askOpen && ['done', 'closed_unverified'].includes(state)
-      ? facts.order.find(
-          (row) =>
-            row.id !== todo.id && !['done', 'closed_unverified', 'removed'].includes(row.state)
-        )
+    facts.askOpen && state === 'done'
+      ? facts.order.find((row) => row.id !== todo.id && !['done', 'removed'].includes(row.state))
       : null;
   return {
     patch,

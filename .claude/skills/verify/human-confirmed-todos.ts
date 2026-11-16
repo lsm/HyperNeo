@@ -68,7 +68,6 @@ try {
     [1, 'choice', false, ['Delete the approved synthetic leftovers'], 'blocked'],
     [2, 'reply', true, 'The synthetic plan is approved.', 'doing'],
     [3, 'yesno', true, 'Yes, go ahead with this plan.', 'failed'],
-    [4, 'yesno', false, 'no', 'closed_unverified'],
     [5, 'yesno', true, 'no', 'todo'],
   ] as const) {
     const askId = `ask-${index}`, id = `approval-${index}`, questionId = `question-${index}`, next = `next-${index}`;
@@ -83,7 +82,7 @@ try {
       instruction: 'Record a synthetic successor dispatch; delete nothing.', named: null,
       check: { pack: 'core', kind: 'evidence', params: { path: join(run, next) } } }, 3);
     sessions.create(next, { verb: 'send', ref: { adapter: 'hyperneo', id: next } });
-    store.updateTodo(approval, { state, ...(state === 'closed_unverified' ? { startedAt: 4 } : {}) }, 4);
+    store.updateTodo(approval, { state }, 4);
     assert.equal(store.getTodo(id)?.state, state);
     const receipt = chat
       ? await rpc('neo.message.send', { sessionId: owner, requestId: crypto.randomUUID(), content: answer,

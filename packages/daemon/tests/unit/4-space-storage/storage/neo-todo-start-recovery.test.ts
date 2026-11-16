@@ -96,7 +96,10 @@ describe('Atomic interrupted-start recovery build', () => {
     startCard();
     const receipt = await recover();
     expect(receipt).toMatchObject({
-      recovery: { todo: { state: 'failed', reason, report }, ask: { id: 'ask' } },
+      recovery: {
+        todo: { state: 'blocked', blockedBy: 'failure', blockedReason: reason, report },
+        ask: { id: 'ask' },
+      },
       changed: true,
     });
     expect(sessions.readStartInterrupted('todo')).toBe(true);
@@ -138,7 +141,7 @@ describe('Atomic interrupted-start recovery build', () => {
     expect(changes).toEqual([]);
   });
 
-  test.each(['todo', 'done', 'blocked', 'failed', 'removed', 'closed_unverified'] as const)(
+  test.each(['todo', 'done', 'blocked', 'failed', 'removed'] as const)(
     'current %s work stays unchanged',
     async (state) => {
       expect(sessions.unrecordedStarts()).toEqual(['todo']);
@@ -161,11 +164,11 @@ describe('Atomic interrupted-start recovery build', () => {
     expect(changes).toHaveLength(prior);
   });
 
-  test('a repeated interruption reason reuses the existing failure escalation policy', async () => {
+  test('a repeated interruption reason blocks the todo with that reason', async () => {
     store.updateTodo(store.getTodo('todo')!, { reason }, 3);
     expect(await recover()).toMatchObject({
       recovery: {
-        todo: { state: 'blocked', blockedBy: 'failure', blockedReason: `Failed twice: ${reason}` },
+        todo: { state: 'blocked', blockedBy: 'failure', blockedReason: reason },
       },
       changed: true,
     });

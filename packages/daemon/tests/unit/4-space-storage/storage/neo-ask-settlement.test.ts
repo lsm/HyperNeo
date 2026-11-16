@@ -170,7 +170,7 @@ describe('Data-only atomic ask settlement', () => {
     expect(changes).toEqual([]);
   });
 
-  test.each(['done', 'closed_unverified', 'removed'] as const)(
+  test.each(['done', 'removed'] as const)(
     'done accepts existing terminal %s rows without relabeling them',
     async (state) => {
       for (const todo of store.listTodos('ask'))

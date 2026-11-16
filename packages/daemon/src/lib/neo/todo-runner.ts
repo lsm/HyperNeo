@@ -7,7 +7,7 @@ import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { planWorkQueue } from '../work-queue/capacity.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
+import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
 import { neoStartRetryDue } from './daemon-cards.ts';
 import { neoDaemonCardWrite } from '../../storage/repositories/neo-daemon-card-write.ts';
@@ -59,6 +59,7 @@ import {
 import { neoHumanInSession, neoTurnQuestionLine } from './session-watch.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
+import { neoPackWaits } from './attention/sweep.ts';
 import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
@@ -118,7 +119,6 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   doing: 'queued',
   blocked: 'queued',
   done: 'reported',
-  closed_unverified: 'cancelled',
   failed: 'failed',
   removed: 'cancelled',
 };
@@ -290,27 +290,15 @@ export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, m
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
 }
 
-export function planNeoTodoFailure(
-  todo: NeoTodo,
-  reason: string,
-  now: number
-): NeoTodoPatch | null {
-  return todo.reason === reason
-    ? planNeoTodoBlocked(
-        todo,
-        'failure',
-        `Failed twice: ${reason}`,
-        'Ask the human how to go on, or take another approach.'
-      )
-    : { state: 'failed', reason, finishedAt: now };
+export function planNeoTodoFailure(todo: NeoTodo, reason: string): NeoTodoPatch | null {
+  return planNeoTodoBlocked(todo, 'failure', reason, NEO_TODO_FAILURE_NEXT);
 }
 
 export function planNeoTodoSettled(
   todo: NeoTodo,
-  settled: { status: 'reported' | 'failed'; report: string },
-  now: number
+  settled: { status: 'reported' | 'failed'; report: string }
 ): NeoTodoPatch | null {
-  if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
+  if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report);
   return todo.report === settled.report ? null : { report: settled.report };
 }
 
@@ -322,9 +310,8 @@ export function planNeoTodoCheck(
   if (!result || todo.state === 'done') return null;
   if (result.done && !result.failed)
     return { state: 'done', evidence: result.evidence, finishedAt: now };
-  if (todo.state === 'failed' || todo.state === 'closed_unverified' || todo.blockedBy === 'held')
-    return null;
-  if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
+  if (neoTodoFailed(todo) || todo.blockedBy === 'held') return null;
+  if (result.failed) return planNeoTodoFailure(todo, result.failed);
   if (result.blocked)
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
       ? null
@@ -338,8 +325,6 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
-  if (todo.state === 'closed_unverified')
-    return `Todo "${todo.title}" is closed unverified, never done: ${todo.reason ?? 'Its outcome check has not passed.'}`;
   if (todo.state === 'doing')
     return `Todo "${todo.title}" reported, and nothing checks it: record evidence for "${todo.doneWhen}"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
@@ -442,10 +427,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (sessions.readStartInterrupted(todo.id))
       return {
         ok: true as const,
-        todo: await finish(todo, ask, planNeoTodoFailure(todo, reason, now), now),
+        todo: await finish(todo, ask, planNeoTodoFailure(todo, reason), now),
       };
     if (neoStartRetryDue(sessions.readRetries(todo.id))) {
-      await recompute(todo, { state: 'failed', reason, finishedAt: now }, now);
+      await recompute(todo, planNeoTodoFailure(todo, reason) ?? {}, now);
       return retry(todo.id, true);
     }
     await deps.write(neoDaemonCardWrite, {
@@ -955,7 +940,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const todo = store.getTodo(card.id);
       if (!todo || todo.state !== 'doing' || todo.updatedAt !== card.updatedAt) return null;
       const now = Date.now();
-      const patch = planNeoTodoSettled(todo, settled, now);
+      const patch = planNeoTodoSettled(todo, settled);
       return patch ? neoTodoCard(store.updateTodo(todo, patch, now), ask) : null;
     },
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
@@ -992,11 +977,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           : null);
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
-      if (
-        (live.state === 'failed' || live.state === 'closed_unverified') &&
-        completion?.state !== 'done'
-      )
-        continue;
+      if (neoTodoFailed(live) && completion?.state !== 'done') continue;
       const next = completion
         ? await recompute(live, {}, now, completion)
         : await finish(live, ask, planNeoTodoCheck(live, result, now), now);
@@ -1261,9 +1242,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const retireWorker = ({ todo, ref }: NudgeClaim) =>
-    ['done', 'closed_unverified', 'failed', 'removed'].includes(
-      store.getTodo(todo.id)?.state ?? 'removed'
-    )
+    ['done', 'failed', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
       ? null
       : sessions.write('markWorkerUnusable', ref);
 
@@ -1271,9 +1250,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['claim', 'reason', 'now'])
     .pipe(
       (claim: NudgeClaim) =>
-        ['done', 'closed_unverified', 'failed', 'removed'].includes(
-          store.getTodo(claim.todo.id)?.state ?? 'removed'
-        )
+        ['done', 'failed', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
           ? { reason: null }
           : { value: claim },
       'claim',
@@ -1296,8 +1273,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       ({ todo }: NudgeClaim, reason: string, now: number) => {
         const current = store.getTodo(todo.id) ?? todo;
-        if (['done', 'closed_unverified', 'failed', 'removed'].includes(current.state))
-          return current;
+        if (['done', 'failed', 'removed'].includes(current.state)) return current;
         return recompute(
           current,
           planNeoTodoBlocked(current, 'stalled', reason, NEO_TODO_STALL_NEXT) ?? {},
@@ -1444,15 +1420,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'live'
     )
     .pipe(
-      async (context: NudgeContext) => {
-        for (const pack of deps.packs())
-          if (
-            (!context.todo.check || pack.id === context.todo.check.pack) &&
-            (await pack.todos?.waiting?.(context.todo))
-          )
-            return { reason: null };
-        return { value: context };
-      },
+      async (context: NudgeContext) =>
+        (await neoPackWaits(deps.packs(), context.todo)) ? { reason: null } : { value: context },
       'admission',
       'result:admission'
     )
@@ -1610,7 +1579,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             {
               state: 'blocked',
               blockedBy: 'stalled',
-              blockedReason: `No fresh worker could start: ${current.reason ?? current.blockedReason ?? 'the start was refused'}`,
+              blockedReason: `No fresh worker could start: ${current.blockedReason ?? current.reason ?? 'the start was refused'}`,
               nextAction: NEO_TODO_STALL_NEXT,
               finishedAt: null,
             },
