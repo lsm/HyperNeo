@@ -170,10 +170,10 @@ describe('neoTodoControlCall', () => {
     });
     expect(neoTodoControlCall(waiting, { kind: 'cancel' }).name).toBe('neo.todo.remove');
     expect(neoTodoControlCall(waiting, { kind: 'hold' }).input.reason).toBe(
-      'The human put it on hold.'
+      'You put this on hold. Start it, or remove it?'
     );
     expect(neoTodoControlCall({ id: 't', startedAt: 1 }, { kind: 'hold' }).input.reason).toBe(
-      'The human paused it.'
+      'You paused this. Resume it, or remove it?'
     );
     expect(neoTodoControlCall(waiting, { kind: 'priority', priority: 'low' })).toEqual({
       name: 'neo.todo.edit',
