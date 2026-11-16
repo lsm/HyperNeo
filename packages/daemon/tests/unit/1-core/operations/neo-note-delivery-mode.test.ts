@@ -131,6 +131,59 @@ describe('Neo daemon notes', () => {
     expect(JSON.stringify([rows, db.getJobQueueRepo().listJobs({})])).not.toContain('is done');
   });
 
+  test('the last todo finishing is told once by the ask, with no done note', async () => {
+    const now = Date.now();
+    const ask = service.todos.openAsk({
+      id: 'finished-synthetic',
+      sessionId: rootId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Finished work',
+      request: 'Complete the work',
+      createdAt: now,
+    });
+    vi.spyOn(service, 'installedPacks').mockReturnValue([
+      {
+        id: 'synthetic-proof',
+        describe: 'Synthetic completion fixture',
+        instructions: () => null,
+        todos: {
+          schema: () => {},
+          check: async () => ({ done: true, evidence: 'Observed' }),
+          statusLine: () => null,
+        },
+      },
+    ]);
+    service.todos.addTodo(
+      'synthetic-last',
+      ask.id,
+      {
+        title: 'Synthetic task',
+        doneWhen: 'Observed',
+        instruction: null,
+        named: null,
+        check: { pack: 'synthetic-proof', kind: 'observed', params: {} },
+      },
+      now
+    );
+    const told = () =>
+      db
+        .getSDKMessages(rootId)
+        .messages.map((row) => String((row as { message: { content: unknown } }).message.content));
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+    expect(told()).toEqual([]);
+    await service.todoRunner.refresh((message, error) => {
+      throw new Error(message, { cause: error });
+    });
+    expect(service.todos.getTodo('synthetic-last')?.state).toBe('done');
+    const finished = Date.now();
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished);
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished + 60_000);
+    expect(told()).toEqual([
+      'Ask: Finished work (finished-synthetic)\nAll todos are finished: write the outcome with neo.ask.settle, or add the next todo.',
+    ]);
+  });
+
   test('wakeNeo keeps structured PR events immediate', async () => {
     await service.wakeNeo('structured-pr', 'PR requires action.');
     expect(queued('structured-pr')).toEqual(['immediate']);

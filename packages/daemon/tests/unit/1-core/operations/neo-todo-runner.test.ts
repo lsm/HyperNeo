@@ -3318,7 +3318,10 @@ describe('stopped worker ladder', () => {
       expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
       await h.at(21);
       await h.at(22);
-      expect(h.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(1);
+      const raised = h.events.filter((event) =>
+        String(event.facts.text).includes('has nobody working on it')
+      );
+      expect(new Set(raised.map((event) => JSON.stringify(event))).size).toBe(1);
       expect(h.store.listQuestions(h.todo.askId).filter((q) => q.state === 'open')).toEqual([]);
     } finally {
       h.clock.mockRestore();

@@ -563,17 +563,23 @@ describe('a doing todo never sits idle without someone on it', () => {
     }
   );
 
-  test('a stalled todo with no known place tells Neo once and opens no card', async () => {
+  test('a stalled todo with no known place tells Neo once, once more after four hours, and opens no card', async () => {
     const w = (current = world());
     w.knobs.placeKnown = false;
     const todo = w.adopt(null);
+    const told = () => w.told.filter((note) => note.includes('has nobody working on it'));
     for (const minutes of [20, 40, 60, 62, 64]) await w.at(minutes);
-    expect(w.named('work.start')).toEqual([]);
-    expect(w.named('work.find')).toHaveLength(1);
     expect(w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)).toEqual(
       []
     );
-    expect(w.told.filter((note) => note.includes('has nobody working on it'))).toHaveLength(1);
+    expect(told()).toHaveLength(1);
+    const since = 64 + (w.todo(todo.id).updatedAt - Date.now()) / 60_000;
+    await w.at(since + 4 * 60 - 1);
+    expect(told()).toHaveLength(1);
+    for (const hours of [4, 5, 9]) await w.at(since + hours * 60);
+    expect(told()).toHaveLength(2);
+    expect(w.named('work.start')).toEqual([]);
+    expect(w.named('work.find')).toHaveLength(1);
   });
 
   test("the human's own tracked session goes to Neo, not a fresh worker", async () => {
