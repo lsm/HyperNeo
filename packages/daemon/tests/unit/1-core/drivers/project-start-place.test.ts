@@ -301,7 +301,7 @@ describe('pack-selected start placement', () => {
     const decide = vi.fn(() => 'explicit' as const);
     const resolve = neoStartPlace({ db, machine: 'local', policy: decide });
     expect(await resolve({ ...input, place }, caller)).toEqual({ value: { ...input, place } });
-    expect(decide).toHaveBeenCalledWith(store.getTodo('todo'), store.getAsk('ask'));
+    expect(decide).toHaveBeenCalledWith(store.getTodo('todo'), store.getAsk('ask'), place.folder);
   });
 
   test('an explicit-place policy refuses an omitted place', async () => {
