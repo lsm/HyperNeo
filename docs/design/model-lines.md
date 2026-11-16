@@ -6,7 +6,7 @@ Checked against dev b315021b06.
 
 A "line" is one way to run a model: provider, model, harness and effort. Today a todo's line is fixed when Neo creates it. When that line runs out, the todo fails or waits, and the human's routing wishes live only in free-text standing rules.
 
-This design adds one pack, `models`, with nothing domain-specific in it. It does three things:
+This design adds one pack, `model-routing`, with nothing domain-specific in it. The name says what it does: it routes work to model lines; it is not a list of models. It does three things:
 1. It ranks candidate lines for a piece of work against the human's structured preferences and each line's current availability. This is a pure function.
 2. When a todo's worker is held on a line for longer than the human wants to wait, it tells Neo, together with the ranked alternatives.
 3. It gives Neo one safe way to move that todo to another line in the same place.
@@ -82,7 +82,7 @@ Tests give the expected output for: a configured line with no usage reader (rank
 ## Work kinds and coding
 
 - A new optional pack field, `workKinds`, lists a pack's kinds with labels, prefixed by the pack id: coding gives `coding.write`, `coding.review`, `coding.verify`. Core adds `general`. A todo's kind is `named.workKind`, or `general` when it has none.
-- A new optional pack hook, `rankLines`, next to `workKinds` in `pack-contract.ts`. The `models` pack implements it. A new core function, `chooseLine(kind, candidates, scope)`, calls the `rankLines` of the enabled pack that provides one and otherwise returns the candidates unchanged. Core never names a pack id. At most one enabled pack may provide `rankLines`; enabling a second is refused.
+- A new optional pack hook, `rankLines`, next to `workKinds` in `pack-contract.ts`. The `model-routing` pack implements it. A new core function, `chooseLine(kind, candidates, scope)`, calls the `rankLines` of the enabled pack that provides one and otherwise returns the candidates unchanged. Core never names a pack id. At most one enabled pack may provide `rankLines`; enabling a second is refused.
 - Coding keeps its eligibility rules, its provenance check, its tie-break and its session strategy. It filters candidates first, calls `chooseLine` with only the eligible ones, and keeps its own tie-break when ranking ties or the pack is off. Its three model and three effort preferences are replaced by `routes`. Where an installation has saved values, coding keeps reading them until the migration proposal for them is confirmed. Its three harness preferences, and the harness scoring in `stage-preferences.ts`, stay as they are.
 
 ## Moving a held todo
