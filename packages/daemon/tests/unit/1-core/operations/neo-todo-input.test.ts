@@ -91,14 +91,15 @@ test('add derives completion text and rejects unsupported check packs and kinds'
 
 test('add rejects a todo that claims to be a worker request', async () => {
   const { call, store } = fixture();
-  const added = await call('neo.todo.add', {
-    after: [],
-    askId: 'ask',
-    title: 'Hidden',
-    check,
-    named: { requestFrom: 'session-w' },
-  });
-  expect(added).toMatchObject({ ok: false });
+  await expect(
+    call('neo.todo.add', {
+      after: [],
+      askId: 'ask',
+      title: 'Hidden',
+      check,
+      named: { requestFrom: 'session-w' },
+    })
+  ).rejects.toThrow('Leave requestFrom out of named');
   expect(store.listTodos('ask')).toHaveLength(0);
 });
 
