@@ -126,7 +126,7 @@ export interface Provider {
 
   getAuthStatus?(): Promise<ProviderAuthStatusInfo>;
 
-  setCredentials?(credentials: ProviderCredentials): void;
+  setCredentials?(credentials: ProviderCredentials): void | Promise<void>;
 
   getCredentials?(): Promise<ProviderCredentials | null> | ProviderCredentials | null;
 
