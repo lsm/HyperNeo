@@ -528,6 +528,34 @@ export class CodingPrLedgerRepository {
     return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
   }
 
+  readHealthDelivery(repos: readonly string[], staleBefore: number) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'healthDelivery', repos, staleBefore);
+  }
+
+  healthDelivery(repos: readonly string[], staleBefore: number) {
+    const pending = (repo: string) =>
+      this.db
+        .prepare(
+          `SELECT number, head, read_at AS readAt FROM pack_coding_pr_ledger
+            WHERE repo = ? AND state = 'approved_pending' AND closed_at IS NULL AND read_at <= ?
+            ORDER BY number`
+        )
+        .all(repo, staleBefore) as { number: number; head: string; readAt: number }[];
+    return [...new Set(repos.map((repo) => this.canonicalRepo(repo)))].flatMap((repo) => {
+      const health = this.health.read(repo);
+      return health
+        ? [
+            {
+              repo,
+              incident: health.incident,
+              pending:
+                health.reason === 'complete' || repo.startsWith('polling:') ? [] : pending(repo),
+            },
+          ]
+        : [];
+    });
+  }
+
   readHealth(repo: string) {
     return this.health.read(repo);
   }
@@ -1000,5 +1028,13 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext', 'readStageFacts'] as const
+  [
+    'lastReads',
+    'list',
+    'humanHandoffs',
+    'readHealth',
+    'healthDelivery',
+    'policyContext',
+    'readStageFacts',
+  ] as const
 );
