@@ -1,3 +1,4 @@
+import type { ModelHold } from './model-hold.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
 import type { NeoSessionMessage } from './neo-session-message.ts';
@@ -218,6 +219,8 @@ export interface NeoWorkingSession {
   projectId: string | null;
   title: string;
   status: NeoWorkingStatus;
+  modelHold?: ModelHold;
+  role?: 'neo' | 'front';
 }
 
 export interface NeoWorkingEvent {
