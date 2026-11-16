@@ -210,7 +210,9 @@ describe('the attention sweep with model-routing on', () => {
   afterEach(() => db.close());
 
   const boot = (
-    wake?: (uuid: string, text: string) => Promise<boolean>,
+    wrap: (
+      wake: (uuid: string, text: string) => Promise<boolean>
+    ) => (uuid: string, text: string) => Promise<boolean> = (wake) => wake,
     read: () => { covered: boolean; latestReportAt: null } = () => ({
       covered,
       latestReportAt: null,
@@ -243,7 +245,7 @@ describe('the attention sweep with model-routing on', () => {
         kinds: () => [...NEO_ATTENTION_KINDS, ...pack.attention!.kinds],
         read,
         ...delivery,
-        wake: wake ?? delivery.wake,
+        wake: wrap(delivery.wake),
         dropped: () => {},
       }),
       failed: (_event, error) => {
@@ -336,13 +338,32 @@ describe('the attention sweep with model-routing on', () => {
     const stopped = new Promise<void>((resolve) => {
       reached = resolve;
     });
-    void boot(() => {
+    void boot(() => () => {
       reached();
       return new Promise<boolean>(() => {});
     })(NOW);
     await stopped;
     expect(wakes()).toEqual([]);
     await boot()(NOW + 5 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a daemon stopped after the notice is queued tells the hold once after it restarts with new text', async () => {
+    heldTodo(31);
+    let reached = () => {};
+    const stopped = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    void boot((wake) => async (uuid, text) => {
+      await wake(uuid, text);
+      reached();
+      return new Promise<boolean>(() => {});
+    })(NOW);
+    await stopped;
+    expect(wakes()).toHaveLength(1);
+    signedIn = false;
+    await boot()(NOW + 5 * MINUTE);
+    await boot()(NOW + 10 * MINUTE);
     expect(wakes()).toHaveLength(1);
   });
 
