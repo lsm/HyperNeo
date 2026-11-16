@@ -212,7 +212,7 @@ export function commitReminderCancellation(
 
 export function createCreateAgentReminderOperation(deps: AgentReminderDependencies) {
   const access = 'mutate' as const;
-  const create = (superpipe({ deps, access })('create-agent-reminder') as PipelineAPI)
+  const create = (superpipe({ deps, access })('agent.reminder.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateReminderAgent, ['outcome', 'input', 'deps'], 'result:outcome')
@@ -233,7 +233,7 @@ export function createCreateAgentReminderOperation(deps: AgentReminderDependenci
 
 export function createListAgentRemindersOperation(deps: AgentReminderDependencies) {
   const access = 'read' as const;
-  const list = (superpipe({ deps, access })('list-agent-reminders') as PipelineAPI)
+  const list = (superpipe({ deps, access })('agent.reminder.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateReminderAgent, ['outcome', 'input', 'deps'], 'result:outcome')
@@ -254,7 +254,7 @@ export function createListAgentRemindersOperation(deps: AgentReminderDependencie
 
 export function createCancelAgentReminderOperation(deps: AgentReminderDependencies) {
   const access = 'mutate' as const;
-  const cancel = (superpipe({ deps, access })('cancel-agent-reminder') as PipelineAPI)
+  const cancel = (superpipe({ deps, access })('agent.reminder.cancel') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateReminderAgent, ['outcome', 'input', 'deps'], 'result:outcome')

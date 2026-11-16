@@ -132,7 +132,7 @@ function projectAgentTemplateEntries(
   }));
 }
 
-const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAPI)
+const runListAgentTemplates = (superpipe()('agent.template.list.entries') as PipelineAPI)
   .input(['db', 'spaceId'])
   .pipe(resolveAgentTemplateLibrary, ['db', 'spaceId'], 'library')
   .pipe(resolveTemplateVersions, ['db', 'spaceId'], 'versions')
@@ -174,7 +174,9 @@ function resolveHiddenBuiltInKeys(
   return db ? new SpaceAgentTemplateRepository(db).hiddenBuiltInKeys(spaceId) : new Set();
 }
 
-const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
+const runResolveAgentTemplateSource = (
+  superpipe()('agent.template.instantiate.source') as PipelineAPI
+)
   .input(['templateName', 'db', 'spaceId'])
   .pipe(resolveExactAgentTemplate, ['db', 'templateName', 'spaceId'], 'exact')
   .pipe(resolveHiddenBuiltInKeys, ['db', 'spaceId'], 'hiddenKeys')

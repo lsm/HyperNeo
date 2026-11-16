@@ -277,7 +277,7 @@ export function createCodingPack(deps: {
       await deliverCodingHealth(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
-        prSweepDeps.wake,
+        deps.attend,
         now
       );
       await wakeCodingUnownedPrs(deps.prEvents, attend, now);

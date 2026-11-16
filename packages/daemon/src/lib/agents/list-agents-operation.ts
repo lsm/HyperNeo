@@ -54,7 +54,7 @@ const LIST_AGENTS_DESCRIPTION =
 
 export function createListAgentsOperation(deps: ListAgentsDependencies) {
   const access = 'read' as const;
-  const list = (superpipe({ deps, access })('list-space-agents') as PipelineAPI)
+  const list = (superpipe({ deps, access })('agent.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(selectAgents, ['outcome', 'input', 'deps'], 'outcome')
