@@ -107,6 +107,11 @@ function setup(
     },
   } satisfies NeoPack;
   const packs: NeoPack[] = [pack];
+  const tell = async (_ask: unknown, _todo: unknown, note: string, key?: string) => {
+    beforeTell?.();
+    told.push(note);
+    toldKeys.push(key);
+  };
   const attend = async (event: NeoAttentionEvent) => {
     beforeTell?.();
     events.push(event);
@@ -132,6 +137,7 @@ function setup(
       return completed(status);
     }),
     packs: () => packs,
+    tell,
     attend,
 
     changed: () => {},
@@ -271,11 +277,46 @@ describe('neo todo runner', () => {
         expect(reports[0]).toContain('The human said: Please change the heading directly.');
         expect(reports[0]).toContain('The worker replied: Changed the heading.');
         expect(reports[0]).not.toContain('dispatch');
+        expect(h.events.filter((event) => String(event.facts.text).includes('human'))).toEqual([]);
       } finally {
         h.db.close();
       }
     }
   );
+
+  test('direct human work is told as it is when a newer worker turn is read with it', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const at = Date.now() + 100;
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: at + 300,
+          recentInputs: [
+            { at, text: 'Use the blue palette.', human: true, inputId: 'human-input' },
+            { at: at + 200, text: 'And ship it.', human: true, inputId: 'human-input-2' },
+          ],
+          turnEnds: [
+            { id: 'human-turn', startedAt: at, at: at + 100, message: 'Switched to blue.' },
+            { id: 'human-turn-2', startedAt: at + 200, at: at + 300, message: 'Shipped.' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      await h.runner.refresh(() => {});
+      const reports = h.told.filter((note) => note.startsWith('The human worked directly'));
+      expect(reports.map((note) => /The human said: (.+)/.exec(note)?.[1])).toEqual([
+        'Use the blue palette.',
+        'And ship it.',
+      ]);
+      expect(h.toldKeys.filter((key) => key === 'turn.report')).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
 
   test('reports tracked human turns only after the follow anchor without a dispatch', async () => {
     const h = setup(false);

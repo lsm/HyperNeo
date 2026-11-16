@@ -38,10 +38,24 @@ describe('worker turn reports through the attention entry', () => {
     turn: { id: string; at: number; message: string },
     status = 'done',
     latestAt = turn.at,
-    receipts = new NeoTurnReportReceipts(db)
+    receipts = new NeoTurnReportReceipts(db),
+    focused = false
   ) =>
     deliverNeoTurnReport(
-      store.getAsk('ask-1')!,
+      {
+        ...store.getAsk('ask-1')!,
+        ...(focused
+          ? {
+              focusedSession: {
+                ...ref,
+                name: 'Worker',
+                label: 'Worker',
+                provider: 'hyperneo',
+                link: null,
+              },
+            }
+          : {}),
+      },
       store.getTodo(todo.id)!,
       'dispatch-1',
       ref,
@@ -134,5 +148,34 @@ describe('worker turn reports through the attention entry', () => {
     await report({ id: 'turn-1', at: T0 + 100, message: 'Still waiting' });
     expect(notes.told()).toEqual([]);
     expect(notes.dropped).toEqual(['turn.report todo-1: covered by card']);
+  });
+
+  test('an ordinary report from the focused discussion is dropped as status only', async () => {
+    const turn = { id: 'turn-1', at: T0 + 100, message: 'Looks fine to me' };
+    await report(turn, 'done', turn.at, undefined, true);
+    expect(notes.told()).toEqual([]);
+    expect(notes.dropped).toEqual(['turn.report todo-1: status only, focused']);
+  });
+
+  test.each(['failed', 'needs_you'])(
+    'a focused discussion turn that ends %s still wakes Neo',
+    async (status) => {
+      const turn = { id: 'turn-1', at: T0 + 100, message: 'Stopped' };
+      await report(turn, status, turn.at, undefined, true);
+      expect(notes.wakes()).toHaveLength(1);
+      expect(notes.wakes()[0]).toContain('Focused discussion status only');
+      expect(notes.dropped).toEqual([]);
+    }
+  );
+
+  test('a focused discussion turn on a blocked todo still wakes Neo', async () => {
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'blocked', blockedBy: 'environment', blockedReason: 'No network' },
+      T0 + 50
+    );
+    const turn = { id: 'turn-1', at: T0 + 100, message: 'Blocked (environment): No network' };
+    await report(turn, 'done', turn.at, undefined, true);
+    expect(notes.wakes()).toHaveLength(1);
   });
 });
