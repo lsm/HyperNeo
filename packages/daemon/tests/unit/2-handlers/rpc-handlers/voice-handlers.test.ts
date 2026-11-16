@@ -1388,6 +1388,7 @@ describe('voice stream RPC handlers', () => {
   it('marks only the live-recording batch fallback as interactive speech', async () => {
     resetVoiceTranscriptionLimitsForTests();
     const { hub, handlers } = createMockMessageHub();
+    Object.assign(hub, { getRouter: () => undefined });
     registerVoiceHandlers(hub, createSettings({ voice }));
     const sent: Record<string, string>[] = [];
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
