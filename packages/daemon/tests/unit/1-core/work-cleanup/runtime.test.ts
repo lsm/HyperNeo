@@ -29,13 +29,20 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 test.each(
   process.env.HYPERNEO_CLEANUP_FIXTURE
     ? [process.env.HYPERNEO_CLEANUP_MODE ?? 'plain']
-    : ['plain', 'listing failure', 'rebound after listing', 'start in flight']
+    : [
+        'plain',
+        'listing failure',
+        'rebound after listing',
+        'start in flight',
+        'bound without a folder',
+      ]
 )(
   'createWorkCleanupRuntime uses adapter roots and keeps listed or rebound folders safe: %s',
   async (mode) => {
     const listingFailure = mode === 'listing failure';
     const rebound = mode === 'rebound after listing';
     const inFlight = mode === 'start in flight';
+    const unlocated = mode === 'bound without a folder';
     if (!process.env.HYPERNEO_CLEANUP_FIXTURE) {
       const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
       mkdirSync(join(fixture, 'home'));
@@ -178,7 +185,9 @@ test.each(
               status: 'stopped',
               lastActivityAt: 1,
               place: { machine: 'fixture', folder: repo, name: 'Fixture' },
-              execution: { directory: paths.get(ref.id), machine: 'fixture' },
+              ...(ref.id === 'unlocated'
+                ? {}
+                : { execution: { directory: paths.get(ref.id), machine: 'fixture' } }),
             },
           };
         },
@@ -250,6 +259,21 @@ test.each(
                   );
                 }
                 if (inFlight) live('starting', { verb: 'start', adapter: 'codex-desktop' }, null);
+                const adopt = (id: string) => {
+                  const todo = todos.addTodo(
+                    id,
+                    'ask',
+                    { title: id, doneWhen: 'Done', instruction: null, named: null, check: null },
+                    3
+                  );
+                  sessions.bind(todo.id, { adapter: 'codex-desktop', id }, 3);
+                  todos.updateTodo(todo, { state: 'doing' }, 3);
+                };
+                if (rebound) {
+                  adopt('adopted');
+                  paths.set('adopted', folders[3]);
+                }
+                if (unlocated) adopt('unlocated');
               }
               if (args[0] === workCleanupReads && args.length > 2) focused.push(args[2]);
               return Reflect.apply(gateway.call, gateway, args);
@@ -267,12 +291,12 @@ test.each(
         {},
         { source: 'rpc', principal: 'local' }
       );
-      const protectedFolders = inFlight ? folders : rebound ? folders.slice(0, 3) : [];
+      const protectedFolders = inFlight || unlocated ? folders : rebound ? folders.slice(0, 4) : [];
       const kept = folders.filter((folder) => !protectedFolders.includes(folder));
       expect(archived.toSorted()).toEqual(
         kept.map((folder) => `worker-${folders.indexOf(folder)}`)
       );
-      expect(statusCalls).toBe(rebound ? 8 : 6);
+      expect(statusCalls).toBe(rebound ? 9 : unlocated ? 7 : 6);
       expect(peak).toBeLessThanOrEqual(4);
       expect(focused).toHaveLength(inFlight ? 0 : 6);
       if (!inFlight)
