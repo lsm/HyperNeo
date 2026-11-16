@@ -60,10 +60,17 @@ OpenAI sign-ins); pair a phone (the existing QR flow); then Neo.
 **4. The desktop app asks one question on first launch.** With no local HyperNeo data it
 asks: "Run HyperNeo on this computer" (start the bundled daemon, then step 2) or "Connect to
 a HyperNeo on another computer". Connecting is today's later-device pairing, started from
-the paired side: on a device already paired with that server, the owner makes a pairing
-link or code (the existing flow in `web/src/components/settings/PairPhoneFlow.tsx`, which
-calls `/pair2/request` as a signed-in human). The desktop app takes that link or code, binds
-with its ticket (`/pair2/bind`), and waits for the owner's Allow. An address alone cannot
+the paired side, in the existing flow in `web/src/components/settings/PairPhoneFlow.tsx`.
+On a device already paired with that server, the owner makes one of two things, and the
+desktop app follows that thing's existing path:
+
+- Over HTTPS, a v2 ticket link (from `/pair2/request` as a signed-in human). The app binds
+  with the ticket (`/pair2/bind`), waits for the owner's Allow, then completes.
+- Otherwise, a pairing code (from `device.pair.create`). The app redeems it with `POST /pair`
+  under the code's existing approval state. A code made by a paired human is already
+  allowed, so no second Allow follows.
+
+An address alone cannot
 start pairing, because `/pair2/request` admits only a paired human
 (`daemon/src/lib/pairing/pair2-route.ts`). The app remembers each server it has joined and
 switches between them from its menu.
@@ -103,7 +110,8 @@ Acceptance, one integration case per row:
 | `hyperneo devices reset-human`, then a restart | a new setup link is printed and grants the first device |
 | New desktop install | the window opens the setup steps with no code typed |
 | `setup-token` file, on POSIX and on Windows | readable only by its owner |
-| Desktop "Connect to another computer" with a link or code made on the other server's paired device | binds, waits for that owner's Allow, then lists that server |
+| Desktop "Connect to another computer" with a v2 ticket link made on the other server's paired device | binds, waits for that owner's Allow, completes, then lists that server |
+| The same with a pairing code made on that paired device | redeems it with `POST /pair` with no further Allow, then lists that server |
 | The same with only the server's address | no pairing starts; the app asks for a link or code from a paired device |
 | Second browser on a daemon with an owner | pairing page, as today |
 
