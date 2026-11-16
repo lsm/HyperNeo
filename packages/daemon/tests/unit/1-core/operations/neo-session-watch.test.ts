@@ -656,6 +656,29 @@ describe('refreshDriverWork', () => {
     expect(service.sessionNotices).toHaveLength(0);
   });
 
+  test('an elapsed long limit with an unknown reset alerts', async () => {
+    modelState({ status: 'rate_limit_cooldown', reason: 'limit', since: Date.now() - 31 * 60_000 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+  });
+
+  test('a model hold notice keeps the public notice list within its existing limit', async () => {
+    service.sessionWatcher.sessionNotices = Array.from(
+      { length: NEO_SESSION_NOTICES_MAX },
+      (_, index) => ({
+        key: `worker-${index}`,
+        ref: { adapter: 'hyperneo', id: `worker-${index}` },
+        title: 'Worker',
+        kind: 'finished',
+        at: index,
+      })
+    );
+    modelState({ status: 'rate_limit_cooldown', reason: 'login', since: Date.now() });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(NEO_SESSION_NOTICES_MAX);
+    expect(service.sessionNotices.at(-1)?.kind).toBe('needs_you');
+  });
+
   test.each(['network', 'overloaded', 'limit'])(
     'a %s hold outside the alert policy stays quiet',
     async (reason) => {
