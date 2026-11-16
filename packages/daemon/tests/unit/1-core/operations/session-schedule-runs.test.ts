@@ -66,6 +66,44 @@ describe('schedule.session.runs', () => {
     return op?.execute({ scheduleId }, { source: 'internal', role: 'neo' });
   };
 
+  test('a send that lands while the schedule is paused still leaves one fired run', async () => {
+    const row = create('paused-mid-send');
+    const due = row.nextRunAt!;
+    now = due;
+    const job = jobs.getJob(row.pendingJobId!)!;
+    const sent: string[] = [];
+    const handler = createSessionScheduleFire({
+      scheduler,
+      status: async () => status,
+      deliver: async (schedule, messageId) => {
+        sent.push(messageId);
+        scheduler.pause(scheduler.repo.get(schedule.id)!);
+      },
+    });
+    await handler(job);
+    await handler(job);
+
+    expect(sent).toEqual([`schedule:${row.id}:${due}`]);
+    expect(scheduler.repo.get(row.id)).toMatchObject({ status: 'paused', pendingJobId: null });
+    expect(
+      jobs
+        .listActiveByPayload('sessionSchedule.fire', { scheduleId: row.id })
+        .map((pending) => pending.id)
+    ).toEqual([]);
+    expect(await runs(row.id)).toEqual({
+      ok: true,
+      runs: [
+        {
+          dueAt: due,
+          firedAt: due,
+          outcome: 'fired',
+          skipReason: null,
+          messageId: `schedule:${row.id}:${due}`,
+        },
+      ],
+    });
+  });
+
   test('every firing leaves one run with its outcome, newest first', async () => {
     const row = create('kept');
     const fired = await fire(row.id);
