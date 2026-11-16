@@ -68,7 +68,8 @@ export function createCodingPack(deps: {
   readLedgerRepo?: CodingLedgerRead;
   postReviewComments?: (
     read: () => Promise<readonly CodingStageFact[]>,
-    posted: (fact: CodingStageFact, marker: string) => Promise<void>
+    posted: (fact: CodingStageFact, marker: string) => Promise<void>,
+    held: (host: string, until: number) => Promise<void>
   ) => Promise<void>;
 }): NeoPack & {
   readMergeFacts: typeof readCodingDaemonMergeFacts;
@@ -274,7 +275,8 @@ export function createCodingPack(deps: {
       if (deps.postReviewComments)
         await deps.postReviewComments(
           () => readCodingPostableReviews(deps.database(), deps.prLedger, now),
-          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker)
+          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker),
+          (host, until) => deps.prLedger.write('recordReviewCommentHold', host, until)
         );
       await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);

@@ -252,7 +252,12 @@ export async function runGhJson(
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
     const errorText = stderrText || `gh exited with code ${exitCode}`;
-    if (isRateLimitError(errorText) || retryAfterMs !== null) {
+    if (
+      isRateLimitError(errorText) ||
+      retryAfterMs !== null ||
+      response?.status === 429 ||
+      (response?.status === 403 && remaining === 0)
+    ) {
       if (retryAfterMs !== null || isSecondaryRateLimitError(errorText)) {
         return {
           ok: false,

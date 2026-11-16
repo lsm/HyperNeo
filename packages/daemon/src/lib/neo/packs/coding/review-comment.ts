@@ -105,15 +105,15 @@ const rateLimitHoldMs = (error: unknown) => {
 };
 
 type CodingPostedReview = (fact: CodingStageFact, marker: string) => Promise<void>;
+type CodingHeldReviews = (host: string, until: number) => Promise<void>;
 
 export function createCodingReviewComments(api: CodingGithubApi) {
-  let heldUntil = 0;
   let queue = Promise.resolve();
   const post = async (
     read: () => Promise<readonly CodingStageFact[]>,
-    posted: CodingPostedReview
+    posted: CodingPostedReview,
+    held: CodingHeldReviews
   ) => {
-    if (Date.now() < heldUntil) return;
     for (const fact of await read()) {
       try {
         await postCodingReviewComment(api, fact);
@@ -121,15 +121,19 @@ export function createCodingReviewComments(api: CodingGithubApi) {
         log.warn('review comment not posted', { url: fact.url, error: String(error) });
         const holdMs = rateLimitHoldMs(error);
         if (holdMs === null) continue;
-        heldUntil = Date.now() + holdMs;
+        await held(parsePrUrl(fact.url)?.host ?? 'github.com', Date.now() + holdMs);
         return;
       }
       await posted(fact, planCodingReviewComment(fact).marker);
     }
   };
-  return (read: () => Promise<readonly CodingStageFact[]>, posted: CodingPostedReview) =>
+  return (
+    read: () => Promise<readonly CodingStageFact[]>,
+    posted: CodingPostedReview,
+    held: CodingHeldReviews
+  ) =>
     (queue = queue
-      .then(() => post(read, posted))
+      .then(() => post(read, posted, held))
       .catch((error: unknown) => log.warn('review comments not read', { error: String(error) })));
 }
 
@@ -138,13 +142,16 @@ export async function readCodingPostableReviews(
   ledger: CodingPrLedgerRepository,
   readAt: number
 ) {
+  const host = process.env.GH_HOST ?? 'github.com';
+  const gateway = gatewayFor(db);
+  const heldUntil = await gateway.call(codingLedgerReads, 'readReviewCommentHold', host);
+  if (heldUntil !== null && Date.now() < heldUntil) return [];
   const open = (await ledger.read('list')).filter(
     (row) => row.readAt === readAt && row.state !== 'closed' && row.state !== 'merged'
   );
-  const gateway = gatewayFor(db);
   const facts = await Promise.all(
     open.map(async (row) => {
-      const url = `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`;
+      const url = `https://${host}/${row.repo}/pull/${row.number}`;
       const posted = await gateway.call(codingLedgerReads, 'readPostedReview', url);
       return (await gateway.call(codingLedgerReads, 'readStageFacts', url)).filter(
         (fact) =>

@@ -104,6 +104,15 @@ export class CodingStageFactsRepository {
       .run(githubUrlKey(url), marker);
   }
 
+  commentHoldUntil(host: string): number | null {
+    const until = Number(this.postedMarker(`https://${host}/`));
+    return Number.isSafeInteger(until) && until > 0 ? until : null;
+  }
+
+  holdComments(host: string, until: number): void {
+    this.markPosted(`https://${host}/`, String(until));
+  }
+
   read(url: string): CodingStageFact[] {
     const rows = this.db
       .prepare(`SELECT fact_json AS fact FROM pack_coding_stage_facts

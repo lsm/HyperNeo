@@ -62,7 +62,8 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
   const sweep = (post = createCodingReviewComments(github)) =>
     post(
       () => readCodingPostableReviews(db, ledger, 1),
-      (fact, marker) => ledger.write('recordPostedReview', fact.url, marker)
+      (fact, marker) => ledger.write('recordPostedReview', fact.url, marker),
+      (host, until) => ledger.write('recordReviewCommentHold', host, until)
     );
   return { db, ledger, comments, outage, calls, github, sweep };
 }
@@ -225,6 +226,7 @@ describe('createCodingReviewComments', () => {
       await expect(
         post(
           () => Promise.reject(new Error('gateway busy')),
+          async () => {},
           async () => {}
         )
       ).resolves.toBeUndefined();
@@ -377,7 +379,8 @@ describe('codingGithubApi rate limits', () => {
     const sweep = () =>
       post(
         () => readCodingPostableReviews(db, ledger, 1),
-        (posted, marker) => ledger.write('recordPostedReview', posted.url, marker)
+        (posted, marker) => ledger.write('recordPostedReview', posted.url, marker),
+        (host, until) => ledger.write('recordReviewCommentHold', host, until)
       );
     const restart = () => {
       post = make();
