@@ -28,6 +28,7 @@ async function rpc(name: string, input: unknown) {
 }
 try {
   await app.spaceRuntimeService.ready();
+  await app.jobProcessor.stop();
   const db = app.db.getDatabase();
   db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('synthetic-neo', 'synthetic-neo', ?, '2026-11-16T00:00:00Z', '2026-11-16T00:00:00Z', 'active', '{}', '{}')`).run(join(run, 'workspace'));
   new NeoRepository(db).reserveBinding({ sessionId: 'synthetic-neo', projectId: null, kind: 'neo' });
