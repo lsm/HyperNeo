@@ -188,6 +188,24 @@ describe('coding session target decision', () => {
     await decide(first, start('backend'));
     worked(first, 'backend-1', 'backend', 'done');
     live['backend-1'] = 'archived';
-    expect(await decide(todo(), start())).toMatchObject({ value: { verb: 'start' } });
+    const next = todo();
+    expect(await decide(next, start())).toMatchObject({ value: { verb: 'start' } });
+    worked(next, 'backend-2', 'backend', 'done');
+    expect(await decide(todo(), start())).toEqual({
+      value: { verb: 'send', ref: ref('backend-2') },
+    });
+  });
+
+  test("a feature whose own session was archived moves to a live idle session", async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    live['backend-1'] = 'archived';
+    const moved = todo();
+    expect(await decide(moved, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    worked(moved, 'spare');
+    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
   });
 });
