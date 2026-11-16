@@ -476,6 +476,78 @@ test('a relay waits while the human already has a card for that todo', async () 
   }
 });
 
+test('a card Neo opens during the relay source lookup keeps the worker question staged', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    const read = service.readQuestionSource.bind(service);
+    service.readQuestionSource = async (ref) => {
+      service.todos.askQuestion(
+        'neo-card',
+        'ask',
+        {
+          text: 'Which branch?',
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          todoId: 'todo',
+        },
+        3
+      );
+      return read(ref);
+    };
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(service.todos.listQuestions('ask').map((q) => q.text)).toEqual(['Which branch?']);
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe(
+      'Choose a destination'
+    );
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a Neo card with the same words is not taken over by a worker relay', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    service.todos.askQuestion(
+      'neo-card',
+      'ask',
+      {
+        text: 'Deploy where?',
+        kind: 'choice',
+        options: ['Staging', 'Production'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: 'todo',
+        document: 'Neo context',
+      },
+      3
+    );
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(service.todos.getQuestion('neo-card')?.document).toBe('Neo context');
+    expect(service.todos.questionAnswers.list('neo-card')).toEqual([]);
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe(
+      'Choose a destination'
+    );
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
   const { db, service, send } = await setup();
   try {

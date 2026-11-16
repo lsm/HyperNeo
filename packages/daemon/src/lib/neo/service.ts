@@ -716,12 +716,7 @@ export class NeoService {
         reason: 'no_worker_question: this todo has no worker question to relay.',
       };
     const setting = this.db.getGlobalSettings().language;
-    const card = requireHumanCard(
-      { text: input.title, kind: 'choice' },
-      this.todos.listQuestions(todo.askId),
-      null,
-      setting
-    );
+    const card = requireHumanCard({ text: input.title, kind: 'choice' }, setting);
     if ('reason' in card) return card.reason;
     const language = expectedReportLanguage(setting);
     const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
@@ -743,8 +738,6 @@ export class NeoService {
       (notice: NeoSessionNotice, input: { title: string }, sessionId: string | undefined) => {
         const card = requireHumanCard(
           { text: input.title, kind: 'choice' },
-          [],
-          null,
           this.db.getGlobalSettings().language
         );
         if ('reason' in card) return card;
