@@ -1,5 +1,9 @@
 # Daily worker worktree cleanup
 
+Step 5b releases worker worktrees without an age delay. Worker and todo evidence
+live separately under `work/evidence` and remain untouched; their age/reference
+cleanup is the separate step 5c that shares `planWorkRelease`'s evidence arm.
+
 Use the isolated metadata-only setup in `../SKILL.md` with pinned Bun:
 
 ```bash
@@ -15,6 +19,8 @@ permanent release fence and recorded release receipt. The unsaved, active and ow
 stay. Human Codex and Claude folders are excluded from the receipt. The attention
 entry records a cleanup digest, and a second sweep is safe.
 It then runs the registered cleanup job once and observes one pending next-day run.
+Fresh worker and todo evidence files keep their exact contents through both RPC
+calls and the daily job, even though the finished worktree is removed immediately.
 
 `work-cleanup-sweep.json` records both RPC receipts and the delivered digest.
 Removed entries retain their owner reason. A deliberately invalid listing root

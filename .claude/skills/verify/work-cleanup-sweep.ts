@@ -1,10 +1,11 @@
 process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { todoEvidenceFile, workerWorkLocations } from '../../../packages/daemon/src/lib/work-locations.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
@@ -57,6 +58,13 @@ try {
   new NeoTodoSessionRepository(raw).create(todo.id, { verb: 'start', adapter: 'hyperneo' });
   raw.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id: todoWorker }), todo.id);
   todos.updateTodo(todo, { state: 'done', finishedAt: Date.now() }, Date.now());
+  const retainedEvidence = [
+    join(workerWorkLocations(trees.todo).evidence, 'result.md'), todoEvidenceFile(todo.id),
+  ];
+  for (const file of retainedEvidence) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'Retained completion evidence');
+  }
   writeFileSync(join(trees.unsaved, 'draft.txt'), 'keep this draft');
   const unknown = join(run, 'data/worktrees/orphan');
   const humanCodex = join(run, 'home/.codex/worktrees/human/source');
@@ -105,6 +113,8 @@ try {
   assert.equal(next.length, 1);
   assert(next[0].runAt >= Date.now() + 86300000);
   evidence.nextDailyAt = next[0].runAt;
+  for (const file of retainedEvidence) assert.equal(readFileSync(file, 'utf8'), 'Retained completion evidence');
+  evidence.retainedEvidence = retainedEvidence;
   evidence.mailbox = raw.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes'").all();
   assert(JSON.stringify(evidence.mailbox).includes('Work cleanup:'), 'cleanup reaches the attention digest');
   evidence.retained = [trees.unsaved, trees.live, unknown, humanCodex, humanClaude].length;
