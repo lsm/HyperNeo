@@ -898,8 +898,10 @@ export class NeoService {
           const incident = neoDerivedId(
             JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
           );
-          const request = !this.todoSessions.worksOpenTodo(
-            sessionWorkerRef(sender, !!this.db.getSession(sender))
+          const request = !this.todoSessions.doingTodoOn(
+            sessionWorkerRef(sender, !!this.db.getSession(sender)),
+            null,
+            ['todo', 'doing', 'blocked']
           );
           const closed = request ? closedNeoRequest(this.todos, incident) : null;
           if (closed)
