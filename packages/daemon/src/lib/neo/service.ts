@@ -357,7 +357,6 @@ export class NeoService {
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      readSource: (ref) => this.readQuestionSource(ref),
     });
     this.sweepAttention = createNeoAttentionSweep({
       sessions: this.todoSessions,

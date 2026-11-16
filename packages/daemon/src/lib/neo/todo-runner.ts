@@ -11,7 +11,7 @@ import { neoTodoPrerequisiteRefusal, neoTodoStartRefusal } from './todo-start-ga
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
-import type { NeoAsk, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -101,7 +101,6 @@ export interface NeoTodoRunnerDeps {
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
   limits(): { running: number; perGroup: number };
-  readSource?(ref: WorkRef): Promise<NeoQuestionSource | null>;
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
