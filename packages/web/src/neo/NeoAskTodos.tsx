@@ -756,7 +756,12 @@ export function NeoAskTodos({
   ]);
   const asked = entry.questions
     .filter((question) => question.state === 'open' && !hideOpenCards)
-    .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt);
+    .sort(
+      (a, b) =>
+        Number(!!a.heldAt) - Number(!!b.heldAt) ||
+        b.createdAt - a.createdAt ||
+        a.id.localeCompare(b.id)
+    );
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
   const knownIds = new Set(
