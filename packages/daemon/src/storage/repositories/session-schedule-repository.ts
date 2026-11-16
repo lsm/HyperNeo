@@ -74,12 +74,12 @@ export class SessionScheduleRepository {
       .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
   }
 
-  listRuns(scheduleId: string, limit: number): SessionScheduleRun[] {
+  listRuns(scheduleId: string, limit: number, since = 0): SessionScheduleRun[] {
     return (
       this.db
         .prepare(`SELECT due_at, fired_at, outcome, message_id FROM session_schedule_runs
-        WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`)
-        .all(scheduleId, limit) as {
+        WHERE schedule_id = ? AND fired_at > ? ORDER BY id DESC LIMIT ?`)
+        .all(scheduleId, since, limit) as {
         due_at: number | null;
         fired_at: number;
         outcome: string;
@@ -281,8 +281,7 @@ export class SessionScheduleRepository {
         this.db
           .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
           .run(id, expectedJobId).changes > 0;
-      if (deleted)
-        this.db.prepare('DELETE FROM session_schedule_runs WHERE schedule_id = ?').run(id);
+      if (deleted) this.db.run('DELETE FROM session_schedule_runs WHERE schedule_id = ?', id);
       return deleted;
     })();
   }
