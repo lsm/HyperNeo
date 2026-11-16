@@ -26,7 +26,7 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
-import { NeoHumanQueue } from './NeoHumanQueue.tsx';
+import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -1064,7 +1064,7 @@ export function NeoLive() {
               onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
               onLoadDetails={loadNeoAskDetails}
               onOpen={openSession}
-              focusQuestionId={cardTarget?.questionId}
+              focus={cardTarget}
               onReply={
                 ready
                   ? (question) =>
@@ -1083,16 +1083,19 @@ export function NeoLive() {
           )}
           {(workQuery.trim()
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
-            : sceneGroups
-                .filter(
-                  (group) => !(humanQueue && (group.key === 'attention' || group.key === 'running'))
-                )
-                .map((group) => ({
-                  ...group,
-                  entries: topic
-                    ? group.entries.filter((entry) => entry.ask.topic === topic)
-                    : group.entries,
-                }))
+            : sceneGroups.map((group) => ({
+                ...group,
+                entries: (topic
+                  ? group.entries.filter((entry) => entry.ask.topic === topic)
+                  : group.entries
+                ).filter(
+                  (entry) =>
+                    !humanQueue ||
+                    group.key === 'outcomes' ||
+                    (cardTarget?.askId === entry.ask.id &&
+                      !neoHumanQueueHolds(humanQueue, cardTarget))
+                ),
+              }))
           ).map((group) =>
             group.entries.length === 0 ? null : (
               <section
