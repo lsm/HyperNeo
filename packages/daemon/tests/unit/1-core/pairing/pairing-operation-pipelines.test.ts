@@ -25,22 +25,23 @@ const caller: OperationCaller = {
   device: { deviceId: 'device-1', kind: 'human' },
 };
 
-describe('createDevicePairingOperations', () => {
-  const operations = createDevicePairingOperations({
-    repo: (): DevicePairingRepository => {
+const brokenStore = {
+  repo: (): DevicePairingRepository => {
+    throw new Error('store unavailable');
+  },
+  limiter: {
+    reset: () => {
       throw new Error('store unavailable');
     },
-    limiter: {
-      reset: () => {
-        throw new Error('store unavailable');
-      },
-    } as unknown as PairingLimiter,
-    now: () => 1_000,
-    revoked: () => {},
-    waits: createPairWaits(),
-  });
+  } as unknown as PairingLimiter,
+  now: () => 1_000,
+  revoked: () => {},
+  waits: createPairWaits(),
+};
 
+describe('createDevicePairingOperations', () => {
   test('covers every device operation', () => {
+    const operations = createDevicePairingOperations(brokenStore);
     expect(operations.map((operation) => operation.name).sort()).toEqual(
       Object.keys(inputs).sort()
     );
@@ -48,7 +49,9 @@ describe('createDevicePairingOperations', () => {
 
   for (const [name, input] of Object.entries(inputs)) {
     test(`${name} reaches the store through a superpipe pipeline`, async () => {
-      const operation = operations.find((candidate) => candidate.name === name);
+      const operation = createDevicePairingOperations(brokenStore).find(
+        (candidate) => candidate.name === name
+      );
       const failure = await Promise.resolve()
         .then(() => operation?.execute(input as never, caller))
         .then(
