@@ -98,7 +98,7 @@ try {
   assert(raw.prepare("SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'released'").get(todo.id));
   for (const path of [trees.unsaved, trees.live, unknown, humanCodex, humanClaude]) assert(existsSync(path), path);
   const receipt = JSON.stringify(evidence.first);
-  assert(receipt.includes('unsaved'));
+  assert(Object.entries(first.reply.kept).some(([reason, kept]) => reason.includes('changes') && kept.includes(trees.unsaved)), receipt);
   assert(receipt.includes('unknown'));
   assert(!receipt.includes(humanCodex));
   assert(!receipt.includes(humanClaude));

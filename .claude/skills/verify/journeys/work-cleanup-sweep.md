@@ -30,8 +30,10 @@ rebinding, the release fence and archive refusals preserved in the digest.
 The runtime fixture uses the same root helpers as the adapters, a custom database
 directory and a synthetic startup home that differs from CODEX_HOME. It matches
 owned folders under all six root kinds. Session paths come directly from the DB;
-confirmed removal receipts exclude released refs. Git tracing confirms that live
-owners receive no Git probes; the first pass inspects at most four folders at a time.
+confirmed removal receipts exclude released refs. Saved-work checks belong to the
+archive path's worktree cleanup, not the sweep; the first pass inspects at most four
+folders at a time. Each fresh read re-resolves worker locations and also counts
+unarchived sessions working directly in the folder.
 This proof does not exercise native Desktop clients or a day of elapsed time.
 
 Run the focused contracts under Node 24 and Vitest, matching CI, with pinned Bun

@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readdir, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
-import simpleGit from 'simple-git';
 import { z } from 'zod';
 import { workCleanupReads } from '../../storage/repositories/work-cleanup-worker.ts';
 import { neoTodoSessionWrites } from '../../storage/repositories/neo-todo-session-repository.ts';
@@ -146,7 +145,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
                       : []
                   ),
                 ],
-                statuses
+                new Map()
               )
             ).filter((row) => row.path === folder || !row.readable)
           : matched;
@@ -164,21 +163,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         if (!row.readable) return { owner: 'unreadable', inUse: false, unsaved: false };
         const facts = { owner: row.owner, inUse: false, unsaved: false };
         if ('keep' in planWorkRelease(facts, Date.now()) || !existsSync(folder)) return facts;
-        try {
-          const git = simpleGit(folder);
-          const [status, ahead] = await Promise.all([
-            git.status(['--ignore-submodules=none']),
-            git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes', '--tags']),
-          ]);
-          const inUse = await folderInUse(folder);
-          return {
-            owner: row.owner,
-            inUse,
-            unsaved: !status.isClean() || Number(ahead.trim()) > 0,
-          };
-        } catch {
-          return { owner: row.owner, inUse: 'unreadable', unsaved: 'unreadable' };
-        }
+        return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
       },
       release: async (folder) => {
         const ref = refs.get(folder);
