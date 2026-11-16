@@ -203,6 +203,22 @@ describe('coding session target decision', () => {
     expect(asks).toHaveLength(1);
   });
 
+  test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
+    const { todo, worked, decide, questions, asks } = setup();
+    worked(todo('other'), 'idle', 'dev', 'done');
+    const decisions = await Promise.all([
+      decide(todo(), start('dev')),
+      decide(todo('other'), start('dev')),
+    ]);
+    expect(decisions).toEqual([
+      { value: { verb: 'send', ref: ref('idle') } },
+      { value: { verb: 'send', ref: ref('idle') } },
+    ]);
+    const open = [...questions('feature'), ...questions('other')];
+    expect(open).toHaveLength(1);
+    expect(asks).toEqual([{ ok: true, questionId: open[0]!.id }]);
+  });
+
   test('a strategy question retired unanswered is asked again, and a kept answer is not', async () => {
     const { todos, todo, decide, questions, asks } = setup();
     await decide(todo(), start('dev'));
