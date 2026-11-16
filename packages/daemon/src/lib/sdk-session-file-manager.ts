@@ -607,7 +607,8 @@ export async function repairSDKSessionFile(
 
     rewriteSessionFile(sessionFile, `${lines.join('\n')}\n`);
 
-    result.success = result.repairedCount > 0;
+    result.success =
+      result.repairedCount > 0 && result.repairedCount === validation.orphanedToolResults.length;
   } catch (error) {
     result.errors.push(`Repair error: ${error}`);
   }
