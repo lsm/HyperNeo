@@ -85,10 +85,23 @@ harness id. A row says:
 Today the open, clear and reopen path knows Codex by name. `oap-reopen.ts`
 checks `ref.adapter === 'codex'`, parses only `codex://threads/…` links, asks
 for `capabilities` of `codex`, and its recovery notices say "Codex thread".
-The first PR moves each of these onto the session's adapter name and its row:
-the row's link parser and its label. After that, adding a harness means adding
-one row and the fields it asks for. Nothing else in the daemon or UI branches
-on a harness id.
+The daemon also compares the harness id by its literal `'codex'` value in
+`session-engine.ts`, `create-session-config.ts`, `query-lifecycle-manager.ts`
+(two places), `agent-session.ts` (four places) and `oap-runtime.ts`. A
+mechanical rename would be wrong there. For example,
+`harness !== 'codex'` in `agent-session.ts` picks a fallback SDK provider, and
+renamed to `!== 'oxap-codex'` it would rewrite a future OXAP DeepSeek chat's
+provider.
+
+The first PRs replace every such check:
+
+- Engine checks become one pure `isOxapHarness(harness)`, true for any table
+  id.
+- Per-harness facts come from the session's row: its adapter name, its link
+  parser and its label.
+
+After that, adding a harness means adding one row and the fields it asks for.
+Nothing else in the daemon or UI branches on a harness id.
 
 Tests prove that by adding a second, synthetic row with a different link shape.
 It runs open, clear and reopen on the hub's built-in `memory` adapter type,
@@ -112,30 +125,25 @@ endpoint with OpenCode Go's key.
 There is one hub process for all OXAP harnesses. Its config gets one adapter
 entry per provider that chose an OXAP harness, named by the provider id. A
 session opens with `adapter: <providerId>`, so two providers on the same
-harness keep separate settings and keys.
+harness keep separate settings.
 
 A pure function, `buildHubConfig(providerRecords, OXAP_HARNESSES)`, builds the
-config. A provider's secret goes into its own adapter entry as a literal
-`NAME=value` environment entry, because the hub reads each environment name
-from one shared process environment.
+config. It keeps the existing posture (`docs/architecture/oap-backend-plan.md`):
+the config lists only allowlisted environment variable names, never keys.
+
+- A key goes only into the hub process's environment, under the name its
+  harness reads. The hub resolves each listed name from that environment.
+- The key never touches disk. The credential store stays its only record.
+- Because the environment is shared, two providers whose harnesses read the
+  same variable cannot hold different values. Settings save refuses that
+  combination with a reason naming both providers. Codex needs no key, so this
+  never blocks it.
 
 The config file is never written on its own. Hub start already writes
 `oap-serve.json` (the `writeConfig` step in `OapEngine`'s `prepareHub`
-pipeline). Each start now builds that file from the saved settings, writes it
-with mode 0600 inside the 0700 state directory, then launches. So the saved
-settings are the one record, and the file is only a copy for that start.
-
-At-rest rule: provider keys stay only in the credential store. The file is
-the one place a key is written in plain text, so it never outlives a start:
-
-- The Go hub reads its config once, in `LoadRegistry`, before it serves.
-- The daemon deletes the file as soon as the hub answers its first request.
-  The client's `connect()` resolves at spawn, before the hub has read the
-  file, so connect alone is not enough.
-- Each start also deletes any file a crash left behind before writing the new
-  one.
-- So a key sits on disk only between the write and the hub's first answer.
-  Rows without secrets, like Codex, never write one.
+pipeline). Each start now builds that file from the saved settings, then
+launches. So the saved settings are the one record, and the file is only a
+copy for that start.
 
 Changing the hub binary, or any provider's harness or harness settings, saves
 settings and then calls a new `OapEngine.restart()`. Today `getHub` throws
@@ -207,11 +215,11 @@ pipeline edges.
   `provider` or `model`.
 - `decideOxapOpen(session, providerRecord)` gates each open. It returns the
   adapter name, or the refusal for a provider whose harness changed.
-- `buildHubConfig`, each row's entry builder and each row's link parser are
-  pure.
+- `isOxapHarness`, `buildHubConfig`, each row's entry builder and each row's
+  link parser are pure.
 - `oxap.settings.save` is one pipeline. It runs read the binary identity
-  (effect), then validate (pure), then write settings (effect), then
-  `OapEngine.restart()` (effect).
+  (effect), then validate paths and refuse conflicting key variables (pure),
+  then write settings (effect), then `OapEngine.restart()` (effect).
   - The settings write is the only commit. If it fails, nothing changed.
   - `restart()` first marks the current hub slot failed. That is an in-memory
     flag and cannot fail. Only then does it close the slot.
@@ -233,12 +241,13 @@ production-line estimates, sized against `oap-hub-config.ts`,
 
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
-| 1 | `OXAP_HARNESSES` with the Codex row, `engineForProvider`, session create copies `harness`, `'codex'` → `oxap-codex`, open/clear/reopen read adapter name and link parser from the row, synthetic second row in tests | daemon | ~150 |
-| 2 | Hub from settings: hub-binary setting, `buildHubConfig` at hub start, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~170 |
-| 3 | `model_id` on submit when advertised, and the switch gate | daemon | ~50 |
-| 4 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
+| 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check, `'codex'` → `oxap-codex` | daemon | ~80 |
+| 2 | `engineForProvider`, session create copies `harness`, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
+| 3 | Hub from settings: hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~170 |
+| 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
+| 5 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine | **UI** | ~140 |
 
-Merge order is 1 → 2 → 3 → 4. Only PR 4 changes what the human sees. Before
+Merge order is 1 → 2 → 3 → 4 → 5. Only PR 5 changes what the human sees. Before
 it, the daemon PRs are reachable through RPC and the verify skill. Each later
 harness, such as DeepSeek, is its own small PR: one table row and its fields.
 
