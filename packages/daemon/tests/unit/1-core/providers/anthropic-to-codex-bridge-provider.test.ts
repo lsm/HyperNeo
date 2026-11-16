@@ -1893,6 +1893,33 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it.each([
+      [
+        'Codex has since rotated its refresh token',
+        '{"tokens":{"access_token":"codex-new-access","refresh_token":"codex-refresh-2"}}',
+      ],
+      ['the Codex file cannot be read', 'not-json'],
+    ])('Test 2e: a legacy imported login is never refreshed when %s', async (_case, codexFile) => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(codexDir, { recursive: true });
+      writeFileSync(path.join(codexDir, 'auth.json'), codexFile, { mode: 0o600 });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'legacy-imported-access',
+        refresh: 'codex-refresh-1',
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as { openai?: { refresh?: string } };
+      expect(hyperneoAuth.openai?.refresh).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2d: a late 401 for the old token reuses the Codex token already re-read', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
