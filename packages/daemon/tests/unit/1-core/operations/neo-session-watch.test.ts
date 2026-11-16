@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
+import { frontSessionId } from '../../../../src/lib/neo/front-mode.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   keepNeoSessionNoticeGroups,
@@ -635,6 +636,31 @@ describe('refreshDriverWork', () => {
         ).processing_state
       )
     ).toEqual({ ...held, since: now + 1 });
+  });
+
+  test('root and front sharing a login hold send one alert until both recover', async () => {
+    const conversation = service.repo.conversationId();
+    if (!conversation) throw new Error('no conversation');
+    const front = frontSessionId(conversation);
+    await db.createSession(createTestSession(front));
+    const setFront = (state: Record<string, unknown>) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify(state), front);
+    modelState({ status: 'rate_limit_cooldown', reason: 'login', since: now });
+    setFront({ status: 'rate_limit_cooldown', reason: 'login', since: now - 1 });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(holdNotices()[0]).toMatchObject({ at: now - 1, kind: 'needs_you' });
+    expect(service.sessionNotices).toHaveLength(1);
+    setFront({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(holdNotices()).toHaveLength(1);
+    expect(service.sessionNotices).toHaveLength(1);
+    modelState({ status: 'idle' });
+    await service.refreshDriverWork();
+    expect(service.sessionNotices).toHaveLength(0);
   });
 
   test('a long Neo limit hold alerts once even when its reset moves nearer', async () => {
