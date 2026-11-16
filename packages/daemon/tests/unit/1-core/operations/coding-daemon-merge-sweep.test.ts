@@ -435,6 +435,17 @@ describe('daemon merge sweep behavior', () => {
     expect(merges()).toEqual([]);
     expect(calls.slice(firstPass)).toEqual([]);
   });
+  test('a PR updated on GitHub is read again and merges', async () => {
+    reviewHead = 'b'.repeat(40);
+    const run = sweep();
+    await run(10);
+    reviewHead = head;
+    await run(11);
+    expect(merges()).toEqual([]);
+    db.prepare("UPDATE pack_coding_pr_ledger SET updated_at = '2026-11-16T12:00:00Z'").run();
+    await run(12);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+  });
   test.each(['ci', 'review', 'thread', 'read'])(
     'a truncated-scope ledger never bypasses fresh %s gates',
     async (condition) => {
@@ -978,6 +989,7 @@ test('same-head sign-off holds skip reads for ten minutes then refresh every gat
   expect(calls.length).toBeGreaterThan(firstReads);
   expect(merges()).toHaveLength(0);
   reviewHead = head;
+  db.prepare("UPDATE pack_coding_pr_ledger SET updated_at = '2026-11-16T12:00:00Z'").run();
   await run(600_011);
   expect(merges()).toHaveLength(1);
 });

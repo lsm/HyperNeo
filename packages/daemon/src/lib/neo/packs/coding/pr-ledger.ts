@@ -109,6 +109,7 @@ export const Node = z.object({
     .default({ nodes: [] }),
   closedAt: z.string().nullable(),
   createdAt: z.string().nullable().default(null),
+  updatedAt: z.string().nullable().default(null),
   author: z
     .object({ login: z.string(), __typename: z.string().optional() })
     .nullable()
@@ -243,6 +244,7 @@ export type CodingLedgerRow = {
   ci?: string | null;
   replyAt?: number | null;
   createdAt?: number | null;
+  updatedAt?: string | null;
   authorIsBot?: boolean;
 };
 
@@ -280,6 +282,7 @@ export function planCodingLedgerRead(
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
       createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
+      updatedAt: pr.updatedAt,
       authorIsBot: pr.author?.__typename !== 'User',
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
@@ -692,8 +695,8 @@ export class CodingPrLedgerRepository {
   private upsert(rows: readonly CodingLedgerRow[], now: number, observedAt: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
-         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = excluded.title, branch = excluded.branch, closed_at = excluded.closed_at,
          read_at = excluded.read_at,
@@ -707,6 +710,7 @@ export class CodingPrLedgerRepository {
            ELSE state_since END,
          reply_at = COALESCE(excluded.reply_at, reply_at),
          created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
+         updated_at = excluded.updated_at,
          terminal_event_json = CASE WHEN head = excluded.head AND state = excluded.state
            THEN terminal_event_json ELSE NULL END,
          head = excluded.head, state = excluded.state`
@@ -729,7 +733,8 @@ export class CodingPrLedgerRepository {
         now,
         row.replyAt ?? null,
         row.createdAt ?? null,
-        row.authorIsBot === false ? 0 : 1
+        row.authorIsBot === false ? 0 : 1,
+        row.updatedAt ?? null
       );
     }
   }
@@ -911,7 +916,7 @@ export class CodingPrLedgerRepository {
     const rows = this.db
       .prepare(
         `SELECT repo, number, title, branch, head, state, closed_at AS closedAt,
-                state_since AS stateSince, read_at AS readAt
+                state_since AS stateSince, read_at AS readAt, updated_at AS updatedAt
            FROM pack_coding_pr_ledger ORDER BY repo, number`
       )
       .all() as (CodingLedgerRow & { stateSince: number; readAt: number })[];
