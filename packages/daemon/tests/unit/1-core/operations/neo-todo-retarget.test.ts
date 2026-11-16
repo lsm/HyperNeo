@@ -259,8 +259,7 @@ describe('neo.todo.retarget', () => {
     async (phase) => {
       const h = setup();
       h.seed(old, Date.now() - 2 * 60 * 60_000);
-      if (phase === 'stop')
-        expect(await h.boot().stop(h.store.getTodo('todo')!)).toBeNull();
+      if (phase === 'stop') expect(await h.boot().stop(h.store.getTodo('todo')!)).toBeNull();
       if (phase === 'reopen') {
         h.db.prepare("DELETE FROM pack_facts WHERE key = 'move'").run();
         h.db
