@@ -151,7 +151,10 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
       reason: null,
       blockedReason: null,
       nextAction: null,
-      named: null,
+      named:
+        typeof todo.named?.requestFrom === 'string'
+          ? { requestFrom: todo.named.requestFrom }
+          : null,
       check: null,
       artifacts: undefined,
       status: line(todo.status),

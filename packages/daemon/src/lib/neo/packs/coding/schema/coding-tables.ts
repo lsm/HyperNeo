@@ -155,15 +155,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     reserved_at INTEGER NOT NULL,
     PRIMARY KEY (repo, feature_key)
   );
-  CREATE TABLE IF NOT EXISTS pack_coding_pr_unowned (
-    key TEXT PRIMARY KEY,
-    listed_at INTEGER NOT NULL
-  );
+  DROP TABLE IF EXISTS pack_coding_pr_unowned;
   CREATE TABLE IF NOT EXISTS pack_coding_pr_unowned_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    activated_at INTEGER NOT NULL,
-    pending_key TEXT,
-    pending_text TEXT
+    activated_at INTEGER NOT NULL
   );
   DROP TABLE IF EXISTS pack_coding_session_prs;
   DROP TABLE IF EXISTS pack_coding_pr_claims;
@@ -199,8 +194,9 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     );
   if (has('pack_coding_daemon_merge_failures', 'notified_at'))
     db.exec('ALTER TABLE pack_coding_daemon_merge_failures DROP COLUMN notified_at');
-  if (!has('pack_coding_pr_unowned_state', 'pending_rows'))
-    db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
+  for (const column of ['pending_key', 'pending_text', 'pending_rows'])
+    if (has('pack_coding_pr_unowned_state', column))
+      db.exec(`ALTER TABLE pack_coding_pr_unowned_state DROP COLUMN ${column}`);
   for (const table of ['pack_coding_pr_event_state', 'pack_coding_pr_unowned_state'])
     db.prepare(`INSERT OR IGNORE INTO ${table} (id, activated_at) VALUES (1, ?)`).run(activatedAt);
 }
