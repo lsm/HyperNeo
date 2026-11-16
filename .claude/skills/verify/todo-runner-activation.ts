@@ -37,7 +37,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
   const receipt=await app.db.gateway.run(op,args);
   record=false;
   return receipt;
-},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},attend:async()=>{effects.push({name:'tell'});},
+},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell: async () => {}, attend:async()=>{effects.push({name:'tell'});},
   invoke:async(_caller,name,input)=>{
     record=false;
     if(name==='work.status') return {kind:'completed',value:{ok:true,value:{status:'done',lastActivityAt:1}}};

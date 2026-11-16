@@ -13,7 +13,6 @@ import {
 import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -40,7 +39,6 @@ function world(coding = false) {
   db.exec(
     "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1)"
   );
-  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
@@ -89,9 +87,7 @@ function world(coding = false) {
       return completed({ ok: true, value: { status: 'done', lastActivityAt: Date.now() } });
     },
     packs: () => [coding ? real : pack],
-    tell: async (_ask, todo, note, key) => {
-      told.push({ id: todo.id, note, key });
-    },
+    tell: async () => {},
     attend: async (event) => {
       told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
     },

@@ -84,7 +84,8 @@ try {
   const status = evidence.status as { reply: { ok: boolean; value: { status: string } } };
   assert.equal(status.reply.ok, true);
   assert.equal(status.reply.value.status, 'done');
-  const messages = () => (db.prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(root) as { body: string }[]).map((row) => hyperneoInputText(row.body));
+  const queued = () => (db.prepare("SELECT json_extract(payload, '$.message.message.content') AS text FROM job_queue WHERE queue IN ('mailbox', 'neo_notes') AND json_extract(payload, '$.to.sessionId') = ? ORDER BY created_at, rowid").all(root) as { text: string | null }[]).flatMap((row) => (row.text ? [row.text] : []));
+  const messages = () => [...new Set([...(db.prepare(`SELECT ${sdkMessageBodyAt('m.rowid')} AS body FROM sdk_messages m WHERE session_id=? AND message_type='user' ORDER BY seq`).all(root) as { body: string }[]).map((row) => hyperneoInputText(row.body)), ...queued()])];
   const durationsMs: number[] = [];
   for (let round = 0; round < 2; round++) {
     const start = performance.now();

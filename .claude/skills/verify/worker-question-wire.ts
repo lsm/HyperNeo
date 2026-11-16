@@ -214,7 +214,8 @@ try {
   const reminders: string[] = [];
   const runner = createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 }), write: gatewayFor(app.db.getDatabase()).run.bind(gatewayFor(app.db.getDatabase())), store: restored, sessions: links, packs: () => [], changed: () => {},
     invoke: async (_caller, name) => { reminders.push(name); return { kind: 'completed', value: { ok: true, value: { ref, title: 'Stopped', place: { machine: 'test', name: 'Test' }, status: 'stopped', lastActivityAt: 1 } } }; },
-    tell: async () => { reminders.push('tell'); }, attend: async () => { reminders.push('tell'); },
+    tell: async () => {},
+    attend: async () => { reminders.push('tell'); },
   });
   await runner.refresh((message, error) => { throw new Error(`${message}: ${error}`); });
   assert(!reminders.includes('work.send'));

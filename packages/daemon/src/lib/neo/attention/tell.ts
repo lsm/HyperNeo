@@ -28,15 +28,14 @@ export const neoAttentionDelivery = (
 ): { wake: Deliver; digest: Deliver } => ({
   wake: async (uuid, text) => {
     const sessionId = session();
-    return (
-      sessionId &&
-      mailSessionEvent(new JobQueueRepository(db), {
-        sessionId,
-        messageUuid: uuid,
-        text,
-        mode: busy(sessionId) ? 'defer' : 'immediate',
-      })
-    );
+    if (!sessionId) return;
+    const outcome = await mailSessionEvent(new JobQueueRepository(db), {
+      sessionId,
+      messageUuid: uuid,
+      text,
+      mode: busy(sessionId) ? 'defer' : 'immediate',
+    });
+    if (outcome.kind === 'rejected') throw new Error(`Neo wake was not queued: ${outcome.reason}`);
   },
   digest: async (uuid, text) => {
     const sessionId = session();

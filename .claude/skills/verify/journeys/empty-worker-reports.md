@@ -9,11 +9,13 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/empty-
 The helper owns a random-port daemon, disposable HOME/DB, a refusing GitHub stub
 and an authenticated local socket. It seeds terminal SDK records, confirms each
 empty or meaningful result through work.status, and runs the real driver-refresh
-job, then reads Neo's actual incoming SDK messages.
+job, then reads Neo's stored messages and the notes queued for Neo by the
+attention entry.
 
 Empty and whitespace-only automatic reports on an already-idle, unblocked worker
-must add no input. Changed or unknown prior status, an open question, meaningful
-text, a human-origin turn and a new blocker each retain one report. Exact refresh
+must add no input, and neither must a report on a todo that waits on an open
+card. Changed or unknown prior status, meaningful text, a human-origin turn and
+a new blocker each retain one report. Exact refresh
 replays add none. Save observed.json, proof.log and the wrapper exit status.
 No model, native app, live daemon or external GitHub request runs.
 

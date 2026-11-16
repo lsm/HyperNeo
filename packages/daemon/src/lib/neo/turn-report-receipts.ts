@@ -1,4 +1,3 @@
-import { skipRepeatedNeoNotice } from './covered-notice.ts';
 import type { NeoTurnReportFacts } from './turn-report-plan.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -9,19 +8,13 @@ import { sentDuringTurn } from '../../storage/repositories/neo-session-message-r
 import { qualifyRemoteOrigin, renderAddress } from '../mailbox/address.ts';
 
 type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
-type Observation = { live: Live; baseline: string | null; facts?: NeoTurnReportFacts };
+type Observation = { live: Live; facts?: NeoTurnReportFacts; focused?: boolean };
 
 export class NeoTurnReportReceipts {
   private readonly receipts: JobQueueRepository;
-  private readonly cutoff: number;
 
   constructor(private readonly db: Database) {
     this.receipts = new JobQueueRepository(db);
-    this.cutoff = this.receipts.commitSubmissionReceipt(
-      'neo-turn-report:v2:cutoff',
-      'v2',
-      Date.now
-    );
   }
 
   async observe(
@@ -34,40 +27,27 @@ export class NeoTurnReportReceipts {
       at: number;
       startedAt?: number;
       senderMachine?: string;
-      message: string;
       humanInput?: string;
     },
     recipient: string,
+    focused: boolean,
     facts?: NeoTurnReportFacts
   ) {
-    const scope = [todoId, dispatchId, ref.adapter, ref.id, ref.daemon ?? null];
-    const hash = neoDerivedId(
-      turn.humanInput === undefined ? turn.message : JSON.stringify([turn.humanInput, turn.message])
+    const observation = this.receipts.commitSubmissionReceipt<Observation>(
+      neoDerivedId(
+        JSON.stringify([
+          'neo-turn-observed-v2',
+          todoId,
+          dispatchId,
+          ref.adapter,
+          ref.id,
+          ref.daemon ?? null,
+          turn.id,
+        ])
+      ),
+      'v2',
+      () => ({ live, facts, focused })
     );
-    const key = neoDerivedId(JSON.stringify(['neo-turn-observed-v2', ...scope, turn.id]));
-    const observation =
-      this.receipts.submissionReceipt<Observation>(key, 'v2') ??
-      this.receipts.commitSubmissionReceipt<Observation>(key, 'v2', () => ({
-        live,
-        facts,
-        baseline: turn.at <= this.cutoff ? hash : null,
-      }));
-    const previousId = neoDerivedId(
-      JSON.stringify(['neo-turn-delivery-v2', ...scope, observation.live?.status ?? null, hash])
-    );
-    const messageId = neoDerivedId(
-      JSON.stringify([
-        'neo-turn-delivery-v3',
-        recipient,
-        ref.adapter,
-        ref.id,
-        ref.daemon ?? null,
-        turn.id,
-        hash,
-      ])
-    );
-    if (observation.baseline === hash) this.acknowledge(messageId);
-    if (this.receipts.submissionReceipt<boolean>(previousId, 'v2')) this.acknowledge(messageId);
     const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
     const sender = ref.daemon
       ? qualifyRemoteOrigin(
@@ -75,7 +55,7 @@ export class NeoTurnReportReceipts {
           turn.senderMachine ?? ref.daemon
         )
       : localSender;
-    if (
+    const sent =
       turn.humanInput === undefined &&
       turn.startedAt !== undefined &&
       (await gatewayFor(this.db).call(sentDuringTurn, 'sentDuringTurn', {
@@ -83,26 +63,12 @@ export class NeoTurnReportReceipts {
         recipient,
         from: turn.startedAt,
         to: turn.at,
-      }))
-    )
-      this.acknowledge(messageId);
+      }));
     return {
       live: observation.live,
       facts: observation.facts,
-      messageId,
-      previousId,
-      skip: this.receipts.submissionReceipt<boolean>(messageId, 'v2') === true,
+      focused: observation.focused ?? focused,
+      sent,
     };
-  }
-
-  async deliverNoticeOnce(key: string, deliver: () => Promise<void>) {
-    if (skipRepeatedNeoNotice(this.receipts.submissionReceipt<boolean>(key, 'v2') === true)) return;
-    await deliver();
-    this.acknowledge(key);
-  }
-
-  acknowledge(messageId: string) {
-    if (!this.receipts.submissionReceipt<boolean>(messageId, 'v2'))
-      this.receipts.commitSubmissionReceipt(messageId, 'v2', () => true);
   }
 }

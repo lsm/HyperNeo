@@ -2,7 +2,6 @@ import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree'
 import { spawnSync } from 'node:child_process';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index';
 
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
@@ -28,6 +27,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes';
 
 const STALL_TIMEOUT_MS = 4000;
 
@@ -250,11 +250,6 @@ describe('owned Copilot lifecycle', () => {
     try {
       runMigrations(db, () => {});
       createTables(db);
-      new JobQueueRepository(db).commitSubmissionReceipt(
-        'neo-turn-report:v2:cutoff',
-        'v2',
-        () => 0
-      );
       const store = new NeoAskTodoRepository(db);
       const sessions = new NeoTodoSessionRepository(db);
       store.openAsk({
@@ -309,12 +304,8 @@ describe('owned Copilot lifecycle', () => {
             ),
           };
         },
-        tell: async (_ask, _todo, note) => {
-          told.push(note);
-        },
-        attend: async (event) => {
-          told.push(String(event.facts.text));
-        },
+        tell: async (_ask, _todo, note) => void told.push(note),
+        attend: neoAttentionNotes(db, store, (text) => told.push(text)).attend,
       });
       await runner.refresh(() => {});
       await runner.refresh(() => {});

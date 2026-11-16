@@ -678,9 +678,7 @@ test('a hold arriving during the runner status lookup prevents a stale reminder'
           },
         };
       },
-      tell: async () => {
-        sends.push('tell');
-      },
+      tell: async () => {},
       attend: async () => {
         sends.push('tell');
       },
