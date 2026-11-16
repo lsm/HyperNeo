@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { vi } from 'vitest';
@@ -289,6 +289,35 @@ describe('shared non-coding work.start home', () => {
     expect(await start()).toMatchObject({
       ok: true,
       value: { place: { folder: join(root, 'workspace') } },
+    });
+  });
+});
+
+describe('read checkout placement', () => {
+  const view = () => join(root, 'data', 'worktrees', 'synthetic', 'repo', 'neo-read');
+  test('a ready read checkout is accepted as an explicit place', async () => {
+    mkdirSync(join(view(), '.git'), { recursive: true });
+    writeFileSync(join(view(), '.git', 'index'), '');
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: true,
+      value: { place: { folder: view() } },
+    });
+  });
+  test('a symlinked or unready read checkout path is not admitted', async () => {
+    const elsewhere = join(root, 'not-a-repository');
+    mkdirSync(join(elsewhere, '.git'), { recursive: true });
+    writeFileSync(join(elsewhere, '.git', 'index'), '');
+    mkdirSync(dirname(view()), { recursive: true });
+    symlinkSync(elsewhere, view());
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: false,
+      reason: 'invalid_place',
+    });
+    rmSync(view());
+    mkdirSync(join(view(), '.git'), { recursive: true });
+    expect(await start(view(), { createFolder: false })).toMatchObject({
+      ok: false,
+      reason: 'invalid_place',
     });
   });
 });

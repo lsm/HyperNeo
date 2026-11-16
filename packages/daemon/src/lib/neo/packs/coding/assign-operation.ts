@@ -9,9 +9,7 @@ import {
 import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir, hostname } from 'node:os';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
+import { getNeoReadCheckoutPath, isReadyNeoReadCheckout } from './read-checkout-path.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -131,7 +129,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
       return refuse('Configure an available independent actor on this daemon.');
     const { owner, repo } = parsePrUrl(input.url)!;
     const view = getNeoReadCheckoutPath(owner, repo);
-    if (!existsSync(join(view, '.git', 'index')))
+    if (!isReadyNeoReadCheckout(view))
       return refuse(`The ${owner}/${repo} read checkout is not ready; assign again once it syncs.`);
     const place = { machine: hostname(), folder: view, name: `${owner}/${repo}` };
     const select = (candidates: Input['candidates']) =>

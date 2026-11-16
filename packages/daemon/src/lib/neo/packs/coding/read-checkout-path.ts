@@ -1,3 +1,4 @@
+import { lstatSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { getDataDir } from '../../../data-dir.ts';
 
@@ -11,10 +12,17 @@ export function getNeoReadCheckoutPath(
   return join(dataDir, 'worktrees', owner.toLowerCase(), repo.toLowerCase(), 'neo-read');
 }
 
-export function isNeoReadCheckoutPath(folder: string, dataDir = getDataDir()): boolean {
-  const [owner = '', repo = ''] = relative(join(dataDir, 'worktrees'), folder).split(sep);
+export function isReadyNeoReadCheckout(folder: string, dataDir = getDataDir()): boolean {
+  const base = join(dataDir, 'worktrees');
+  const [owner = '', repo = ''] = relative(base, folder).split(sep);
   try {
-    return getNeoReadCheckoutPath(owner, repo, dataDir) === folder;
+    return (
+      getNeoReadCheckoutPath(owner, repo, dataDir) === folder &&
+      [join(base, owner), join(base, owner, repo), folder, join(folder, '.git')].every((path) =>
+        lstatSync(path).isDirectory()
+      ) &&
+      lstatSync(join(folder, '.git', 'index')).isFile()
+    );
   } catch {
     return false;
   }
