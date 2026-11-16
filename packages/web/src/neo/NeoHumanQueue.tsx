@@ -267,7 +267,10 @@ export function NeoHumanQueue({
         )}
       </div>
       {groups.map((id) => {
-        const full = renderAsk && (entries.find((entry) => entry.ask.id === id) ?? details[id]);
+        const full =
+          renderAsk &&
+          id !== outside &&
+          (entries.find((entry) => entry.ask.id === id) ?? details[id]);
         const showFull = !!full && opened.has(id);
         return (
           <section
