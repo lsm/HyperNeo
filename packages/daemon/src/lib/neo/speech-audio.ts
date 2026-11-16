@@ -23,7 +23,13 @@ const OPENAI_VOICES = [
   'cedar',
 ];
 
-export type SpeechPart = { endpoint: string; model?: string; voice?: string; key?: string };
+export type SpeechPart = {
+  provider?: 'openai' | 'deepgram';
+  endpoint: string;
+  model?: string;
+  voice?: string;
+  key?: string;
+};
 type SpeechBackend = { base?: string; part?: SpeechPart };
 
 const retryAfterMs = (header: string | null, now: number): number | null => {
@@ -67,7 +73,10 @@ export const planSpeechRetry = (superpipe({})('neo.speech.retry') as PipelineAPI
 ) => SpeechRetry;
 
 const authorization = (part?: SpeechPart): Record<string, string> =>
-  part?.key ? { Authorization: `Bearer ${part.key}` } : {};
+  part?.key
+    ? { Authorization: `${part.provider === 'deepgram' ? 'Token' : 'Bearer'} ${part.key}` }
+    : {};
+const isDeepgram = (backend: SpeechBackend) => backend.part?.provider === 'deepgram';
 
 export class NeoSpeechAudio {
   private readonly jobs = new Map<string, AbortController>();
@@ -107,16 +116,42 @@ export class NeoSpeechAudio {
     return url;
   }
 
+  private speechRequest(backend: SpeechBackend, text: string, voice: string | undefined) {
+    const part = backend.part;
+    if (part?.provider === 'deepgram') {
+      const url = this.url(backend, '/v1/speak');
+      const model = voice ?? part.voice ?? part.model;
+      if (model) url.searchParams.set('model', model);
+      url.searchParams.set('encoding', 'linear16');
+      url.searchParams.set('sample_rate', '24000');
+      url.searchParams.set('container', 'none');
+      return { url, body: { text } };
+    }
+    const spoken = voice ?? (part ? part.voice : 'vivian');
+    return {
+      url: this.url(backend, '/v1/audio/speech'),
+      body: part
+        ? {
+            ...(part.model ? { model: part.model } : {}),
+            input: text,
+            ...(spoken ? { voice: spoken } : {}),
+            response_format: 'pcm',
+          }
+        : { input: text, voice: spoken, language: 'auto', response_format: 'pcm' },
+    };
+  }
+
   async catalog(): Promise<{ ok: true; catalog: unknown } | { ok: false; reason: string }> {
     const signal = AbortSignal.timeout(10_000);
     try {
       const backend = await this.backend();
-      const response = await this.request(this.url(backend, '/v1/audio/voices'), {
+      const path = isDeepgram(backend) ? '/v1/models' : '/v1/audio/voices';
+      const response = await this.request(this.url(backend, path), {
         signal,
         redirect: 'error',
         headers: authorization(backend.part),
       }).catch((error) => {
-        if (backend.part) return null;
+        if (backend.part && !isDeepgram(backend)) return null;
         if (
           error instanceof TypeError ||
           (error instanceof DOMException && ['TimeoutError', 'AbortError'].includes(error.name))
@@ -124,10 +159,15 @@ export class NeoSpeechAudio {
           throw new Error('speech_backend_unavailable');
         throw error;
       });
-      if (backend.part && !response?.ok)
+      if (backend.part && !isDeepgram(backend) && !response?.ok)
         return { ok: true, catalog: { data: OPENAI_VOICES.map((id) => ({ id })) } };
       if (!response?.ok) throw new Error('speech_backend_unavailable');
-      return { ok: true, catalog: await response.json() };
+      if (!isDeepgram(backend)) return { ok: true, catalog: await response.json() };
+      const models = (await response.json()) as { tts?: { canonical_name?: string }[] };
+      const data = (models.tts ?? []).flatMap((m) =>
+        m.canonical_name ? [{ id: m.canonical_name }] : []
+      );
+      return { ok: true, catalog: { data } };
     } catch (error) {
       if (signal.aborted) return { ok: false, reason: 'speech_backend_unavailable' };
       if (
@@ -156,23 +196,14 @@ export class NeoSpeechAudio {
         controller.signal.throwIfAborted();
         voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
         const backend = await this.backend();
-        const spoken = voice ?? (backend.part ? backend.part.voice : 'vivian');
+        const speech = this.speechRequest(backend, target.text, voice);
         const synthesize = () =>
-          this.request(this.url(backend, '/v1/audio/speech'), {
+          this.request(speech.url, {
             method: 'POST',
             signal: controller.signal,
             redirect: 'error',
             headers: { 'Content-Type': 'application/json', ...authorization(backend.part) },
-            body: JSON.stringify(
-              backend.part
-                ? {
-                    ...(backend.part.model ? { model: backend.part.model } : {}),
-                    input: target.text,
-                    ...(spoken ? { voice: spoken } : {}),
-                    response_format: 'pcm',
-                  }
-                : { input: target.text, voice: spoken, language: 'auto', response_format: 'pcm' }
-            ),
+            body: JSON.stringify(speech.body),
           });
         let response = await synthesize();
         for (let attempt = 0; !response.ok; attempt++) {
@@ -193,7 +224,8 @@ export class NeoSpeechAudio {
         fault.status = response.status;
         if (
           !response.ok ||
-          !response.headers.get('content-type')?.startsWith('audio/pcm') ||
+          (!isDeepgram(backend) &&
+            !response.headers.get('content-type')?.startsWith('audio/pcm')) ||
           !response.body
         )
           throw new Error('speech_backend_unavailable');
@@ -205,6 +237,8 @@ export class NeoSpeechAudio {
             const { done, value } = await reader.read();
             if (done) break;
             controller.signal.throwIfAborted();
+            if (!bytes && Buffer.from(value.subarray(0, 4)).toString('latin1') === 'RIFF')
+              throw new Error('invalid_speech_audio');
             if (!bytes && value.byteLength)
               voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
             bytes += value.byteLength;
