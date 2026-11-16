@@ -27,7 +27,7 @@ const fact: CodingStageFact = {
   evidence: ['artifact:proof'],
 };
 
-function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
+function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'waiting_review') {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -36,8 +36,8 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
   ledger.stageFacts.observeHead(url, 'head-a', 1);
   db.prepare(
     `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, closed_at, read_at)
-     VALUES ('synthetic/review', 3, 'Synthetic', 'branch', ?, 'waiting_review', 1, ?, 1)`
-  ).run(ledgerHead, closedAt);
+     VALUES ('synthetic/review', 3, 'Synthetic', 'branch', ?, ?, 1, ?, 1)`
+  ).run(ledgerHead, state, closedAt);
   const comments: { host: string; path: string; body: string }[] = [];
   const outage = { on: false };
   const github = async (host: string, args: string[]) => {
@@ -96,11 +96,30 @@ describe('createCodingReviewComments', () => {
       db.close();
     }
   });
+  test('a PR merged while GitHub failed gets its comment on a later sweep', async () => {
+    const { db, ledger, comments, outage, sweep, github } = setup();
+    try {
+      ledger.recordStage(fact);
+      const post = createCodingReviewComments(github);
+      outage.on = true;
+      await sweep(post);
+      db.prepare("UPDATE pack_coding_pr_ledger SET state = 'merged', closed_at = 5").run();
+      outage.on = false;
+      await sweep(post);
+      expect(comments).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
   test.each([
     ['a closed PR', 'head-a', 5],
     ['a PR whose head moved on', 'head-b', null],
   ] as const)('%s gets no comment', async (_label, head, closedAt) => {
-    const { db, ledger, comments, sweep, github } = setup(head, closedAt);
+    const { db, ledger, comments, sweep, github } = setup(
+      head,
+      closedAt,
+      closedAt ? 'closed' : 'waiting_review'
+    );
     try {
       ledger.recordStage(fact);
       await sweep(createCodingReviewComments(github));
