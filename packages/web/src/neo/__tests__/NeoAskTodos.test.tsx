@@ -1319,6 +1319,24 @@ describe('NeoAskTodos open cards', () => {
       'neo-ref-question-held-old',
     ]);
   });
+
+  it('breaks equal card times by card id', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'waiting',
+          questions: [
+            question('tie-b', { state: 'open', createdAt: 5 }),
+            question('tie-a', { state: 'open', createdAt: 5 }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[id^="neo-ref-question-"]')].map((node) => node.id)
+    ).toEqual(['neo-ref-question-tie-a', 'neo-ref-question-tie-b']);
+  });
 });
 
 describe('neoAskEntryGroup', () => {
