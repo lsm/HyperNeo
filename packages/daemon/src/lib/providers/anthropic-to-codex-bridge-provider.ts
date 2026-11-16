@@ -626,7 +626,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (rejectedAccessToken && credentials.access && credentials.access !== rejectedAccessToken) {
       return credentials;
     }
-    if (!credentials.refresh || credentialOwner(credentials) === 'codex') {
+    if (credentialOwner(credentials) === 'codex') {
       if (credentials.refresh) {
         const accessOnly: StoredCredentials = {
           ...credentials,
@@ -640,6 +640,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       const reread = await this.loadCredentials();
       return reread?.access && reread.access !== credentials.access ? reread : 'definitive';
     }
+    if (!credentials.refresh) return 'definitive';
 
     const result = await this.tryRefreshCodexToken(credentials.refresh);
     if (!result.ok) {
