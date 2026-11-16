@@ -428,7 +428,15 @@ describe('spoken replies separate from publications', () => {
     const pcm = () =>
       new Response(new Uint8Array([1, 0, 2, 0]), { headers: { 'content-type': 'audio/pcm' } });
     const withPart = (
-      part: { endpoint: string; key?: string; model?: string; voice?: string } | undefined,
+      part:
+        | {
+            provider?: 'openai' | 'deepgram';
+            endpoint: string;
+            key?: string;
+            model?: string;
+            voice?: string;
+          }
+        | undefined,
       request: typeof fetch
     ) =>
       new NeoSpeech(
@@ -509,6 +517,90 @@ describe('spoken replies separate from publications', () => {
       try {
         await speakOnce(speaker, null);
         expect(server.seen[0].body?.voice).toBe('vivian');
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('Deepgram speech asks for raw PCM with a Token header and streams it unchanged', async () => {
+      const server = fakeServer(
+        () =>
+          new Response(new Uint8Array([1, 0, 2, 0]), {
+            headers: { 'content-type': 'audio/l16;rate=24000' },
+          })
+      );
+      const speaker = withPart(
+        { provider: 'deepgram', endpoint: 'https://api.deepgram.com', key: 'dg' },
+        server.request
+      );
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        expect(server.seen[0].url).toBe(
+          'https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=linear16&sample_rate=24000&container=none'
+        );
+        expect(server.seen[0].headers.Authorization).toBe('Token dg');
+        expect(server.seen[0].body).toEqual({ text: 'Hello.' });
+        const audio = messages.filter((item) => item.message.data.type === 'audio');
+        expect(audio.map((item) => item.message.data.pcm)).toEqual(['AQACAA==']);
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a WAV container from Deepgram never reaches clients', async () => {
+      const wav = new Uint8Array(48);
+      wav.set(new TextEncoder().encode('RIFF'), 0);
+      wav.set(new TextEncoder().encode('WAVE'), 8);
+      const server = fakeServer(
+        () => new Response(wav, { headers: { 'content-type': 'audio/wav' } })
+      );
+      const speaker = withPart(
+        {
+          provider: 'deepgram',
+          endpoint: 'https://api.deepgram.com',
+          key: 'dg',
+          voice: 'aura-2-thalia-en',
+        },
+        server.request
+      );
+      try {
+        await speakOnce(speaker, null);
+        for (
+          let i = 0;
+          i < 200 && !messages.some((item) => item.message.data.type === 'failed');
+          i++
+        )
+          await new Promise((done) => setTimeout(done, 1));
+        expect(server.seen[0].url).toContain('model=aura-2-thalia-en');
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('the Deepgram voice list is its text-to-speech model names', async () => {
+      const server = fakeServer(() =>
+        Response.json({
+          stt: [{ canonical_name: 'nova-3' }],
+          tts: [{ canonical_name: 'aura-2-thalia-en' }, { canonical_name: 'aura-2-orion-en' }],
+        })
+      );
+      const speaker = withPart(
+        { provider: 'deepgram', endpoint: 'https://api.deepgram.com', key: 'dg' },
+        server.request
+      );
+      try {
+        expect(await catalogOf(speaker)).toMatchObject({
+          kind: 'completed',
+          value: {
+            ok: true,
+            catalog: { data: [{ id: 'aura-2-thalia-en' }, { id: 'aura-2-orion-en' }] },
+          },
+        });
+        expect(server.seen[0].url).toBe('https://api.deepgram.com/v1/models');
+        expect(server.seen[0].headers.Authorization).toBe('Token dg');
       } finally {
         await speaker.dispose();
       }

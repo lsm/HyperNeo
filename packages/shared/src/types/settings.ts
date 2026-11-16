@@ -99,7 +99,7 @@ export interface VoiceSettings {
 }
 
 export interface VoiceRecordedPart {
-  provider: 'openai';
+  provider: 'openai' | 'deepgram';
   endpoint: string;
   model: string;
 }
@@ -110,7 +110,7 @@ export interface VoiceLivePart {
 }
 
 export interface VoiceSpeechPart {
-  provider: 'openai';
+  provider: 'openai' | 'deepgram';
   endpoint: string;
   model?: string;
   voice?: string;
