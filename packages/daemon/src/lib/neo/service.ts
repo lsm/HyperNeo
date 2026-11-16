@@ -1272,7 +1272,7 @@ export class NeoService {
       'message.send',
       {
         sessionId: reply.to,
-        idempotencyKey: `neo-request-reply:${reply.todoId}`,
+        idempotencyKey: reply.key ?? `neo-request-reply:${reply.todoId}`,
         message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
       },
       { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
@@ -1289,13 +1289,7 @@ export class NeoService {
     if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
       this.db.getJobQueueRepo().enqueue({
         queue: NEO_REQUEST_REPLY,
-        payload: {
-          todoId: reply.todoId,
-          to: reply.to,
-          from: reply.from,
-          text: reply.text,
-          deferred: deferred + 1,
-        } satisfies NeoRequestReply,
+        payload: { ...reply, deferred: deferred + 1 } satisfies NeoRequestReply,
         runAt: Date.now() + 10 * 60_000,
         maxRetries: job.maxRetries,
       });
