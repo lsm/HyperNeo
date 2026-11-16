@@ -19,4 +19,8 @@ It then runs the registered cleanup job once and observes one pending next-day r
 `work-cleanup-sweep.json` records both RPC receipts and the delivered digest.
 Focused tests cover owner selection, scoped refreshes, bounded status concurrency,
 rebinding, the release fence and archive refusals preserved in the digest.
+The runtime fixture matches owned folders under all six root kinds, including
+the nested Copilot and Codex layouts. Git tracing confirms that live and unreadable
+owners receive no Git probes; the first planning pass inspects at most four folders
+at a time.
 This proof does not exercise native Desktop clients or a day of elapsed time.

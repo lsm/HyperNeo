@@ -157,8 +157,8 @@ test('createWorkCleanupRuntime matches all six root kinds, bounds status calls a
     const digest = result as { kept: Record<string, string[]> };
     expect(digest.kept['Unpublished branch; kept.'].toSorted()).toEqual(folders.toSorted());
     expect(digest.kept.live).toHaveLength(2);
-    expect(digest.kept.live).toContain(paths.get('worker-6'));
-    expect(digest.kept.live).toContain(paths.get('worker-7'));
+    expect(digest.kept.live).toContain(paths.get('worker-6')!);
+    expect(digest.kept.live).toContain(paths.get('worker-7')!);
     const probes = readFileSync(trace, 'utf8');
     expect(probes).toContain(folders[0]);
     expect(probes).not.toContain(paths.get('worker-6')!);

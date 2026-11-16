@@ -16,7 +16,7 @@ import { isLocalUser } from '../operations/caller.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
-import type { WorkFolderFacts } from './plan.ts';
+import { planWorkRelease, type WorkFolderFacts } from './plan.ts';
 import { listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
 import { releaseWorkCleanup } from './release.ts';
 
@@ -88,12 +88,13 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         const projects = await children(join(data, 'projects'));
         const claude = await children(join(data, 'claude-worktrees'));
         const codex = await children(shared[0]);
+        const copilot = await children(join(data, 'copilot-workers', 'worktrees'));
         const roots = [
           join(data, 'worktrees'),
-          join(data, 'copilot-workers', 'worktrees'),
           ...projects.map((project) => join(project, 'worktrees')),
           ...claude,
           ...codex,
+          ...copilot,
           ...shared.slice(1),
         ];
         const folders = (await Promise.all(roots.map(children))).flat();
@@ -137,7 +138,8 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           owners.flatMap(({ todoId }) => (todoId ? [todoId] : []))
         );
         if (!row.readable) return { owner: 'unreadable', inUse: false, unsaved: false };
-        if (!existsSync(folder)) return { owner: row.owner, inUse: false, unsaved: false };
+        const facts = { owner: row.owner, inUse: false, unsaved: false };
+        if ('keep' in planWorkRelease(facts, Date.now()) || !existsSync(folder)) return facts;
         try {
           const git = simpleGit(folder);
           const [status, ahead] = await Promise.all([
@@ -173,7 +175,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           subject: { type: 'work_cleanup', id: 'local' },
           since: Date.now(),
           facts: {
-            text: `Work cleanup: removed ${digest.removed.length} folders; freed ${Math.max(0, (after.bavail - before.bavail) * after.bsize)} bytes. Kept by reason: ${JSON.stringify(digest.kept)}.`,
+            text: `Work cleanup: removed ${digest.removed.length} folders; volume available-space change: ${(after.bavail - before.bavail) * after.bsize} bytes. Kept by reason: ${JSON.stringify(digest.kept)}.`,
           },
         });
       },

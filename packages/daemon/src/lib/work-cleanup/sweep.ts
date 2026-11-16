@@ -32,12 +32,16 @@ export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as Pipeline
   .pipe(
     async (folders: string[], deps: Dependencies) => {
       const digest: Digest = { removed: [], kept: {} };
-      const initial = await Promise.all(
-        folders.map(async (folder) => ({
-          folder,
-          plan: planWorkRelease(await deps.read(folder), Date.now()),
-        }))
-      );
+      const initial: { folder: string; plan: ReturnType<typeof planWorkRelease> }[] = [];
+      for (let offset = 0; offset < folders.length; offset += 4)
+        initial.push(
+          ...(await Promise.all(
+            folders.slice(offset, offset + 4).map(async (folder) => ({
+              folder,
+              plan: planWorkRelease(await deps.read(folder), Date.now()),
+            }))
+          ))
+        );
       for (const { folder, plan } of initial) {
         const fresh =
           'remove' in plan ? planWorkRelease(await deps.read(folder), Date.now()) : plan;
