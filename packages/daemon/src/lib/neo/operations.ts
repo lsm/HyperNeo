@@ -95,6 +95,7 @@ import { readNeoRuleApproval } from '../../storage/repositories/neo-rule-answer.
 
 import { createRestartReservationOperation } from '../system/restart-reservation.ts';
 import { voiceStreamsBusy } from '../rpc-handlers/voice-handlers.ts';
+import { neoHumanQueue } from './human-queue.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -121,6 +122,7 @@ const Project = z.object({
 const NEO_SESSION_MESSAGES_SHOWN = 30;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const HistoryCursor = z.object({ updatedAt: z.number().finite(), id: z.string().min(1) });
+const NeoHumanQueueState = z.enum(['waiting', 'held', 'progress']);
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
@@ -160,6 +162,31 @@ const SnapshotOk = z.object({
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   wakes: z.array(NeoConversationWakeSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
+  humanQueue: z
+    .object({
+      items: z.array(
+        z.union([
+          z.object({
+            state: z.enum(['waiting', 'held']),
+            askId: z.string(),
+            questionId: z.string(),
+            text: z.string(),
+            todos: z.array(z.object({ id: z.string(), title: z.string() })),
+          }),
+          z.object({
+            state: z.literal('progress'),
+            askId: z.string(),
+            todoId: z.string(),
+            title: z.string(),
+            owner: z
+              .enum(['human', 'nobody', 'prerequisite', 'daemon', 'worker', 'pack', 'neo'])
+              .nullable(),
+          }),
+        ])
+      ),
+      counts: z.record(z.string(), z.record(NeoHumanQueueState, z.number().int().nonnegative())),
+    })
+    .optional(),
   needsYou: z.number().int().nonnegative().optional(),
   neoUnhandled: z.number().int().nonnegative().optional(),
   historyCursor: HistoryCursor.nullable().optional(),
@@ -539,6 +566,9 @@ export function createNeoOperations(
       preferences: service.modelPreference(),
       ...(detailed ? { packPreferences: listPackPreferences(service.db.getDatabase()) } : {}),
       todoAsks: entries.map(summarizeNeoAskEntry),
+      ...(detailed
+        ? { humanQueue: neoHumanQueue({ ...openWork, owners: await service.stepOwners() }) }
+        : {}),
       ...counts,
       historyCursor,
       ...(!detailed && Object.keys(more).length ? { more } : {}),

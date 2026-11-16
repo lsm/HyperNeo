@@ -200,6 +200,7 @@ export interface NeoSnapshot {
   omitted?: { asks?: number };
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
+  humanQueue?: NeoHumanQueue;
   needsYou?: number;
   neoUnhandled?: number;
   historyCursor?: { updatedAt: number; id: string } | null;
@@ -209,6 +210,29 @@ export interface NeoSnapshot {
     asks?: { count: number; cursor: { updatedAt: number; id: string } };
     working?: { count: number };
   };
+}
+
+export type NeoHumanQueueState = 'waiting' | 'held' | 'progress';
+
+export type NeoHumanQueueItem =
+  | {
+      state: 'waiting' | 'held';
+      askId: string;
+      questionId: string;
+      text: string;
+      todos: { id: string; title: string }[];
+    }
+  | {
+      state: 'progress';
+      askId: string;
+      todoId: string;
+      title: string;
+      owner: 'human' | 'nobody' | 'prerequisite' | 'daemon' | 'worker' | 'pack' | 'neo' | null;
+    };
+
+export interface NeoHumanQueue {
+  items: NeoHumanQueueItem[];
+  counts: Record<string, Record<NeoHumanQueueState, number>>;
 }
 
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';

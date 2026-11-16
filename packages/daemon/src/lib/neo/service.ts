@@ -120,7 +120,7 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
-import { createNeoAttentionSweep } from './attention/sweep.ts';
+import { createNeoAttentionSweep, neoStepOwners, readNeoSteps } from './attention/sweep.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
 import { neoTodoCovered } from './todo-state.ts';
@@ -1425,6 +1425,16 @@ export class NeoService {
         this.defaultPacks
       ),
     });
+  }
+
+  async stepOwners() {
+    const facts = await this.todoSessions.read('neoStepFacts');
+    return neoStepOwners(
+      await readNeoSteps(facts, {
+        packs: () => this.installedPacks(),
+        limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      })
+    );
   }
 
   installedPacks(): NeoPack[] {

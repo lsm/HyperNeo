@@ -315,3 +315,41 @@ test.each(['workers', 'packs', 'projects'] as const)(
     expect(snapshotRows).not.toHaveBeenCalled();
   }
 );
+
+test('the RPC snapshot carries the human queue with each in-progress todo owner', async () => {
+  seed(2);
+  db.getDatabase().exec("UPDATE neo_todos SET title = id, approved_at = 1 WHERE id = 'todo-0'");
+  service.todos.askQuestion(
+    'queue-card',
+    'index-1',
+    {
+      text: 'Ship it?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      document: null,
+      replyTo: [],
+      confirm: null,
+    },
+    1
+  );
+  expect((await snapshot(rpc)).humanQueue).toEqual({
+    items: [
+      {
+        state: 'waiting',
+        askId: 'index-1',
+        questionId: 'queue-card',
+        text: 'Ship it?',
+        todos: [{ id: 'todo-1', title: 'Title '.repeat(100) }],
+      },
+      { state: 'progress', askId: 'index-0', todoId: 'todo-0', title: 'todo-0', owner: 'neo' },
+    ],
+    counts: {
+      'index-0': { waiting: 0, held: 0, progress: 1 },
+      'index-1': { waiting: 1, held: 0, progress: 0 },
+    },
+  });
+  expect(await snapshot(mcp)).not.toHaveProperty('humanQueue');
+});

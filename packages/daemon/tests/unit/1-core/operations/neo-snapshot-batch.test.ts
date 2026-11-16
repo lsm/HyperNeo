@@ -172,7 +172,7 @@ function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
   return outcome.value as NeoSnapshot & { todoAsks: NonNullable<NeoSnapshot['todoAsks']> };
 }
 
-test('a 231-todo snapshot retains its rows using three child/link reads', async () => {
+test('a 231-todo snapshot reads its rows and step owners in six child reads', async () => {
   const value = read(await snapshot());
   const todos = value.todoAsks.flatMap((entry) => entry.todos);
   expect(value.todoAsks).toHaveLength(60);
@@ -183,7 +183,7 @@ test('a 231-todo snapshot retains its rows using three child/link reads', async 
     link: '/session/synthetic-230',
     instruction: null,
   });
-  expect(observer.queries.filter((query) => query.child)).toHaveLength(3);
+  expect(observer.queries.filter((query) => query.child)).toHaveLength(6);
 });
 
 test('overlapping snapshots build once and the next read sees later edits', async () => {
@@ -193,7 +193,7 @@ test('overlapping snapshots build once and the next read sees later edits', asyn
   ).toBe(true);
   expect(values.every((value) => JSON.stringify(value) === JSON.stringify(values[0]))).toBe(true);
   expect(observer.queries.filter((query) => query.build)).toHaveLength(1);
-  expect(observer.queries.filter((query) => query.child)).toHaveLength(3);
+  expect(observer.queries.filter((query) => query.child)).toHaveLength(6);
   db.getDatabase()
     .prepare("UPDATE neo_todos SET title='Changed after burst' WHERE id='todo-230'")
     .run();
@@ -217,7 +217,7 @@ test('different scopes stay distinct and revision responses remain per request',
   expect(a.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-18']);
   expect(b.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-17']);
   expect(all.todoAsks).toHaveLength(60);
-  expect(observer.queries.filter((query) => query.child)).toHaveLength(9);
+  expect(observer.queries.filter((query) => query.child)).toHaveLength(18);
   observer.reset();
   const [same, full] = await Promise.all([snapshot({ sinceRev: all.rev }), snapshot()]);
   expect(same).toMatchObject({ kind: 'completed', value: { unchanged: true, rev: all.rev } });
