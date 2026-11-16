@@ -24,6 +24,13 @@ then fires four due times with no fact change in between:
   active.
 
 `schedule.session.runs` over RPC lists the same four outcomes newest first.
+
+The goal is then completed and reactivated through `goal.session.update`, which
+replaces its schedule. The next due time is still `skipped_budget` with no new
+notice, because the limit counts the goal's runs, not the schedule's. After the
+clock moves 24 hours past the first run and the goal is reactivated again, the
+next due time is `fired`.
+
 Inspect `goal-work-wakes.json` for each wake's outcome, delivery and text.
 Before the change the second due time is `skipped_unchanged` and nothing is
 delivered.

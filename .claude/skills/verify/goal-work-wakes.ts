@@ -66,7 +66,17 @@ try {
   const runs = await call('schedule.session.runs', { scheduleId: schedule().id });
   evidence.runs = runs;
   assert.deepEqual(runs.runs.map((r: { outcome: string }) => r.outcome), ['skipped_budget', 'skipped_budget', 'fired', 'fired']);
-  console.log(`PASS unchanged goal due times woke the owner, the third run in a day hit the limit of 2 with one notice. ${run}/evidence/goal-work-wakes.json`);
+  const status = async (value: string) => assert((await call('goal.session.update', { ownerSessionId, goalId: created.goal.id, status: value })).accepted);
+  const before = schedule().id;
+  await status('completed'); await status('active');
+  assert.notEqual(schedule().id, before);
+  const reactivated = await wake();
+  assert.equal(reactivated.outcome, 'skipped_budget', 'Reactivating the goal reset its daily run limit');
+  assert(!reactivated.delivered, 'Reactivating the goal repeated the limit notice');
+  await status('completed'); now = first.due + 86_400_000; await status('active');
+  const nextDay = await wake();
+  assert.equal(nextDay.outcome, 'fired', 'Runs older than 24 hours still counted');
+  console.log(`PASS unchanged goal due times woke the owner, the third run in a day hit the limit of 2 with one notice, reactivation kept the limit and the next day fired. ${run}/evidence/goal-work-wakes.json`);
 } finally {
   Date.now = clock;
   writeFileSync(join(run, 'evidence/goal-work-wakes.json'), JSON.stringify(evidence, null, 2));

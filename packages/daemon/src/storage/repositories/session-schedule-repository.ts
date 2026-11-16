@@ -69,17 +69,25 @@ export class SessionScheduleRepository {
   ): void {
     this.db
       .prepare(`INSERT OR IGNORE INTO session_schedule_runs
-      (schedule_id, due_at, fired_at, outcome, message_id)
-      SELECT id, ?, ?, ?, ? FROM session_schedules WHERE id = ?`)
+      (schedule_id, source_kind, source_id, due_at, fired_at, outcome, message_id)
+      SELECT id, source_kind, source_id, ?, ?, ?, ? FROM session_schedules WHERE id = ?`)
       .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
   }
 
-  listRuns(scheduleId: string, limit: number, since = 0): SessionScheduleRun[] {
+  budgetRuns(sourceKind: string, sourceId: string, since: number) {
+    return this.db
+      .prepare(`SELECT COUNT(*) FILTER (WHERE outcome = 'fired') AS fired,
+      COUNT(*) FILTER (WHERE outcome = 'skipped_budget' AND message_id IS NOT NULL) AS noticed
+      FROM session_schedule_runs WHERE source_kind = ? AND source_id = ? AND fired_at > ?`)
+      .get(sourceKind, sourceId, since) as { fired: number; noticed: number };
+  }
+
+  listRuns(scheduleId: string, limit: number): SessionScheduleRun[] {
     return (
       this.db
         .prepare(`SELECT due_at, fired_at, outcome, message_id FROM session_schedule_runs
-        WHERE schedule_id = ? AND fired_at > ? ORDER BY id DESC LIMIT ?`)
-        .all(scheduleId, since, limit) as {
+        WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`)
+        .all(scheduleId, limit) as {
         due_at: number | null;
         fired_at: number;
         outcome: string;
@@ -100,10 +108,14 @@ export class SessionScheduleRepository {
     metadata: { scheduleId: string; sourceKind: string; sourceId: string },
     firedAt: number
   ): void {
-    this.db
-      .prepare(`INSERT OR IGNORE INTO session_schedule_wakes
-      (session_id, message_id, metadata_json, fired_at) VALUES (?, ?, ?, ?)`)
-      .run(sessionId, messageId, JSON.stringify(metadata), firedAt);
+    this.db.run(
+      `INSERT OR IGNORE INTO session_schedule_wakes
+      (session_id, message_id, metadata_json, fired_at) VALUES (?, ?, ?, ?)`,
+      sessionId,
+      messageId,
+      JSON.stringify(metadata),
+      firedAt
+    );
   }
 
   create(input: NewSessionSchedule, nextRunAt: number, now = Date.now()): SessionSchedule {
@@ -281,7 +293,12 @@ export class SessionScheduleRepository {
         this.db
           .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
           .run(id, expectedJobId).changes > 0;
-      if (deleted) this.db.run('DELETE FROM session_schedule_runs WHERE schedule_id = ?', id);
+      if (deleted)
+        this.db.run(
+          `DELETE FROM session_schedule_runs WHERE fired_at <= ?
+          AND schedule_id NOT IN (SELECT id FROM session_schedules)`,
+          Date.now() - 86_400_000
+        );
       return deleted;
     })();
   }

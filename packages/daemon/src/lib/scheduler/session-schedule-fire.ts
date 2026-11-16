@@ -71,10 +71,15 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         if (!source) throw new Error(`Unregistered schedule source: ${schedule.sourceKind}`);
         const limit = source.dailyRunLimit?.(schedule.sourceId) ?? null;
         const day =
-          limit === null ? [] : scheduler.repo.listRuns(schedule.id, 1440, Date.now() - 86_400_000);
-        if (limit !== null && day.filter((run) => run.outcome === 'fired').length >= limit) {
-          if (day.some((run) => run.outcome === 'skipped_budget'))
-            return finish(schedule, 'skipped_budget');
+          limit === null
+            ? null
+            : scheduler.repo.budgetRuns(
+                schedule.sourceKind,
+                schedule.sourceId,
+                Date.now() - 86_400_000
+              );
+        if (limit !== null && day && day.fired >= limit) {
+          if (day.noticed) return finish(schedule, 'skipped_budget');
           return {
             value: {
               schedule,
