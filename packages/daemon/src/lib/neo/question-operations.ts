@@ -187,24 +187,22 @@ export function createNeoWorkerQuestionWriter(
           }
           const open = store
             .listQuestions(todo.askId)
-            .find((q) => q.todoId === todo.id && q.state === 'open');
-          const daemonCard = !!open && isNeoTodoStalledCard(open.text);
-          if (open && daemonCard)
-            store.retireQuestion(open, 'its worker asked its own question', null, Date.now());
-          const existing = daemonCard ? null : open;
-          const workerCard =
-            !!existing &&
-            store.questionAnswers.list(existing.id).some((route) => route.todoId === todo.id);
-          if (
-            existing &&
-            (!workerCard ||
-              existing.text !== input.title ||
-              existing.document !== input.report ||
-              JSON.stringify(existing.options) !== JSON.stringify(input.options))
-          ) {
-            rejection = `card_open: card ${existing.id} is already open on this todo; wait for its answer.`;
+            .filter((q) => q.todoId === todo.id && q.state === 'open');
+          const others = open.filter((q) => !isNeoTodoStalledCard(q.text));
+          const existing =
+            others.find(
+              (q) =>
+                q.text === input.title &&
+                q.document === input.report &&
+                JSON.stringify(q.options) === JSON.stringify(input.options) &&
+                store.questionAnswers.list(q.id).some((route) => route.todoId === todo.id)
+            ) ?? null;
+          if (!existing && others.length) {
+            rejection = `card_open: card ${others[0].id} is already open on this todo; wait for its answer.`;
             return null;
           }
+          for (const stalled of open.filter((q) => isNeoTodoStalledCard(q.text)))
+            store.retireQuestion(stalled, 'its worker asked its own question', null, Date.now());
           const allowed = existing
             ? null
             : requireHumanCard({ text: input.title, kind: 'choice' as const }, language());
