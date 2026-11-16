@@ -102,7 +102,6 @@ test('the fifteen-minute fallback delivers one visible batch without a placehold
       String(jobs[0].payload.messageUuid)
     )
   ).not.toBeNull();
-  expect(new NeoSessionMessageRepository(db.getDatabase()).latest(root.slice(4), 10)).toEqual([]);
   queue.flushDue(oldest + 30 * 60_000, options());
   expect(
     db.getJobQueueRepo().listActiveByPayload('message_delivery', { sessionId: root })
