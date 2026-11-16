@@ -286,26 +286,44 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     .pipe(
       (events: NeoAttentionEvent[]) => {
         const db = deps.database();
-        for (const event of events)
-          db.run(
-            `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
-             ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json`,
-            event.subject.id,
-            JSON.stringify({ since: event.since })
-          );
-        return events;
+        return events.filter(
+          (event) =>
+            db.run(
+              `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
+               ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json
+               WHERE json_extract(pack_facts.value_json, '$.since')
+                 IS NOT json_extract(excluded.value_json, '$.since')`,
+              event.subject.id,
+              JSON.stringify({ since: event.since })
+            ).changes === 1
+        );
       },
       'events',
-      'told'
+      'claimed'
     )
-    .endAsync('told') as (now: number) => Promise<NeoAttentionEvent[]>;
+    .endAsync('claimed') as (now: number) => Promise<NeoAttentionEvent[]>;
+
+  const release = (event: NeoAttentionEvent) =>
+    deps.database().run(
+      `DELETE FROM pack_facts WHERE todo_id = ? AND pack = '${PACK}' AND key = 'told'
+           AND json_extract(value_json, '$.since') = ?`,
+      event.subject.id,
+      event.since
+    );
 
   return {
     ...MODEL_ROUTING_PACK_BRIEF,
     preferences,
     rankLines: rank,
     attention: {
-      kinds: [{ id: LINE_HELD, decide: () => 'wake', render: ({ facts }) => String(facts.text) }],
+      kinds: [
+        {
+          id: LINE_HELD,
+          decide: () => 'wake',
+          render: ({ facts }) => String(facts.text),
+          released: release,
+        },
+      ],
       scan,
     },
     instructions: () => null,

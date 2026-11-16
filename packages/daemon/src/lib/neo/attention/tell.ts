@@ -5,6 +5,7 @@ import { neoWakeQueueWrite } from '../../../storage/repositories/neo-wake-queue-
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import { mailSessionEvent } from '../../external-events/session-event-delivery.ts';
 import { renderAddress } from '../../mailbox/address.ts';
+import { rejected } from '../../mailbox/handoff.ts';
 import { createMailboxEntry } from '../../mailbox/entry.ts';
 import {
   decideNeoAttention,
@@ -15,7 +16,7 @@ import {
   renderNeoAttention,
 } from './decide.ts';
 
-type Deliver = (uuid: string, text: string) => Promise<unknown>;
+type Deliver = (uuid: string, text: string) => Promise<boolean>;
 
 export type NeoAttentionOutcome =
   | { told: 'wake' | 'digest'; step: number; uuid: string; text: string }
@@ -29,35 +30,36 @@ export const neoAttentionDelivery = (
   wake: async (uuid, text) => {
     const sessionId = session();
     return (
-      sessionId &&
-      mailSessionEvent(new JobQueueRepository(db), {
-        sessionId,
-        messageUuid: uuid,
-        text,
-        mode: busy(sessionId) ? 'defer' : 'immediate',
-      })
+      !!sessionId &&
+      !rejected(
+        await mailSessionEvent(new JobQueueRepository(db), {
+          sessionId,
+          messageUuid: uuid,
+          text,
+          mode: busy(sessionId) ? 'defer' : 'immediate',
+        })
+      )
     );
   },
   digest: async (uuid, text) => {
     const sessionId = session();
-    return (
-      sessionId &&
-      gatewayFor(db).call(
-        neoWakeQueueWrite,
-        'hold',
-        createMailboxEntry({
-          to: { kind: 'session', sessionId },
-          origin: renderAddress({ kind: 'session', sessionId }),
-          messageUuid: uuid,
-          message: {
-            type: 'user',
-            parent_tool_use_id: null,
-            message: { content: text },
-            inputKind: 'system',
-          },
-        })
-      )
+    if (!sessionId) return false;
+    await gatewayFor(db).call(
+      neoWakeQueueWrite,
+      'hold',
+      createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        origin: renderAddress({ kind: 'session', sessionId }),
+        messageUuid: uuid,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: text },
+          inputKind: 'system',
+        },
+      })
     );
+    return true;
   },
 });
 
@@ -68,6 +70,11 @@ export function createNeoAttention(deps: {
   digest: Deliver;
   dropped(event: NeoAttentionEvent, reason: string): void;
 }) {
+  const release = (event: NeoAttentionEvent) =>
+    deps
+      .kinds()
+      .find((kind) => kind.id === event.kind)
+      ?.released?.(event);
   return (superpipe({})('neo.attention.tell') as PipelineAPI)
     .input(['event', 'now'])
     .pipe(deps.read, 'event', 'known')
@@ -76,6 +83,7 @@ export function createNeoAttention(deps: {
         const decision = decideNeoAttention(event, known, now, deps.kinds());
         if ('value' in decision) return decision;
         deps.dropped(event, decision.reason);
+        release(event);
         return { reason: { dropped: decision.reason } };
       },
       ['event', 'known', 'now'],
@@ -91,11 +99,17 @@ export function createNeoAttention(deps: {
       'message'
     )
     .pipe(
-      async (message: Extract<NeoAttentionOutcome, { told: string }>) => {
-        await deps[message.told](message.uuid, message.text);
+      async (event: NeoAttentionEvent, message: Extract<NeoAttentionOutcome, { told: string }>) => {
+        const sent = await deps[message.told](message.uuid, message.text).catch(
+          (error: unknown) => {
+            release(event);
+            throw error;
+          }
+        );
+        if (!sent) release(event);
         return message;
       },
-      'message',
+      ['event', 'message'],
       'outcome'
     )
     .endAsync('outcome') as (event: NeoAttentionEvent, now: number) => Promise<NeoAttentionOutcome>;
