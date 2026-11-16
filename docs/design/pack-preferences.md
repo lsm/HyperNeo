@@ -1,5 +1,7 @@
 # Pack settings, conventions and human holds
 
+> Closed in part, 2026-11-16: slices 4–14 (per-PR human holds, the readiness check, the worker merge check and their prompts) are not planned. The daemon's merge admission and the `human-merge` label already hold a PR for the human. The session-strategy slices stay as built.
+
 Status: design for approval (question 087e13b7, revised with the human). No code until the human approves it.
 
 ## Problem
