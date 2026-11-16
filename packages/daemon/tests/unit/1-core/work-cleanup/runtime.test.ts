@@ -126,7 +126,7 @@ test.each(
         VALUES (?,?,'/work','now','now',?,'{}','{}',?,?)`).run(
           id,
           id,
-          index >= 6 ? 'active' : index === 5 ? 'ended' : 'archived',
+          index >= 6 ? 'active' : 'archived',
           path,
           repo
         );
