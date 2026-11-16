@@ -15,7 +15,6 @@ const chip = 'rounded-full border px-3 py-1 text-sm';
 const tone = (on: boolean) =>
   on ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted hover:text-fg';
 
-/** Everything that waits on the human, filtered by state and by ask. */
 export function NeoHumanQueue({
   queue,
   entries,
@@ -37,11 +36,12 @@ export function NeoHumanQueue({
       (total, [id, counts]) => total + (a === null || a === id ? counts[s] : 0),
       0
     );
-  const asks = Object.keys(queue.counts).filter((id) => queue.counts[id][state] > 0);
+  const asks = Object.keys(queue.counts).filter((id) => id === ask || queue.counts[id][state] > 0);
   const items = queue.items.filter(
     (item) => item.state === state && (ask === null || item.askId === ask)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
+  if (!queue.items.length) return null;
   return (
     <div data-human-queue class="mt-6 space-y-3">
       <div role="group" aria-label={t('queue.state')} class="flex flex-wrap gap-2">

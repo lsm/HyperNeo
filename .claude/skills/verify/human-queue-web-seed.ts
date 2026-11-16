@@ -33,7 +33,6 @@ try {
   ask('trip', 'Synthetic trip plan');
   ask('tax', 'Synthetic tax filing');
   ask('car', 'Synthetic car service');
-  // Written before the trip's todos exist, so it stays about the whole ask.
   card('trip-card', 'trip', 'Keep the trip to one week?');
   todo('hotel', 'trip', 'Book the hotel');
   todo('bags', 'trip', 'Pack the bags');

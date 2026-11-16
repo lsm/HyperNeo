@@ -12,7 +12,8 @@ HYPERNEO_DATA_DIR="$RUN/data" NODE_PATH=<playwright> node .claude/skills/verify/
 
 The seed opens three synthetic asks: a trip with a card on one todo, a held card about
 the whole ask and one uncovered todo; a tax filing with a card on its todo; a car service
-with one uncovered todo. No key or model is used.
+with one uncovered todo. The held card is written before the trip's todos exist, so it
+stays about the whole ask. No key or model is used.
 
 End state, in `$RUN/evidence/`:
 
