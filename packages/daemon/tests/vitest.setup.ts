@@ -10,6 +10,7 @@ import { registerSchemaExtension } from '../src/storage/schema/extensions';
 import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 
 process.env.HYPERNEO_SPACE ??= 'on';
+process.env.HYPERNEO_TEST_OWN_PROCESSES = '1';
 const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
 process.env.BUN_INSTALL ??= join(homedir(), '.bun');
 process.env.HOME = isolatedHome;

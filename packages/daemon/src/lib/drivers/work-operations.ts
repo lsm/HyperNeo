@@ -88,6 +88,8 @@ export interface WorkVerbDeps {
     sessionId?: string
   ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
   markUnusable?: (ref: WorkRef) => void;
+  claimWorker?: (ref: WorkRef, todoId?: string) => Promise<boolean>;
+  unclaimWorker?: (todoId: string, ref: WorkRef) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   todoWorker?: {
     on(todoId: string, ref: WorkRef): boolean;
@@ -136,7 +138,7 @@ export const StartWorkInputSchema = z.object({
     .min(1)
     .optional()
     .describe(
-      'Todo reference for bookkeeping; missing or stale references are recorded without blocking.'
+      'Todo reference for bookkeeping; missing or stale references are recorded without blocking, but such a start does not reuse a worker a todo has used.'
     ),
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
@@ -284,6 +286,18 @@ type StartResult = z.infer<typeof StartWorkResultSchema>;
 type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
+
+function ownedTodoId(
+  input: StartInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): string | undefined {
+  return input.todoId &&
+    (caller.source === 'internal' ||
+      (!!caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId)))
+    ? input.todoId
+    : undefined;
+}
 
 function neoTodoRecords(
   input: StartDraft | QueuedInput,
@@ -678,6 +692,17 @@ export async function reuseIdleWorker(
           harness: adapter.id,
         })
       : input.message;
+    const todoId = ownedTodoId(input, caller, deps);
+    const claimed = deps.claimWorker
+      ? await deps.claimWorker(work.ref, todoId).catch((error: unknown) => {
+          reuseHolds.delete(key);
+          throw error;
+        })
+      : true;
+    if (!claimed) {
+      reuseHolds.delete(key);
+      continue;
+    }
     const sent = await adapter.send(work.ref, message, { from, caller }).catch((error: unknown) => {
       reuseHolds.delete(key);
       throw error;
@@ -697,6 +722,7 @@ export async function reuseIdleWorker(
       };
     }
     reuseHolds.delete(key);
+    if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref);
     deps.markUnusable?.(work.ref);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);

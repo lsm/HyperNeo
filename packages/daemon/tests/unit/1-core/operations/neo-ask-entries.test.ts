@@ -638,6 +638,23 @@ describe('NeoTodoSessionRepository.readLinks', () => {
 });
 
 describe('neoWorkCounts', () => {
+  test('an ask whose only card is held does not need the human', () => {
+    const waiting = {
+      id: 't',
+      askId: 'a',
+      state: 'blocked',
+      blockedBy: 'question',
+      startedAt: null,
+    } as const;
+    const card = { askId: 'a', state: 'open' as const, todos: ['t'] };
+    expect(neoWorkCounts([waiting], [card], [])).toEqual({ needsYou: 1, neoUnhandled: 0 });
+    const held = { ...card, heldAt: 5 };
+    expect(neoWorkCounts([waiting], [held], [])).toEqual({
+      needsYou: 0,
+      neoUnhandled: 0,
+    });
+  });
+
   test('counts a todo waiting on a cancelled prerequisite once', () => {
     const stalled = {
       id: 'both',

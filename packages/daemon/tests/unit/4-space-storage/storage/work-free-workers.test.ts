@@ -77,6 +77,118 @@ describe('readFreeWorkers', () => {
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
   });
 
+  describe('release fence', () => {
+    const ref = { adapter: 'claude-desktop', id: 'w-done' };
+    const other = { adapter: 'claude-desktop', id: 'w-other' };
+    const liveTodo = (todoId: string, withRow = true) => {
+      store.addTodo(
+        todoId,
+        'ask',
+        { title: todoId, doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        3
+      );
+      if (withRow) sessions.create(todoId, { verb: 'start', adapter: 'claude-desktop' });
+    };
+
+    test('a released worker is never offered again, also once its unusable mark expired', () => {
+      bind('finished', 'w-done', 'done');
+      recordStartedWork(db, ref, Date.now() - 61 * 60_000, true);
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+      expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+    });
+
+    test('a claim reserves the worker without touching the todo binding', () => {
+      bind('finished', 'w-done', 'done');
+      liveTodo('next');
+      expect(sessions.claimWorker(ref, 'next')).toBe(true);
+      expect(sessions.readRef('next')).toBeNull();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
+    });
+
+    test('a start that loses to the release claims nothing', () => {
+      bind('finished', 'w-done', 'done');
+      liveTodo('next');
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+      expect(sessions.claimWorker(ref, 'next')).toBe(false);
+    });
+
+    test('a live todo with no binding row still reserves the worker', () => {
+      bind('finished', 'w-done', 'done');
+      liveTodo('targetless', false);
+      expect(sessions.claimWorker(ref, 'targetless')).toBe(true);
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
+    });
+
+    test('a todo holds one claim at a time, so a second worker cannot replace the first', () => {
+      bind('finished', 'w-done', 'done');
+      bind('finished-other', 'w-other', 'done');
+      liveTodo('next');
+      expect(sessions.claimWorker(ref, 'next')).toBe(true);
+      expect(sessions.claimWorker(other, 'next')).toBe(false);
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
+      expect(sessions.fenceRelease(other, Date.now())).toBe(true);
+    });
+
+    test('a worker a failed or queued todo still holds cannot be claimed', () => {
+      bind('failed-owner', 'w-done', 'done');
+      store.updateTodo(store.getTodo('failed-owner')!, { state: 'failed' }, 3);
+      liveTodo('next');
+      expect(sessions.claimWorker(ref, 'next')).toBe(false);
+      liveTodo('queued');
+      sessions.queueOn('queued', other, 'Next step.');
+      expect(sessions.claimWorker(other, 'next')).toBe(false);
+    });
+
+    test('a restart between claim and send leaves the todo recoverable and the worker reserved', () => {
+      bind('finished', 'w-done', 'done');
+      liveTodo('next');
+      store.updateTodo(store.getTodo('next')!, { state: 'doing', startedAt: 4 }, 4);
+      expect(sessions.claimWorker(ref, 'next')).toBe(true);
+      const restarted = new NeoTodoSessionRepository(db);
+      expect(restarted.unrecordedStarts()).toContain('next');
+      expect(restarted.fenceRelease(ref, Date.now())).toBe(false);
+    });
+
+    test('rolling back a refused rebind keeps the old binding and its receipt', () => {
+      bind('finished', 'w-done', 'done');
+      bind('bound', 'w-other', 'doing');
+      const sent = { inputBefore: 0, opening: 'Go', receipt: { executionId: 'e', inputId: 'i' } };
+      sessions.recordSent('bound', sent);
+      expect(sessions.claimWorker(ref, 'bound')).toBe(true);
+      sessions.unclaimWorker('bound', ref);
+      expect(sessions.readRef('bound')).toMatchObject(other);
+      expect(sessions.readSent('bound')).toMatchObject({ receipt: sent.receipt });
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
+    test('a start without a todo cannot claim a worker a todo was bound to', () => {
+      bind('finished', 'w-done', 'done');
+      expect(sessions.claimWorker(ref, null)).toBe(false);
+      recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' });
+      expect(sessions.claimWorker({ adapter: 'claude-desktop', id: 'w-new' }, null)).toBe(true);
+    });
+
+    test('a claim for a todo that is not live reserves nothing', () => {
+      bind('finished', 'w-done', 'done');
+      bind('closed', 'w-other', 'done');
+      expect(sessions.claimWorker(ref, 'closed')).toBe(false);
+      expect(sessions.claimWorker(ref, 'missing')).toBe(false);
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
+    test('a todo removed today releases its worker even if it finished eight days ago', () => {
+      bind('old', 'w-done', 'done');
+      const eightDays = Date.now() - 8 * 24 * 60 * 60_000;
+      store.updateTodo(store.getTodo('old')!, { finishedAt: eightDays }, eightDays);
+      db.prepare("UPDATE neo_todos SET state = 'removed', updated_at = ? WHERE id = 'old'").run(
+        Date.now()
+      );
+      expect(
+        sessions.finishedWorkers(Date.now() - 7 * 24 * 60 * 60_000).map((row) => row.todoId)
+      ).toEqual(['old']);
+    });
+  });
+
   describe('readReusableWorkers', () => {
     test('legacy engine birth cannot make a later todo look older than its creation', () => {
       bind('legacy-prior', 'legacy', 'done', 'ask', 20);

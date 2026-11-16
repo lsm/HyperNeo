@@ -61,7 +61,7 @@ export function planCodingStrategyQuestion(input: {
   };
 }
 
-type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' };
+type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' | 'archived' };
 type Plan =
   | { verb: 'send'; ref: WorkRef; bind: boolean }
   | { verb: 'queue'; ref: WorkRef }

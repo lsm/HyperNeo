@@ -1,4 +1,7 @@
-import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
+import { readdir, readFile, readlink } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -8,6 +11,7 @@ import type { Result, WorkArchived } from './types.ts';
 import { releaseWorkerWorkFolders } from './worker-sandbox.ts';
 
 const log = new Logger('work-placement');
+const execFileAsync = promisify(execFile);
 
 export async function releaseRemovedWorkerFolders(directory: string) {
   await releaseWorkerWorkFolders(directory).catch((error) =>
@@ -107,6 +111,69 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   )
   .end('ready') as (facts: Facts) => true | { reason: string };
 
+export const WORKTREE_IN_USE =
+  'A running process is inside the worktree, or the process check failed; kept.';
+
+type ProcReader = {
+  readdir(path: string): Promise<string[]>;
+  readFile(path: string, encoding: 'utf8'): Promise<string>;
+  readlink(path: string): Promise<string>;
+};
+
+export async function procFolderInUse(
+  root: string,
+  proc: ProcReader = { readdir, readFile, readlink }
+): Promise<boolean> {
+  const uid = process.getuid?.();
+  const pids = (await proc.readdir('/proc')).filter((name) => /^\d+$/.test(name));
+  const busy = await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        const ids = /^Uid:\s+(.*)$/m.exec(await proc.readFile(`/proc/${pid}/status`, 'utf8'));
+        if (!ids) return true;
+        const [real, effective] = ids[1].split(/\s+/);
+        if (real !== String(uid) && effective !== String(uid)) return false;
+        return `${await proc.readlink(`/proc/${pid}/cwd`)}/`.startsWith(`${root}/`);
+      } catch (error) {
+        return !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');
+      }
+    })
+  );
+  return busy.includes(true);
+}
+
+async function testRunProcesses(): Promise<string[]> {
+  const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
+  const parents = new Map<string, string>();
+  await Promise.all(
+    pids.map(async (pid) => {
+      const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
+      if (stat) parents.set(pid, stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+    })
+  );
+  const self = String(process.pid);
+  return pids.filter((pid) => {
+    for (let at = parents.get(pid), hops = 0; at && hops < 64; at = parents.get(at), hops++)
+      if (at === self) return true;
+    return false;
+  });
+}
+
+async function folderInUse(directory: string): Promise<boolean> {
+  const root = realpathSync(directory);
+  const inside = (path: string) => `${path}/`.startsWith(`${root}/`);
+  if (process.platform === 'linux')
+    return procFolderInUse(
+      root,
+      process.env.NODE_ENV === 'test' && process.env.HYPERNEO_TEST_OWN_PROCESSES === '1'
+        ? { readdir: testRunProcesses, readFile, readlink }
+        : undefined
+    );
+  const uid = String(process.getuid?.() ?? '');
+  const { stdout } = await execFileAsync('lsof', ['-w', '-a', '-d', 'cwd', '-u', uid, '-Fn']);
+  return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
+}
+
 export async function cleanupOwnedWorktree(
   directory: string,
   roots: readonly string[]
@@ -145,6 +212,8 @@ export async function cleanupOwnedWorktree(
     ]);
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
+    if (await folderInUse(directory).catch(() => true))
+      return { directory, removed: false, reason: WORKTREE_IN_USE };
     await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
     await releaseRemovedWorkerFolders(directory);
     return { directory, removed: true };

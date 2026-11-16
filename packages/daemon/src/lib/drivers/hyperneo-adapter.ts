@@ -224,6 +224,7 @@ function toWork(row: HyperneoSessionRow, machine: string): WorkSummary {
     title: row.title,
     place: { machine, ...(row.folder ? { folder: row.folder } : {}), name: placeName(row.folder) },
     status: row.queryFailureId && status !== 'stopped' ? 'failed' : status,
+    ...(row.status === 'archived' || row.status === 'ended' ? { archived: true } : {}),
     lastActivityAt: timestamp(row.lastActiveAt),
     link: `/session/${row.id}`,
   };

@@ -10,6 +10,8 @@ import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/ne
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 import type { NeoPack } from '../../../packages/daemon/src/lib/neo/pack-contract.ts';
+import { recordWorkTurns } from '../../../packages/daemon/src/storage/repositories/work-turn-repository.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -23,9 +25,9 @@ fs.appendFileSync(root+'/evidence/gh.log', JSON.stringify(args)+'\\n');
 if (args[0] === 'pr' && args[1] === 'view') {
   const url = args.find(x => x.startsWith('https://'));
   if (!url || !url.startsWith('https://github.com/synthetic/facts/pull/')) process.exit(2);
-  const closed = url.endsWith('/9') || url.endsWith('/10');
+  const closed = url.endsWith('/9') || url.endsWith('/10') || url.endsWith('/11');
   process.stdout.write(JSON.stringify({ url, state: closed ? 'CLOSED' : url.endsWith('/6') ? 'OPEN' : 'MERGED', headRefOid: 'a'.repeat(40),
-    mergeCommit: closed ? null : { oid: 'b'.repeat(40) }, reviews: [], statusCheckRollup: [], createdAt: '2026-10-20T00:00:00Z', closedAt: '2026-10-21T00:00:00Z', mergedAt: closed ? null : '2026-10-21T00:00:00Z' }));
+    mergeCommit: closed ? null : { oid: 'b'.repeat(40) }, reviews: [], statusCheckRollup: [], createdAt: url.endsWith('/102') ? '2026-10-20T00:01:00Z' : '2026-10-20T00:00:00Z', closedAt: '2026-10-21T00:00:00Z', mergedAt: closed ? null : '2026-10-21T00:00:00Z' }));
 } else if (args[0] === 'api' && args[1] === 'graphql' && args.includes('o=synthetic') && args.includes('n=facts')) {
   const closed = args.includes('p=219');
   process.stdout.write(JSON.stringify({ data: { repository: { defaultBranchRef: { name: 'dev' }, issueOrPullRequest: {
@@ -50,7 +52,8 @@ const cases = [
   { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'failed', done: false },
   { id: 'failed-preserved', kind: 'pr_merged', state: 'failed', done: false },
   { id: 'merged-failed', kind: 'pr_merged', state: 'failed', done: true },
-];
+  { id: 'named-replacement', kind: 'pr_merged', state: 'doing', done: true },
+].filter(item => !process.argv.includes('named') || ['merged-delivery', 'named-replacement'].includes(item.id));
 const evidence: unknown[] = [];
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
@@ -74,7 +77,7 @@ try {
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   for (const [index, item] of cases.entries()) {
     store.openAsk({ id: item.id, title: item.id, request: 'Observe completion', sessionId: root, projectId: null, originMessageId: null, createdAt: 1 });
-    const url = `https://github.com/synthetic/facts/pull/${index + 1}`;
+    const url = `https://github.com/synthetic/facts/pull/${item.id === 'named-replacement' ? 11 : index + 1}`;
     const todo = store.addTodo(item.id, item.id, { title: item.id, doneWhen: 'Declared check passes', instruction: null, named: null,
       check: { pack: item.kind === 'conflicting' ? 'synthetic-legacy' : 'coding', kind: item.kind, params: item.kind === 'pr_merged' ? { urls: [url] } : { issue: 'synthetic/facts#219' } } }, 1);
     db.prepare('UPDATE neo_todos SET state=?, blocked_by=?, blocked_reason=?, next_action=?, report=? WHERE id=?')
@@ -89,8 +92,26 @@ try {
       assert(await assignments.recordLater(todo.id, 'review', { ...base, bot: 'review-bot' }));
       assert(await assignments.recordLater(todo.id, 'qa', { ...base, ref: { adapter: 'test', id: 'qa' }, actor: { kind: 'agent', id: 'qa', harness: 'test', model: 'synthetic' } }));
     }
+    if (['merged-delivery', 'named-replacement'].includes(item.id)) {
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      const replacement = item.id === 'named-replacement';
+      const other = `https://github.com/synthetic/facts/pull/${replacement ? 102 : 101}`;
+      db.prepare(`INSERT INTO work_delivery_inputs
+        (id,todo_id,origin_session_id,target,message,accepted_at,deadline_at,outcome)
+        VALUES (?, ?,?,'{}','work',1,2,?)`).run(
+        `input-${item.id}`, todo.id, root, JSON.stringify({ ref, receipt: { inputId: `receipt-${item.id}` } })
+      );
+      const created = Date.parse('2026-10-20T00:00:00Z');
+      recordWorkTurns.run(db, { ref, turns: [{
+        id: `turn-${item.id}`, startedAt: created - 1000, endedAt: created + 120000,
+        ended: 'success', inputs: [`receipt-${item.id}`], urls: [url, other],
+        finalUrls: replacement ? [url, other] : [url], complete: true, cursor: '{}',
+      }] }, undefined as never);
+    }
   }
-  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, {
+    headers: { authorization: `Bearer ${await readLocalCredential()}` },
+  } as unknown as string[]);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket open failed')); });
   const rpc = (name: string, input: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
     const id = crypto.randomUUID(), timeout = setTimeout(() => fail(new Error(name+' timeout')), 15000);
@@ -131,6 +152,8 @@ try {
   }
   await refresh();
   assert.deepEqual(cases.filter(item => item.done).map(item => store.getTodo(item.id)), observed.filter(item => cases.find(entry => entry.id === item.id)!.done).map(item => item.todo));
-  console.log('PASS: scheduled refresh and real RPC show passed checks as done despite old gates, while a legacy done+failed result remains failed.');
+  console.log(process.argv.includes('named')
+    ? `PASS: named_pr_todos=${cases.length} incidental_unknown_prs=1 owned_replacements=1 public_rpc_done=${cases.length} repeat_refresh_stable=1 exit_code=0`
+    : 'PASS: scheduled refresh and real RPC show passed checks as done despite old gates, while a legacy done+failed result remains failed.');
 } catch (error) { evidence.push({ error: String(error) }); throw error; }
 finally { ws?.close(); await app?.cleanup(); NeoService.prototype.installedPacks = installedPacks; globalThis.fetch = network; writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }

@@ -11,6 +11,9 @@ import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import type { NeoRequestReply } from '../../../../src/lib/neo/request-todo.ts';
+import { vi } from 'vitest';
 
 type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; records?: string[] };
 describe('Writer-backed todo operation activation', () => {
@@ -330,6 +333,82 @@ describe('Writer-backed todo operation activation', () => {
     });
     expect(store.getTodo('first')!.state).toBe('removed');
     expect(order).toEqual([]);
+  });
+
+  const addRequest = (sender: string) => {
+    advance = async () => undefined;
+    store.addTodo(
+      'request',
+      'ask',
+      {
+        approvedAt: 1,
+        title: 'Close the merged todo',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: sender },
+      },
+      1
+    );
+  };
+  const replies = () =>
+    (
+      db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo.request.reply'").all() as {
+        payload: string;
+      }[]
+    ).map((row) => JSON.parse(row.payload) as NeoRequestReply);
+
+  test('closing a request todo queues one reply to its recorded sender with the outcome', async () => {
+    addRequest('stranger');
+    expect(
+      await call('neo.todo.done', { todoId: 'request', reason: 'Closed it as merged' })
+    ).toMatchObject({ ok: true, todo: { state: 'done' } });
+    expect(await call('neo.todo.remove', { todoId: 'request', reason: 'Retire' })).toMatchObject({
+      ok: true,
+    });
+    await call('neo.todo.done', { todoId: 'first' });
+    expect(replies()).toEqual([
+      {
+        todoId: 'request',
+        to: 'stranger',
+        from: 'neo',
+        text: 'Neo closed your request "Close the merged todo" as done: Closed it as merged',
+      },
+    ]);
+  });
+
+  test('concurrent done and remove of a request queue exactly one answer, the committed one', async () => {
+    addRequest('stranger');
+    const [done, removed] = await Promise.all([
+      call('neo.todo.done', { todoId: 'request', reason: 'Merged' }),
+      call('neo.todo.remove', { todoId: 'request', reason: 'Not needed' }),
+    ]);
+    expect(removed).toMatchObject({ ok: true });
+    const winner = done.ok ? 'as done: Merged' : 'as removed: Not needed';
+    expect(replies()).toHaveLength(1);
+    expect(replies()[0].text).toContain(winner);
+  });
+
+  test('a close whose reply cannot be queued commits nothing, and the retry answers once', async () => {
+    addRequest('stranger');
+    const enqueue = vi
+      .spyOn(JobQueueRepository.prototype, 'enqueueUniquePending')
+      .mockImplementationOnce(() => {
+        throw new Error('synthetic crash before the reply is queued');
+      });
+    try {
+      await expect(
+        call('neo.todo.done', { todoId: 'request', reason: 'Merged' })
+      ).rejects.toThrow();
+      expect(store.getTodo('request')!.state).toBe('todo');
+      expect(replies()).toEqual([]);
+    } finally {
+      enqueue.mockRestore();
+    }
+    expect(await call('neo.todo.done', { todoId: 'request', reason: 'Merged' })).toMatchObject({
+      ok: true,
+    });
+    expect(replies()).toHaveLength(1);
   });
 
   test('remove cancels a never-started todo whose check has not passed', async () => {

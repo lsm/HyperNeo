@@ -15,6 +15,7 @@ import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree'
 import {
   cleanupOwnedWorktree,
   planWorkPlacement,
+  procFolderInUse,
 } from '../../../../src/lib/drivers/work-placement';
 import { workerWorkLocations } from '../../../../src/lib/work-locations';
 
@@ -191,5 +192,86 @@ describe('archive removes the worker work folders', () => {
     expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
     expect(existsSync(places.scratch)).toBe(false);
     expect(existsSync(places.ghConfig)).toBe(false);
+  });
+});
+
+describe('procFolderInUse', () => {
+  const uid = process.getuid?.() ?? 0;
+  const failure = (code: string) => Object.assign(new Error(code), { code });
+  type Pid = { uid?: number; statUid?: number; status?: string | Error; cwd: string | Error };
+  const proc = (pids: Record<string, Pid>) => {
+    const pid = (path: string) => pids[path.split('/')[2]];
+    return {
+      readdir: async () => ['self', ...Object.keys(pids)],
+      stat: async (path: string) => ({ uid: pid(path)?.statUid ?? pid(path)?.uid ?? uid }),
+      readFile: async (path: string) => {
+        const entry = pid(path);
+        if (!entry) throw failure('ENOENT');
+        if (entry.status instanceof Error) throw entry.status;
+        const id = entry.uid ?? uid;
+        return entry.status ?? `Name:\tworker\nUid:\t${id}\t${id}\t${id}\t${id}\n`;
+      },
+      readlink: async (path: string) => {
+        const cwd = pid(path)?.cwd;
+        if (cwd instanceof Error || cwd === undefined) throw cwd ?? failure('ENOENT');
+        return cwd;
+      },
+    };
+  };
+
+  test('finds an own process whose working folder is inside', async () => {
+    expect(await procFolderInUse('/w', proc({ '1': { cwd: '/w/sub' } }))).toBe(true);
+    expect(await procFolderInUse('/w', proc({ '1': { cwd: '/wx' } }))).toBe(false);
+  });
+
+  test('keeps the folder when an own process cwd cannot be read', async () => {
+    for (const code of ['EACCES', 'EPERM', 'EIO'])
+      expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(true);
+  });
+
+  test('keeps the folder for a non-dumpable own process that /proc shows as root', async () => {
+    expect(await procFolderInUse('/w', proc({ '1': { statUid: 0, cwd: failure('EACCES') } }))).toBe(
+      true
+    );
+  });
+
+  test('keeps the folder when a process owner cannot be read', async () => {
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: failure('EACCES'), cwd: '/wx' } }))
+    ).toBe(true);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: 'Name:\tworker\n', cwd: '/wx' } }))
+    ).toBe(true);
+  });
+
+  test('ignores only a process that is gone', async () => {
+    for (const code of ['ENOENT', 'ESRCH'])
+      expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(false);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: failure('ESRCH'), cwd: '/w' } }))
+    ).toBe(false);
+  });
+
+  test('keeps the folder for a process the user started that runs as root, like sudo', async () => {
+    const sudo = `Uid:\t${uid}\t0\t0\t0\n`;
+    expect(await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: '/w/sub' } }))).toBe(true);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: failure('EACCES') } }))
+    ).toBe(true);
+    expect(await procFolderInUse('/w', proc({ '1': { status: sudo, cwd: '/wx' } }))).toBe(false);
+  });
+
+  test('keeps the folder for a setuid process that runs as the user', async () => {
+    const setuid = `Uid:\t${uid + 1}\t${uid}\t${uid}\t${uid}\n`;
+    expect(await procFolderInUse('/w', proc({ '1': { status: setuid, cwd: '/w' } }))).toBe(true);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: setuid, cwd: failure('EACCES') } }))
+    ).toBe(true);
+  });
+
+  test('skips processes of other users', async () => {
+    expect(
+      await procFolderInUse('/w', proc({ '1': { uid: uid + 1, cwd: failure('EACCES') } }))
+    ).toBe(false);
   });
 });

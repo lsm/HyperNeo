@@ -606,6 +606,7 @@ export async function describeCodexThread(
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
       ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
+      ...(thread.archived ? { archived: true } : {}),
       ...(state.model ? { model: state.model } : {}),
       ...(state.effort ? { effort: state.effort } : {}),
       ...(state.turnEnds?.length ? { turnEnds: state.turnEnds } : {}),

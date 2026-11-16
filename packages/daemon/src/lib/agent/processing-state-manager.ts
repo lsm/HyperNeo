@@ -359,6 +359,12 @@ export class ProcessingStateManager {
       return;
     }
     const previousState = this.processingState;
+    const since =
+      state.since ??
+      (previousState.status === 'rate_limit_cooldown' && previousState.reason === state.reason
+        ? previousState.since
+        : undefined) ??
+      Date.now();
     const cooldownState: AgentProcessingState = {
       status: 'rate_limit_cooldown',
       ...(state.exhaustedCycles !== undefined ? { exhaustedCycles: state.exhaustedCycles } : {}),
@@ -368,7 +374,7 @@ export class ProcessingStateManager {
       ...(state.messageId !== undefined ? { messageId: state.messageId } : {}),
       ...(state.manualRetry ? { manualRetry: true } : {}),
       ...(state.reason ? { reason: state.reason } : {}),
-      ...(state.since !== undefined ? { since: state.since } : {}),
+      since,
     };
     let writeError: unknown;
     try {

@@ -107,7 +107,7 @@ export function createCodingPack(deps: {
     recordSmoke: recordCodingSmoke,
     prepareMerge: prepareCodingMerge,
     operations: [
-      createCodingHumanMergeOperation(),
+      createCodingHumanMergeOperation(undefined, mergeSweep.invalidate),
       createCodingRetryMergeOperation(deps.database, deps.prLedger),
       createCodingPrFileOperation(deps.database),
     ],

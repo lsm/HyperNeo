@@ -671,6 +671,43 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('when a hold started', () => {
+    const realNow = Date.now;
+    afterEach(() => {
+      Date.now = realNow;
+    });
+    const hold = (reason: 'login' | 'network', at: number, since?: number) => {
+      Date.now = () => at;
+      return manager.setRateLimitCooldown({
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: at + 60_000,
+        reason,
+        ...(since === undefined ? {} : { since }),
+      });
+    };
+
+    test('a hold written without a start records one, and re-arming the same hold keeps it', async () => {
+      await hold('login', 1_000);
+      await hold('login', 61_000);
+      expect(manager.getState()).toMatchObject({ reason: 'login', since: 1_000 });
+    });
+
+    test('a hold for another reason, or after leaving the hold, starts again', async () => {
+      await hold('login', 1_000);
+      await hold('network', 2_000);
+      expect(manager.getState()).toMatchObject({ reason: 'network', since: 2_000 });
+      await manager.setIdle();
+      await hold('network', 3_000);
+      expect(manager.getState()).toMatchObject({ reason: 'network', since: 3_000 });
+    });
+
+    test('a start the writer gives is kept as given', async () => {
+      await hold('login', 5_000, 4_000);
+      expect(manager.getState()).toMatchObject({ since: 4_000 });
+    });
+  });
+
   describe('rate-limit-episode cooldown owner filter (B5e)', () => {
     test('a rate-limit cooldown bound to a stale generation is not persisted', async () => {
       manager.noteQueryOwnerGeneration(2);

@@ -18,6 +18,19 @@ Full worker reports survive, and another scheduled refresh does not change the
 completed rows. This proves automatic completion and public RPC state, not visual
 layout, real deployments, or live GitHub state.
 
+The merged-delivery worker also mentions another PR whose owner is unknown.
+That incidental link must not hold the named merged-PR check open: the scheduled
+refresh must close the todo and the public ask RPC must show Done. Run this
+fixture before the fix and retain its failing RPC observation, then repeat on
+the fixed tree. Extra owned PRs may remain in the todo view without changing
+the verdict of a check that names its required PRs.
+Pass `named` instead of `verify` to the same helper for the focused named-PR
+regression without the independent legacy-pack and issue-completion fixtures.
+This mode also closes a todo whose named PR was closed and replaced by a newer
+merged PR owned by the same todo. An owned open replacement must keep it waiting;
+unrelated extra PRs remain optional. Named checks can complete while a worker
+turn is still incomplete: the required PR facts, not turn completion, decide.
+
 A synthetic legacy pack is installed at the test daemon's pack seam and returns
 both done and an explicit failure. The scheduled refresh must preserve failure
 precedence: the public ask read shows Failed with that reason. This fixture does

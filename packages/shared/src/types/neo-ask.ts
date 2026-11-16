@@ -107,6 +107,7 @@ export interface NeoQuestion {
   replyTo?: string[];
   cause?: string | null;
   actionsAppliedAt?: number | null;
+  heldAt?: number | null;
   id: string;
   askId: string;
   text: string;

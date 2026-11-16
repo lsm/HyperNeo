@@ -77,7 +77,7 @@ import {
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
-import type { PlaceGroup, WorkAdapter } from '../../drivers/types.ts';
+import type { PlaceGroup, WorkAdapter, WorkRef } from '../../drivers/types.ts';
 import {
   createWorkVerbOperations,
   type WorkSendUncertainty,
@@ -675,6 +675,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
+    claimWorker: (ref: WorkRef, todoId?: string) =>
+      new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),
+    unclaimWorker: (todoId: string, ref: WorkRef) =>
+      new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');

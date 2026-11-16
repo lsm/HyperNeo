@@ -48,6 +48,13 @@ import { wrapSessionContent } from '../messaging/session-envelope.ts';
 import { publishDroppedWork } from './dropped-work.ts';
 import { wakeStalledAsks } from './stalled-asks.ts';
 import { neoDerivedId } from './derived-id.ts';
+import {
+  closedNeoRequest,
+  NEO_REQUEST_REPLY,
+  type NeoRequestReply,
+  recordNeoRequestTodo,
+} from './request-todo.ts';
+import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -122,6 +129,7 @@ import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts'
 import { createNeoPublisher } from './publication-operation.ts';
 import {
   neoSessionQuestionNote,
+  keepNeoSessionNotices,
   type NeoSessionNotice,
   type NeoSessionNoticeGroup,
 } from './session-watch.ts';
@@ -150,7 +158,10 @@ export class NeoService {
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
-    return this.sessionWatcher.sessionNotices;
+    return keepNeoSessionNotices(
+      this.sessionWatcher.sessionNotices,
+      this.sessionWatcher.modelHoldNotices
+    );
   }
 
   get sessionNoticeGroups(): NeoSessionNoticeGroup[] {
@@ -206,6 +217,7 @@ export class NeoService {
     this.sessionWatcher = new NeoSessionWatcher({
       db,
       defaultSessionId: () => this.defaultSessionId(),
+      working: () => readNeoWorking(this.db.getDatabase(), this.repo.readConversationId(), true),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
@@ -348,6 +360,17 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      scan: async (now) =>
+        (
+          await Promise.all(
+            this.packs().map((pack) =>
+              (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
+                this.log.warn(`Attention scan ${pack.id} failed`, error);
+                return [];
+              })
+            )
+          )
+        ).flat(),
       tell: (this.attention = createNeoAttention({
         kinds: () => [
           ...NEO_ATTENTION_KINDS,
@@ -382,7 +405,7 @@ export class NeoService {
     };
     this.noteWorking = () => {
       try {
-        const working = readNeoWorking(this.db.getDatabase());
+        const working = readNeoWorking(this.db.getDatabase(), this.repo.readConversationId());
         const key = neoWorkingKey(working);
         if (key === this.workingKey) return;
         this.workingKey = key;
@@ -454,7 +477,10 @@ export class NeoService {
         if (bound?.kind === 'neo') {
           this.noteWorking();
           if (status) this.notifyChanged();
+          return;
         }
+        const conversation = status || session?.status ? this.repo.readConversationId() : null;
+        if (conversation && sessionId === frontSessionId(conversation)) this.noteWorking();
       },
       { subscriberName: 'neo-work-return' }
     );
@@ -894,14 +920,38 @@ export class NeoService {
             : submit();
         };
         if (!input.question) {
-          wake(
-            neoDerivedId(
-              JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
-            ),
-            input.handoff && typeof content !== 'string'
-              ? (content.find((b) => b.type === 'text')?.text ?? text)
-              : text
+          const incident = neoDerivedId(
+            JSON.stringify([origin, input.sessionId, text, media, files.map((f) => f.sha256)])
           );
+          const request = !this.todoSessions.doingTodoOn(
+            sessionWorkerRef(sender, !!this.db.getSession(sender)),
+            null,
+            ['todo', 'doing', 'blocked']
+          );
+          const closed = request ? closedNeoRequest(this.todos, incident) : null;
+          if (closed)
+            return {
+              kind: 'rejected',
+              reason: `request_closed: Neo already closed this request (todo ${closed}). Send a new request if something changed.`,
+            };
+          this.todos.inTransaction(() => {
+            wake(
+              incident,
+              input.handoff && typeof content !== 'string'
+                ? (content.find((b) => b.type === 'text')?.text ?? text)
+                : text
+            );
+            const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
+            if (request && sent?.kind === 'accepted')
+              recordNeoRequestTodo(this.todos, {
+                incident,
+                neoSession: input.sessionId,
+                sender,
+                text,
+                messageId: sent.messageId,
+                now: Date.now(),
+              });
+          });
           return receipt;
         }
         const todo = this.todos.getTodo(input.question.todoId);
@@ -1200,6 +1250,57 @@ export class NeoService {
     } finally {
       this.catchingUpTurns = false;
     }
+  }
+
+  async deliverRequestReply(job: Job): Promise<Record<string, unknown>> {
+    const reply = job.payload as NeoRequestReply;
+    const sent = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'message.send',
+      {
+        sessionId: reply.to,
+        idempotencyKey: `neo-request-reply:${reply.todoId}`,
+        message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
+      },
+      { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
+    ).catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
+    if (sent.kind === 'failed' && job.retryCount < job.maxRetries) throw new Error(sent.message);
+    const result =
+      sent.kind === 'failed'
+        ? {
+            kind: 'failed',
+            reason: `${sent.message} (gave up after ${job.retryCount + 1} attempts)`,
+          }
+        : (sent.value as { kind: string; reason?: string });
+    const deferred = reply.deferred ?? 0;
+    if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
+      this.db.getJobQueueRepo().enqueue({
+        queue: NEO_REQUEST_REPLY,
+        payload: {
+          todoId: reply.todoId,
+          to: reply.to,
+          from: reply.from,
+          text: reply.text,
+          deferred: deferred + 1,
+        } satisfies NeoRequestReply,
+        runAt: Date.now() + 10 * 60_000,
+        maxRetries: job.maxRetries,
+      });
+      return { kind: 'deferred' };
+    }
+    if (result.kind !== 'accepted')
+      await this.attention(
+        {
+          kind: 'request.reply_failed',
+          subject: { type: 'request_reply', id: reply.todoId },
+          since: job.createdAt,
+          facts: {
+            text: `Your answer to request todo ${reply.todoId} did not reach session ${reply.to}: ${result.reason ?? result.kind}. Tell it yourself with message.send.`,
+          },
+        },
+        Date.now()
+      );
+    return { kind: result.kind };
   }
 
   async sweepPacks(): Promise<void> {

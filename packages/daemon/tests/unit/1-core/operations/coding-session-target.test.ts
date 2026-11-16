@@ -19,7 +19,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable';
+type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived' | 'interrupted';
 
 function setup() {
   const db = new Database(':memory:');
@@ -38,13 +38,23 @@ function setup() {
       createdAt: 1,
     });
   createCodingTodoPack(new CodingTodoPrRepository(db), async () => []).schema(db);
-  const todo = (askId = 'feature', inRepo = repo): NeoTodo => {
+  const todo = (askId = 'feature', inRepo = repo, url?: string): NeoTodo => {
     const added = todos.addTodo(
       crypto.randomUUID(),
       askId,
-      { title: 'Slice', doneWhen: 'Merged', check: null, instruction: 'Do it', named: null },
+      {
+        title: 'Slice',
+        doneWhen: 'Merged',
+        check: url ? { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } } : null,
+        instruction: 'Do it',
+        named: null,
+      },
       1
     );
+    if (url)
+      db.prepare(
+        'INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, 1)'
+      ).run(added.id, JSON.stringify([{ url, state: 'OPEN', checks: 'passing', review: 'none' }]));
     if (inRepo)
       db.prepare(
         'INSERT INTO pack_coding_todos (todo_id, repo) VALUES (?, ?) ON CONFLICT (todo_id) DO UPDATE SET repo = excluded.repo'
@@ -72,7 +82,13 @@ function setup() {
           ref: work,
           title: work.id,
           place: { machine: 'm', name: 'w' },
-          status: state === 'idle' ? 'done' : state,
+          status:
+            state === 'idle'
+              ? 'done'
+              : state === 'archived' || state === 'interrupted'
+                ? 'stopped'
+                : state,
+          ...(state === 'archived' ? { archived: true } : {}),
           lastActivityAt: 1,
         },
       },
@@ -261,5 +277,157 @@ describe('coding session target decision', () => {
     const next = todo();
     expect(await decide(next, start())).toEqual({ value: start('dev') });
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test('an archived session is never reused; a live idle one is, and with none a new one starts', async () => {
+    for (const idleLive of [true, false]) {
+      const { todo, worked, live, decide } = setup();
+      worked(todo('other'), 'gone', 'dev', 'done');
+      worked(todo('other'), 'idle', 'dev-2', 'done');
+      live.gone = 'archived';
+      if (!idleLive) live.idle = 'archived';
+      expect(await decide(todo(), start())).toMatchObject(
+        idleLive ? { value: { verb: 'send', ref: ref('idle') } } : { value: { verb: 'start' } }
+      );
+    }
+  });
+
+  test('a feature whose own session was archived starts a new one', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    live['backend-1'] = 'archived';
+    const next = todo();
+    expect(await decide(next, start())).toMatchObject({ value: { verb: 'start' } });
+    worked(next, 'backend-2', 'backend', 'done');
+    expect(await decide(todo(), start())).toEqual({
+      value: { verb: 'send', ref: ref('backend-2') },
+    });
+  });
+
+  test('a feature whose own session was archived moves to a live idle session', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    live['backend-1'] = 'archived';
+    const moved = todo();
+    expect(await decide(moved, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    worked(moved, 'spare');
+    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+  });
+
+  test('an archived session keeps its name taken', async () => {
+    const { todo, worked, live, decide } = setup();
+    worked(todo('other'), 'gone', 'dev', 'done');
+    live.gone = 'archived';
+    expect(await decide(todo(), start())).toEqual({ value: start('dev-2') });
+  });
+
+  test('two dispatches racing to take over an archived owner: only one wins', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    live['backend-1'] = 'archived';
+    const results = await Promise.all([decide(todo(), start()), decide(todo(), start())]);
+    expect(results.filter((result) => 'value' in result)).toHaveLength(1);
+    expect(results.filter((result) => 'reason' in result)).toHaveLength(1);
+  });
+
+  test('a stopped but open feature session keeps its feature', async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    worked(todo('other'), 'gone', 'backend-3', 'done');
+    live['backend-1'] = 'interrupted';
+    live.gone = 'archived';
+    expect(await decide(todo(), start())).toEqual({
+      value: { verb: 'send', ref: ref('backend-1') },
+    });
+  });
+
+  test('later slices of a PR follow the session that took over its archived holder', async () => {
+    const { todo, worked, live, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    await decide(first, start('backend'));
+    worked(first, 'holder', 'backend', 'done');
+    worked(todo('other'), 'spare', 'backend-2', 'done');
+    live.holder = 'archived';
+    const second = todo('feature', repo, url);
+    expect(await decide(second, start())).toEqual({ value: { verb: 'send', ref: ref('spare') } });
+    worked(second, 'spare', undefined, 'done');
+    expect(await decide(todo('feature', repo, url), start())).toEqual({
+      value: { verb: 'send', ref: ref('spare') },
+    });
+  });
+
+  test('per-PR slices follow the live replacement of an archived holder, and queue there', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    db.prepare(
+      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
+    ).run(repo);
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    expect(await decide(first, start('dev'))).toEqual({ value: start('dev') });
+    worked(first, 'a', 'dev', 'done');
+    live.a = 'archived';
+    const second = todo('feature', repo, url);
+    expect(await decide(second, start('dev'))).toEqual({ value: start('dev') });
+    worked(second, 'b', 'dev', 'done');
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+    live.b = 'running';
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+  });
+
+  test('a PR follows its live replacement holder from another ask, and queues there', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    await decide(first, start('backend'));
+    worked(first, 'a', 'backend', 'done');
+    live.a = 'archived';
+    const fix = todo('other', repo, url);
+    db.prepare('UPDATE neo_todos SET created_at = 2 WHERE id = ?').run(fix.id);
+    expect(await decide(fix, start('backend'))).toMatchObject({ value: { verb: 'start' } });
+    worked(fix, 'b', 'backend-2', 'doing');
+    live.b = 'running';
+    expect(await decide(todo('feature', repo, url), start())).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+  });
+
+  test('per-PR slices follow the latest dispatched live holder, not the latest created', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    db.prepare(
+      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
+    ).run(repo);
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const ran = (item: NeoTodo, session: string, at: number) => {
+      worked(item, session, 'dev', 'done');
+      db.prepare('UPDATE neo_todo_sessions SET started_at = ? WHERE todo_id = ?').run(at, item.id);
+    };
+    const original = todo('feature', repo, url);
+    const waiting = todo('feature', repo, url);
+    const later = todo('feature', repo, url);
+    ran(original, 'a', 1);
+    ran(later, 'a', 2);
+    live.a = 'archived';
+    expect(await decide(waiting, start('dev'))).toEqual({ value: start('dev') });
+    ran(waiting, 'b', 3);
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
   });
 });

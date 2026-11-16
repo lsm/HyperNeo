@@ -236,8 +236,9 @@ mirror home still controls the closing-reference gate.
 
 Use `assigned-review` or `bot-review-repro` for the actual public bot-then-independent
 review path. The public assign operation records bot approval separately. A real
-work.send to a synthetic manual-mode session provides an accepted receipt, which
-neo.coding.assign records as a pending independent handoff. Two sweeps then emit
+work.send to a synthetic manual-mode session queues an input. Briefly run the
+job processor until its delivery reader records an accepted receipt, then stop it.
+neo.coding.assign records that receipt as a pending independent handoff. Two sweeps then emit
 no additional sign-off wake. An open human question restores the wake while the
 handoff is pending. Resolving it restores coverage; recording the review return
 retires coverage and wakes again. Use `bot-review-cancel` for cancellation instead
@@ -259,3 +260,15 @@ execute no merge. A passing Review fact by the same model must still hold. A
 passing Review fact by a different model on the head must then allow exactly one
 SHA-pinned squash, with saved preferences unchanged. Unit tests cover the sweep's
 single Neo wake for this state.
+
+Add `signoff-throttle` to prove a same-head sign-off hold avoids GitHub reads
+for ten minutes, refreshes on expiry, and immediately rechecks every gate after
+a recorded policy event. The synthetic CLI log records reads and the pinned merge.
+
+Review coverage changes invalidate a cached sign-off hold on the next sweep.
+A successful human-label operation also invalidates its URL, including a label
+first observed during the final merge read rather than by ledger reconciliation.
+
+Add `label-invalidation-race` to pause a synthetic GitHub label read, remove the
+label through the real human-merge operation, then release the stale read. The
+next sweep must merge immediately rather than caching that stale sign-off hold.

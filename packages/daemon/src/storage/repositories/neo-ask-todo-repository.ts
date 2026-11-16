@@ -1,3 +1,4 @@
+import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
@@ -164,7 +165,7 @@ export type NeoQuestionDraft = Pick<
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -180,6 +181,7 @@ type QuestionRow = Omit<
   | 'retireWhen'
 > & {
   kind: NeoQuestion['kind'] | 'start';
+  holdRequests: string | null;
   answerProvenanceJson: string | null;
   retireWhenJson: string | null;
   artifactsJson: string | null;
@@ -205,10 +207,13 @@ const toQuestion = ({
   todoId,
   cause,
   actionsAppliedAt,
+  heldAt,
+  holdRequests: _holdRequests,
   ...row
 }: QuestionRow): NeoQuestion => ({
   ...(cause ? { cause } : {}),
   ...(actionsAppliedAt ? { actionsAppliedAt } : {}),
+  ...(heldAt && row.state === 'open' ? { heldAt } : {}),
   ...(answerProvenanceJson
     ? { answerProvenance: JSON.parse(answerProvenanceJson) as NeoAnswerProvenance }
     : {}),
@@ -392,11 +397,11 @@ export class NeoAskTodoRepository {
     const questions = (
       this.db
         .prepare(
-          `SELECT q.ask_id AS askId, q.state, q.todos
+          `SELECT q.ask_id AS askId, q.state, q.todos, q.held_at AS heldAt
            FROM neo_questions q JOIN neo_asks a ON a.id = q.ask_id
            WHERE q.state = 'open' AND a.status = 'open'`
         )
-        .all() as (Pick<NeoQuestion, 'askId' | 'state'> & { todos: string })[]
+        .all() as (Pick<NeoQuestion, 'askId' | 'state' | 'heldAt'> & { todos: string })[]
     ).map((row) => ({ ...row, todos: JSON.parse(row.todos) as string[] }));
     return { todos, questions, awaitingNeo: this.listAwaitingNeoDecision() };
   }
@@ -549,10 +554,16 @@ export class NeoAskTodoRepository {
   }
 
   listChildAsks(parentId: string): NeoAsk[] {
+    return this.listChildAsksOf([parentId]);
+  }
+
+  listChildAsksOf(parentIds: readonly string[]): NeoAsk[] {
     return (
       this.db
-        .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
-        .all(parentId) as AskRow[]
+        .prepare(
+          `${ASK_SELECT} WHERE parent_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, rowid`
+        )
+        .all(JSON.stringify(parentIds)) as AskRow[]
     ).map(toAsk);
   }
 
@@ -588,10 +599,16 @@ export class NeoAskTodoRepository {
       .run(status, outcome, now, now, ask.id);
     for (const todo of this.listTodos(ask.id))
       if (['todo', 'doing', 'blocked'].includes(todo.state))
-        this.updateTodo(
+        queueNeoRequestReply(
+          this.db,
           todo,
-          { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
-          now
+          this.updateTodo(
+            todo,
+            { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
+            now
+          ),
+          outcome,
+          ask.sessionId
         );
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
@@ -986,8 +1003,31 @@ export class NeoAskTodoRepository {
   }
 
   getQuestion(id: string): NeoQuestion | null {
-    const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
+    const row = this.questionRow(id);
     return row ? toQuestion(row) : null;
+  }
+
+  private questionRow(id: string): QuestionRow | null {
+    return this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
+  }
+
+  holdQuestion(id: string, held: boolean, requestId: string, now: number): NeoQuestion | null {
+    const changed = this.db.transaction(() => {
+      const row = this.questionRow(id);
+      if (row?.state !== 'open') return null;
+      const requests = JSON.parse(row.holdRequests ?? '[]') as string[];
+      if (requests.includes(requestId)) return false;
+      const heldAt = held ? (row.heldAt ?? now) : null;
+      this.changeQuestion(id, {
+        held_at: heldAt,
+        hold_requests: JSON.stringify([...requests, requestId]),
+      });
+      return heldAt !== row.heldAt;
+    })();
+    if (changed === null) return null;
+    const question = this.getQuestion(id);
+    if (changed && question) this.touchAsk(question.askId, now);
+    return question;
   }
 
   markCardActionsApplied(id: string, now: number): void {
@@ -1094,13 +1134,15 @@ export class NeoAskTodoRepository {
     question: NeoQuestion,
     reason: string,
     replacedBy: string | null,
-    now: number
+    now: number,
+    unheld = false
   ): NeoQuestion | null {
     const changed = this.db.transaction(() => {
       const retired = this.changeQuestion(
         question.id,
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
-        'open'
+        'open',
+        unheld
       );
       if (retired) this.pruneQuestions(question.askId, now);
       return retired;
@@ -1222,13 +1264,14 @@ export class NeoAskTodoRepository {
   private changeQuestion(
     id: string,
     patch: Record<string, string | number | null>,
-    state?: NeoQuestion['state']
+    state?: NeoQuestion['state'],
+    unheld = false
   ): number {
     return this.db
       .prepare(`UPDATE neo_questions SET ${Object.keys(patch)
         .map((key) => `${key} = ?`)
         .join(', ')}
-      WHERE id = ?${state ? ' AND state = ?' : ''}`)
+      WHERE id = ?${state ? ' AND state = ?' : ''}${unheld ? ' AND held_at IS NULL' : ''}`)
       .run(...Object.values(patch), id, ...(state ? [state] : [])).changes;
   }
 

@@ -42,6 +42,7 @@ export function planNeoSweepEvents(
               facts: {
                 title: row.todo.title,
                 reason: next.reason,
+                requestFrom: row.todo.named?.requestFrom,
                 detail:
                   next.reason === 'failed'
                     ? (row.todo.blockedReason ?? row.todo.reason ?? '').replace(/[.。\s]+$/, '')
@@ -73,6 +74,7 @@ export function createNeoAttentionSweep(deps: {
   sessions: NeoTodoSessionRepository;
   packs(): readonly NeoPack[];
   limits(): Limits;
+  scan(now: number): Promise<readonly NeoAttentionEvent[]>;
   tell(event: NeoAttentionEvent, now: number): Promise<unknown>;
   failed(event: NeoAttentionEvent, error: unknown): void;
 }) {
@@ -92,9 +94,13 @@ export function createNeoAttentionSweep(deps: {
       'queued',
       'steps'
     )
+    .pipe(deps.scan, 'now', 'scanned')
     .pipe(
-      (steps: NeoStepRow[], facts: Facts) => planNeoSweepEvents(steps, facts),
-      ['steps', 'facts'],
+      (steps: NeoStepRow[], facts: Facts, scanned: readonly NeoAttentionEvent[]) => [
+        ...planNeoSweepEvents(steps, facts),
+        ...scanned,
+      ],
+      ['steps', 'facts', 'scanned'],
       'events'
     )
     .pipe(
