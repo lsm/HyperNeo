@@ -1950,6 +1950,21 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2h: an explicit login without a refresh token is not replaced by the Codex login', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-other-account', refresh_token: 'codex-refresh' },
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      p.setCredentials({ type: 'oauth', accessToken: 'explicit-access' } as ProviderCredentials);
+      expect(await p.refreshToken()).toBe('definitive');
+      expect(await p.getApiKey()).toBe('explicit-access');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2g: a legacy imported login handed back by the credential store is not refreshed', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
