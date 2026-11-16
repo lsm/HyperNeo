@@ -27,8 +27,8 @@ const app = await createDaemonApp({
 });
 const place = { machine: hostname(), folder, name: 'Synthetic' };
 const input = (title: string, todoId?: string) => ({ adapter: 'hyperneo', place, title, message: `Synthetic task: ${title}`, ...(todoId ? { todoId } : {}) });
-const start = async (title: string, caller: Parameters<typeof invokeOperation>[3]) => {
-  const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input(title, caller.role === 'neo' ? 'todo-plan' : undefined), caller);
+const start = async (title: string, caller: Parameters<typeof invokeOperation>[3], todoId = 'todo-plan') => {
+  const outcome = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input(title, caller.role === 'neo' ? todoId : undefined), caller);
   assert.equal(outcome.kind, 'completed', JSON.stringify(outcome));
   const result = (outcome as { value: Result<WorkStarted> }).value;
   assert(result.ok, JSON.stringify(result));
@@ -70,11 +70,26 @@ try {
     store.updateTodo(store.getTodo(`todo-${id}`)!, { state: 'doing' }, 2);
   }
   const third = await start('third', neo);
+  const afterThird = sessions();
+  const lease = (id: string, state: 'doing' | 'done', bindRef: boolean) => {
+    store.addTodo(`todo-${id}`, 'synthetic-ask', { title: id, doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
+    if (bindRef) todos.bind(`todo-${id}`, { adapter: 'hyperneo', id }, Date.now());
+    store.updateTodo(store.getTodo(`todo-${id}`)!, { state }, 2);
+  };
+  lease(third.id, 'doing', true);
+  // A session the human opened in the folder, which only ever did a review todo.
+  const reviewer = await app.sessionManager.createSession({ workspacePath: folder, title: 'Human review', worktreeMode: 'direct', createdBy: 'human' });
+  lease(reviewer, 'done', true);
+  await settle([reviewer]);
+  const beforeBuild = sessions();
+  store.addTodo('todo-build', 'synthetic-ask', { title: 'Build', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 3);
+  const build = await start('build', neo, 'todo-build');
   const observed = {
     first: { reused: first.reused },
     humanStart: { reused: byHuman.reused, newSession: byHuman.id !== first.id },
     neoSecond: { reused: second.reused, sameRefAsEarlier: [first.id, byHuman.id].includes(second.id), sessionsBefore: before, sessionsAfter: afterReuse },
-    neoThirdAllLeased: { reused: third.reused, newSession: ![first.id, byHuman.id].includes(third.id), sessionsAfter: sessions() },
+    neoThirdAllLeased: { reused: third.reused, newSession: ![first.id, byHuman.id].includes(third.id), sessionsAfter: afterThird },
+    neoBuildBesideFreeHumanReviewer: { reused: build.reused, gotReviewer: build.id === reviewer, sessionsBefore: beforeBuild, sessionsAfter: sessions() },
   };
   writeFileSync(join(run, 'evidence/work-start-reuse.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed, null, 2));
@@ -87,6 +102,9 @@ try {
   assert.equal(third.reused, false);
   assert(observed.neoThirdAllLeased.newSession);
   assert.equal(observed.neoThirdAllLeased.sessionsAfter, afterReuse + 1);
+  assert.equal(build.reused, false);
+  assert.equal(observed.neoBuildBesideFreeHumanReviewer.gotReviewer, false);
+  assert.equal(observed.neoBuildBesideFreeHumanReviewer.sessionsAfter, beforeBuild + 1);
 } finally {
   await app.cleanup();
 }

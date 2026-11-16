@@ -9,7 +9,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readReusableWorkers,
-  recordStartedWork,
+  recordWorkerStarted,
 } from '../../../../src/storage/work-started-sessions';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
@@ -79,11 +79,12 @@ function setup(idle: string[] = []) {
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      recordStarted: (ref) => recordStartedWork(db, ref),
+      recordStarted: (ref) => recordWorkerStarted(db, ref),
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
       unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
-      isOpenTodo: (todoId) => ['todo', 'doing', 'blocked'].includes(store.getTodo(todoId)?.state ?? ''),
+      isOpenTodo: (todoId) =>
+        ['todo', 'doing', 'blocked'].includes(store.getTodo(todoId)?.state ?? ''),
     })
   );
   const start = async (todoId: string) => {

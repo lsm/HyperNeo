@@ -8,6 +8,7 @@ import {
   readFreeWorkers,
   readReusableWorkers,
   recordStartedWork,
+  recordWorkerStarted,
 } from '../../../../src/storage/work-started-sessions.ts';
 
 describe('readFreeWorkers', () => {
@@ -27,6 +28,7 @@ describe('readFreeWorkers', () => {
       place: { machine: 'synthetic', name: 'Fixture', folder: '/synthetic' },
     });
     sessions.recordRef(todoId, { adapter: 'claude-desktop', id });
+    recordWorkerStarted(db, { adapter: 'claude-desktop', id });
     store.updateTodo(store.getTodo(todoId)!, { state, startedAt: at }, 2);
   };
 
@@ -50,16 +52,16 @@ describe('readFreeWorkers', () => {
   test('lists recorded workers of the adapter that hold no open todo and are usable', () => {
     bind('finished', 'w-done', 'done');
     bind('working', 'w-busy', 'doing');
-    recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' });
-    recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-bad' });
-    recordStartedWork(db, { adapter: 'hyperneo', id: 'w-other' });
+    recordWorkerStarted(db, { adapter: 'claude-desktop', id: 'w-new' });
+    recordWorkerStarted(db, { adapter: 'claude-desktop', id: 'w-bad' });
+    recordWorkerStarted(db, { adapter: 'hyperneo', id: 'w-other' });
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-bad' });
 
     expect([...readFreeWorkers(db, 'claude-desktop')].sort()).toEqual(['w-done', 'w-new']);
   });
 
   test('an unusable mark expires after an hour', () => {
-    recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-old' });
+    recordWorkerStarted(db, { adapter: 'claude-desktop', id: 'w-old' });
     recordStartedWork(
       db,
       { adapter: 'claude-desktop', id: 'w-old' },
@@ -70,7 +72,7 @@ describe('readFreeWorkers', () => {
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['w-old']);
   });
 
-  test('a worker bound only through a todo can be marked unusable', () => {
+  test('a worker bound through a todo can be marked unusable', () => {
     bind('finished', 'w-done', 'done');
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-done' });
 
@@ -206,7 +208,7 @@ describe('readFreeWorkers', () => {
       ).toBe(50);
     });
 
-    test('reads same-ask recency from legacy bindings without a started-work row', () => {
+    test('reads same-ask recency from the todos a worker was bound to', () => {
       bind('first', 'worker', 'done', 'ask', 10);
       bind('latest', 'worker', 'done', 'ask', 30);
       expect(readReusableWorkers(db, 'claude-desktop', 'latest', 'neo').get('worker')).toEqual({
