@@ -35,13 +35,16 @@ separate choice, and that is where a code and an approval belong.
 
 ## The design
 
-**1. A setup link instead of the first code.** While no human device has ever paired (the
-first-device window of `pairing-v2-approval.md`), the daemon makes a one-time setup token
-when it starts. It writes the token to `<data-dir>/setup-token` with owner-only file mode
+**1. A setup link instead of the first code.** While the first-device window of
+`pairing-v2-approval.md` is open (no human phone has ever paired, or a lost-phone reset from
+`hyperneo devices reset-human` is open), the daemon makes a one-time setup token when it
+starts. Minting and redeeming both check that same window, so after a reset and a restart
+the daemon prints a new setup link. It writes the token to `<data-dir>/setup-token` with owner-only file mode
 and prints `Open http://localhost:<port>/setup#<token>` on the terminal that started it.
 The daemon log records only that a setup link exists. Opening the link grants the browser
 the first human device, the same grant as a first-device pairing today. The token stops
-working once any human device has paired. It is not loopback trust: a tailnet proxy makes
+working when the window closes: the next human pairing closes it and consumes an open
+reset. It is not loopback trust: a tailnet proxy makes
 remote requests look local, so the address alone proves nothing. `runtime.json` is not
 used for the token because it is world-readable.
 
@@ -92,6 +95,7 @@ Acceptance, one integration case per row:
 |---|---|
 | New daemon started from a terminal | prints a setup link; opening it lands on the setup steps, not the pairing page |
 | The same link after a human device has paired | refused; the pairing page with the "already has an owner" wording |
+| `hyperneo devices reset-human`, then a restart | a new setup link is printed and grants the first device |
 | New desktop install | the window opens the setup steps with no code typed |
 | `setup-token` file | readable only by its owner |
 | Desktop "Connect to another computer" | sends a pairing request the other owner allows; the app lists that server |
