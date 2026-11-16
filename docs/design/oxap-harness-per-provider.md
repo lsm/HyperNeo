@@ -33,9 +33,15 @@ A provider is who you sign in with and which models you get. A harness is the
 agent loop that runs a turn. Today every provider runs on one harness, the
 Claude Code SDK. This design adds one setting per provider:
 
-**Harness:** Claude Code (default) · OXAP Codex · OXAP DeepSeek · …
+**Harness:** Claude Code (default) · OXAP Claude Code · OXAP Codex · OXAP
+DeepSeek · OXAP Pi · …
 
-The list shows only harnesses that support that provider. Examples:
+The provider picks the harness, and any OXAP adapter can be one. This is
+not a Codex-only design. The first table rows are OXAP Claude Code, OXAP
+Codex, OXAP DeepSeek and OXAP Pi. OXAP Codex is built first because its
+sign-in is designed below; each other row is its own small PR (see "Adding a
+harness"). The list shows only harnesses that support that provider.
+Examples:
 
 - **OpenAI Codex** runs on Claude Code through the Responses bridge today. You
   switch it to **OXAP Codex**, and its chats run in the real Codex app-server.
@@ -415,7 +421,7 @@ release, then 6 → 7. The rename lands after PR 4 and before the UI PR. PRs 1�
 do not wait on OXAP. Only PR 7 changes what the human sees, and it lands once
 sign-in works. Before it, the daemon PRs are reachable
 through RPC and the verify skill. Each later
-harness, such as DeepSeek, is its own small PR: one table row and its fields.
+harness, starting with OXAP Claude Code, OXAP DeepSeek and OXAP Pi, is its own small PR: one table row and its fields.
 
 ## Ready today vs. waiting
 
