@@ -1598,7 +1598,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             {
               state: 'blocked',
               blockedBy: 'stalled',
-              blockedReason: `No fresh worker could start: ${current.reason ?? current.blockedReason ?? 'the start was refused'}`,
+              blockedReason: `No fresh worker could start: ${current.blockedReason ?? current.reason ?? 'the start was refused'}`,
               nextAction: NEO_TODO_STALL_NEXT,
               finishedAt: null,
             },
