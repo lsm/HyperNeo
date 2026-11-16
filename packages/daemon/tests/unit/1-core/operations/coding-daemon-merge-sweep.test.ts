@@ -171,6 +171,10 @@ const entry = () => {
   return { run, wakes: notes.wakes };
 };
 const merges = () => calls.filter((args) => args[2] === 'merge');
+const completeRead = async (at: number) => {
+  await ledger.write('recordHealth', 'synthetic/merge', { at, outcome: 'complete' });
+  await ledger.write('replace', 'synthetic/merge', await ledger.read('list'), at);
+};
 const reserve = (at: number) =>
   ledger.write('daemonMerge', { kind: 'begin', url, head, actor: 'daemon:coding-sweep', at });
 beforeEach(async () => {
@@ -1214,7 +1218,9 @@ test('an undelivered retry-limit notice survives removal from the candidate set'
   for (const at of [10, 11, 12]) await sweep(spawn, { attend: async () => false })(at);
   expect(merges()).toHaveLength(3);
   policy('mergeBy', 'owner');
-  await ledger.write('recordHealth', 'synthetic/merge', { at: 13, outcome: 'complete' });
+  await run(13);
+  expect(wakes()).toEqual([]);
+  await completeRead(14);
   await run(14);
   await run(15);
   expect(merges()).toHaveLength(3);
@@ -1341,6 +1347,7 @@ test('a failed fresh read sends no ready cue and each report repeats once', asyn
   expect(wakes()).toHaveLength(1);
   fail = '';
   await run(22);
+  await completeRead(12 + FOUR_HOURS);
   await run(12 + FOUR_HOURS);
   await run(20 + FOUR_HOURS);
   await run(20 + 6 * FOUR_HOURS);
@@ -1384,6 +1391,46 @@ test.each(['failed', 'partial', 'cooldown'] as const)(
     expect(merges()).toHaveLength(3);
   }
 );
+
+test('an undelivered stopped report is not sent on complete health kept from a later clock', async () => {
+  mergeFailed = true;
+  const { run, wakes } = entry();
+  for (const at of [10, 11, 12]) await sweep(spawn, { attend: async () => false })(at);
+  expect(merges()).toHaveLength(3);
+  policy('mergeBy', 'owner');
+  await completeRead(20);
+  state = 'CLOSED';
+  for (const at of [15, 16]) {
+    await ledger.write(
+      'observePoll',
+      'synthetic/merge',
+      { error: 'lookup failed' },
+      at,
+      at,
+      [],
+      []
+    );
+    expect((await ledger.pollContextCurrent('synthetic/merge')).health).toMatchObject({
+      reason: 'complete',
+      cycleAt: 20,
+    });
+    expect((await ledger.read('list'))[0]).toMatchObject({ closedAt: null, readAt: 20 });
+    await run(at);
+  }
+  expect(wakes()).toEqual([]);
+  const rows = await ledger.read('list');
+  await ledger.write('recordHealth', 'synthetic/merge', { at: 21, outcome: 'complete' });
+  await ledger.write(
+    'replace',
+    'synthetic/merge',
+    [{ ...rows[0], state: 'closed', closedAt: 21 }],
+    21
+  );
+  await run(21);
+  await run(12 + FOUR_HOURS);
+  expect(wakes()).toEqual([]);
+  expect(merges()).toHaveLength(3);
+});
 
 test('the merge sweep keeps no record of what it told Neo', () => {
   db.exec(
