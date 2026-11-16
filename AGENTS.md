@@ -1,6 +1,6 @@
 # AGENTS.md
 
-HyperNeo uses the Claude Agent SDK.
+HyperNeo uses the Claude Agent SDK. Use Preact conventions, not React APIs.
 See [ADRs](docs/adr/) and [architecture](docs/architecture/) for design and layout.
 
 ## Area rules
@@ -40,6 +40,7 @@ Never run `bun test` from the repo root. Pre-commit checks lint, format, types a
 - Preserve idioms; make surgical changes, no unrelated cleanup.
 - Use ONE direct superpipe pipeline per daemon/web business path, named for its operation. Mix decisions, transforms and effects ([ADR 0004](docs/adr/0004-superpipe-pipelines.md)).
 - Record each fact once. Derive from the tables that already hold it instead of adding columns or tables that duplicate it.
+- Keep authorization and autonomy checks in handlers and admission gates, never prompts.
 - `bun run check` must pass. It runs format, lint, types, knip and the repo guards; each guard names what to fix.
 - No TS/TSX comments except shebangs, triple-slash references, `@ts-*` and lint, knip or coverage ignore directives.
 - Lint bans `any`, unused variables and app `console.*` (entry points/tests exempt).

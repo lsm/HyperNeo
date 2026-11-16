@@ -27,7 +27,6 @@ For `packages/daemon` and `packages/space`. The root `AGENTS.md` still applies.
 - Domain rejections return `{ accepted: false, reason }`; infrastructure faults throw; long work returns `{ accepted: true, jobId }`.
 - Resolve caller roles with `resolveSpaceMcpSessionPolicy` before invocation.
 - Reach `ActionRegistry` through operations via `actionsAsOperations`.
-- Keep authorization and autonomy checks in handlers and admission gates, never prompts.
 - `check:operation-names`: `defineOperation` names must match `packages/shared/src/types/operation-names.ts` both ways.
 - `check:session-guards`: only the `scripts/check-session-deletion-callers.sh` allowlist may delete/archive sessions.
 
