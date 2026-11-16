@@ -524,7 +524,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
           'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
           jti: 'token-2',
         });
-        p.setCredentials({
+        await p.setCredentials({
           type: 'oauth',
           accessToken: accessToken2,
           refreshToken: 'refresh-token-2',
@@ -1936,6 +1936,51 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2n: two rejected queued saves leave no rejected login cached', async () => {
+      const blocked = path.join(tmpDir, 'not-a-directory');
+      writeFileSync(blocked, 'regular file');
+      const p = makeProvider({}, path.join(blocked, 'hyperneo'), path.join(tmpDir, 'codex'));
+
+      const results = await Promise.allSettled([
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-a',
+          refreshToken: 'unsaved-refresh-a',
+        } as ProviderCredentials),
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-b',
+          refreshToken: 'unsaved-refresh-b',
+        } as ProviderCredentials),
+      ]);
+
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+      expect(await p.getCredentials()).toBeNull();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2o: a rejected save after a saved login keeps the saved login', async () => {
+      const p = makeProvider({}, path.join(tmpDir, 'hyperneo'), path.join(tmpDir, 'codex'));
+      await p.setCredentials({
+        type: 'oauth',
+        accessToken: 'saved-account-a',
+        refreshToken: 'saved-refresh-a',
+      } as ProviderCredentials);
+      fsPromiseMocks.writeFile.mockImplementationOnce(async () => {
+        throw new Error('synthetic write failure');
+      });
+
+      await expect(
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-b',
+          refreshToken: 'unsaved-refresh-b',
+        } as ProviderCredentials)
+      ).rejects.toThrow('synthetic write failure');
+      expect(await p.getCredentials()).toMatchObject({ accessToken: 'saved-account-a' });
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2m: the default Codex login path stays inside the test temp directory', () => {
       const p = new AnthropicToCodexBridgeProvider();
       const codexAuthPath = (p as unknown as { codexAuthPath: string }).codexAuthPath;
@@ -1988,7 +2033,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
 
       const before = makeProvider({}, hyperneoDir, codexDir);
-      before.setCredentials({
+      await before.setCredentials({
         type: 'oauth',
         accessToken: 'explicit-account-a',
         refreshToken: 'explicit-refresh-a',
@@ -2029,7 +2074,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       );
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      p.setCredentials({
+      await p.setCredentials({
         type: 'oauth',
         accessToken: 'explicit-access-1',
         refreshToken: 'explicit-refresh-1',
@@ -2048,7 +2093,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      p.setCredentials({ type: 'oauth', accessToken: 'explicit-access' } as ProviderCredentials);
+      await p.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-access',
+      } as ProviderCredentials);
       expect(await p.refreshToken()).toBe('definitive');
       expect(await p.getApiKey()).toBe('explicit-access');
       expect(fetchSpy).not.toHaveBeenCalled();
@@ -2084,7 +2132,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       const p = makeProvider({}, hyperneoDir, codexDir);
       const mirrored = await p.getCredentials();
-      p.setCredentials(mirrored as ProviderCredentials);
+      await p.setCredentials(mirrored as ProviderCredentials);
       await p.refreshToken();
       expect(fetchSpy).not.toHaveBeenCalled();
       p.stopAllBridgeServers();
