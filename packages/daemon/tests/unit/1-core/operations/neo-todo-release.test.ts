@@ -308,6 +308,59 @@ describe('releaseNeoTodoWorkers', () => {
   });
 });
 
+describe('neo todo runner refresh settles shared and local-only work', () => {
+  test('records a second finished todo on a worker the first already released', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      await h.finishTodo(h.add(started));
+      h.setArchive(() => {
+        rmSync(h.folder(), { recursive: true, force: true });
+        return { ok: true, value: { archived: true } };
+      });
+      await h.refresh();
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('archives a worker whose only local commits are on a branch that stays', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'base.txt'), 'base');
+      git(h.folder(), 'add', 'base.txt');
+      git(h.folder(), 'commit', '-q', '--no-gpg-sign', '-m', 'local base');
+      git(h.folder(), 'checkout', '-q', '-b', 'worker');
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps a worker a failed todo is still bound to', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const failed = h.add(started);
+      h.queueOn(failed.id);
+      h.db.prepare("UPDATE neo_todos SET state = 'failed' WHERE id = ?").run(failed.id);
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      const db = { getDatabase: () => h.db } as never;
+      expect(admitSessionArchive(worker, { source: 'internal', role: 'neo' }, db)).toMatchObject({
+        reason: 'live_todo',
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
 describe('admitSessionArchive', () => {
   test('admits the daemon itself releasing a worker', () => {
     const h = setup();
