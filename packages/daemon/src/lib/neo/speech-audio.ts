@@ -222,25 +222,37 @@ export class NeoSpeechAudio {
           response = await synthesize();
         }
         fault.status = response.status;
+        const type = response.headers.get('content-type') ?? '';
         if (
           !response.ok ||
-          (!isDeepgram(backend) &&
-            !response.headers.get('content-type')?.startsWith('audio/pcm')) ||
+          !type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') ||
           !response.body
         )
           throw new Error('speech_backend_unavailable');
         const reader = response.body.getReader();
         let bytes = 0,
           seq = 0;
+        let head: Uint8Array | null = new Uint8Array(0);
         try {
           while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.signal.throwIfAborted();
-            if (!bytes && Buffer.from(value.subarray(0, 4)).toString('latin1') === 'RIFF')
-              throw new Error('invalid_speech_audio');
-            if (!bytes && value.byteLength)
-              voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
+            const read = await reader.read();
+            if (!read.done) controller.signal.throwIfAborted();
+            let value: Uint8Array = read.value ?? new Uint8Array(0);
+            if (head) {
+              value = Buffer.concat([head, value]);
+              if (value.byteLength < 4 && !read.done) {
+                head = value;
+                continue;
+              }
+              head = null;
+              if (Buffer.from(value.subarray(0, 4)).toString('latin1') === 'RIFF')
+                throw new Error('invalid_speech_audio');
+            }
+            if (!value.byteLength) {
+              if (read.done) break;
+              continue;
+            }
+            if (!bytes) voiceDiagnostic('voice.tts.first_chunk', { ...timing, atMs: Date.now() });
             bytes += value.byteLength;
             if (bytes > 5_760_000) throw new Error('speech_audio_too_long');
             for (let offset = 0; offset < value.length; offset += 3840) {
@@ -257,6 +269,7 @@ export class NeoSpeechAudio {
               if (seq === 1)
                 voiceDiagnostic('voice.tts.first_chunk_sent', { ...timing, atMs: Date.now() });
             }
+            if (read.done) break;
           }
           if (!bytes || bytes % 2) throw new Error('invalid_speech_audio');
           if (
