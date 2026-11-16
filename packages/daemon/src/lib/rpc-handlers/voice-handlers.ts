@@ -244,6 +244,7 @@ export function registerVoiceHandlers(
               data: { audioBase64, mimeType: 'audio/wav' },
               signal,
               context,
+              interactive: true,
               deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
             }),
           push: (text: VoiceStreamText) => {
