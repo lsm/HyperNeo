@@ -17,8 +17,14 @@ import {
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let store: DatabaseCredentialStore;
 let vault: ConnectionVault;
-let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
-let startLogin: ReturnType<typeof vi.fn>;
+let requests: string[];
+const fetchImpl = (async (url) => {
+  requests.push(String(url));
+  return Response.json({});
+}) as typeof fetch;
+const startLogin = vi.fn(async () => {
+  throw new Error('No consent is expected');
+});
 let registry: ReturnType<typeof createOperationRegistry>;
 const microsoft = {
   id: 'microsoft-one',
@@ -43,8 +49,8 @@ beforeEach(async () => {
   vault = new ConnectionVault(store, identity);
   await db.gateway.call(googleConnectionWrites, 'put', microsoft);
   await vault.replace(microsoft, bundle);
-  fetchImpl = vi.fn<typeof fetch>(async () => Response.json({}));
-  startLogin = vi.fn();
+  requests = [];
+  startLogin.mockClear();
   registry = createOperationRegistry(
     createGoogleConnectionOperations(() => db.getDatabase(), {
       createStore: () => store,
@@ -56,7 +62,7 @@ beforeEach(async () => {
 afterEach(() => db.close());
 
 async function expectUntouched() {
-  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(requests).toEqual([]);
   expect(startLogin).not.toHaveBeenCalled();
   expect(await db.gateway.call(googleConnectionReads, 'list')).toEqual([microsoft]);
   expect(await vault.read(microsoft)).toEqual(bundle);
