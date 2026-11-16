@@ -2,6 +2,7 @@ import { createLiveFileRead } from '../artifacts/live-file-read.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { createConnectionList } from '../connections/list-operation.ts';
 import { createGoogleConnectionOperations } from '../connections/operations.ts';
+import { createMicrosoftConnectionOperations } from '../connections/microsoft-operations.ts';
 import { sessionWorkerRef } from '../neo/worker-identity.ts';
 import { neoTodoSessionReads } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
@@ -109,6 +110,7 @@ export function createDatabaseOperationCatalog(
       createHumanDeviceResetOperation(() => db.getDatabase()),
       createConnectionList(() => db.getDatabase()),
       ...createGoogleConnectionOperations(() => db.getDatabase()),
+      ...createMicrosoftConnectionOperations(() => db.getDatabase()),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>

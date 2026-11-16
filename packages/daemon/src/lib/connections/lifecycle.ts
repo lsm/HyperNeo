@@ -1,14 +1,15 @@
 import { createGoogleHttp } from './google-http.ts';
 import { randomUUID } from 'node:crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { startGoogleLogin } from './google-login.ts';
+import type { LoginOutcome } from './loopback-login.ts';
 import type { ConnectionVault } from './vault.ts';
 import type { ConnectionStatus, GoogleConnectionAttempt as View } from './status.ts';
 import { createGoogleTokenAccess } from './token-access.ts';
 
-type Login = Awaited<ReturnType<typeof startGoogleLogin>>;
-type Outcome = Awaited<Login['result']>;
-type Client = Parameters<typeof startGoogleLogin>[0];
+type Client = { clientId: string; clientSecret?: string };
+type Login = { authorizeUrl: string; result: Promise<LoginOutcome>; cancel: () => void };
+export type StartLogin = (client: Client) => Promise<Login>;
+type Outcome = LoginOutcome;
 type Flow = {
   id: string;
   connectionId: string;
@@ -39,12 +40,16 @@ function admit(
   return { value: { flow, outcome } };
 }
 
-function planLogin({ flow, outcome }: Admitted, records: ConnectionStatus[]) {
+function planLogin(
+  { flow, outcome }: Admitted,
+  records: ConnectionStatus[],
+  provider: ConnectionStatus['provider']
+) {
   const id =
     records.find((record) => record.accountId === outcome.accountId)?.id ?? flow.connectionId;
   const connection: ConnectionStatus = {
     id,
-    provider: 'google',
+    provider,
     accountId: outcome.accountId,
     email: outcome.email,
     scopes: outcome.tokens.scopes,
@@ -65,10 +70,10 @@ async function persistLogin(
 }
 
 const completeLogin = (superpipe({})('google-connection-complete') as PipelineAPI)
-  .input(['outcome', 'flow', 'active', 'closed', 'read', 'save', 'vault'])
+  .input(['outcome', 'flow', 'active', 'closed', 'read', 'save', 'vault', 'provider'])
   .pipe(admit, ['outcome', 'flow', 'active', 'closed'], 'result:result')
   .pipe((read: Read) => read(), 'read', 'records')
-  .pipe(planLogin, ['result', 'records'], 'plan')
+  .pipe(planLogin, ['result', 'records', 'provider'], 'plan')
   .pipe(persistLogin, ['plan', 'save', 'vault'], 'result')
   .endAsync('result') as (
   outcome: Outcome,
@@ -77,7 +82,8 @@ const completeLogin = (superpipe({})('google-connection-complete') as PipelineAP
   closed: boolean,
   read: Read,
   save: Save,
-  vault: ConnectionVault
+  vault: ConnectionVault,
+  provider: ConnectionStatus['provider']
 ) => Promise<View>;
 
 const disconnect = (superpipe({})('google-connection-disconnect') as PipelineAPI)
@@ -113,7 +119,8 @@ export function createConnectionLifecycle(deps: {
   read: Read;
   save: Save;
   vault: ConnectionVault;
-  startLogin: typeof startGoogleLogin;
+  provider: ConnectionStatus['provider'];
+  startLogin: StartLogin;
   closed: AbortSignal;
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -182,7 +189,8 @@ export function createConnectionLifecycle(deps: {
                 deps.closed.aborted,
                 deps.read,
                 deps.save,
-                deps.vault
+                deps.vault,
+                deps.provider
               )
             )
           )
