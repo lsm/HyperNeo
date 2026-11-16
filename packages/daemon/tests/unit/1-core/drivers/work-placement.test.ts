@@ -198,15 +198,26 @@ describe('archive removes the worker work folders', () => {
 describe('procFolderInUse', () => {
   const uid = process.getuid?.() ?? 0;
   const failure = (code: string) => Object.assign(new Error(code), { code });
-  const proc = (pids: Record<string, { uid?: number; cwd: string | Error }>) => ({
-    readdir: async () => ['self', ...Object.keys(pids)],
-    stat: async (path: string) => ({ uid: pids[path.split('/')[2]]?.uid ?? uid }),
-    readlink: async (path: string) => {
-      const cwd = pids[path.split('/')[2]]?.cwd;
-      if (cwd instanceof Error || cwd === undefined) throw cwd ?? failure('ENOENT');
-      return cwd;
-    },
-  });
+  type Pid = { uid?: number; statUid?: number; status?: string | Error; cwd: string | Error };
+  const proc = (pids: Record<string, Pid>) => {
+    const pid = (path: string) => pids[path.split('/')[2]];
+    return {
+      readdir: async () => ['self', ...Object.keys(pids)],
+      stat: async (path: string) => ({ uid: pid(path)?.statUid ?? pid(path)?.uid ?? uid }),
+      readFile: async (path: string) => {
+        const entry = pid(path);
+        if (!entry) throw failure('ENOENT');
+        if (entry.status instanceof Error) throw entry.status;
+        const id = entry.uid ?? uid;
+        return entry.status ?? `Name:\tworker\nUid:\t${id}\t${id}\t${id}\t${id}\n`;
+      },
+      readlink: async (path: string) => {
+        const cwd = pid(path)?.cwd;
+        if (cwd instanceof Error || cwd === undefined) throw cwd ?? failure('ENOENT');
+        return cwd;
+      },
+    };
+  };
 
   test('finds an own process whose working folder is inside', async () => {
     expect(await procFolderInUse('/w', proc({ '1': { cwd: '/w/sub' } }))).toBe(true);
@@ -218,9 +229,27 @@ describe('procFolderInUse', () => {
       expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(true);
   });
 
+  test('keeps the folder for a non-dumpable own process that /proc shows as root', async () => {
+    expect(await procFolderInUse('/w', proc({ '1': { statUid: 0, cwd: failure('EACCES') } }))).toBe(
+      true
+    );
+  });
+
+  test('keeps the folder when a process owner cannot be read', async () => {
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: failure('EACCES'), cwd: '/wx' } }))
+    ).toBe(true);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: 'Name:\tworker\n', cwd: '/wx' } }))
+    ).toBe(true);
+  });
+
   test('ignores only a process that is gone', async () => {
     for (const code of ['ENOENT', 'ESRCH'])
       expect(await procFolderInUse('/w', proc({ '1': { cwd: failure(code) } }))).toBe(false);
+    expect(
+      await procFolderInUse('/w', proc({ '1': { status: failure('ESRCH'), cwd: '/w' } }))
+    ).toBe(false);
   });
 
   test('skips processes of other users', async () => {
