@@ -29,6 +29,8 @@ import { NeoAskTodos } from './NeoAskTodos.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
+import { ModelHoldLine } from '../components/ModelHoldLine.tsx';
+import { shownModelHold } from '@hyperneo/shared/types/model-hold';
 import { NeoConversation } from './NeoConversation.tsx';
 import { NeoDrawer } from './NeoDrawer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
@@ -195,6 +197,7 @@ export function NeoLive() {
   const lastScrollTop = useRef(0);
   const scrollProgress = useRef(1);
   const view = neo.snapshot;
+  const modelHold = shownModelHold(view?.working ?? []);
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
@@ -1171,6 +1174,9 @@ export function NeoLive() {
               onClick={scrollToBottom}
               bottomClass="bottom-full mb-2 pointer-events-auto"
             />
+          )}
+          {ready && modelHold && (
+            <ModelHoldLine hold={modelHold} class="pointer-events-auto mb-2 text-center" />
           )}
           {ready && neo.sessionId && (
             <NeoComposer

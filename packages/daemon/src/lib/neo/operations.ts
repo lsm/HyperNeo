@@ -180,6 +180,15 @@ const SnapshotOk = z.object({
         projectId: z.string().nullable(),
         title: z.string(),
         status: z.enum(['queued', 'processing', 'rate_limit_cooldown']),
+        role: z.enum(['neo', 'front']).optional(),
+        modelHold: z
+          .object({
+            provider: z.string(),
+            reason: z.enum(['network', 'login', 'limit', 'overloaded']),
+            since: z.number(),
+            resetAt: z.number().optional(),
+          })
+          .optional(),
       })
     )
     .max(100)

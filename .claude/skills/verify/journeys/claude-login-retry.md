@@ -33,13 +33,23 @@ appear, no second subprocess may start, and no terminal notice may be emitted.
 Before this behavior, one SDK process repeatedly received 401 and the query was
 charged until the third failure latched the episode and cleared the queue.
 
-`--serve` additionally serves the production build on an ephemeral port. In
-headless Playwright import `claude-login-web.mjs` and call
-`verifyClaudeLogin(page, run)`. Without `--historical-result` it checks that the
-login hold does not read as a failed login on /neo and /session at 1280 and 390,
-with no horizontal overflow. The bottom banner still reads "Rate limit reached"
-until the model-hold line lands; the helper asserts the banner, not the wording.
-Inspect all screenshots independently. The helper writes browser.json and
+`--serve` additionally serves the production build on an ephemeral port and
+writes a synthetic pairing code to `<run>/pair.json` (outside `evidence/`). The
+whole browser proof runs with one command:
+
+```sh
+NODE_PATH=<directory containing playwright> \
+  .claude/skills/verify/claude-login-proof.sh "$(mktemp -d)/run"
+```
+
+It runs `fail --serve` and pairs a headless browser through `/pair`. Then
+`verifyClaudeLogin(page, run)` requires the one-line model hold
+"Claude needs you to sign in again · Sign in" above the composer on /neo and
+/session at 1280 and 390, with no "Rate limit reached" banner, no failed-login
+notice and no horizontal overflow. In `fail --serve` the helper then saves a new
+key, the mock starts accepting, and the browser requires both pages to drop the
+line once the held turn answers. Inspect all screenshots, including the
+`*-line.png` crops and `*-after-key-1280.png`. The helper writes browser.json and
 browser-done, allowing daemon/mock/server cleanup.
 
 ## Historical result text regression

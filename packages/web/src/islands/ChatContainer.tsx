@@ -33,6 +33,8 @@ import {
   resolveChatDisplayMode,
 } from '../components/sdk/chat-display-mode.ts';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
+import { ModelHoldLine } from '../components/ModelHoldLine.tsx';
+import { modelHoldOf } from '@hyperneo/shared/types/model-hold';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { TurnStatusLine } from '../components/sdk/TurnStatusLine.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
@@ -448,6 +450,10 @@ export default function ChatContainer({
   };
 
   const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
+  const modelHold =
+    agentState.status === 'rate_limit_cooldown' && !agentState.manualRetry
+      ? modelHoldOf(agentState, session?.config?.provider ?? '')
+      : undefined;
   const isWaitingForInput = shouldBlockForPendingQuestion(agentState, messages as SDKMessage[]);
   const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
@@ -1127,7 +1133,7 @@ export default function ChatContainer({
         </div>
       )}
 
-      {agentState.status === 'rate_limit_cooldown' && session && (
+      {agentState.status === 'rate_limit_cooldown' && agentState.manualRetry && session && (
         <RateLimitCooldownBanner
           sessionId={session.id}
           retryCount={agentState.retryCount}
@@ -1309,6 +1315,7 @@ export default function ChatContainer({
             </ContentContainer>
           )}
 
+          {modelHold && <ModelHoldLine hold={modelHold} class="px-4 py-2" />}
           <div ref={messagesEndRef} />
         </div>
 
