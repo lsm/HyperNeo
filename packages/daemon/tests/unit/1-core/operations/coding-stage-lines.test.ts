@@ -257,3 +257,22 @@ describe('rankCodingTargets with a copying ranker', () => {
     });
   });
 });
+
+describe('rankCodingTargets with a model id two providers share', () => {
+  test('a display name that selects the second provider is dispatched so it starts there, not on the first', async () => {
+    const shared = [
+      catalogModel('m-1', 'x', 'M X'),
+      catalogModel('m-1', 'y', 'M Y'),
+      catalogModel('n-1', 'z'),
+    ];
+    const target = { adapter: 'hyperneo', place, model: 'M Y' };
+    const held = { holds: [{ provider: 'x', model: 'm-1', retryAt: 5_000 }] };
+    const lines = driverCodingLines(shared, held);
+    expect((await codingCandidateLine(lines, target)).line.provider).toBe('y');
+    const result = await rankCodingTargets(lines, 'coding.write', [target], {});
+    expect(result).toEqual({ value: [target], sources: [target], skipped: [] });
+    if ('reason' in result) throw new Error(result.reason);
+    const started = await lines.resolve(result.value[0]);
+    expect(started?.ok && started.value.provider).toBe('y');
+  });
+});

@@ -271,6 +271,41 @@ describe('createModelRoutingPack', () => {
     expect({ reads, most }).toEqual({ reads: 3, most: 3 });
   });
 
+  test('a usage read that finishes after the deadline is still kept, and is read once', async () => {
+    let reads = 0;
+    const slow = {
+      ...provider(true, null),
+      getUsage: async () => {
+        reads += 1;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return {
+          supported: true,
+          provider: 'x',
+          windows: [{ label: 'week', used: 100, limit: 100, resetAt: null }],
+        };
+      },
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => slow,
+      now: () => NOW,
+      readDeadlineMs: 10,
+    });
+    const [first, overlapping] = await Promise.all([
+      pack.rankLines!('coding.write', [A], {}),
+      pack.rankLines!('coding.write', [A], {}),
+    ]);
+    expect([first.ranked, overlapping.ranked]).toEqual([
+      [{ line: A, reason: 'usage unknown' }],
+      [{ line: A, reason: 'usage unknown' }],
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    expect(reads).toBe(1);
+  });
+
   test('ignores holds left on archived and ended sessions', async () => {
     const cooling = JSON.stringify({
       status: 'rate_limit_cooldown',
