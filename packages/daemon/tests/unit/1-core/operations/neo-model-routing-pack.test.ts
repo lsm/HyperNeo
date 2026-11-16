@@ -225,4 +225,32 @@ describe('createModelRoutingPack', () => {
       { line: C, reason: 'usage unknown' },
     ]);
   });
+
+  test('ignores holds left on archived and ended sessions', async () => {
+    const cooling = JSON.stringify({
+      status: 'rate_limit_cooldown',
+      retryCount: 0,
+      maxRetries: 0,
+      retryAt: NOW + 60_000,
+      reason: 'limit',
+    });
+    const insert = db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, processing_state, archived_at)
+       VALUES (?, 't', '/w', '2026-11-16', '2026-11-16', ?, ?, '{}', ?, ?)`
+    );
+    const config = JSON.stringify({ provider: 'anthropic', model: 'opus' });
+    insert.run('archived', 'archived', config, cooling, '2026-11-16');
+    insert.run('ended', 'ended', config, cooling, null);
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => provider(true, 10),
+      now: () => NOW,
+    });
+
+    expect(await pack.rankLines!('coding.write', [A], {})).toEqual({
+      ranked: [{ line: A }],
+      skipped: [],
+      exhausted: false,
+    });
+  });
 });
