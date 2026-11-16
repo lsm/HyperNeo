@@ -4,11 +4,9 @@ Status: proposal, 2026-11-16. Design only.
 
 ## Why
 
-Neo is woken by every report another session sends it. Reviewers send the most: in seven
-hours on one install, review sessions sent Neo 476 `done` reports. About 278 were verdicts.
-About 90 only said a review had started ("Review started at exact checkout …. Static
-review only … auto depth resolves to deep …"). The rest were resumes, rechecks and
-clarifications.
+Neo is woken by every report another session sends it, and reviewers send the most. Most
+of their reports are verdicts. A large share only say that a review has started and name
+its review source and depth. The rest are resumes, rechecks and clarifications.
 
 Verdicts must reach Neo at once. An approval is what Neo records with `neo.coding.result`
 before the cross-model gate lets the daemon merge; a request for changes is what sends the
@@ -23,7 +21,7 @@ The start reports are the waste, and one prompt line asks for them. The review p
 > them in your review or gate artifact.
 
 Review sessions working for Neo follow the first half literally: their start reports name
-exactly the source and depth ("Source: internal cross-model review; standard depth"). The worker rules already say to message Neo only at
+exactly that source and depth. The worker rules already say to message Neo only at
 milestones, with no progress pings (`packages/prompts/src/neo/packs/coding/worker-rules.md`).
 
 ## The design
