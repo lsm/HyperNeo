@@ -61,6 +61,7 @@ function setup(
     goals,
     schedules,
     sessionExists: (sessionId) => sessions.includes(sessionId),
+    isChildSession: (sessionId) => sessionId.startsWith('goal-session-'),
     startSession: async (parentSessionId, title) => {
       started.push({ parentSessionId, title });
       sessions.push(`goal-session-${started.length}`);
@@ -800,6 +801,35 @@ describe('a goal in its own session', () => {
         (await call('goal.session.update', { goalId, status: 'completed' }, own)).goal.status
       ).toBe('completed');
       expect(scheduler.repo.getBySource('goal', goalId)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a child session cannot start another goal session under itself', async () => {
+    const { db, call, scheduler, started } = setup();
+    try {
+      await call('goal.session.create', { title: 'First', doneTest: 'Done', ownSession: true });
+      const child: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      };
+      const goalsBefore = db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get();
+      const schedulesBefore = scheduler.repo.list().length;
+      expect(
+        await call(
+          'goal.session.create',
+          { title: 'Nested', doneTest: 'Done', ownSession: true },
+          child
+        )
+      ).toEqual({
+        accepted: false,
+        reason: 'parent_is_child: a goal session must start under a top-level session.',
+      });
+      expect(started).toHaveLength(1);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual(goalsBefore);
+      expect(scheduler.repo.list()).toHaveLength(schedulesBefore);
     } finally {
       db.close();
     }
