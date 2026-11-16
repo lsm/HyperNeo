@@ -20,6 +20,7 @@ import {
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
 import {
+  codingMergeFactReadFailed,
   readCodingDaemonMergeFacts,
   readCodingLocalMergeFacts,
   readCodingRequiredChecks,
@@ -86,7 +87,13 @@ export function createCodingDaemonMergeSweep(
     at: number,
     revision: number
   ) => {
-    if (facts.ok && facts.mergeable !== 'UNKNOWN' && key && revision === holdRevision)
+    if (
+      facts.ok &&
+      facts.mergeable !== 'UNKNOWN' &&
+      facts.files !== null &&
+      key &&
+      revision === holdRevision
+    )
       lastRead.set(url, { key, at, facts });
     else lastRead.delete(url);
   };
@@ -315,7 +322,11 @@ export function createCodingDaemonMergeSweep(
             const cached = unchanged(url);
             if (cached) {
               observedAt.set(url, cached.at);
-              return [url, await readCodingLocalMergeFacts(database(), url, cached.facts)] as const;
+              const local = await readCodingLocalMergeFacts(database(), url, cached.facts).catch(
+                () => codingMergeFactReadFailed
+              );
+              if (!local.ok) log.warn('Daemon merge held', { url, reason: local.reason });
+              return [url, local] as const;
             }
           }
           const fresh = await read(url);

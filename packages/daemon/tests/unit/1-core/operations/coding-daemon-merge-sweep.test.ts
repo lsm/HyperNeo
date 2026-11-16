@@ -547,6 +547,7 @@ describe('daemon merge sweep behavior', () => {
         ['gh', 'pr', 'merge', second, '--squash', '--match-head-commit', head],
       ]);
       failFirst = false;
+      state = 'OPEN';
       db.prepare(
         "UPDATE pack_coding_pr_ledger SET updated_at = '2026-11-16T12:00:00Z' WHERE number = 1"
       ).run();

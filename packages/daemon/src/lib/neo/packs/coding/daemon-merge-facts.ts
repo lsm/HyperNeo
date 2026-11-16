@@ -277,9 +277,11 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   spawn: SpawnFn
 ) => Promise<ReturnType<typeof project>>;
 
+export const codingMergeFactReadFailed = {
+  ok: false as const,
+  reason:
+    'merge_fact_read_failed: Merge facts could not be read. Leave the PR unchanged until a fresh read succeeds.',
+};
+
 export const readCodingDaemonMergeFacts = (db: Database, url: string, spawn = spawnProcess) =>
-  read(db, url, spawn).catch(() => ({
-    ok: false as const,
-    reason:
-      'merge_fact_read_failed: Merge facts could not be read. Leave the PR unchanged until a fresh read succeeds.',
-  }));
+  read(db, url, spawn).catch(() => codingMergeFactReadFailed);
