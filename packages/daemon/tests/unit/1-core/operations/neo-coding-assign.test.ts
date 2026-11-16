@@ -48,6 +48,7 @@ function fixture(
   process.env.HYPERNEO_DATA_DIR = join(root, 'data');
   const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
   mkdirSync(join(view, '.git'), { recursive: true });
+  writeFileSync(join(view, '.git', 'index'), '');
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -581,13 +582,15 @@ describe('review place', () => {
   });
   test('without a read view assignment refuses and starts nobody', async () => {
     const f = fixture();
-    rmSync(f.view, { recursive: true, force: true });
-    for (const stage of ['review', 'verify'] as const)
-      expect(await f.assign({ stage, candidates: [homeFolder] })).toMatchObject({
-        ok: false,
-        reason: expect.stringContaining('read checkout is not ready'),
-      });
+    rmSync(join(f.view, '.git', 'index'));
+    const notReady = { ok: false, reason: expect.stringContaining('read checkout is not ready') };
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
     expect(f.starts).toHaveLength(0);
+    writeFileSync(join(f.view, '.git', 'index'), '');
+    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    rmSync(f.view, { recursive: true, force: true });
+    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(notReady);
+    expect(f.starts).toHaveLength(1);
   });
   test('a candidate on another daemon is never routed to', async () => {
     const f = fixture();
@@ -596,7 +599,12 @@ describe('review place', () => {
       reason: expect.stringContaining('on this daemon'),
     });
     expect(f.starts).toHaveLength(0);
-    expect((await f.assign({ candidates: [remote, reviewer] })).ok).toBe(true);
+    expect(await f.assign({ candidates: [remote, reviewer] })).toMatchObject({
+      ok: true,
+      assignment: {
+        fallback: expect.arrayContaining([expect.stringContaining('another daemon were skipped')]),
+      },
+    });
     expect(f.starts[0].place?.daemon).toBeUndefined();
   });
 });
