@@ -7,7 +7,7 @@ const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked', 'fa
 
 export function neoHumanQueue(input: {
   questions: readonly Pick<NeoQuestion, 'id' | 'askId' | 'state' | 'text' | 'todos' | 'heldAt'>[];
-  todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state'>[];
+  todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state' | 'named'>[];
   owners: ReadonlyMap<string, NeoStepOwner>;
 }): NeoHumanQueue {
   const cards = input.questions.filter((card) => card.state === 'open');
@@ -22,7 +22,12 @@ export function neoHumanQueue(input: {
         .map(({ id, title }) => ({ id, title })),
     })),
     ...input.todos
-      .filter((todo) => UNFINISHED.includes(todo.state) && !neoTodoCovered(todo, cards))
+      .filter(
+        (todo) =>
+          UNFINISHED.includes(todo.state) &&
+          typeof todo.named?.requestFrom !== 'string' &&
+          !neoTodoCovered(todo, cards)
+      )
       .map((todo) => ({
         state: 'progress' as const,
         askId: todo.askId,

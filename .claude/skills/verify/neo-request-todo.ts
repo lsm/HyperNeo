@@ -121,6 +121,19 @@ try {
     'neo.snapshot keeps the request marker on the request todo only'
   );
   (evidence.checks as unknown[]).push({ name: 'snapshot marker', named: snapshotNamed });
+  const humanSnapshot = await invokeOperation(registry, 'neo.snapshot', {}, {
+    source: 'rpc',
+    principal: 'local',
+  });
+  const humanQueue = (
+    humanSnapshot as { value: { humanQueue: { items: { todoId?: string }[] } } }
+  ).value.humanQueue;
+  assert.deepEqual(
+    humanQueue.items.map((item) => item.todoId),
+    ['worked'],
+    "the human's queue lists the worked todo and never the request todo"
+  );
+  (evidence.checks as unknown[]).push({ name: 'human queue', humanQueue });
   const wakes = () =>
     (
       db
@@ -263,7 +276,7 @@ try {
   assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request`
   );
 } catch (error) {
   evidence.error = String(error);
