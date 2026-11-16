@@ -84,13 +84,22 @@ describe('Neo daemon notes', () => {
         )
       );
 
+  const attention = () =>
+    (service as unknown as { attention: Parameters<typeof wakeStalledAsks>[1] }).attention;
+  const askNotes = (queue: 'mailbox' | 'neo_notes') =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload(queue, { 'to.sessionId': rootId })
+      .map((job) => job.payload.message as { inputKind?: string; message: { content: string } })
+      .filter((message) => message.message.content.startsWith('Ask: '));
+
   const queued = (messageId: string) =>
     db
       .getJobQueueRepo()
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
 
-  test('a stalled-ask nudge is persisted as a synthetic input and a finished todo adds no note', async () => {
+  test('a stalled-ask note waits for the digest as a system input and a finished todo adds no note', async () => {
     const now = Date.now();
     const ask = service.todos.openAsk({
       id: 'stalled-synthetic',
@@ -101,7 +110,7 @@ describe('Neo daemon notes', () => {
       request: 'Complete the work',
       createdAt: now - 3 * 3_600_000,
     });
-    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+    await wakeStalledAsks(service.todos, attention(), now);
     vi.spyOn(service, 'installedPacks').mockReturnValue([
       {
         id: 'synthetic-proof',
@@ -129,15 +138,16 @@ describe('Neo daemon notes', () => {
       throw new Error(message, { cause: error });
     });
     const rows = db.getSDKMessages(rootId).messages;
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          uuid: expect.stringMatching(/^neo-stalled-ask:/),
-          inputKind: 'system',
-          isSynthetic: true,
-        }),
-      ])
-    );
+    expect(askNotes('mailbox')).toEqual([]);
+    expect(askNotes('neo_notes')).toEqual([
+      expect.objectContaining({
+        inputKind: 'system',
+        message: {
+          content:
+            'Ask: Stalled work (stalled-synthetic)\nThis ask has nothing in progress. Add the next todo, or settle it.',
+        },
+      }),
+    ]);
     expect(service.todos.getTodo('synthetic-done')?.state).toBe('done');
     expect(JSON.stringify([rows, db.getJobQueueRepo().listJobs({})])).not.toContain('is done');
   });
@@ -177,19 +187,16 @@ describe('Neo daemon notes', () => {
       },
       now
     );
-    const told = () =>
-      db
-        .getSDKMessages(rootId)
-        .messages.map((row) => String((row as { message: { content: unknown } }).message.content));
-    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+    const told = () => askNotes('mailbox').map((message) => message.message.content);
+    await wakeStalledAsks(service.todos, attention(), now);
     expect(told()).toEqual([]);
     await service.todoRunner.refresh((message, error) => {
       throw new Error(message, { cause: error });
     });
     expect(service.todos.getTodo('synthetic-last')?.state).toBe('done');
     const finished = Date.now();
-    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished);
-    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished + 60_000);
+    await wakeStalledAsks(service.todos, attention(), finished);
+    await wakeStalledAsks(service.todos, attention(), finished + 60_000);
     expect(told()).toEqual([
       'Ask: Finished work (finished-synthetic)\nAll todos are finished: write the outcome with neo.ask.settle, or add the next todo.',
     ]);
