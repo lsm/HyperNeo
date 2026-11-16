@@ -32,7 +32,7 @@ const proxy = createServer(async (req, res) => {
   if (req.url?.includes('/messages') && !req.url.includes('count_tokens') && body.includes('CLAUDE_LOGIN_RECOVERED')) {
     evidence.requests = Number(evidence.requests) + 1;
     const processNumber = (evidence.processes as unknown[]).length;
-    const rejected = scenario === 'fail' ||
+    const rejected = (scenario === 'fail' && !evidence.keyAccepted) ||
       processNumber === 1 ||
       processNumber > Number(evidence.acceptedProcess ?? Number.POSITIVE_INFINITY);
     if (rejected) {
@@ -150,9 +150,24 @@ try {
     evidence.port = web.port;
     assert.notEqual(web.port, 8399);
   }
+  if (process.argv.includes('--serve')) {
+    const paired = await hub.request<{ ok: boolean; code: string }>('operation.invoke', { name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic login browser' } });
+    assert(paired.ok);
+    writeFileSync(join(run, 'pair.json'), JSON.stringify({ pairCode: paired.code, pairBase: `http://127.0.0.1:${app.server.port}` }));
+  }
+  if (process.argv.includes('--serve') && failCase) writeFileSync(join(run, 'evidence/accepts-key'), 'yes');
   evidence.pass = true;
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   console.log(`PASS ${scenario}: ${run}/evidence/observed.json`);
+  if (process.argv.includes('--serve') && failCase) {
+    await until(() => existsSync(join(run, 'browser-held')), 'browser did not see the hold in 5 minutes', 300000);
+    evidence.keyAccepted = true;
+    const anthropic = (await hub.request<{ providers: Array<{ id: string; providerId: string }> }>('providers.list', {})).providers.find(row => row.providerId === providerId);
+    assert(anthropic, 'the anthropic provider row is missing');
+    await hub.request('providers.update', { id: anthropic.id, params: {}, credentials: { apiKey: 'sk-devproxy-test-key' } });
+    await until(async () => (await sessionState()).status !== 'rate_limit_cooldown', 'the new key did not wake the hold');
+    writeFileSync(join(run, 'key-accepted'), 'done');
+  }
   if (process.argv.includes('--serve')) await until(() => existsSync(join(run, 'browser-done')), 'browser proof not finished in 5 minutes', 300000);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
