@@ -115,6 +115,7 @@ describe('neoHumanQueue', () => {
       worker: null,
       packWaiting: false,
       start: null,
+      now: 4,
     });
     const queue = neoHumanQueue({
       questions: [card('q1', ['t1'], { state: 'answered' })],

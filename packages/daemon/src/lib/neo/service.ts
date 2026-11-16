@@ -52,6 +52,7 @@ import {
   closedNeoRequest,
   NEO_REQUEST_REPLY,
   type NeoRequestReply,
+  neoRequestAskId,
   recordNeoRequestTodo,
 } from './request-todo.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
@@ -139,6 +140,8 @@ import { NeoSessionWatcher } from './session-watcher.ts';
 import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
+import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { resolveSpeechPart } from '../voice/voice-parts.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
   'model-switch',
@@ -156,7 +159,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
-  private readonly attention: ReturnType<typeof createNeoAttention>;
+  readonly attention: ReturnType<typeof createNeoAttention>;
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
@@ -317,7 +320,12 @@ export class NeoService {
         const conversation = this.repo.readConversationId();
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
       },
-      () => this.db.getGlobalSettings().neo?.front?.enabled === true
+      () => this.db.getGlobalSettings().neo?.front?.enabled === true,
+      () =>
+        resolveSpeechPart(
+          this.db.getGlobalSettings().voice,
+          ProviderCredentialManager.create(this.db.getDatabase())
+        )
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
@@ -357,7 +365,6 @@ export class NeoService {
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      readSource: (ref) => this.readQuestionSource(ref),
     });
     this.sweepAttention = createNeoAttentionSweep({
       sessions: this.todoSessions,
@@ -870,7 +877,7 @@ export class NeoService {
         const files = input.handoff?.files ?? [];
         const jobs = this.db.getJobQueueRepo();
         let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
-        const wake = (incident: string, note: string) => {
+        const wake = (incident: string, note: string, ask?: string) => {
           if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
           type Prior = { mailboxId: string; messageId: string };
           let key = `worker-question:${incident}`;
@@ -906,7 +913,7 @@ export class NeoService {
                         media.length
                           ? [{ type: 'text', text: note || 'Worker report' }, ...media]
                           : note,
-                        { sessionId: sender, name: null }
+                        { sessionId: sender, name: null, ask }
                       ) as MailboxMessageContent,
                     },
                   },
@@ -944,7 +951,8 @@ export class NeoService {
               incident,
               input.handoff && typeof content !== 'string'
                 ? (content.find((b) => b.type === 'text')?.text ?? text)
-                : text
+                : text,
+              request ? neoRequestAskId(incident) : undefined
             );
             const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
             if (request && sent?.kind === 'accepted')
@@ -1264,7 +1272,7 @@ export class NeoService {
       'message.send',
       {
         sessionId: reply.to,
-        idempotencyKey: `neo-request-reply:${reply.todoId}`,
+        idempotencyKey: reply.key ?? `neo-request-reply:${reply.todoId}`,
         message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
       },
       { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
@@ -1281,13 +1289,7 @@ export class NeoService {
     if (/^(rate_limited|duplicate):/.test(result.reason ?? '') && deferred < 10) {
       this.db.getJobQueueRepo().enqueue({
         queue: NEO_REQUEST_REPLY,
-        payload: {
-          todoId: reply.todoId,
-          to: reply.to,
-          from: reply.from,
-          text: reply.text,
-          deferred: deferred + 1,
-        } satisfies NeoRequestReply,
+        payload: { ...reply, deferred: deferred + 1 } satisfies NeoRequestReply,
         runAt: Date.now() + 10 * 60_000,
         maxRetries: job.maxRetries,
       });
@@ -1437,10 +1439,14 @@ export class NeoService {
 
   async humanQueue() {
     const facts = await this.todoSessions.read('neoStepFacts');
-    const steps = await readNeoSteps(facts, {
-      packs: () => this.installedPacks(),
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-    }).catch((error) => {
+    const steps = await readNeoSteps(
+      facts,
+      {
+        packs: () => this.installedPacks(),
+        limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      },
+      Date.now()
+    ).catch((error) => {
       this.log.warn('Human queue pack waits failed', error);
       return null;
     });

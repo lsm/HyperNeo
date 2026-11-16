@@ -1,5 +1,5 @@
 import type { SpaceGoal, SpaceTask } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import {
   defineOperation,
@@ -65,11 +65,10 @@ export function applyGoalTrigger(
 }
 
 function stateWritePipeline<Result>(
-  name: string,
-  apply: (goal: SpaceGoal, caller: OperationCaller, deps: GoalStateDependencies) => Result,
-  deps: GoalStateDependencies
+  pipeline: ReturnType<SuperPipeFactory>,
+  apply: (goal: SpaceGoal, caller: OperationCaller, deps: GoalStateDependencies) => Result
 ) {
-  return (superpipe({ deps })(name) as PipelineAPI)
+  return (pipeline as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalStateWrite, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(apply, ['outcome', 'caller', 'deps'], 'outcome')
@@ -80,7 +79,7 @@ function stateWritePipeline<Result>(
 }
 
 export function createTriggerGoalTaskOperation(deps: GoalStateDependencies) {
-  const trigger = stateWritePipeline('goal-trigger-task', applyGoalTrigger, deps);
+  const trigger = stateWritePipeline(superpipe({ deps })('goal-trigger-task'), applyGoalTrigger);
   return defineOperation({
     name: 'goal.task.trigger',
     description:

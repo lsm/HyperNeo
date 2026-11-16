@@ -1,6 +1,6 @@
 import { errorMessage as failureMessage } from '../utils/error-message.ts';
 import type { Session, TaskSchedule } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import {
   defineOperation,
@@ -317,11 +317,10 @@ const SCOPE_NOTE =
   'Human (RPC) callers pass spaceId; agent (MCP) callers inherit the Space of their own session and may not override it. Neo (MCP) callers name any Space.';
 
 function schedulePipeline<Input, Result>(
-  label: string,
-  injected: Record<string, unknown>,
+  named: ReturnType<SuperPipeFactory>,
   stages: (pipeline: PipelineAPI) => PipelineAPI
 ): (input: Input, caller: OperationCaller) => Promise<Result> {
-  const scoped = (superpipe(injected)(label) as PipelineAPI)
+  const scoped = (named as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(resolveScheduleScope, ['input', 'caller', 'deps', 'admission'], 'result:outcome');
   return stages(scoped).endAsync('outcome') as (
@@ -337,24 +336,23 @@ export function createScheduleOperations(
   const read = { deps, admission: READ_ADMISSION };
 
   const create = schedulePipeline<CreateScheduleInput, ScheduleResult>(
-    'schedule-create',
-    write,
+    superpipe(write)('schedule-create'),
     (pipeline) =>
       pipeline.pipe(createScheduleRecord, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   );
   const list = schedulePipeline<ListSchedulesInput, ScheduleListResult>(
-    'schedule-list',
-    read,
+    superpipe(read)('schedule-list'),
     (pipeline) => pipeline.pipe(listScheduleRecords, ['outcome', 'input', 'deps'], 'outcome')
   );
-  const get = schedulePipeline<ScheduleRefInput, ScheduleResult>('schedule-get', read, (pipeline) =>
-    pipeline
-      .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
-      .pipe(readScheduleRecord, 'outcome', 'outcome')
+  const get = schedulePipeline<ScheduleRefInput, ScheduleResult>(
+    superpipe(read)('schedule-get'),
+    (pipeline) =>
+      pipeline
+        .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
+        .pipe(readScheduleRecord, 'outcome', 'outcome')
   );
   const update = schedulePipeline<UpdateScheduleInput, ScheduleResult>(
-    'schedule-update',
-    { ...write, operationName: 'schedule.update' },
+    superpipe({ ...write, operationName: 'schedule.update' })('schedule-update'),
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
@@ -366,8 +364,7 @@ export function createScheduleOperations(
         )
   );
   const remove = schedulePipeline<ScheduleRefInput, ScheduleDeleteResult>(
-    'schedule-delete',
-    write,
+    superpipe(write)('schedule-delete'),
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')

@@ -5820,7 +5820,10 @@
                   "type": "string"
                 },
                 "provider": {
-                  "const": "google",
+                  "enum": [
+                    "google",
+                    "microsoft"
+                  ],
                   "type": "string"
                 },
                 "scopes": {
@@ -35239,7 +35242,7 @@
                     "type": "array"
                   },
                   "askId": {
-                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
                     "minLength": 1,
                     "type": "string"
                   },
@@ -35482,7 +35485,7 @@
                     "type": "array"
                   },
                   "askId": {
-                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
                     "minLength": 1,
                     "type": "string"
                   },
@@ -40789,7 +40792,7 @@
             "type": "array"
           },
           "askId": {
-            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
             "minLength": 1,
             "type": "string"
           },
@@ -42849,7 +42852,7 @@
                 "type": "null"
               }
             ],
-            "description": "Why it must wait; null releases it."
+            "description": "The card’s whole text: your question to the human; null releases it."
           },
           "todoId": {
             "minLength": 1,
@@ -43588,7 +43591,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "dependents": {
-            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.",
+            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; they then wait, and deciding is your next step.",
             "enum": [
               "continue",
               "remove"
@@ -46276,6 +46279,104 @@
             "required": [
               "ok",
               "schedule"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "limit": {
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scheduleId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId"
+        ],
+        "type": "object"
+      },
+      "name": "schedule.session.runs",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "runs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dueAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "firedAt": {
+                      "type": "number"
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "skipReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dueAt",
+                    "firedAt",
+                    "outcome",
+                    "skipReason",
+                    "messageId"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ok",
+              "runs"
             ],
             "type": "object"
           }
@@ -54471,6 +54572,78 @@
               "ok",
               "reason",
               "detail"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "work.cleanup.sweep",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kept": {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "removed": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "directory": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "directory",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "removed",
+              "kept"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "const": "human_or_neo_only",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
             ],
             "type": "object"
           }

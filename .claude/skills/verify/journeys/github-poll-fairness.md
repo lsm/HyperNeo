@@ -87,9 +87,10 @@ until its todo finishes, after which normal cleanup removes it.
 
 Finally the fixture binds the synthetic owner as Neo and returns a synthetic
 rate-limit response. Four RPC cycles must persist a `polling:<owner>/<repo>`
-health incident for each remaining watch and accept each concern into Neo's
-mailbox. Inspect `staleHealth` and `mailbox` in `evidence/polling.json`. This
-reuses coding health notice delivery but keeps polling incidents separate from
+health incident for each remaining watch, and each reaches Neo as a
+`coding.github_health` digest in the `neo_notes` queue. Inspect `staleHealth` and
+`mailbox` (the digest jobs) in `evidence/polling.json`. This reuses coding health
+delivery through the attention entry but keeps polling incidents separate from
 ledger coverage incidents. The threshold is three missed enabled cycles,
 including cycles deferred by rate limits; disabled scopes do not count.
 

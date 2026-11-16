@@ -642,7 +642,7 @@ const CREATE_FROM_TEMPLATE_DESCRIPTION = `Create a long-horizon agent in a Space
 
 export function createCreateAgentTemplateOperation(deps: AgentTemplateOperationDependencies) {
   const access = 'mutate' as const;
-  const create = (superpipe({ deps, access })('agent-template-create') as PipelineAPI)
+  const create = (superpipe({ deps, access })('agent.template.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(runCreateAgentTemplate, ['outcome', 'input', 'caller', 'deps'], 'outcome')
@@ -665,7 +665,7 @@ export function createCreateAgentTemplateOperation(deps: AgentTemplateOperationD
 
 export function createUpdateAgentTemplateOperation(deps: AgentTemplateOperationDependencies) {
   const access = 'mutate' as const;
-  const update = (superpipe({ deps, access })('agent-template-update') as PipelineAPI)
+  const update = (superpipe({ deps, access })('agent.template.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(runUpdateAgentTemplate, ['outcome', 'input', 'caller', 'deps'], 'outcome')
@@ -688,7 +688,7 @@ export function createUpdateAgentTemplateOperation(deps: AgentTemplateOperationD
 
 export function createDeleteAgentTemplateOperation(deps: AgentTemplateOperationDependencies) {
   const access = 'mutate' as const;
-  const remove = (superpipe({ deps, access })('agent-template-delete') as PipelineAPI)
+  const remove = (superpipe({ deps, access })('agent.template.delete') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(runDeleteAgentTemplate, ['outcome', 'input', 'caller', 'deps'], 'outcome')
@@ -708,7 +708,7 @@ export function createDeleteAgentTemplateOperation(deps: AgentTemplateOperationD
 
 export function createListAgentTemplatesOperation(deps: AgentTemplateOperationDependencies) {
   const access = 'read' as const;
-  const list = (superpipe({ deps, access })('agent-template-list') as PipelineAPI)
+  const list = (superpipe({ deps, access })('agent.template.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(runListAgentTemplates, ['outcome', 'input', 'caller', 'deps'], 'outcome')
@@ -731,7 +731,7 @@ export function createListAgentTemplatesOperation(deps: AgentTemplateOperationDe
 
 export function createCreateAgentFromTemplateOperation(deps: AgentTemplateOperationDependencies) {
   const access = 'mutate' as const;
-  const create = (superpipe({ deps, access })('agent-create-from-template') as PipelineAPI)
+  const create = (superpipe({ deps, access })('agent.template.instantiate') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(runCreateAgentFromTemplate, ['outcome', 'input', 'caller', 'deps'], 'outcome')

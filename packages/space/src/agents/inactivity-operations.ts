@@ -1,4 +1,4 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type {
   SpaceAgentInactivityClaimRepository,
@@ -126,11 +126,10 @@ async function runScanNow(scope: Scope, _input: unknown, agents: InactivityDepen
 const REJECTIONS = z.enum(['caller_denied', 'agent_unknown', 'session_inactive']);
 
 function readPipeline<Result>(
-  name: string,
-  agents: InactivityDependencies,
+  pipeline: ReturnType<SuperPipeFactory>,
   apply: (scope: Scope, input: never, agents: InactivityDependencies) => Result | Promise<Result>
 ) {
-  return (superpipe({ agents })(name) as PipelineAPI)
+  return (pipeline as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitInactivityCaller, ['input', 'caller', 'agents'], 'result:outcome')
     .pipe(apply, ['outcome', 'input', 'agents'], 'outcome')
@@ -141,11 +140,10 @@ function readPipeline<Result>(
 }
 
 function writePipeline<Result>(
-  name: string,
-  agents: InactivityDependencies,
+  pipeline: ReturnType<SuperPipeFactory>,
   apply: (scope: Scope, input: never, agents: InactivityDependencies) => Result | Promise<Result>
 ) {
-  return (superpipe({ agents })(name) as PipelineAPI)
+  return (pipeline as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitInactivityCaller, ['input', 'caller', 'agents'], 'result:outcome')
     .pipe(admitInactivityWriter, ['outcome', 'caller', 'agents'], 'result:outcome')
@@ -174,7 +172,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         }),
         REJECTIONS,
       ]),
-      execute: readPipeline('inactivity-config-get', agents, readConfig),
+      execute: readPipeline(superpipe({ agents })('inactivity-config-get'), readConfig),
     }),
     defineOperation({
       name: 'inactivity.config.set',
@@ -182,7 +180,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       description: `Adjust an agent inactivity watchdog: enable, pause, or resume it, and set the idle threshold (ms before a nag) or nag prompt; an empty prompt clears it. Omitted fields keep their current value. Enabling clears the degraded flag and restores the default threshold when none is set; pausing keeps the threshold and prompt but stops new nags until resumed. Any change bumps the config revision so a pending nag revalidates against the new settings. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: SetInput,
       resultSchema: z.union([InactivityConfigSchema, REJECTIONS]),
-      execute: writePipeline('inactivity-config-set', agents, applyConfig),
+      execute: writePipeline(superpipe({ agents })('inactivity-config-set'), applyConfig),
     }),
     defineOperation({
       name: 'inactivity.scan.run',
@@ -193,7 +191,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         z.object({ started: z.literal(true), scope: z.object({ spaceId: z.string() }) }),
         REJECTIONS,
       ]),
-      execute: writePipeline('inactivity-scan-run', agents, runScanNow),
+      execute: writePipeline(superpipe({ agents })('inactivity-scan-run'), runScanNow),
     }),
   ];
 }

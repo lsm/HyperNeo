@@ -197,6 +197,23 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
       expect(last?.type).toBe('result');
     });
 
+    it('keeps a completed turn terminal when session_writes_lost follows its result', () => {
+      repository.saveSDKMessage('session-1', result());
+      repository.saveSDKMessage('session-1', {
+        type: 'system',
+        subtype: 'session_writes_lost',
+        error_code: 'ENOSPC',
+        lost: ['transcript'],
+        uuid: crypto.randomUUID(),
+      } as unknown as SDKMessage);
+
+      const last = repository.getLastSDKMessage('session-1');
+      expect(last?.type).toBe('result');
+      expect(classifyLastMessageForIdleAgent(last)).toEqual(
+        expect.objectContaining({ terminal: true })
+      );
+    });
+
     it('keeps every progress subtype visible to idle detection across a mixed history', () => {
       for (const subtype of PROGRESS_SUBTYPES) {
         db.exec('DELETE FROM sdk_messages');

@@ -48,8 +48,51 @@ function toSchedule(row: Row): SessionSchedule {
   };
 }
 
+const skipReason = (outcome: string) => (outcome.startsWith('skipped_') ? outcome.slice(8) : null);
+
+export interface SessionScheduleRun {
+  dueAt: number | null;
+  firedAt: number;
+  outcome: string;
+  skipReason: string | null;
+  messageId: string | null;
+}
+
 export class SessionScheduleRepository {
   constructor(private readonly db: BunDatabase) {}
+
+  recordRun(
+    schedule: SessionSchedule,
+    outcome: string,
+    messageId: string | null,
+    firedAt: number
+  ): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO session_schedule_runs
+      (schedule_id, due_at, fired_at, outcome, message_id)
+      SELECT id, ?, ?, ?, ? FROM session_schedules WHERE id = ?`)
+      .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
+  }
+
+  listRuns(scheduleId: string, limit: number): SessionScheduleRun[] {
+    return (
+      this.db
+        .prepare(`SELECT due_at, fired_at, outcome, message_id FROM session_schedule_runs
+        WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`)
+        .all(scheduleId, limit) as {
+        due_at: number | null;
+        fired_at: number;
+        outcome: string;
+        message_id: string | null;
+      }[]
+    ).map((row) => ({
+      dueAt: row.due_at,
+      firedAt: row.fired_at,
+      outcome: row.outcome,
+      skipReason: skipReason(row.outcome),
+      messageId: row.message_id,
+    }));
+  }
 
   recordWake(
     sessionId: string,
@@ -185,7 +228,7 @@ export class SessionScheduleRepository {
       due_count = ?, updated_at = ? WHERE id = ? AND status = 'active' AND pending_job_id = ?`)
         .run(
           outcome,
-          outcome.startsWith('skipped_') ? outcome.slice(8) : null,
+          skipReason(outcome),
           digest,
           messageId,
           outcome === 'fired' || outcome === 'progress' ? 0 : schedule.dueCount,
@@ -233,10 +276,14 @@ export class SessionScheduleRepository {
   }
 
   delete(id: string, expectedJobId: string | null): boolean {
-    return (
-      this.db
-        .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
-        .run(id, expectedJobId).changes > 0
-    );
+    return this.db.transaction(() => {
+      const deleted =
+        this.db
+          .prepare('DELETE FROM session_schedules WHERE id = ? AND pending_job_id IS ?')
+          .run(id, expectedJobId).changes > 0;
+      if (deleted)
+        this.db.prepare('DELETE FROM session_schedule_runs WHERE schedule_id = ?').run(id);
+      return deleted;
+    })();
   }
 }

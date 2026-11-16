@@ -1,4 +1,4 @@
-**A ready human step, a twice-failed start and an ignored blocker each end in one card.**
+**A ready check-only step, a twice-failed start and an ignored blocker open no card; they reach Neo.**
 
 Use the shared metadata-only isolated setup in SKILL.md. No model, provider,
 worker or credential is used; the clock is a fixture.
@@ -8,23 +8,19 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
   .claude/skills/verify/daemon-cards.ts verify
 ```
 
-On a real daemon, driving its Neo refresh and answering on the human door
-(`neo.question.answer`):
+On a real daemon, driving its Neo refresh and attention sweep:
 
-- A check-only todo with nothing unfinished before it gets exactly one Mark done /
-  Remove card at once, even with two refreshes at once and after a restart; one
-  that waits on it gets none. No note goes to Neo. Mark done finishes it, and
-  the todo waiting on it then gets its own card at once.
+- A check-only todo with nothing unfinished before it gets no card and no wake
+  while the daemon polls its check.
+- A daemon card left open from before (a human-step card) still works: the human
+  answers Mark done on the human door (`neo.question.answer`) and, after a
+  restart, the daemon carries it out.
 - A todo added through the agent door whose start the driver refuses is retried
-  twice by the daemon, then waits on one Retry / Mark done / Remove card.
-  A retry from Neo retires that card; the new failures get two fresh automatic
-  retries and one new card. Remove removes it.
+  twice by the daemon, then is blocked by its failure with no card; the sweep
+  wakes Neo once with "it failed: …", and Neo removes it.
 - A worker blocker (seeded as the final-line blocker leaves it, with a stopped
-  worker) that Neo leaves for an hour gets one card with the worker's words as
-  its document, and a reply route to that worker even though its source cannot
-  be read. A Mark done answer saved just before a daemon restart is carried out
-  after it, once: the card records that its action was applied, and its route is
-  settled by the action instead of sent to the worker.
+  worker) that Neo leaves for two hours gets no card; the sweep wakes Neo with
+  "it waits on an answer and no card is open".
 
-Evidence is `result.json` and `proof.log`. This proves the stored cards and the
-daemon's handling of answers, not how the web renders them or how Neo words its turn.
+Evidence is `result.json` and `proof.log`. This proves the stored rows and the
+wakes queued for Neo, not how Neo words its turn.

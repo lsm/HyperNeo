@@ -17,7 +17,6 @@ import {
   pairingRequestWrites,
 } from '../repositories/pairing-request-repository.ts';
 import { neoStallReminderWrite } from '../repositories/neo-stall-reminder-write.ts';
-import { neoDaemonCardWrite } from '../repositories/neo-daemon-card-write.ts';
 import { neoTodoDesktopControlWrite } from '../repositories/neo-todo-desktop-control-write.ts';
 import { historySnapshotReads } from '../repositories/sdk-history-snapshot-read.ts';
 import { toolRecoveryWrites } from '../repositories/tool-continuation-recovery-repository.ts';
@@ -266,9 +265,9 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     neoProjectCleanupWrites,
     reserveNeoHomeProjects,
     neoTodoSessionReads,
+    workCleanupReads,
     neoTodoSessionWrites,
     neoStallReminderWrite,
-    neoDaemonCardWrite,
     neoTodoDesktopControlWrite,
     codingTodoPrReads,
     neoAskInputReads,
@@ -407,3 +406,4 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubWatchPollingWrite,
   ].map((op) => [op.name, op])
 );
+import { workCleanupReads } from '../repositories/work-cleanup-worker.ts';

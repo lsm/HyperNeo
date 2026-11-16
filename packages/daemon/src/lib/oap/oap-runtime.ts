@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { generateUUID, type Session } from '@hyperneo/shared';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OapQueryRuntime } from '../agent/query-runner.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -124,10 +125,9 @@ export function createOapRuntime(
     { subscriberName: 'oap-runtime' }
   );
   return (session) => {
-    const slot =
-      session.config.harness === 'codex'
-        ? (sessions.get(session.id) ?? { deleted: false, session })
-        : undefined;
+    const slot = isOxapHarness(session.config.harness)
+      ? (sessions.get(session.id) ?? { deleted: false, session })
+      : undefined;
     if (slot) {
       slot.session = session;
       sessions.set(session.id, slot);

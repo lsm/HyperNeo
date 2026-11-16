@@ -1,4 +1,5 @@
 import type { NeoWorkerNameSource } from '../../neo/worker-name.ts';
+import type { NeoAttentionEvent } from '../../neo/attention/decide.ts';
 import type { createClaudeInboxDriver } from '../../drivers/claude-inbox-driver.ts';
 import type { createClaudeDesktopModsDriver } from '../../drivers/claude-desktop-mods-driver.ts';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
@@ -22,6 +23,7 @@ export interface SessionSpacePort {
 }
 
 export interface FamilyOperationContext {
+  readonly workCleanupAttention?: (event: NeoAttentionEvent) => Promise<unknown>;
   readonly workerNameSource?: (read: NeoWorkerNameSource) => void;
   readonly workAdapters?: (read: () => readonly WorkAdapter[]) => void;
   readonly driverCleanup?: (() => Promise<void>)[];

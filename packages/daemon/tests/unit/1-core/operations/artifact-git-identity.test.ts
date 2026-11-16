@@ -7,6 +7,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op';
 import { captureGitArtifact } from '../../../../src/lib/artifacts/git-capture';
+import { resolveCaptureSteps } from '../../../../src/lib/artifacts/resolve-operation';
 
 class IdentityGateway extends DbGateway {
   writes = 0;
@@ -52,7 +53,15 @@ describe('Git capture committed identity admission', () => {
   };
   const invoke = (check = current) =>
     Promise.resolve().then(() =>
-      captureGitArtifact(main, root, plan, 'synthetic-request', check, blob, join(root, 'home'))
+      captureGitArtifact(
+        resolveCaptureSteps(blob),
+        main,
+        root,
+        plan,
+        'synthetic-request',
+        check,
+        join(root, 'home')
+      )
     );
   beforeEach(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-git-identity-')));

@@ -539,6 +539,20 @@ describe('SDKMessageHandler', () => {
           },
           'Filtered SDK control_request_progress message',
         ],
+        [
+          'hook heartbeat tool_progress',
+          {
+            type: 'tool_progress',
+            tool_use_id: 'hook-PreToolUse-1',
+            tool_name: 'PreToolUse',
+            parent_tool_use_id: null,
+            elapsed_time_seconds: 30,
+            heartbeat: true,
+            uuid: 'm-6',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK hook_heartbeat message',
+        ],
       ].map(
         ([label, message, logLabel]) => [label, message as unknown as SDKMessage, logLabel] as const
       )

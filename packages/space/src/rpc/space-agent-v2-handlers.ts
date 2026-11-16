@@ -34,8 +34,6 @@ import {
   publishUnifiedAgentUpdated,
 } from '../../../daemon/src/lib/agents/unified-agent-events.ts';
 
-const METHOD_PREFIX = 'spaceAgentV2';
-
 export interface SessionLookup {
   type?: string;
   context?: { spaceId?: string | null; taskId?: string | null } | null;
@@ -119,10 +117,6 @@ async function publishAgentDeleted(
     .publish('spaceAgentV2.deleted', { sessionId: `space:${spaceId}`, spaceId, agentId })
     .catch(() => {});
   await publishUnifiedAgentDeleted(deps.internalEventBus, spaceId, agentId);
-}
-
-function method(name: string): string {
-  return `${METHOD_PREFIX}.${name}`;
 }
 
 function requireString(value: unknown, field: string): string {
@@ -277,14 +271,14 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   const createAgent = buildAgentCreate(deps);
   const updateAgent = buildAgentUpdate(deps);
 
-  messageHub.onRequest(method('list'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.list', async (data) => {
     const params = data as { spaceId?: string };
     const spaceId = requireString(params.spaceId, 'spaceId');
     if (!(await deps.spaceExists(spaceId))) throw new Error(`Space not found: ${spaceId}`);
     return { agents: deps.agents.listOwnedBySpaceId(spaceId) };
   });
 
-  messageHub.onRequest(method('get'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.get', async (data) => {
     const params = data as { id?: string };
     const id = requireString(params.id, 'id');
     const agent = deps.agents.getById(id);
@@ -292,13 +286,13 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     return { agent };
   });
 
-  messageHub.onRequest(method('create'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.create', async (data) => {
     const params = data as CreateSpaceAgentInput;
     requireString(params?.spaceId, 'spaceId');
     return { agent: await createAgent(params) };
   });
 
-  messageHub.onRequest(method('update'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.update', async (data) => {
     const params = data as UpdateSpaceAgentInput & { spaceId?: string; confirmed?: unknown };
     const id = requireString(params?.id, 'id');
     const existing = deps.agents.getById(id);
@@ -314,7 +308,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     return { agent: await updateAgent(input) };
   });
 
-  messageHub.onRequest(method('listReminderCounts'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.listReminderCounts', async (data) => {
     const params = data as { spaceId?: string };
     const spaceId = requireString(params.spaceId, 'spaceId');
     const active = deps.reminders.countActiveRemindersByAgent(spaceId);
@@ -324,7 +318,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     return { counts };
   });
 
-  messageHub.onRequest(method('delete'), async (data) => {
+  messageHub.onRequest('spaceAgentV2.delete', async (data) => {
     const params = data as {
       id?: string;
       spaceId?: string;
