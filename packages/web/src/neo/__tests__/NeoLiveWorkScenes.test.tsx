@@ -664,7 +664,9 @@ describe('card reply notice navigation', () => {
       request: vi.fn(async (_method: string, params: { name: string }) =>
         params.name === 'neo.ask.doneTodos'
           ? { ok: true, todos: [oil], doneCount: 1, nextOffset: null }
-          : { ok: true, results: [], schedules: [] }
+          : params.name === 'neo.ask.read'
+            ? { ok: true, entry: testAskEntry('tax', 'Fictional tax', { state: 'waiting' }) }
+            : { ok: true, results: [], schedules: [] }
       ),
     } as never);
     act(() => {
