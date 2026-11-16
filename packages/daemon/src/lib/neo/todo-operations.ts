@@ -382,7 +382,7 @@ export const NeoTodoSchema = z.object({
   finishedAt: z.number().nullable(),
 });
 
-const TodoResult = z.union([
+export const TodoResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({
     ok: z.literal(true),

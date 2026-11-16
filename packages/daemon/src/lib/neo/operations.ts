@@ -67,6 +67,7 @@ import { createNeoQuestionOperations } from './question-operations.ts';
 import type { NeoInputReads } from './input-ask.ts';
 import {
   createNeoTodoOperations,
+  TodoResult,
   type NeoTodoControls,
   type NeoTodoWorkerRead,
 } from './todo-operations.ts';
@@ -742,23 +743,6 @@ export function createNeoOperations(
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    defineOperation({
-      name: 'neo.todo.retarget',
-      description:
-        'Stop a todo worker, confirmed, and restart the todo through its stored start target. The old fromRef makes a repeated request harmless. Shared workers and send or adopted targets are refused.',
-      inputSchema: z.object({ todoId: z.string().min(1), fromRef: WorkRefSchema }),
-      resultSchema: z.object({
-        ok: z.boolean(),
-        reason: z.string().optional(),
-        todo: z.unknown().optional(),
-      }),
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: path(
-        'neo.todo.retarget',
-        ({ todoId, fromRef }: { todoId: string; fromRef: z.infer<typeof WorkRefSchema> }) =>
-          service.todoRunner.retarget(todoId, fromRef)
-      ),
-    }),
     createRestartReservationOperation(() => {
       const id = service.repo.defaultBinding()?.sessionId;
       return {
@@ -1067,6 +1051,18 @@ export function createNeoOperations(
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },
       execute: read,
+    }),
+    defineOperation({
+      name: 'neo.todo.retarget',
+      description: neoToolDescription('neo.todo.retarget'),
+      inputSchema: z.object({ todoId: z.string().min(1), fromRef: WorkRefSchema }),
+      resultSchema: TodoResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: path(
+        'neo.todo.retarget',
+        ({ todoId, fromRef }: { todoId: string; fromRef: z.infer<typeof WorkRefSchema> }) =>
+          service.todoRunner.retarget(todoId, fromRef)
+      ),
     }),
     defineOperation({
       name: 'neo.project.save',
