@@ -37,7 +37,11 @@ describe('codingCandidateLine', () => {
   test('an omitted model resolves to the default line; effort is not part of the line and is kept as given', async () => {
     expect((await codingCandidateLine(lines, { adapter: 'hyperneo' })).line).toEqual(opusLine);
     for (const effort of ['think24k', 'High', 'high']) {
-      const offer = await codingCandidateLine(lines, { adapter: 'hyperneo', effort });
+      const input: { adapter: string; model?: string; effort: string } = {
+        adapter: 'hyperneo',
+        effort,
+      };
+      const offer = await codingCandidateLine(lines, input);
       expect(offer).toEqual({
         line: opusLine,
         target: { adapter: 'hyperneo', model: 'claude-opus-5-5', effort },

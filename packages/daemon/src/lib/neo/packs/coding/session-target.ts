@@ -134,11 +134,13 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         facts && rankedHere(target)
           ? codingStagePreference(db, { repo: facts.repo, stage: 'write' })
           : {};
-      const start = {
-        ...target,
-        ...(!target.model && saved.model ? { model: saved.model } : {}),
-        ...(!target.effort && saved.effort ? { effort: saved.effort } : {}),
+      const usable = async (field: 'model' | 'effort') => {
+        const value = !target[field] && saved[field];
+        if (!value || !lines) return {};
+        const resolved = await lines.resolve({ adapter: target.adapter, [field]: value });
+        return resolved?.ok ? { [field]: value } : {};
       };
+      const start = { ...target, ...(await usable('model')), ...(await usable('effort')) };
       if (!lines) return { value: start };
       const kind = todo.named?.workKind;
       const ranked = await rankCodingTargets(

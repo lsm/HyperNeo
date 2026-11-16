@@ -1,4 +1,3 @@
-import { executedEffort } from '@hyperneo/shared';
 import type { ProviderUsageResult } from '@hyperneo/shared/provider';
 import type { NeoLine, NeoLineRanking, NeoLineScope } from '../../pack-contract.ts';
 
@@ -27,8 +26,7 @@ export const names = (route: NeoLine, line: NeoLine) =>
   route.provider === line.provider &&
   route.model === line.model &&
   (route.harness === undefined || route.harness === line.harness) &&
-  (route.effort === undefined ||
-    (line.effort !== undefined && executedEffort(route.effort) === executedEffort(line.effort)));
+  (route.effort === undefined || route.effort === line.effort);
 
 const matches = (filter: LineFilter, kind: string, scope: NeoLineScope) =>
   (!filter.kinds || filter.kinds.includes(kind)) &&

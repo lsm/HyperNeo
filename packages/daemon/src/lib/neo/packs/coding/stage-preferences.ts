@@ -34,7 +34,7 @@ type Result = { ok: true; choices: Choice[] } | { ok: false; reason: string };
 export const CODING_STAGE_PREFERENCES: Record<string, NeoPackPreferenceDeclaration> =
   Object.fromEntries(
     (['write', 'review', 'verify'] as const).flatMap((stage) =>
-      (['harness'] as const).map((field) => [
+      (['harness', 'effort'] as const).map((field) => [
         `${stage}.${field}`,
         {
           label: {
