@@ -5,6 +5,7 @@ import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credent
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 import { createGoogleConnectionOperations } from '../../../../src/lib/connections/operations.ts';
 import { createMicrosoftConnectionOperations } from '../../../../src/lib/connections/microsoft-operations.ts';
+import { createConnectionList } from '../../../../src/lib/connections/list-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { artifactIdentityWrites } from '../../../../src/storage/repositories/artifact-file-identity-write.ts';
@@ -87,6 +88,7 @@ beforeEach(async () => {
   registry = createOperationRegistry([
     ...createMicrosoftConnectionOperations(() => db.getDatabase(), deps),
     ...createGoogleConnectionOperations(() => db.getDatabase(), deps),
+    createConnectionList(() => db.getDatabase()),
   ]);
 });
 afterEach(() => db.close());
