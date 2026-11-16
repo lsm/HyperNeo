@@ -249,10 +249,13 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         return reject('busy', 'The HyperNeo session still has a live turn.');
       if (session.status === 'archived') {
         await releaseWorkerSandbox(sessionSdkPath(session));
-        return { ok: true, value: { archived: false } };
+        const worktree = session.worktree
+          ? await sessionManager.cleanupArchivedWorktree(ref.id)
+          : undefined;
+        return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
-      return { ok: true, value: { archived: true } };
+      const worktree = await sessionManager.archiveSessionResources(ref.id, 'work_archive');
+      return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
       createDriverSession(
