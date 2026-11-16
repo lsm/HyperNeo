@@ -728,6 +728,49 @@ describe('card reply notice navigation', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe(`neo-ref-todo-${todoId}`));
     if (chip)
       expect(screen.getByRole('button', { name: chip }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'State' })).getByRole('button', {
+        name: 'In progress 1',
+      })
+    );
+    for (const id of ['neo-ref-ask-car', 'neo-ref-todo-garage', `neo-ref-todo-${todoId}`])
+      expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+  });
+
+  it('applies the chosen topic to the queue', () => {
+    const { model } = mount();
+    const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
+    trip.ask.topic = 'Travel';
+    const tax = testAskEntry('tax', 'Fictional tax', { state: 'doing' });
+    tax.ask.topic = 'Money';
+    const progress = (askId: string) => ({
+      state: 'progress' as const,
+      askId,
+      todoId: `${askId}-step`,
+      title: `${askId} step`,
+      owner: 'worker' as const,
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [trip, tax],
+          humanQueue: {
+            items: [progress('trip'), progress('tax')],
+            counts: {
+              trip: { waiting: 0, held: 0, progress: 1 },
+              tax: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Travel 1' }));
+    const states = within(screen.getByRole('group', { name: 'State' }));
+    fireEvent.click(states.getByRole('button', { name: 'In progress 1' }));
+    expect(screen.getByRole('region', { name: 'Fictional trip' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Fictional tax' })).toBeNull();
   });
 
   it.each(['answered', 'retired'] as const)(

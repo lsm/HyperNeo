@@ -227,6 +227,11 @@ describe('NeoHumanQueue', () => {
     expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
     expect(view.queryByRole('button', { name: 'Agree' })).toBeNull();
     view.rerender(<NeoHumanQueue {...props} entries={[{ ...summarised }]} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(onLoadDetails).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <NeoHumanQueue {...props} queue={{ ...props.queue }} entries={[{ ...summarised }]} />
+    );
     await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
     expect(await view.findByText('Couldn’t load the full card.')).toBeTruthy();
     fireEvent.click(view.getByRole('button', { name: 'Retry' }));
@@ -331,6 +336,59 @@ describe('NeoHumanQueue', () => {
     } finally {
       Element.prototype.scrollIntoView = original;
     }
+  });
+
+  it('drops the ask filter when that ask leaves the queue', () => {
+    const props = { entries, onHold: vi.fn(), onAnswer: vi.fn() };
+    const view = render(<NeoHumanQueue {...props} queue={queue} />);
+    const states = within(view.getByRole('group', { name: 'State' }));
+    const asks = within(view.getByRole('group', { name: 'Ask' }));
+    fireEvent.click(states.getByRole('button', { name: 'In progress 2' }));
+    fireEvent.click(asks.getByRole('button', { name: 'Service the car 1' }));
+    const { car: _car, ...counts } = queue.counts;
+    view.rerender(
+      <NeoHumanQueue
+        {...props}
+        queue={{ items: queue.items.filter((item) => item.askId !== 'car'), counts }}
+      />
+    );
+    expect(asks.getByRole('button', { name: 'All 1' }).getAttribute('aria-pressed')).toBe('true');
+    expect(states.getByRole('button', { name: 'Waiting on you 2' })).toBeTruthy();
+    expect(view.getByText('Pack bags')).toBeTruthy();
+  });
+
+  it('reads an ask again when a newer snapshot arrives during its read', async () => {
+    let first = (_: NeoAskEntry) => {};
+    const onLoadDetails = vi
+      .fn<(askId: string) => Promise<NeoAskEntry>>()
+      .mockImplementationOnce(() => new Promise((resolve) => (first = resolve)))
+      .mockResolvedValue(entry('far', 'Far ask', [question('q2', 'far', { text: 'Second' })]));
+    const queued = (questionId: string) => ({
+      items: [{ state: 'waiting' as const, askId: 'far', questionId, text: questionId, todos: [] }],
+      counts: { far: { waiting: 1, held: 0, progress: 0 } },
+    });
+    const props = { onHold: vi.fn(), onAnswer: vi.fn(), onLoadDetails };
+    const view = render(<NeoHumanQueue {...props} entries={[]} queue={queued('q1')} />);
+    view.rerender(<NeoHumanQueue {...props} entries={[]} queue={queued('q2')} />);
+    first(entry('far', 'Far ask', [question('q1', 'far')]));
+    await waitFor(() => expect(onLoadDetails).toHaveBeenCalledTimes(2));
+    expect(await view.findByText('Second')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Agree' })).toBeTruthy();
+  });
+
+  it('gives a todo shared by two cards one anchor', () => {
+    const shared: Queue = {
+      items: ['q1', 'q2'].map((questionId) => ({
+        state: 'waiting' as const,
+        askId: 'trip',
+        questionId,
+        text: `Question ${questionId}`,
+        todos: [{ id: 't1', title: 'Book hotel' }],
+      })),
+      counts: { trip: { waiting: 2, held: 0, progress: 0 } },
+    };
+    render(<NeoHumanQueue queue={shared} entries={entries} onHold={vi.fn()} onAnswer={vi.fn()} />);
+    expect(document.querySelectorAll('[id="neo-ref-todo-t1"]')).toHaveLength(1);
   });
 
   it('shows nothing when nothing waits', () => {
