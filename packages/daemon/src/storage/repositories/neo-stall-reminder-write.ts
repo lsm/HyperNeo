@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_HUMAN_STEP, neoDaemonCardDraft, neoHumanStepDue } from '../../lib/neo/daemon-cards.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import { openHumanCard } from '../../lib/neo/human-card.ts';
+import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import type { FollowThroughIncident } from '../../lib/work-queue/follow-through.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
@@ -125,6 +126,7 @@ export const neoStallReminderWrite = defineDbOp<{ now: number }, void>({
       undefined,
       changes
     );
+    const families = new Map<string, NeoTodo[]>();
     for (const todo of store.listCheckable(now - INTERVAL, now)) {
       const ask = store.getAsk(todo.askId)!;
       if (todo.state !== 'todo') {
@@ -132,12 +134,17 @@ export const neoStallReminderWrite = defineDbOp<{ now: number }, void>({
         continue;
       }
       if (!todo.check || new NeoTodoSessionRepository(db).get(todo.id)) continue;
-      if (neoHumanStepDue(todo, store.listFamilyTodos(todo.askId), store.todoCards(todo), now))
+      const cards = store.todoCards(todo);
+      if (neoTodoCovered(todo, cards)) continue;
+      const root = ask.parentId ?? ask.id;
+      const family = families.get(root) ?? store.listFamilyTodos(root);
+      families.set(root, family);
+      if (neoHumanStepDue(todo, family, cards, now))
         openHumanCard(
           store,
           crypto.randomUUID(),
           todo.askId,
-          neoDaemonCardDraft(NEO_HUMAN_STEP, [todo]),
+          { ...neoDaemonCardDraft(NEO_HUMAN_STEP, [todo]), todoId: todo.id },
           now
         );
     }
