@@ -60,6 +60,60 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
+  test.each(['MERGED', 'OPEN'] as const)(
+    'a closed named PR follows its owned %s replacement',
+    async (state) => {
+      const named = {
+        ...pr(1, 'CLOSED'),
+        url: 'https://github.com/acme/app/pull/1',
+        createdAt: 150,
+        closedAt: 0,
+      };
+      const replacement = {
+        ...pr(2, state),
+        url: 'https://github.com/acme/app/pull/2',
+        createdAt: 160,
+      };
+      const { db, pack, repo, todo } = setup(async () => [named, replacement]);
+      const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } });
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      db.prepare(`INSERT INTO work_delivery_inputs
+        (id,todo_id,origin_session_id,target,message,accepted_at,deadline_at,outcome)
+        VALUES ('send',?,'neo','{}','work',1,2,?)`).run(
+        row.id,
+        JSON.stringify({ ref, receipt: { inputId: 'input' } })
+      );
+      recordWorkTurns.run(
+        db,
+        {
+          ref,
+          turns: [
+            {
+              id: 'turn',
+              startedAt: 100,
+              endedAt: 200,
+              ended: 'success',
+              inputs: ['input'],
+              urls: [named.url, replacement.url],
+              finalUrls: [named.url, replacement.url],
+              complete: true,
+              cursor: '{}',
+            },
+          ],
+        },
+        undefined as never
+      );
+      try {
+        expect(await pack.check(row)).toEqual({
+          done: state === 'MERGED',
+          evidence: state === 'MERGED' ? '#2 merged' : null,
+        });
+        expect(repo.prs(row.id).map(({ url }) => url)).toEqual([named.url, replacement.url]);
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('an unread named PR cannot be replaced by another merged PR', async () => {
     const named = 'https://github.com/acme/app/pull/1';
     const { db, pack, todo } = setup(async () => [

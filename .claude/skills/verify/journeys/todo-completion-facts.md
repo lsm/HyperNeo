@@ -26,6 +26,10 @@ the fixed tree. Extra owned PRs may remain in the todo view without changing
 the verdict of a check that names its required PRs.
 Pass `named` instead of `verify` to the same helper for the focused named-PR
 regression without the independent legacy-pack and issue-completion fixtures.
+This mode also closes a todo whose named PR was closed and replaced by a newer
+merged PR owned by the same todo. An owned open replacement must keep it waiting;
+unrelated extra PRs remain optional. Named checks can complete while a worker
+turn is still incomplete: the required PR facts, not turn completion, decide.
 
 A synthetic legacy pack is installed at the test daemon's pack seam and returns
 both done and an explicit failure. The scheduled refresh must preserve failure
