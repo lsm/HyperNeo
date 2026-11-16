@@ -1,3 +1,4 @@
+import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
@@ -153,6 +154,35 @@ describe('coding session target decision', () => {
     expect(await decide(todo('other'), glm, only)).toEqual({ value: opus });
     db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'third'").run();
     expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });
+  });
+
+  test('a start runs at a route effort, not the medium default', async () => {
+    const { todo, decide } = setup();
+    const graded = [
+      { ...catalogModel('glm-6', 'glm'), effortLevels: ['medium', 'high'] },
+    ] as ModelInfo[];
+    const routes = [
+      { kind: 'coding.write', lines: [{ provider: 'glm', model: 'glm-6', effort: 'high' }] },
+    ];
+    expect(
+      await decide(todo(), glm, driverCodingLines(graded, { routes, effort: 'medium' }))
+    ).toEqual({ value: { ...glm, effort: 'high' } });
+  });
+
+  test('saved legacy write model and effort apply to a start that names neither, with routing off', async () => {
+    const { db, todo, decide } = setup();
+    const save = db.prepare(`INSERT INTO neo_pack_preferences
+      (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', ?, ?, ?, 'human', 1)`);
+    save.run(repo, 'write.model', JSON.stringify('glm-6'));
+    save.run(repo, 'write.effort', JSON.stringify('high'));
+    const bare = { verb: 'start' as const, adapter: 'hyperneo', name: 'backend' };
+    expect(await decide(todo(), bare)).toEqual({
+      value: { ...bare, model: 'glm-6', effort: 'high' },
+    });
+    expect(await decide(todo('other'), { ...glm, effort: 'low' })).toEqual({
+      value: { ...glm, effort: 'low' },
+    });
   });
 
   test('a send to an existing session is not ranked', async () => {

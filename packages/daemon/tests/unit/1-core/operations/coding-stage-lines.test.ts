@@ -1,3 +1,4 @@
+import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import { chooseLine } from '../../../../src/lib/neo/pack-selection.ts';
 import {
@@ -278,5 +279,41 @@ describe('CODING_WORK_KINDS', () => {
       'coding.review',
       'coding.verify',
     ]);
+  });
+});
+
+describe('rankCodingTargets with route effort', () => {
+  const graded = [
+    { ...catalogModel('claude-opus-5-5', 'anthropic'), effortLevels: ['low', 'medium', 'high'] },
+    catalogModel('glm-6', 'glm'),
+  ] as ModelInfo[];
+  const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+
+  test.each(['coding.write', 'coding.review', 'coding.verify'])(
+    'a %s route naming high wins over the medium default and the target carries high',
+    async (kind) => {
+      const routes = [{ kind, lines: [{ ...opusLine, effort: 'high' }] }];
+      const result = await rankCodingTargets(
+        driverCodingLines(graded, { routes, effort: 'medium' }),
+        kind,
+        [target, glm],
+        {}
+      );
+      expect(result).toMatchObject({
+        value: [{ ...target, effort: 'high' }, glm],
+        sources: [target, glm],
+      });
+    }
+  );
+
+  test('with no effort route the default effort stays first', async () => {
+    expect(
+      await rankCodingTargets(
+        driverCodingLines(graded, { effort: 'medium' }),
+        'coding.write',
+        [target, glm],
+        {}
+      )
+    ).toMatchObject({ value: [{ ...target, effort: 'medium' }, glm] });
   });
 });
