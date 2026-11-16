@@ -1,26 +1,25 @@
-# Persisted health notices reach the existing wake mailbox
+# GitHub health reaches Neo through the attention entry
 
-Use shared isolation in `../SKILL.md`:
+Use shared isolation and cleanup in `../SKILL.md`. This proof boots one fresh
+synthetic daemon on an ephemeral loopback port with the job processor stopped,
+so no model, provider, browser or external HTTP is used; `gh` is the refusing
+stub.
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-health-delivery-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
-  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=error \
-  bun .claude/skills/verify/github-ledger-health-delivery.ts "$RUN"
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+  .claude/skills/verify/github-ledger-health-delivery.ts
 ```
 
-The helper owns an isolated daemon and synthetic recipient. It exercises the
-real coding-pack sweep, existing Neo wake and durable mailbox handoff, with no
-provider turn. A synthetic trigger rejects mailbox insertion: the third miss
-must retain a pending incident notice. Recovery queues a stable recovery notice
-behind it. Restart must preserve both; removing the rejection lets the next
-existing sweep accept exactly two keyed mailbox jobs and persist acceptance.
-Further sweeps and another restart must not duplicate them. Protected source
-history remains unchanged. Unit contracts also cover a thrown wake, a newer
-incident while delivery is pending, and acceptance before failed bookkeeping.
+The helper binds a synthetic Neo session and uses a controlled clock. Observe
+`health-delivery.json` and the `neo_notes` and `mailbox` queues:
 
-Inspect `evidence/health-delivery.json` and the captured log. This proves durable
-acceptance, not recipient consumption. No real GitHub, keys, credential files,
-live DB/copy, GUI or port 8399; all owned resources stop in finally. No new
-timer/RPC/schema/permissions/reader or source-history rewrite.
+- the GitHub polling report (`reportGitHubWatchHealth`, as the daemon wires it,
+  with the real Neo service entry): two missed cycles tell nothing; the third is
+  one `coding.github_health` digest, not repeated within the day, told once more
+  a day later, and never again once polling recovers;
+- the real coding pack sweep (`NeoService.sweepPacks`) with one watched
+  repository whose GitHub read fails: an approved pull request whose readiness
+  read is older than 15 minutes is one digest;
+- nothing wakes Neo, and no health row keeps a told record.
+
+This does not show a model consuming the digest flush, or a real GitHub read.

@@ -1,84 +1,165 @@
+process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
-import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
-import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
+import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-events/github/github-event-extension.ts';
+import { reportGitHubWatchHealth } from '../../../packages/daemon/src/lib/external-events/github/github-watch-inventory.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
-import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
-import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
-import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { codingWatchedRepos, initializeCodingWatches } from '../../../packages/daemon/src/lib/neo/packs/coding/watched-repos.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 
-const run = resolve(process.argv[2]), repo = 'synthetic/health', session = 'synthetic-health-recipient';
-assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
-assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
-for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) assert.equal(process.env[key], undefined);
-for (const dir of ['bin', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
-writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
-writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\nprintf "[]\\n"\n', { mode: 0o700 });
-process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
-const network = globalThis.fetch;
-globalThis.fetch = (async () => { throw new Error('No network in health delivery proof'); }) as typeof fetch;
-let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, neo: ReturnType<typeof createNeoService> | undefined;
-let complete = false;
-const wakeAttempts: { key: string; text: string }[] = [];
-const healthLogs: Record<string, unknown>[] = [];
-const unsubscribe = subscribeToStructuredLogs(event => { if (event.module === 'coding-health') healthLogs.push(event.metadata); });
-const proof: Record<string, unknown> = { verified: false, providerTurns: 0, recipientConsumptionVerified: false };
-const sql = () => app!.db.getDatabase();
-const notices = () => JSON.parse(sql().prepare('SELECT health_json FROM pack_coding_repo_health WHERE repo=?').get(repo).health_json).notices ?? [];
-const jobs = () => sql().prepare("SELECT id,payload FROM job_queue WHERE queue='mailbox' ORDER BY id").all();
-const history = () => sql().prepare('SELECT * FROM pack_coding_poll_facts').all();
-async function open() {
-  app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
-  await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399); app.db.updateGlobalSettings({ neo: { packs: [] } });
-  neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
-}
-async function close() { await neo?.dispose(); neo = undefined; await app?.cleanup(); app = undefined; }
-async function cycle(at: number) {
-  const db = sql();
-  const pack = createCodingPack({
-    database: () => db, readPrs: async () => [], todoPrs: new CodingTodoPrRepository(db), prLedger: new CodingPrLedgerRepository(db),
-    prEvents: new CodingPrEventRepository(db), prSweep: new CodingPrSweepRepository(db), projectRepos: () => [repo],
-    prSweepDeps: { tell: async () => true, wake: (key, text) => { wakeAttempts.push({ key, text }); return neo!.wakeNeo(key, text); } },
-    readLedgerRepo: async () => complete ? { data: { rateLimit: { remaining: 4000 }, repository: { nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] }, done: { nodes: [] } } } } : null,
-  });
-  await pack.sweep!(at);
-}
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'])
+  assert.equal(process.env[key], undefined);
+for (const dir of ['workspace', 'bin', 'evidence']) mkdirSync(join(run, dir), { recursive: true });
+copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
+globalThis.fetch = (() => {
+  throw new Error('External HTTP is disabled');
+}) as typeof fetch;
+const HOUR = 3_600_000;
+const at = Date.now();
+const realNow = Date.now;
+let clock = at;
+Date.now = () => clock;
+const evidence: Record<string, unknown> = { checks: [] };
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let service: ReturnType<typeof createNeoService> | undefined;
 try {
-  await open(); proof.runtime = { commit: BUILD_METADATA.commit, pid: process.pid, port: app!.server.port };
-  await app!.db.createSession({ id: session, title: 'Synthetic recipient', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  neo!.repo.reserveBinding({ sessionId: session, projectId: null, kind: 'neo' });
-  sql().exec("INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,attempted_at) VALUES ('[\"protected-history\"]',3,5,'[]',1)");
-  const protectedRows = history();
-  sql().exec("CREATE TRIGGER reject_health_delivery BEFORE INSERT ON job_queue WHEN NEW.queue='mailbox' BEGIN SELECT RAISE(ABORT,'synthetic mailbox rejection'); END");
-  for (const at of [1, 2, 3]) await cycle(at);
-  assert.equal(notices().length, 1, 'third miss must persist a pending incident notice');
-  assert.equal(notices()[0].acceptedAt, null); assert.equal(jobs().length, 0);
-  complete = true; await cycle(4);
-  assert.equal(notices().length, 2); assert(notices().every((notice: { acceptedAt: number | null }) => notice.acceptedAt === null));
-  const pending = notices(); proof.rejected = { notices: pending, jobs: jobs() };
-  sql().exec('DROP TRIGGER reject_health_delivery'); await close(); await open();
-  assert.deepEqual(notices(), pending); await cycle(5);
-  const accepted = notices(); assert(accepted.every((notice: { acceptedAt: number | null }) => notice.acceptedAt === 5));
-  assert.equal(jobs().length, 2);
-  const payloads = jobs().map((job: { payload: string }) => JSON.parse(job.payload));
-  assert.deepEqual(payloads.map((payload: { messageUuid: string }) => payload.messageUuid).sort(), accepted.map((notice: { key: string }) => notice.key).sort());
-  assert.deepEqual(wakeAttempts.slice(-2).map(notice => notice.key), accepted.map((notice: { key: string }) => notice.key));
-  assert.deepEqual(wakeAttempts.slice(0, -1), Array(3).fill(wakeAttempts[0]));
-  const acceptedAttempts = wakeAttempts.length; proof.accepted = { notices: accepted, jobs: jobs(), attempts: [...wakeAttempts] };
-  await cycle(6); assert.deepEqual(notices(), accepted); assert.equal(jobs().length, 2);
-  sql().prepare("UPDATE job_queue SET run_at=? WHERE queue='mailbox'").run(Date.now() + 86400000);
-  await close(); await open(); await cycle(7);
-  assert.deepEqual(notices(), accepted); assert.equal(jobs().length, 2); assert.deepEqual(history(), protectedRows); assert.equal(wakeAttempts.length, acceptedAttempts);
-  assert.equal(sql().prepare('SELECT count(*) AS count FROM sdk_messages WHERE session_id=?').get(session).count, 0);
-  proof.afterRestart = { notices: notices(), jobs: jobs(), protectedHistory: history() };
-  assert(healthLogs.some(log => log.repo === repo && typeof log.lagMs === 'number' && typeof log.coverage === 'string' && 'nextRetryAt' in log)); proof.structuredLogs = healthLogs; proof.verified = true;
-  console.log(JSON.stringify({ verified: true, realWakeAndMailbox: true, rejectedThenAccepted: true, restartVerified: true, providerTurns: 0 }));
+  app = await createDaemonApp({
+    config: {
+      ...getConfig({
+        port: 0,
+        host: '127.0.0.1',
+        dbPath: join(run, 'data/daemon.db'),
+        workspaceRoot: join(run, 'workspace'),
+      }),
+      disableWorktrees: true,
+      disableGoalProcessing: true,
+    },
+    verbose: false,
+  });
+  await app.spaceRuntimeService.ready();
+  await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  const db = app.db.getDatabase();
+  const root = 'neo:00000000-0000-4000-8000-00000000a772';
+  db.prepare(
+    'INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(
+    root,
+    'Synthetic Neo',
+    'general',
+    join(run, 'workspace'),
+    new Date(at).toISOString(),
+    new Date(at).toISOString(),
+    'active',
+    '{}',
+    '{}'
+  );
+  db.prepare("INSERT INTO neo_session_bindings (session_id, kind) VALUES (?, 'neo')").run(root);
+  const queue = (name: string) =>
+    (
+      db
+        .prepare(
+          `SELECT json_extract(payload, '$.message.message.content') AS text
+             FROM job_queue WHERE queue = ?
+              AND json_extract(payload, '$.to.sessionId') = ? ORDER BY created_at, rowid`
+        )
+        .all(name, root) as { text: string }[]
+    ).map((row) => String(row.text));
+  const told = (prefix: string) => ({
+    digests: queue('neo_notes').filter((text) => text.startsWith(prefix)),
+    wakes: queue('mailbox').filter((text) => text.startsWith(prefix)),
+  });
+  const ledger = new CodingPrLedgerRepository(db);
+  const watched = new GitHubEventExtension(db).repo.upsertWatchedRepo({
+    spaceId: 'sessions',
+    owner: 'fixture',
+    repo: 'stale',
+    pollingEnabled: true,
+  });
+  const stalled = 'GitHub coverage stalled for polling:fixture/stale.';
+  const poll = async (name: string, hours: number, reached: boolean) => {
+    clock = at + hours * HOUR;
+    await reportGitHubWatchHealth(
+      ledger,
+      [watched],
+      new Set(reached ? [watched.id] : []),
+      (event) => service!.attend(event),
+      clock
+    );
+    const seen = told(stalled);
+    (evidence.checks as unknown[]).push({ name, hours, ...seen });
+    return seen;
+  };
+  for (const minutes of [0, 5]) await poll('a missed polling cycle', minutes / 60, false);
+  assert.equal(told(stalled).digests.length, 0, 'two misses are not an incident');
+  await poll('the third missed cycle', 10 / 60, false);
+  await poll('another missed cycle', 15 / 60, false);
+  await poll('an hour later', 1, false);
+  assert.equal(told(stalled).digests.length, 1, 'the incident is one digest');
+  await poll('a day after the incident began', 24 + 10 / 60, false);
+  assert.equal(told(stalled).digests.length, 2, 'one more digest a day later');
+  await poll('polling recovers', 25, true);
+  const recovered = await poll('two days later, still recovered', 50, true);
+  assert.equal(recovered.digests.length, 2, 'a recovered repository is not told again');
+  assert.deepEqual(recovered.wakes, [], 'GitHub health never wakes Neo');
+
+  const repo = 'synthetic/health';
+  await app.db.updateGlobalSettings({ neo: { packs: ['coding'] } });
+  db.prepare(
+    "DELETE FROM neo_pack_preferences WHERE pack = 'coding' AND key = 'watchedRepos'"
+  ).run();
+  initializeCodingWatches(db, [repo]);
+  assert.deepEqual(codingWatchedRepos(db), [repo]);
+  clock = at + 60 * HOUR;
+  ledger.replace(
+    repo,
+    [
+      {
+        repo,
+        number: 1,
+        title: 'Ready after CI',
+        branch: 'topic',
+        head: 'approved-head',
+        state: 'approved_pending',
+        closedAt: null,
+      },
+    ],
+    clock
+  );
+  const pending = `GitHub readiness observation stalled for ${repo}#1`;
+  for (const minutes of [5, 20, 25]) {
+    clock = at + 60 * HOUR + minutes * 60_000;
+    await service.sweepPacks();
+    (evidence.checks as unknown[]).push({
+      name: `real pack sweep, ${minutes} minutes after the last read`,
+      ...told(pending),
+      health: ledger.readHealth(repo),
+    });
+  }
+  assert.equal(told(pending).digests.length, 1, 'a stalled readiness read is one digest');
+  const rows = db.prepare('SELECT health_json FROM pack_coding_repo_health').all() as {
+    health_json: string;
+  }[];
+  assert(
+    rows.every((row) => JSON.parse(row.health_json).notices === undefined),
+    'no told record is kept in the health row'
+  );
+  evidence.passed = true;
+  console.log('PASS');
+} catch (error) {
+  evidence.error = String(error);
+  throw error;
 } finally {
-  await close(); unsubscribe(); globalThis.fetch = network; proof.resourcesStopped = true;
-  writeFileSync(join(run, 'evidence/health-delivery.json'), JSON.stringify(proof, null, 2));
+  await service?.dispose();
+  await app?.cleanup();
+  Date.now = realNow;
+  writeFileSync(join(run, 'evidence/health-delivery.json'), JSON.stringify(evidence, null, 2));
 }

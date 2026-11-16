@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-events/github/github-event-extension.ts';
 import { ExternalEventExtensionConfigStore } from '../../../packages/daemon/src/lib/external-events/extension-config-store.ts';
 import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/session-event-subscription-repository.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [mode, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
@@ -110,7 +111,7 @@ try {
     for (const repo of repos.slice(1)) github.repo.removeWatchedRepo('sessions', 'verify-test', repo);
     evidence.push({ startupRestored: true, deletedBeforeCycle: repos.slice(1) });
   }
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const poll = () => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
@@ -171,10 +172,9 @@ try {
     stall = true;
     for (let miss = 0; miss < 4; miss++) await poll();
     const health = db.prepare("SELECT repo, health_json FROM pack_coding_repo_health WHERE repo LIKE 'polling:%'").all() as { repo: string; health_json: string }[];
-    const notices = health.flatMap(row => JSON.parse(row.health_json).notices ?? []);
-    assert(notices.length >= 4, 'each stalled watched repo must raise a concern');
-    assert(notices.every(notice => notice.acceptedAt !== null), 'Neo mailbox must accept concerns');
-    const jobs = db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").all();
+    const jobs = db.prepare("SELECT payload FROM job_queue WHERE queue='neo_notes'").all() as { payload: string }[];
+    const concerns = jobs.filter(job => JSON.parse(job.payload).message.message.content.startsWith('GitHub coverage stalled'));
+    assert(concerns.length >= 4, 'each stalled watched repo must reach Neo as a digest');
     evidence.push({ staleHealth: health, mailbox: jobs });
   }
   console.log(`${resume ? mode : mode === 'reproduce' ? 'REPRODUCED starvation' : 'PASS: every small repo approval is published each cycle'}; ${run}/evidence/polling.json`);
