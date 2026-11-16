@@ -737,6 +737,7 @@ export function NeoLive() {
         if (referenceRequest.current !== ticket) return;
         setCardOpening(false);
         if (result === 'unavailable') return setCardUnavailable(true);
+        if (topic && result.entry.ask.topic !== topic) chooseTopic(null);
         if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
           setReferenced({
             scope: sceneScope,
