@@ -2,7 +2,8 @@
 
 Run this journey on a build host with the pinned Bun from SKILL.md. It starts an
 isolated daemon on a random port with its own HOME and database, then calls the
-real session's hyperneo-operations MCP server against a fake desktop host. It
+real session's hyperneo-operations MCP server against a fake desktop host. The
+session keeps the daemon's own caller role, as a todo worker Neo starts does. It
 uses no model provider and sends no real GUI input. Worktrees are disabled in
 the daemon config, and the job processor is stopped before fixture seeding.
 
@@ -14,7 +15,7 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test PATH="$PATH"
 ```
 
 Pass prints `desktop.call journey PASS host_requests=1 audit_rows=1
-refused_paths=5`. The JSON evidence is in `evidence/desktop-call.json`. RPC,
+refused_paths=5 described_tools=12`: operations.describe lists every catalog tool. The JSON evidence is in `evidence/desktop-call.json`. RPC,
 session door, caller impersonation, unlisted tools and an unapproved todo must
 produce no host requests. The accepted request must use the caller session and
 its daemon-owned workspace, and persist the host outcome without arguments in
