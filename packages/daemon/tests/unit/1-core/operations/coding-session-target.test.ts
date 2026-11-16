@@ -112,7 +112,10 @@ describe('coding session target decision', () => {
     const { todo, decide } = setup();
     const kinds: string[] = [];
     expect(await decide(todo(), glm, routed(kinds, false))).toEqual({ value: glm });
-    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({ value: opus });
+    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({
+      value: opus,
+      note: `Started on another model line: glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
+    });
     expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
     expect(await decide(todo('third'), start('desktop'), routed(kinds, true))).toEqual({
       value: start('desktop'),

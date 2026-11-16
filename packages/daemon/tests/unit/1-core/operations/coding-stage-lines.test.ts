@@ -276,3 +276,24 @@ describe('rankCodingTargets with a model id two providers share', () => {
     expect(started?.ok && started.value.provider).toBe('y');
   });
 });
+
+describe('codingCandidateLine for a bare start whose default is the second provider of a shared id', () => {
+  test('the start is pinned to a selector that still resolves to that provider', async () => {
+    const shared = [catalogModel('m-1', 'x', 'M X'), catalogModel('m-1', 'y', 'M Y')];
+    const lines = driverCodingLines(shared, {
+      holds: [{ provider: 'x', model: 'm-1', retryAt: 5_000 }],
+      defaultIndex: 1,
+    });
+    const bare: { adapter: string; place: typeof place; model?: string } = {
+      adapter: 'hyperneo',
+      place,
+    };
+    const offer = await codingCandidateLine(lines, bare);
+    expect(offer).toEqual({
+      line: { provider: 'y', model: 'm-1', harness: 'hyperneo' },
+      target: { ...bare, model: 'M Y' },
+    });
+    const started = await lines.resolve(offer.target);
+    expect(started?.ok && started.value.provider).toBe('y');
+  });
+});

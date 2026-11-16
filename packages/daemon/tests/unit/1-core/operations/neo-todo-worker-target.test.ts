@@ -190,6 +190,16 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.sessions.get(id)).toEqual({ ...start, name: 'backend-2' });
   });
 
+  test('a start that moved to another model line tells Neo why', async () => {
+    const w = (current = world());
+    const why = 'Started on another model line: glm/glm-6 via hyperneo: held.';
+    w.decideWith((target) => ({ value: target, note: why }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.told).toContainEqual({ id, note: why, key: 'todo.line_moved' });
+  });
+
   test('a wait decision dispatches nothing, keeps the todo and its target, and tells Neo once', async () => {
     const w = (current = world());
     const wait = 'session_unknown: the session for this work is starting or unreachable; wait.';

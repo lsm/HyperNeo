@@ -32,13 +32,17 @@ export function driverCodingLines(
     rules?: LineRule[];
     holds?: LineHold[];
     ready?: string[];
+    defaultIndex?: number;
   } = {},
   calls: string[] = []
 ): CodingLines {
   const adapter = createHyperneoAdapter({
     sessions: {
       resolveModel: (model: string) => resolveDriverModel(catalog, model),
-      resolveDefaultModel: async () => ({ id: catalog[0].id, provider: catalog[0].provider }),
+      resolveDefaultModel: async () => {
+        const model = catalog[prefs.defaultIndex ?? 0];
+        return { id: model.id, provider: model.provider };
+      },
     },
   } as unknown as HyperneoAdapterDeps);
   return {
