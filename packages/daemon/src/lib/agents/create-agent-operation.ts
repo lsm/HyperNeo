@@ -106,7 +106,7 @@ const CREATE_AGENT_DESCRIPTION =
 
 export function createCreateAgentOperation(deps: CreateAgentDependencies) {
   const access = 'mutate' as const;
-  const create = (superpipe({ deps, access })('create-long-horizon-agent') as PipelineAPI)
+  const create = (superpipe({ deps, access })('agent.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateAgentName, ['outcome', 'input', 'deps'], 'result:outcome')

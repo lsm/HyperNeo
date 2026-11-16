@@ -182,7 +182,7 @@ export async function applyAgentUpdate(
 
 function buildUpdatePipeline(deps: UpdateAgentDependencies) {
   const access = 'mutate' as const;
-  return (superpipe({ deps, access })('update-long-horizon-agent') as PipelineAPI)
+  return (superpipe({ deps, access })('agent.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(gateUpdateTarget, ['outcome', 'input', 'deps'], 'result:outcome')

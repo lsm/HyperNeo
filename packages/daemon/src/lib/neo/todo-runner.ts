@@ -1,4 +1,3 @@
-import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -7,14 +6,12 @@ import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
 import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
-import { workerBlockerReminderDue } from './worker-blocker.ts';
 import { neoStartRetryDue } from './daemon-cards.ts';
-import { neoDaemonCardWrite } from '../../storage/repositories/neo-daemon-card-write.ts';
 import { neoTodoPrerequisiteRefusal, neoTodoStartRefusal } from './todo-start-gate.ts';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { neoTodoRunnerWrites } from '../../storage/repositories/neo-todo-runner-state.ts';
 import { neoSyncedWorkers, neoWorkerStatusDue } from './worker-status-gate.ts';
-import type { NeoAsk, NeoQuestionSource, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -104,7 +101,6 @@ export interface NeoTodoRunnerDeps {
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
   limits(): { running: number; perGroup: number };
-  readSource?(ref: WorkRef): Promise<NeoQuestionSource | null>;
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
@@ -438,14 +434,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await recompute(todo, planNeoTodoFailure(todo, reason) ?? {}, now);
       return retry(todo.id, true);
     }
-    await deps.write(neoDaemonCardWrite, {
-      kind: 'retries',
-      todoId: todo.id,
-      reason: failure,
-      now,
-    });
-    deps.changed();
-    const blocked = store.getTodo(todo.id) ?? todo;
+    const blocked = await recompute(todo, planNeoTodoFailure(todo, failure) ?? {}, now);
     await noteState(blocked);
     return { ok: true as const, todo: blocked };
   };
@@ -1083,24 +1072,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'result:todo'
     )
     .endAsync('todo') as (todo: NeoTodo, now: number) => Promise<NeoTodo | null>;
-
-  const cardBlocker = async (id: string, now: number) => {
-    const due = workerBlockerReminderDue(store, sessions, id, now);
-    const ref = sessions.readRef(id);
-    const incident = sessions.readNudge(id);
-    if (!due || !ref || !incident?.blockerReport) return;
-    const source = (await deps.readSource?.(ref)) ?? {
-      ...workerIdentity(ref, null),
-      provider: workerEngine(ref.adapter),
-      link: null,
-    };
-    await deps.write(neoDaemonCardWrite, { kind: 'blocker', todoId: id, source, now });
-    sessions.recordNudge(id, {
-      ...incident,
-      blockerReport: { ...incident.blockerReport, remindedAt: now },
-    });
-    deps.changed();
-  };
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
@@ -1784,10 +1755,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ).catch((error) => warn('Worker human turn report pending', error));
       }
       for (const todo of await store.read('listCheckable')) {
-        if (todo.blockedBy === 'needs-human')
-          await cardBlocker(todo.id, Date.now()).catch((error) =>
-            warn('Worker blocker card pending', error)
-          );
         await waitOnHuman(todo, Date.now()).catch((error) =>
           warn('Todo human wait pending', error)
         );

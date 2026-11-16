@@ -11,8 +11,8 @@ import {
   readLimitedResponseText,
   withTimeout,
 } from './transcribe-fetch.ts';
+import { resolveVoiceKey, voiceParts } from './voice-parts.ts';
 
-const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 const TRANSCRIPTION_TIMEOUT_MS = 120_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
 const MAX_AUDIO_BYTES = VOICE_MAX_AUDIO_BYTES;
@@ -212,15 +212,16 @@ function commitTranscriptionAdmission(ctx: VoiceTranscribeCtx): VoiceTranscribeC
 function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeCtx {
   const voice = ctx.deps.settingsManager.getGlobalSettings().voice;
   if (!voice?.enabled) return { ...ctx, outcome: denied('Voice input is disabled') };
-  if (!voice.endpoint?.trim()) {
+  const recorded = voiceParts(voice).recorded;
+  if (!recorded?.endpoint.trim()) {
     return { ...ctx, outcome: denied('Voice transcription endpoint is required') };
   }
-  if (!voice.model?.trim()) {
+  if (!recorded.model.trim()) {
     return { ...ctx, outcome: denied('Voice transcription model is required') };
   }
   let endpoint: URL;
   try {
-    endpoint = new URL(voice.endpoint);
+    endpoint = new URL(recorded.endpoint);
   } catch {
     return { ...ctx, outcome: denied('Voice transcription endpoint must be a valid URL') };
   }
@@ -238,35 +239,12 @@ function resolveTranscriptionEndpoint(ctx: VoiceTranscribeCtx): VoiceTranscribeC
   return {
     ...ctx,
     endpoint,
-    model: voice.model.trim(),
+    model: recorded.model.trim(),
     allowPrivateNetwork: voice.allowPrivateNetwork ?? false,
     allowInsecureTls: voice.allowInsecureTls ?? false,
     tlsCaPem: voice.tlsCaPem?.trim() || undefined,
     audio,
   };
-}
-
-export async function resolveApiKey(
-  legacyApiKey: string | undefined,
-  apiKeyEndpoint: string | undefined,
-  endpoint: URL,
-  credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
-): Promise<string | undefined> {
-  const trimmedLegacyKey = legacyApiKey?.trim();
-  if (trimmedLegacyKey) return trimmedLegacyKey;
-  if (!apiKeyEndpoint || endpoint.toString() !== normalizeEndpoint(apiKeyEndpoint)) {
-    return undefined;
-  }
-  const credentials = await credentialManager?.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID);
-  return credentials?.type === 'api_key' ? credentials.apiKey?.trim() : undefined;
-}
-
-function normalizeEndpoint(endpoint: string): string {
-  try {
-    return new URL(endpoint).toString();
-  } catch {
-    return endpoint;
-  }
 }
 
 async function acquireTranscriptionCredentials(
@@ -279,9 +257,10 @@ async function acquireTranscriptionCredentials(
   let tlsCaPem = ctx.tlsCaPem;
   const key = await withVoiceCredentialLock(async () => {
     const liveVoice = ctx.deps.settingsManager.getGlobalSettings().voice;
-    if (liveVoice?.endpoint) {
+    const liveRecorded = voiceParts(liveVoice).recorded;
+    if (liveVoice && liveRecorded?.endpoint) {
       try {
-        const liveEndpoint = new URL(liveVoice.endpoint);
+        const liveEndpoint = new URL(liveRecorded.endpoint);
         if (liveEndpoint.protocol === 'http:' || liveEndpoint.protocol === 'https:') {
           endpoint = liveEndpoint;
         }
@@ -289,15 +268,10 @@ async function acquireTranscriptionCredentials(
       allowPrivateNetwork = liveVoice.allowPrivateNetwork ?? false;
       allowInsecureTls = liveVoice.allowInsecureTls ?? false;
       tlsCaPem = liveVoice.tlsCaPem?.trim() || undefined;
-      model = liveVoice.model?.trim() || model;
+      model = liveRecorded.model.trim() || model;
     }
     return withTimeout(
-      resolveApiKey(
-        liveVoice?.apiKey,
-        liveVoice?.apiKeyEndpoint,
-        endpoint,
-        ctx.deps.credentialManager
-      ),
+      resolveVoiceKey(liveVoice, endpoint, ctx.deps.credentialManager),
       CREDENTIAL_LOOKUP_TIMEOUT_MS,
       'Voice transcription credential lookup timed out',
       ctx.signal

@@ -1405,15 +1405,7 @@ test('an undelivered stopped report is not sent on complete health kept from a l
   await completeRead(20);
   state = 'CLOSED';
   for (const at of [15, 16]) {
-    await ledger.write(
-      'observePoll',
-      'synthetic/merge',
-      { error: 'lookup failed' },
-      at,
-      at,
-      [],
-      []
-    );
+    await ledger.write('observePoll', 'synthetic/merge', { error: 'lookup failed' }, at, at, []);
     expect((await ledger.pollContextCurrent('synthetic/merge')).health).toMatchObject({
       reason: 'complete',
       cycleAt: 20,

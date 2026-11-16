@@ -76,7 +76,23 @@ function toolResultParts(content: string | Array<TextBlock | ImageBlock> | undef
   return { text: text.join('\n'), images };
 }
 
-function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts: string[]): void {
+export interface ImageOmission {
+  left: number;
+  text: string;
+}
+
+function omitted(omission: ImageOmission | undefined, count: number): string[] {
+  const n = omission ? Math.min(omission.left, count) : 0;
+  if (omission) omission.left -= n;
+  return Array.from({ length: n }, () => omission?.text ?? '');
+}
+
+function formatBlocks(
+  blocks: ContentBlock[],
+  role: 'user' | 'assistant',
+  parts: string[],
+  omission: ImageOmission | undefined
+): void {
   for (const block of blocks) {
     if (block.type === 'text') {
       if (!block.text) continue;
@@ -87,19 +103,25 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
     } else if (block.type === 'tool_result') {
       const r = block as ToolResultBlock;
       const prefix = r.is_error ? '[Tool error for' : '[Tool result for';
-      parts.push(`${prefix} ${r.tool_use_id}]: ${toolResultParts(r.content).text}`);
+      const { text, images } = toolResultParts(r.content);
+      const notes = omitted(omission, images.length);
+      parts.push(`${prefix} ${r.tool_use_id}]: ${[text, ...notes].join('\n')}`);
     } else if (block.type === 'image') {
+      parts.push(...omitted(omission, 1));
     }
   }
 }
 
-export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
+export function formatAnthropicPrompt(
+  messages: AnthropicMessage[],
+  omission?: ImageOmission
+): string {
   const parts: string[] = [];
   for (const msg of messages) {
     if (typeof msg.content === 'string') {
       parts.push(msg.role === 'user' ? `[User]: ${msg.content}` : `[Assistant]: ${msg.content}`);
     } else {
-      formatBlocks(msg.content, msg.role, parts);
+      formatBlocks(msg.content, msg.role, parts, omission);
     }
   }
   return parts.join('\n\n');

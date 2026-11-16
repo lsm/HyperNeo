@@ -1,9 +1,12 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { NEO_CHECK_DEADLINE_MS } from '../daemon-cards.ts';
 
 type Step = Pick<NeoTodo, 'state'> & { blockedBy?: NeoTodo['blockedBy'] };
 
 export type NeoStepFacts = {
-  todo: Step & Pick<NeoTodo, 'createdAt' | 'approvedAt' | 'startedAt' | 'finishedAt'>;
+  todo: Step &
+    Pick<NeoTodo, 'createdAt' | 'approvedAt' | 'startedAt' | 'finishedAt'> &
+    Partial<Pick<NeoTodo, 'check' | 'instruction'>>;
   covered: boolean;
   held: boolean;
   prerequisites: readonly (Step & Pick<NeoTodo, 'finishedAt'> & { failedAt?: number | null })[];
@@ -13,6 +16,7 @@ export type NeoStepFacts = {
   worker: { status: 'running' | 'idle' | 'unknown'; since: number } | null;
   packWaiting: boolean;
   start: 'held' | 'ready' | null;
+  now: number;
 };
 
 export type NeoStepReason =
@@ -20,6 +24,7 @@ export type NeoStepReason =
   | 'prerequisite_gone'
   | 'unanswered'
   | 'no_worker'
+  | 'check_overdue'
   | 'idle_worker';
 
 export type NeoStepOwner =
@@ -59,5 +64,10 @@ export function nextStepOwner(facts: NeoStepFacts): NeoStepOwner {
   if (facts.packWaiting) return { owner: 'pack' };
   if (worker) return neo('idle_worker', worker.since);
   if (facts.start) return { owner: 'daemon' };
-  return neo('no_worker', latest(began, ...prerequisites.map((item) => item.finishedAt)));
+  const ready = prerequisites.map((item) => item.finishedAt);
+  if (todo.check && !todo.instruction?.trim()) {
+    const deadline = latest(todo.createdAt, ...ready) + NEO_CHECK_DEADLINE_MS;
+    return facts.now < deadline ? { owner: 'daemon' } : neo('check_overdue', deadline);
+  }
+  return neo('no_worker', latest(began, ...ready));
 }

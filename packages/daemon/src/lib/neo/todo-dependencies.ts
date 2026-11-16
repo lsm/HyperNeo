@@ -85,9 +85,6 @@ export const planNeoTodoDependencies = (superpipe({})('neo.todo.plan-dependencie
   after: readonly string[]
 ) => string[] | DependencyRejection;
 
-export const NEO_TODO_CANCELLED_DEPENDENCY =
-  'cancelled_dependency: a prerequisite of this step was cancelled; stop it with neo.todo.remove.';
-
 export const NEO_TODO_NOT_READY =
   'not_ready: this step waits for unfinished steps; add it without start and the daemon starts it once they are done.';
 

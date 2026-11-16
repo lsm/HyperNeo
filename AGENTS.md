@@ -3,18 +3,21 @@
 HyperNeo uses the Claude Agent SDK. Use Preact conventions, not React APIs.
 See [ADRs](docs/adr/) and [architecture](docs/architecture/) for design and layout.
 
-## Runtime and setup
+## Area rules
+
+This file holds the rules for every change. Before you edit inside one of these areas you MUST read its file first; Claude Code loads it when it first opens a file there, other agents open it themselves.
+
+- `packages/daemon/AGENTS.md`: server code, also for `packages/space` — operations, pipelines, runtime seams, Neo core and packs, daemon tests.
+- `packages/web/AGENTS.md`: web UI.
+- `packages/prompts/AGENTS.md`: prompts.
+- `packages/shared/AGENTS.md`: shared types and the vendored SDK typings.
+
+## Setup and commands
 
 - Use Bun 1.4.2 for the daemon and native proof jobs ([runtimes](docs/supported-runtimes.md)).
 - Pin exact dependency versions; no `^` or `~`.
 - Run `bun install --frozen-lockfile` in fresh worktrees before committing.
 - Always pass a unique `DB_PATH` from a worktree; the DB has a PID lock.
-- Startup must delete `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
-- Credential discovery reads env, then `~/.claude/.credentials.json`, macOS Keychain, then the env block in `~/.claude/settings.json`.
-- Credential-dependent tests must fail when secrets are missing; never silently skip.
-- In `packages/prompts/src/mod.ts`, import every `.md` with `with { type: 'text' }`; Bun otherwise renders HTML.
-
-## Commands
 
 ```bash
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
@@ -25,7 +28,6 @@ make setup-hooks
 
 ./scripts/test-daemon.sh  # accepts a shard name, --rerun, --show-failures
 cd packages/daemon && bun test tests/unit/some-test.test.ts
-cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts
 cd packages/web && bunx vitest run src/lib/__tests__/some.test.ts
 
 make build && make compile
@@ -33,42 +35,25 @@ make build && make compile
 
 Never run `bun test` from the repo root. Pre-commit checks lint, format, types and knip.
 
-## Style and constraints
+## Every change
 
 - Preserve idioms; make surgical changes, no unrelated cleanup.
-- Biome uses spaces, single quotes (double in JSX), semicolons, ES5 trailing commas and width 100.
-- Oxlint bans `any`, unused variables and app `console.*` (entry points/tests exempt). Startup logging uses `const logInfo = verbose ? console.log : () => {};`.
 - Use ONE direct superpipe pipeline per daemon/web business path, named for its operation. Mix decisions, transforms and effects ([ADR 0004](docs/adr/0004-superpipe-pipelines.md)).
-- Decisions are pure functions over recorded facts; effects (DB writes, sends, spawns) sit at the pipeline's edges. A multi-step effect must leave consistent recorded state whichever step fails.
 - Record each fact once. Derive from the tables that already hold it instead of adding columns or tables that duplicate it.
-- Neo core vs packs: core (`packages/daemon/src/lib/neo/`) knows asks, todos, questions and workers only. Domain rules (pull requests, review, QA, life admin, ...) live in their pack under `lib/neo/packs/<pack>/` and reach core through the `NeoPack` hooks in `pack-contract.ts`; core never branches on a pack id or a domain concept.
-- Typed rejection gates share one `result:<name>` output with disjoint `{ value } | { reason }` arms.
-- Use named inputs, not ctx objects; `!dep` halts may exit based on data.
-- Do not hand-roll gate cascades where a pipeline fits.
-- Do not add `decisionRun` or `stagedRun` calls; both are deprecated.
-- Hot loops and resource-owning shells stay imperative; consult pipelines for decisions.
-
-## Checks and tests
-
-`bun run check` includes format, lint, types, knip and these guards:
-
-- `check:no-comments`: no TS/TSX comments except shebangs, triple-slash references, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore` and coverage ignores. Vendored `packages/shared/src/sdk/{sdk,sdk-tools}.d.ts` also retain their generated `Upstream SDK documentation` pointer; refresh it with `make sync-sdk-types`.
-- `check:session-guards`: only the `scripts/check-session-deletion-callers.sh` allowlist may delete/archive sessions.
-- `check:operation-names`: `defineOperation` names must match `packages/shared/src/types/operation-names.ts` both ways.
-- `check:db-schema-parity`: keep `createSpaceTables` in `packages/daemon/tests/unit/helpers/space-test-db.ts` aligned with migrations.
-- `check:test-matrix` / `check:online-shards`: each test belongs to one shard via directory globs in `scripts/test-{daemon,online}.sh`, never hand-lists.
-- `check:test-quality`: assertions must be able to fail against mocked components; call the function named in `describe`.
-- `check:raw-palette`: use theme tokens, not new raw Tailwind palette classes in `packages/web/src`.
+- Keep authorization and autonomy checks in handlers and admission gates, never prompts.
+- `bun run check` must pass. It runs format, lint, types, knip and the repo guards; each guard names what to fix.
+- No TS/TSX comments except shebangs, triple-slash references, `@ts-*` and lint, knip or coverage ignore directives.
+- Lint bans `any`, unused variables and app `console.*` (entry points/tests exempt).
 - knip ignores tests; export/register new modules in the same PR so production reaches them.
 - Prefer unit/component tests. Use Vitest except for messaging, which uses Bun test.
-- Vitest loads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; direct `bun test` preloads `tests/unit/setup.ts`.
-- Online tests boot a daemon. `HYPERNEO_USE_DEV_PROXY=1` routes Anthropic to `.devproxy/` with real credentials blanked; never silently fall back.
-- `real-api-tests.yml` runs selected modules with real keys.
+- Assertions must be able to fail against mocked components; call the function named in `describe`.
 - Register flaky tests in `flaky-tests.json`; do not add retries or skips.
 
 ## Change decomposition and Git
 
 - Measure touched code and callers before slicing; never estimate from a brief.
+- Before settling a design or plan, and before changing code that has no written plan, run `bun run system-map impact <files>` (or `--diff` on a branch) and account for every file it lists outside the plan; `bun run system-map where <name>` shows who defines, calls, reads or writes an operation, RPC method, event or table.
+- When a pull request where you ran `system-map` is done, add one comment to the feedback log, issue #10836, in the format given there: the command, what it showed that the plan lacked, and anything it missed or got wrong.
 - When re-slicing, use a three-dot diff against freshly fetched `origin/dev`.
 - Keep PRs near 300 production lines; tests ride their slice. The limit only splits work, never bundles unrelated work.
 - One PR per rung: Pin (preserve behavior in tests) → Extract (verbatim moves, tests unchanged) → Build (tested, reachable for knip, not called) → Wire (one call site; flags only for staged behavior) → Delete (removal only).
@@ -85,31 +70,8 @@ Never run `bun test` from the repo root. Pre-commit checks lint, format, types a
 - A merge-parent mismatch from advancing `dev` is informational: gates bind to the head. Record it in the audit.
 - Releases are tags on protected `dev`; follow [the release process](docs/release-process.md).
 
-## Operations and runtime boundaries
-
-- Use one transport-neutral `defineOperation` per business path, wrapping one pipeline.
-- Humans use `operation.invoke` RPC; agents use `invoke` on `hyperneo-operations` MCP.
-- Adapters/typed tools must not add another transition or retry policy.
-- Domain rejections return `{ accepted: false, reason }`; infrastructure faults throw; long work returns `{ accepted: true, jobId }`.
-- Resolve caller roles with `resolveSpaceMcpSessionPolicy` before invocation.
-- Reach `ActionRegistry` through operations via `actionsAsOperations`.
-- Keep authorization and autonomy checks in handlers and admission gates, never prompts.
-- Route new `Bun.*` calls through the SQLite, server, spawn or hash runtime seams.
-- Initialize `MessageHubRouter`, then `MessageHub`, then `WebSocketServerTransport`.
-- Use `messages.bySession` snapshots/deltas; re-sync on reconnect or `MESSAGE_TOO_LARGE`.
-- Room overrides may disable global skills, never enable them ([skills](docs/features/skills.md)).
-- MCP visibility uses app registry + enablement (session > space > default); room scope is not read.
-- Keep SDK `strictMcpConfig: true`; `.mcp.json` is not auto-loaded.
-- Add MCP servers with `AgentSession.mergeRuntimeMcpServers` so existing servers survive.
-- Use `resolveTaskWorkspace` for every task-to-repo lookup; never invent fallbacks.
-- SDK runtime locations come from the host system prompt, not workflow slot prompts.
-- Workflow slot prompts describe behavior; do not duplicate peers, channels, gate IDs or reviewer framing.
-- Store goal state in `space_goals` with append-only `space_goal_events`.
-- Goal check-ins create ordinary tasks; Forge adds evidence loops without replacing goal state.
-- Autonomy is numeric, 1–5.
-
 ## Agent notes
 
-- Claude Code reads this file through the `CLAUDE.md` link; Codex reads it directly.
+- Claude Code reads each `AGENTS.md` through the `CLAUDE.md` link beside it; Codex reads the root one directly.
 - Do not mechanically rename Claude/Anthropic SDK identifiers here; those names reflect the actual upstream SDK and project configuration.
 - To prove a change works, follow the verify skill in `.claude/skills/verify/SKILL.md`.

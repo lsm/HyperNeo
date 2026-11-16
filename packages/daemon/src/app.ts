@@ -1,3 +1,4 @@
+import type { NeoAttentionEvent } from './lib/neo/attention/decide.ts';
 import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
@@ -1041,7 +1042,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         publish: (event) => sessionExternalEventService.publish(event),
       });
     const watchInventory = new GitHubWatchInventory(db.getDatabase(), sessionEventSubscriptions);
-    let wakePollingConcern = async (_key: string, _text: string): Promise<boolean> => false;
+    let attendPollingConcern = async (_event: NeoAttentionEvent): Promise<unknown> => undefined;
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
@@ -1067,7 +1068,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             new CodingPrLedgerRepository(db.getDatabase()),
             repos,
             reached,
-            wakePollingConcern,
+            attendPollingConcern,
             now
           ),
         subscribedPullRequests: (watched) =>
@@ -1201,7 +1202,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       return timer;
     });
     const { cleanup: rpcHandlerCleanup, space } = rpcHandlers;
-    wakePollingConcern = rpcHandlers.wakePollingConcern;
+    attendPollingConcern = rpcHandlers.attendPollingConcern;
     taskAgentManager = space?.taskAgentManager ?? null;
 
     startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');

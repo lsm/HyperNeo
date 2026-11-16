@@ -22,6 +22,12 @@ export const CODING_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
     render: told.render,
     ladder: [4 * 3_600_000],
   },
+  {
+    id: 'coding.github_health',
+    decide: () => 'digest',
+    render: told.render,
+    ladder: [24 * 3_600_000],
+  },
 ];
 
 type Waiting = Parameters<NonNullable<NonNullable<NeoPack['attention']>['scan']>>[1];

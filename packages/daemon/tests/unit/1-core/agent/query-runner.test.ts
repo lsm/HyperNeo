@@ -408,7 +408,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
       });
@@ -480,7 +480,7 @@ describe('QueryRunner', () => {
       const ctx = createContext({
         session: {
           ...mockSession,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
         messageQueue: queue,
@@ -535,7 +535,7 @@ describe('QueryRunner', () => {
       const ctx = createContext({
         session: {
           ...mockSession,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
         messageQueue: queue,
@@ -567,7 +567,7 @@ describe('QueryRunner', () => {
       const ctx = createContext({
         session: {
           ...mockSession,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         db: {
           ...mockDb,
@@ -619,7 +619,7 @@ describe('QueryRunner', () => {
       const ctx = createContext({
         session: {
           ...mockSession,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         db: { ...mockDb, writeSDKMessage: mock(async () => []) } as unknown as Database,
         messageQueue: queue,
@@ -675,7 +675,7 @@ describe('QueryRunner', () => {
         const ctx = createContext({
           session: {
             ...mockSession,
-            config: { model: 'unit', provider: providerId, harness: 'codex' },
+            config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
           oap: {
@@ -768,7 +768,7 @@ describe('QueryRunner', () => {
         const ctx = createContext({
           session: {
             ...mockSession,
-            config: { model: 'unit', provider: providerId, harness: 'codex' },
+            config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
           oap: {
@@ -845,7 +845,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
@@ -893,7 +893,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
@@ -970,7 +970,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub },
@@ -1002,7 +1002,7 @@ describe('QueryRunner', () => {
       const ctx = createContext({
         session: {
           ...mockSession,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: opening as unknown as OapQueryHub },
@@ -1032,7 +1032,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
@@ -1053,7 +1053,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: {
@@ -1082,7 +1082,7 @@ describe('QueryRunner', () => {
           ...mockSession,
           workspacePath: null,
           context,
-          config: { model: 'unit', provider: providerId, harness: 'codex', ...config },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex', ...config },
         } as Session,
         messageQueue: queue,
         oap: {
@@ -1106,7 +1106,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         toolGuards: [
           { matcher: 'Bash', pattern: 'git push', decision: 'deny', reason: 'synthetic' },
@@ -1135,7 +1135,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
         oap: {
@@ -1172,7 +1172,7 @@ describe('QueryRunner', () => {
           session: {
             ...mockSession,
             workspacePath: null,
-            config: { model: 'unit', provider: providerId, harness: 'codex' },
+            config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
           oap: {
@@ -1225,7 +1225,7 @@ describe('QueryRunner', () => {
         session: {
           ...mockSession,
           workspacePath: null,
-          config: { model: 'unit', provider: providerId, harness: 'codex' },
+          config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         isCleaningUp: () => cleaning,
         messageQueue: queue,

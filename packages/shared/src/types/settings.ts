@@ -93,6 +93,27 @@ export interface VoiceSettings {
   tlsCaPem?: string;
   streamEndpoint?: string;
   streamProtocol?: VoiceStreamProtocol;
+  recorded?: VoiceRecordedPart;
+  live?: VoiceLivePart;
+  speech?: VoiceSpeechPart;
+}
+
+export interface VoiceRecordedPart {
+  provider: 'openai';
+  endpoint: string;
+  model: string;
+}
+
+export interface VoiceLivePart {
+  provider: VoiceStreamProtocol;
+  endpoint: string;
+}
+
+export interface VoiceSpeechPart {
+  provider: 'openai';
+  endpoint: string;
+  model?: string;
+  voice?: string;
 }
 
 export type VoiceMode = 'batch' | 'streaming' | 'auto';

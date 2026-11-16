@@ -3,6 +3,7 @@ import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { SessionEventSubscriptionRepository } from '../../../storage/repositories/session-event-subscription-repository.ts';
 import { githubRepoOfTopic } from '../session-event-operations.ts';
 import type { GitHubWatchedRepo } from './github-repository.ts';
+import type { NeoAttentionEvent } from '../../neo/attention/decide.ts';
 import { deliverCodingHealth } from '../../neo/packs/coding/health-delivery.ts';
 import type { CodingPrLedgerRepository } from '../../neo/packs/coding/pr-ledger.ts';
 
@@ -50,7 +51,7 @@ export class GitHubWatchInventory {
 }
 
 export const reportGitHubWatchHealth = (superpipe({})('github-watch-health') as PipelineAPI)
-  .input(['ledger', 'repos', 'reached', 'wake', 'now'])
+  .input(['ledger', 'repos', 'reached', 'attend', 'now'])
   .pipe(
     async (
       ledger: CodingPrLedgerRepository,
@@ -73,11 +74,11 @@ export const reportGitHubWatchHealth = (superpipe({})('github-watch-health') as 
     ['ledger', 'repos', 'reached', 'now'],
     'keys'
   )
-  .pipe(deliverCodingHealth, ['ledger', 'keys', 'wake', 'now'])
+  .pipe(deliverCodingHealth, ['ledger', 'keys', 'attend', 'now'])
   .endAsync() as (
   ledger: CodingPrLedgerRepository,
   repos: GitHubWatchedRepo[],
   reached: Set<string>,
-  wake: (key: string, text: string) => Promise<boolean>,
+  attend: (event: NeoAttentionEvent) => Promise<unknown>,
   now: number
 ) => Promise<void>;

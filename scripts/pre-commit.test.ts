@@ -187,6 +187,16 @@ const cases: {
     setup: (f) => f.stage('docs/design/设计 plan.md'),
     inert: true,
   },
+  {
+    name: 'nested agent instruction files',
+    setup: (f) => f.stage('packages/daemon/AGENTS.md', 'packages/web/CLAUDE.md'),
+    inert: true,
+  },
+  {
+    name: 'nested skill file',
+    setup: (f) => f.stage('packages/skills/example/SKILL.md'),
+    inert: false,
+  },
   { name: 'docs JSON', setup: (f) => f.stage('docs/branding/tokens.json'), inert: false },
   { name: 'TypeScript under docs', setup: (f) => f.stage('docs/example.ts'), inert: false },
   { name: 'shell script under docs', setup: (f) => f.stage('docs/check.sh'), inert: false },

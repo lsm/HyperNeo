@@ -14,7 +14,7 @@ import {
 import { createCredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { ConnectionVault } from './vault.ts';
-import { googleClient, googleConnectionAttempt } from './status.ts';
+import { googleClient, googleConnectionAttempt, googleConnections } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
 import { createConnectionLifecycle } from './lifecycle.ts';
 
@@ -50,7 +50,7 @@ export function getGoogleConnectionService(sql: Database, deps: GoogleConnection
     pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) => {
       entry.closed.signal.throwIfAborted();
       return createConnectionLifecycle({
-        read: () => gateway.call(googleConnectionReads, 'list'),
+        read: () => gateway.call(googleConnectionReads, 'list').then(googleConnections),
         save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
         vault: new ConnectionVault(
           (configured.createStore ?? createCredentialStore)(sql),

@@ -51,6 +51,26 @@ describe('root Neo system prompt', () => {
       'A worker that ended its turn with a question waits on you. Answer it yourself when the plan, saved rules or your authority settle it; only otherwise relay it with neo.question.ask kind relay, so the card links the session and the answer reaches the worker.'
     );
   });
+  test('tells Neo a next-step wake is its own to resolve and how to ask the human', () => {
+    for (const line of [
+      'resolving it is yours, not the human’s',
+      'Run a step the human already authorized',
+      'Ask with neo.question.ask only when the step needs new authority from the human or you cannot tell',
+      'name the decision, why it needs them and what each answer does',
+      'options are the decision ("Merge", "Close it"), not todo operations',
+      'When the human says a step must wait, hold it with neo.todo.hold',
+      'For an overdue check, ask whoever it waits on, mark it done or remove it; if the wait is still right, do nothing',
+    ])
+      expect(NEO_ROOT_TURN_END).toContain(line);
+    expect(NEO_ROOT_TURN_END).not.toContain(
+      'Act on it, ask the human, or hold it with neo.todo.hold'
+    );
+    expect(NEO_ROOT_TURN_END).not.toContain('Not yet');
+    expect(neoToolDescription('neo.question.ask')).toContain(
+      'no option may mean later or not now: when the human decides a step must wait, record that with neo.todo.hold'
+    );
+  });
+
   test('tells Neo to label asks with a reused short topic', () => {
     expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
     expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');

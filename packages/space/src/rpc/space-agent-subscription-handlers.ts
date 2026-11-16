@@ -8,8 +8,6 @@ import {
 } from '../../../daemon/src/lib/external-events/topic-validator.ts';
 import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 
-const METHOD_PREFIX = 'spaceAgentSubscription';
-
 type SubscriptionRuntimeService = Pick<
   SpaceRuntimeService,
   'refreshLongHorizonSubscription' | 'removeLongHorizonSubscription'
@@ -68,9 +66,7 @@ export function setupSpaceAgentSubscriptionHandlers(
   messageHub: MessageHub,
   deps: SpaceAgentSubscriptionDeps
 ): void {
-  const method = (name: string): string => `${METHOD_PREFIX}.${name}`;
-
-  messageHub.onRequest(method('list'), async (data) => {
+  messageHub.onRequest('spaceAgentSubscription.list', async (data) => {
     const params = data as { agentId: string; spaceId?: string };
     if (!params.agentId) throw new Error('agentId is required');
     const agent = deps.agents.getById(params.agentId);
@@ -81,7 +77,7 @@ export function setupSpaceAgentSubscriptionHandlers(
     return { subscriptions: deps.subscriptions.listSubscriptions(params.agentId) };
   });
 
-  messageHub.onRequest(method('create'), async (data) => {
+  messageHub.onRequest('spaceAgentSubscription.create', async (data) => {
     const params = data as {
       spaceId: string;
       agentId: string;
@@ -121,7 +117,7 @@ export function setupSpaceAgentSubscriptionHandlers(
     return { subscription };
   });
 
-  messageHub.onRequest(method('update'), async (data) => {
+  messageHub.onRequest('spaceAgentSubscription.update', async (data) => {
     const params = data as {
       subscriptionId: string;
       spaceId?: string;
@@ -169,7 +165,7 @@ export function setupSpaceAgentSubscriptionHandlers(
     return { subscription };
   });
 
-  messageHub.onRequest(method('delete'), async (data) => {
+  messageHub.onRequest('spaceAgentSubscription.delete', async (data) => {
     const params = data as { subscriptionId: string; spaceId?: string };
     if (!params.subscriptionId) throw new Error('subscriptionId is required');
     const existing = deps.subscriptions.getSubscription(params.subscriptionId);

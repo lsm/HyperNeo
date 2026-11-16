@@ -217,44 +217,6 @@ export const neoDaemonCardChoice = (card: Pick<Card, 'cause' | 'answer'>) =>
 
 export const neoStartRetryDue = (retries: number) => retries < NEO_AUTOMATIC_RETRIES;
 
-export function planNeoRetriesCard<C extends Card>(
-  todo: Row,
-  family: readonly Row[],
-  cards: readonly C[]
-): { replaces: C | null; draft: NeoQuestionDraft } | null {
-  const open = cards.filter((card) => card.state === 'open');
-  if (neoTodoCovered(todo, open)) return null;
-  const shared =
-    open.find(
-      (card) =>
-        card.cause === NEO_RETRIES_EXHAUSTED &&
-        card.todos.some(
-          (id) => family.find((item) => item.id === id)?.blockedReason === todo.blockedReason
-        )
-    ) ?? null;
-  const covered = [
-    ...(shared?.todos ?? []).flatMap((id) => family.filter((item) => item.id === id && live(item))),
-    todo,
-  ];
-  return { replaces: shared, draft: neoDaemonCardDraft(NEO_RETRIES_EXHAUSTED, covered) };
-}
-
-export const neoHumanStepDue = (
-  todo: Covered,
-  family: readonly Covered[],
-  cards: readonly Card[],
-  now: number
-) =>
-  !neoTodoCovered(todo, cards) &&
-  humanStep(todo, family) &&
-  !cards.some(
-    (card) =>
-      (card.cause === NEO_CHECK_OVERDUE || card.cause === NEO_HUMAN_STEP) &&
-      card.state === 'answered' &&
-      card.todos.includes(todo.id) &&
-      now - (card.answeredAt ?? 0) < NEO_CHECK_DEADLINE_MS
-  );
-
 export type NeoDaemonCardAction = {
   todoId: string;
   name: 'neo.todo.done' | 'neo.todo.remove' | 'neo.todo.continue';
@@ -299,7 +261,7 @@ export function planNeoDaemonCardActions(card: Card, todos: readonly Row[]): Neo
 export function planNeoHoldCard(
   todo: Covered,
   cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[],
-  reason: string
+  question: string
 ): { value: NeoQuestionDraft } | { reason: string } {
   const cause = todo.startedAt === null ? NEO_HOLD : NEO_PAUSE;
   if (!covers[cause](todo, [todo]))
@@ -308,7 +270,7 @@ export function planNeoHoldCard(
     };
   if (neoTodoCovered(todo, cards))
     return { reason: 'already_waiting: this todo already waits on an open card; answer that one.' };
-  return { value: { ...neoDaemonCardDraft(cause, [todo], reason), todoId: todo.id } };
+  return { value: { ...neoDaemonCardDraft(cause, [todo]), text: question, todoId: todo.id } };
 }
 
 export const neoTodoHeldBy = (
