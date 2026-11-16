@@ -254,6 +254,68 @@ test('an idle ask is told again after a card is answered, with no todo change', 
   expect(digests()).toEqual([idle('quiet'), idle('quiet'), idle('quiet')]);
 });
 
+test('an idle ask whose reminder was read settles once the card answer is read, with no second reminder', async () => {
+  ask('quiet', clock - 2 * hour);
+  todo('quiet', 'removed');
+  await service.refreshDriverWork();
+  clock += 16 * 60_000;
+  await service.refreshDriverWork();
+  const raw = db.getDatabase();
+  let turn = 0;
+  const row = (kind: 'user' | 'result') =>
+    raw
+      .prepare(`INSERT INTO sdk_messages
+        (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
+         is_terminal, send_status)
+        VALUES ((SELECT COALESCE(MAX(seq), 0) + 1 FROM sdk_messages), ?, ?, ?, ?, ?, ?, ?, ?, 'consumed')`)
+      .run(
+        `turn-${++turn}`,
+        root,
+        kind,
+        JSON.stringify({ type: kind }),
+        new Date(clock).toISOString(),
+        `turn-${turn}`,
+        10 + turn,
+        kind === 'result' ? 1 : 0
+      );
+  expect(
+    raw
+      .prepare(`UPDATE sdk_messages SET consumed_seq = 10, send_status = 'consumed'
+        WHERE session_id = ? AND message_type = 'user' AND sdk_message LIKE '%Ask: quiet (quiet)%'`)
+      .run(root).changes
+  ).toBe(1);
+  const card = service.todos.askQuestion(
+    'card',
+    'quiet',
+    {
+      text: 'Choose',
+      kind: 'yesno',
+      options: null,
+      multiple: false,
+      noLabel: 'No',
+      yesLabel: 'Yes',
+      confirm: null,
+      document: null,
+      replyTo: [],
+      todoId: null,
+      artifacts: [],
+    },
+    clock
+  );
+  row('result');
+  await service.refreshDriverWork();
+  expect(service.todos.getAsk('quiet')?.status).toBe('open');
+  clock += hour;
+  service.todos.answerQuestion(card, true as never, 'button', clock);
+  await service.refreshDriverWork();
+  expect(service.todos.getAsk('quiet')?.status).toBe('open');
+  row('user');
+  row('result');
+  await service.refreshDriverWork();
+  expect(service.todos.getAsk('quiet')?.status).toBe('dropped');
+  expect(digests()).toEqual([idle('quiet')]);
+});
+
 test('a parent with an open child is not finished', async () => {
   ask('parent', clock);
   todo('parent', 'done');
