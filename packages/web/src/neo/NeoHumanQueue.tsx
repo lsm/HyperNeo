@@ -60,6 +60,21 @@ export function NeoHumanQueue({
   const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [attempt, setAttempt] = useState(0);
   const loading = useRef(new Set<string>());
+  const covers = (loaded: NeoAskEntry, askId: string) =>
+    queue.items.every(
+      (item) =>
+        item.askId !== askId ||
+        !('questionId' in item) ||
+        loaded.questions.some((question) => question.id === item.questionId)
+    );
+  const card = (askId: string): NeoAskEntry | undefined => {
+    const entry = entries.find((candidate) => candidate.ask.id === askId);
+    if (entry && !entry.summary) return entry;
+    const loaded = details[askId];
+    if (!loaded || !covers(loaded, askId)) return undefined;
+    return !entry || loaded.ask.updatedAt >= entry.ask.updatedAt ? loaded : undefined;
+  };
+  const focusReady = !!focus && !!card(focus.askId);
   const focused = focus && queue.items.find((item) => holds(item, focus));
   useEffect(() => {
     if (!focused) return;
@@ -93,7 +108,7 @@ export function NeoHumanQueue({
       cancelAnimationFrame(frame);
       restore();
     };
-  }, [focus, focused?.state, state, ask]);
+  }, [focus, focused?.state, state, ask, focusReady]);
   const title = (id: string) =>
     entries.find((entry) => entry.ask.id === id)?.ask.title ?? details[id]?.ask.title ?? id;
   const count = (s: NeoHumanQueueState, a: string | null) =>
@@ -106,13 +121,6 @@ export function NeoHumanQueue({
     (item) => item.state === state && (ask === null || item.askId === ask)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
-  const card = (askId: string): NeoAskEntry | undefined => {
-    const entry = entries.find((candidate) => candidate.ask.id === askId);
-    const loaded = details[askId];
-    if (!entry) return loaded;
-    if (!entry.summary) return entry;
-    return loaded && loaded.ask.updatedAt >= entry.ask.updatedAt ? loaded : undefined;
-  };
   const stale = groups.filter((id) => !card(id));
   useEffect(() => {
     if (!onLoadDetails) return;
@@ -123,7 +131,7 @@ export function NeoHumanQueue({
         .then(
           (value) => {
             setDetails((current) => ({ ...current, [id]: value }));
-            setFailed((current) => ({ ...current, [id]: false }));
+            setFailed((current) => ({ ...current, [id]: !covers(value, id) }));
           },
           () => setFailed((current) => ({ ...current, [id]: true }))
         )
