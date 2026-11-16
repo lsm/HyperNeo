@@ -70,7 +70,8 @@ function readHolds(db: Database): LineHold[] {
         json_extract(processing_state, '$.reason') AS reason,
         json_extract(processing_state, '$.retryAt') AS retryAt
       FROM sessions
-      WHERE json_valid(processing_state) AND json_valid(config)
+      WHERE status NOT IN ('archived', 'ended') AND archived_at IS NULL
+        AND json_valid(processing_state) AND json_valid(config)
         AND json_extract(processing_state, '$.status') = 'rate_limit_cooldown'`)
     .all()
     .flatMap((row) => {
