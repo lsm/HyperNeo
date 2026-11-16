@@ -125,9 +125,58 @@ try {
   const half = await sweep('Neo ignored it for 30 minutes', 0.5);
   const hour = await sweep('Neo still ignored it at 1 h', 1);
   assert.equal(hour.length, half.length + 1, 'the request todo wakes Neo again at its 1 h rung');
+  assert.match(hour.at(-1)!, /is a request from session synthetic-requester waiting for your answer/);
+  assert.doesNotMatch(hour.at(-1)!, /Write the instruction and start it/);
   const mailbox = () =>
     (db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'mailbox'").get() as { n: number }).n;
-  todos.updateTodo(todos.getTodo(recorded!.id)!, { state: 'done', finishedAt: clock }, clock);
+  const inbox = (sessionId: string) =>
+    (
+      db
+        .prepare(
+          `SELECT json_extract(payload, '$.origin') AS origin,
+                  json_extract(payload, '$.message.message.content') AS text
+             FROM job_queue WHERE queue = 'mailbox'
+              AND json_extract(payload, '$.to.sessionId') = ? ORDER BY created_at, rowid`
+        )
+        .all(sessionId) as { origin: string; text: string }[]
+    ).map((row) => ({ origin: row.origin, text: String(row.text) }));
+  db.prepare(
+    'INSERT INTO sessions (id,title,type,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(
+    'synthetic-requester',
+    'Synthetic requester',
+    'general',
+    join(run, 'workspace'),
+    new Date(at).toISOString(),
+    new Date(at).toISOString(),
+    'active',
+    '{}',
+    '{}'
+  );
+  const asNeo = { source: 'mcp' as const, sessionId: root, role: 'neo' as const };
+  const closed = await invokeOperation(
+    registry,
+    'neo.todo.done',
+    { todoId: recorded!.id, reason: 'Closed the merged synthetic todo' },
+    asNeo
+  );
+  assert.equal((closed as { value?: { ok?: boolean } }).value?.ok, true, JSON.stringify(closed));
+  const replies = inbox('synthetic-requester');
+  assert.equal(replies.length, 1, 'closing the request sends exactly one reply to its sender');
+  assert.equal(replies[0]!.origin, `session:${encodeURIComponent(root)}`);
+  assert.match(
+    replies[0]!.text,
+    /Neo closed your request "Close the merged synthetic todo" as done: Closed the merged synthetic todo/
+  );
+  (evidence.checks as unknown[]).push({ name: 'Neo closed it', closed, replies });
+  const again = await invokeOperation(
+    registry,
+    'neo.todo.remove',
+    { todoId: recorded!.id, reason: 'Retire it' },
+    asNeo
+  );
+  assert.equal(inbox('synthetic-requester').length, 1, 'retiring a closed request sends no second reply');
+  (evidence.checks as unknown[]).push({ name: 'retired after close', again });
   clock += 11 * 60_000;
   const queued = mailbox();
   const repeat = await send('synthetic-requester', `${title}\nIts pull request merged.`);
@@ -135,12 +184,35 @@ try {
   assert.equal(mailbox(), queued, 'a repeat of a closed request queues no wake');
   assert.equal(todos.listTodos(asks[0]!.id).length, 1);
   (evidence.checks as unknown[]).push({ name: 'repeat after close', repeat, mailbox: mailbox() });
+  const lost = 'Close the other synthetic todo';
+  assert.equal(
+    ((await send('gone-requester', lost)) as { value?: { kind?: string } }).value?.kind,
+    'accepted'
+  );
+  const lostAsk = requestAsks().find((ask) => ask.title === lost)!;
+  const [lostTodo] = todos.listTodos(lostAsk.id);
+  const failed = await invokeOperation(
+    registry,
+    'neo.todo.remove',
+    { todoId: lostTodo!.id, reason: 'Not needed' },
+    asNeo
+  );
+  const records = (failed as { value?: { ok?: boolean; records?: string[] } }).value;
+  assert.equal(records?.ok, true, JSON.stringify(failed));
+  assert.ok(
+    records?.records?.some((line) => line.startsWith('reply_failed: the requester gone-requester')),
+    JSON.stringify(failed)
+  );
+  (evidence.checks as unknown[]).push({ name: 'reply to an unknown session fails visibly', failed });
+  const allAsks = () =>
+    (db.prepare('SELECT COUNT(*) AS n FROM neo_asks').get() as { n: number }).n;
+  const asksBefore = allAsks();
   const reported = await send('synthetic-worker', 'Which synthetic region should I use?');
   assert.equal((reported as { value?: { kind?: string } }).value?.kind, 'accepted');
-  assert.equal(requestAsks().length, 1, "a worker's own report records no request todo");
+  assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} closed_repeat=rejected`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} reply_failed=shown closed_repeat=rejected`
   );
 } catch (error) {
   evidence.error = String(error);

@@ -82,6 +82,7 @@ function setup(
         advance: () => runner.advance(),
         changed: () => {},
         project: async (todos) => [...todos],
+        reply: async () => null,
       }
     ),
     ...createNeoAskRecordOperations(

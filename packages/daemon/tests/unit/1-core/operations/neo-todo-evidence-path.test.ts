@@ -79,6 +79,7 @@ function setup(repository: string | null, seedPeer = true) {
       advance: async () => {},
       changed: () => {},
       project: async (todos) => [...todos],
+      reply: async () => null,
     }
   );
   const add = operations.find((op) => op.name === 'neo.todo.add')!;
