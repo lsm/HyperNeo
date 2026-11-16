@@ -79,7 +79,7 @@ export function neoTodoRepository(
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
 
 type WorkerStartExclusions = { value: readonly WorkRef[] } | { reason: string };
-export type NeoWorkerTargetDecision = { value: NeoTodoTarget } | { reason: string };
+export type NeoWorkerTargetDecision = { value: NeoTodoTarget; note?: string } | { reason: string };
 
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;

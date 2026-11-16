@@ -693,6 +693,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       deps.changed();
     }
     const chosen = decision.value;
+    if (decision.note) await note('todo.line_moved', todo, Date.now(), decision.note);
     if (
       chosen.verb === 'send' &&
       (target.verb !== 'send' || neoWorkerKey(target.ref) !== neoWorkerKey(chosen.ref))

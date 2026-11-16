@@ -129,7 +129,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       target: NeoTodoTarget
     ) => {
       if (target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
-        return { value: target };
+        return { value: { target } };
       const saved =
         facts && rankedHere(target)
           ? codingStagePreference(db, { repo: facts.repo, stage: 'write' })
@@ -141,7 +141,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         return resolved?.ok ? { [field]: value } : {};
       };
       const start = { ...target, ...(await usable('model')), ...(await usable('effort')) };
-      if (!lines) return { value: start };
+      if (!lines) return { value: { target: start } };
       const kind = todo.named?.workKind;
       const ranked = await rankCodingTargets(
         lines,
@@ -149,9 +149,11 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         codingStartAlternatives(start, lines.models()),
         codingLineScope(db, todo.id, facts?.repo)
       );
-      return 'reason' in ranked
-        ? { reason: { reason: ranked.reason } }
-        : { value: ranked.value[0] };
+      if ('reason' in ranked) return { reason: { reason: ranked.reason } };
+      const note = ranked.skipped.length
+        ? `Started on another model line: ${ranked.skipped.join('; ')}.`
+        : undefined;
+      return { value: { target: ranked.value[0], ...(note ? { note } : {}) } };
     },
     ['db', 'lines', 'facts', 'plan', 'todo', 'target'],
     'result:decision'
@@ -175,8 +177,13 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     'reserved'
   )
   .pipe(
-    (plan: Plan, reserved: boolean, target: NeoTodoTarget): NeoWorkerTargetDecision => {
-      if (plan.verb === 'keep') return { value: target };
+    (
+      plan: Plan,
+      reserved: boolean,
+      { target, note }: { target: NeoTodoTarget; note?: string }
+    ): NeoWorkerTargetDecision => {
+      const moved = note ? { note } : {};
+      if (plan.verb === 'keep') return { value: target, ...moved };
       if (plan.verb === 'held' || plan.verb === 'wait' || !reserved) return { reason: WAIT };
       if (plan.verb !== 'start') return { value: { verb: 'send', ref: plan.ref } };
       if (target.verb !== 'start')
@@ -184,7 +191,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
           reason:
             'session_start_needed: this work needs a new session; add it with a start target.',
         };
-      return { value: plan.name ? { ...target, name: plan.name } : target };
+      return { value: plan.name ? { ...target, name: plan.name } : target, ...moved };
     },
     ['plan', 'reserved', 'decision'],
     'decision'

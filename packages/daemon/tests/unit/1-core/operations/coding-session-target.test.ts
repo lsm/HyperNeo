@@ -151,9 +151,15 @@ describe('coding session target decision', () => {
       kinds
     );
     const only = driverCodingLines(catalog, { rules: [{ line, only: { projects: ['p1'] } }] });
-    expect(await decide(todo(), glm, never)).toEqual({ value: opus });
+    expect(await decide(todo(), glm, never)).toEqual({
+      value: opus,
+      note: 'Started on another model line: glm/glm-6 via hyperneo: excluded by a rule.',
+    });
     expect(kinds).toEqual([`coding.write ${repo} p1`]);
-    expect(await decide(todo('other'), glm, only)).toEqual({ value: opus });
+    expect(await decide(todo('other'), glm, only)).toEqual({
+      value: opus,
+      note: 'Started on another model line: glm/glm-6 via hyperneo: excluded by a rule.',
+    });
     db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'third'").run();
     expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });
   });

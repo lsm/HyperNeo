@@ -29,6 +29,15 @@ export const CODING_WORK_KINDS: readonly NeoWorkKind[] = [
   { id: 'coding.verify', label: { en: 'Coding: verify', 'zh-Hans': '编码：验证' } },
 ];
 
+async function pinnedModel(lines: CodingLines, adapter: string, provider: string, id: string) {
+  const entry = lines.models().find((model) => model.id === id && model.provider === provider);
+  for (const model of [...new Set([id, entry?.name, entry?.alias].filter(Boolean))] as string[]) {
+    const again = await lines.resolve({ adapter, model }).catch(() => null);
+    if (again?.ok && again.value.provider === provider && again.value.model === id) return model;
+  }
+  return null;
+}
+
 export async function codingCandidateLine<T extends Candidate>(
   lines: CodingLines,
   target: T
@@ -36,14 +45,17 @@ export async function codingCandidateLine<T extends Candidate>(
   const resolved = await lines.resolve(target).catch(() => null);
   const value = resolved?.ok ? resolved.value : null;
   const model = value?.model ?? target.model;
-  const again =
+  const pinned =
     value?.model && value.model !== target.model
-      ? await lines.resolve({ adapter: target.adapter, model: value.model }).catch(() => null)
-      : null;
-  const stable = again?.ok && again.value.provider === value?.provider;
+      ? await pinnedModel(lines, target.adapter, value.provider ?? '', value.model)
+      : target.model;
   return {
-    line: { provider: value?.provider ?? '', model: model ?? '', harness: target.adapter },
-    target: stable && model ? { ...target, model } : target,
+    line: {
+      provider: (pinned && value?.provider) || '',
+      model: model ?? '',
+      harness: target.adapter,
+    },
+    target: pinned ? { ...target, model: pinned } : target,
   };
 }
 
