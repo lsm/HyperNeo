@@ -101,6 +101,8 @@ describe('the attention sweep with model-routing on', () => {
   let db: Database;
   let sweep: (now: number) => Promise<void>;
   let whileRanking = () => {};
+  let signedIn = true;
+  let authReads = 0;
 
   const wakes = () =>
     (
@@ -113,21 +115,13 @@ describe('the attention sweep with model-routing on', () => {
     sinceMinutes: number,
     status = 'active',
     retryAt: number | null = NOW + 10 * MINUTE,
-    reason = 'limit'
+    reason = 'limit',
+    n = 1
   ) => {
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
-    store.openAsk({
-      id: 'ask-1',
-      title: 'Cache layer',
-      request: 'Build the cache layer',
-      sessionId: 'neo:root',
-      projectId: null,
-      originMessageId: null,
-      createdAt: NOW,
-    });
     const todo = store.addTodo(
-      'todo-1',
+      `todo-${n}`,
       'ask-1',
       {
         title: 'Ship it',
@@ -140,15 +134,16 @@ describe('the attention sweep with model-routing on', () => {
       },
       NOW
     );
-    const ref = { adapter: 'hyperneo', id: 'worker-1' };
+    const ref = { adapter: 'hyperneo', id: `worker-${n}` };
     sessions.create(todo.id, { verb: 'send', ref });
     sessions.recordRef(todo.id, ref, NOW);
     store.updateTodo(todo, { state: 'doing', startedAt: NOW }, NOW);
     sessions.recordNudge(todo.id, { since: NOW, nudges: 0, live: 'running' });
     db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, processing_state)
-       VALUES ('worker-1', 't', '/w', '2026-11-16', '2026-11-16', ?, ?, '{}', ?)`
+       VALUES (?, 't', '/w', '2026-11-16', '2026-11-16', ?, ?, '{}', ?)`
     ).run(
+      ref.id,
       status,
       JSON.stringify({ provider: 'anthropic', model: 'opus' }),
       JSON.stringify({
@@ -165,8 +160,19 @@ describe('the attention sweep with model-routing on', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     whileRanking = () => {};
+    signedIn = true;
+    authReads = 0;
     runMigrations(db, () => {});
     createTables(db);
+    new NeoAskTodoRepository(db).openAsk({
+      id: 'ask-1',
+      title: 'Cache layer',
+      request: 'Build the cache layer',
+      sessionId: 'neo:root',
+      projectId: null,
+      originMessageId: null,
+      createdAt: NOW,
+    });
     db.prepare(
       `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
        VALUES ('model-routing', 'global', '', 'routes', ?, 'human', 1)`
@@ -177,8 +183,9 @@ describe('the attention sweep with model-routing on', () => {
         ({
           isAvailable: async () => true,
           getAuthStatus: async () => {
+            authReads += 1;
             whileRanking();
-            return { isAuthenticated: true };
+            return { isAuthenticated: signedIn };
           },
         }) as unknown as Provider,
       now: () => NOW,
@@ -211,12 +218,12 @@ describe('the attention sweep with model-routing on', () => {
     expect(wakes()).toEqual([]);
   });
 
-  test('a long limit hold tells Neo once, with the usable lines', async () => {
+  test('a long limit hold tells Neo once, with the other lines on its route', async () => {
     heldTodo(31);
     await sweep(NOW);
     await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
     ]);
   });
 
@@ -225,7 +232,7 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW);
     await sweep(NOW + 5 * MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Usable lines, best first: kimi k2 via hyperneo. Decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (limit) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
     ]);
   });
 
@@ -247,8 +254,29 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW);
     await sweep(NOW + MINUTE);
     expect(wakes()).toEqual([
-      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (overloaded) since 2026-11-16T11:59:00.000Z. No other line is usable for it. Decide whether it waits or moves.',
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (overloaded) since 2026-11-16T11:59:00.000Z. No other line is listed for it. Decide whether it waits or moves.',
     ]);
+  });
+
+  test('a hold is told once even when its other lines stop being usable', async () => {
+    heldTodo(31);
+    await sweep(NOW);
+    signedIn = false;
+    await sweep(NOW + 5 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a hold whose reset has passed is stale and tells Neo nothing', async () => {
+    heldTodo(31, 'active', NOW - MINUTE);
+    await sweep(NOW);
+    expect(wakes()).toEqual([]);
+  });
+
+  test('two todos held on the same line are ranked once per sweep', async () => {
+    heldTodo(31, 'active', NOW + 10 * MINUTE, 'limit', 1);
+    heldTodo(31, 'active', NOW + 10 * MINUTE, 'limit', 2);
+    await sweep(NOW);
+    expect([wakes().length, authReads]).toEqual([2, 1]);
   });
 
   test('a hold left on an archived worker tells Neo nothing', async () => {

@@ -29,6 +29,7 @@ interface Harness {
     content: string
   ): Promise<Awaited<ReturnType<AgentSession['driveDeliveryTurn']>>>;
   setOutcome(outcome: RefreshNowOutcome): void;
+  persisted(): Promise<string | undefined>;
 }
 
 let availability: Array<{ mockRestore(): void }> = [];
@@ -151,6 +152,7 @@ async function harness(
     deliver,
     deliverWhileQueued,
     setOutcome,
+    persisted: async () => (await db.getSession(session.id))?.processingState,
   };
 }
 
@@ -322,6 +324,25 @@ describe('login hold', () => {
     const state = h.agent.getProcessingState() as { reason?: string; since?: number };
     expect(state.reason).toBe('login');
     expect(state.since).toBeGreaterThanOrEqual(before);
+    await h.agent.cleanup();
+  });
+
+  it('a skipped restore of a login hold with no held prompt leaves the session idle', async () => {
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since: Date.now() - 45 * 60_000,
+      }),
+      needsLoginAt: null,
+    });
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+
+    expect(JSON.parse((await h.persisted()) ?? '{}').status).toBe('idle');
     await h.agent.cleanup();
   });
 
