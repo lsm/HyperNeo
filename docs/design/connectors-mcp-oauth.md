@@ -13,8 +13,8 @@ a URL, a scope set and, where the vendor requires it, a client ID.
   from [query options][qob] (`appMcpServerToSdkConfig`). The same conversion in the
   [lifecycle manager][lifecycle] has no production caller today.
 - So OAuth servers only work with a pasted bearer token. That token is stored in
-  the registry, appears in settings reads and session config, and expires in
-  about an hour with no refresh.
+  the registry, appears in settings reads and session config, and stops working
+  when it expires, because nothing refreshes it.
 - The Google connection already has what we need: a namespaced [vault][vault] over
   `CredentialStore`, single-flight [refresh][access], and a loopback PKCE
   [login][login]. The daemon already depends on `@modelcontextprotocol/sdk`
@@ -49,6 +49,16 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    is within the maximum. Anywhere else it throws: a tool call, a refresh, or a
    401/403 retry. It never opens consent. A token response that grants scopes
    beyond the maximum is discarded, not stored.
+   **Normalize the token response before the SDK parses it.** The SDK parses
+   token responses with its own schema before `saveTokens`, and that drops
+   unknown fields. Slack's `oauth.v2.user.access` puts the granted scopes in
+   `authed_user.scope`, comma-separated, and reports errors as `{ok: false,
+   error}`. So the `fetchFn` the daemon passes to `auth()` normalizes each
+   preset's token-endpoint reply. The Slack preset turns `ok: false` into an
+   OAuth error body, moves `authed_user.scope` to a space-separated top-level
+   `scope`, and sets `token_type: Bearer`. Other presets pass through. A
+   response with no `scope` means the requested scope (RFC 6749). The
+   over-broad check runs on the normalized scope.
 4. **Inject outside registry headers.** For an OAuth row the daemon itself is the
    MCP client: SDK `Client` plus `StreamableHTTPClientTransport` with the
    provider above. Sessions get an in-process SDK server (`createSdkMcpServer`,
@@ -76,6 +86,22 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    scopes apart. Write tools may still be listed, but the vendor's server refuses
    them for lack of scope; tool hints are never trusted. Adding write scopes is
    part of the phase-2 work, not this design.
+7. **Bound and redact at the daemon boundary.** The SDK reads OAuth and MCP
+   bodies whole (`response.json()`, `text()`, SSE parsing). So the daemon passes
+   one bounded fetch, as `fetchFn` to `auth()` and as `fetch` to the transport.
+   It caps each response body and each SSE event in bytes and fails with
+   `response_too_large`; nothing is buffered past the cap. The proxy caps the
+   tool catalog (tool count and description and schema bytes, refusing a list
+   over the cap) and each tool result (items and bytes, truncated with an
+   explicit marker), as [connections](connectors.md) requires for every tool.
+   Before a result reaches a session, the proxy replaces the grant's access
+   token, refresh token and client secret with `[redacted]`, as
+   [Google HTTP][google-http] does. Errors from the SDK, OAuth bodies and the
+   upstream server are never forwarded or logged as text. Sessions, status RPCs
+   and logs get only a reason code (`unauthorized`, `reconnect_needed`,
+   `rate_limited`, `response_too_large`, `request_failed`). Status RPCs return
+   health and granted scopes only. Tool names, descriptions and results are
+   untrusted content, never instructions or approval.
 
 Not in this design: DPoP, token exchange, device flow, a hosted relay, and
 importing tokens from other clients' caches.
@@ -126,14 +152,17 @@ rejects a missing or expired bearer. It has one read tool and one write tool. Th
 write tool needs a write scope and counts every mutation it applies. It records
 every authorize request's scope, can advertise every scope in its metadata, can
 answer with a 403 `insufficient_scope` challenge naming a write scope, and can
-delay any token response. Switches cover the vendor shapes above: no DCR plus a
-required client secret (Slack), and root versus path metadata.
+delay any token response. It can also return oversized bodies, SSE events,
+catalogs and results, and echo the caller's bearer in a result or an error.
+Switches cover the vendor shapes above: no DCR plus a required client secret
+and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
+`ok: false` errors), and root versus path metadata.
 
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
-| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault, survives a restart, and is absent from DB rows and registry reads. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored. |
+| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault, survives a restart, and is absent from DB rows and registry reads. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
 | 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. |
-| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. |
+| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
 | 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
 
@@ -146,6 +175,7 @@ vendor credentials.
 [lifecycle]: ../../packages/daemon/src/lib/mcp/app-mcp-lifecycle-manager.ts
 [vault]: ../../packages/daemon/src/lib/connections/vault.ts
 [access]: ../../packages/daemon/src/lib/connections/token-access.ts
+[google-http]: ../../packages/daemon/src/lib/connections/google-http.ts
 [google-lifecycle]: ../../packages/daemon/src/lib/connections/lifecycle.ts
 [login]: ../../packages/daemon/src/lib/connections/google-login.ts
 [ops]: ../../packages/daemon/src/lib/operations/mcp-server.ts
