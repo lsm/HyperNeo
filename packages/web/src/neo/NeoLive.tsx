@@ -133,6 +133,7 @@ export function NeoLive() {
   );
   const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 2400px)').matches);
   const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
+  const [reveal, setReveal] = useState(0);
   const [cardUnavailable, setCardUnavailable] = useState(false);
   const [cardOpening, setCardOpening] = useState(false);
   const referenceRequest = useRef<object | null>(null);
@@ -742,7 +743,9 @@ export function NeoLive() {
             entry: neoWorkReferenceEntry(result.entry),
           });
         requestAnimationFrame(() => {
-          if (referenceRequest.current === ticket) setCardTarget(result.target);
+          if (referenceRequest.current !== ticket) return;
+          setCardTarget(result.target);
+          setReveal((value) => value + 1);
         });
         if (!result.target.questionId && !result.target.todoId)
           requestAnimationFrame(() =>
@@ -1097,6 +1100,7 @@ export function NeoLive() {
               onLoadDetails={loadNeoAskDetails}
               onOpen={openSession}
               focus={cardTarget}
+              reveal={reveal}
               onReply={
                 ready
                   ? (question) =>
@@ -1134,7 +1138,9 @@ export function NeoLive() {
               >
                 <h2 class="text-xs font-medium text-fg-muted">
                   {group.label} ·{' '}
-                  {group.key === 'attention' && !topic ? attentionCount : group.entries.length}
+                  {group.key === 'attention' && !topic && !fullQueue
+                    ? attentionCount
+                    : group.entries.length}
                 </h2>
                 {group.entries.map((entry) => (
                   <NeoAskTodos

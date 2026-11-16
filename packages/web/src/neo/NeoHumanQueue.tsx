@@ -43,6 +43,7 @@ export function NeoHumanQueue({
   onReply,
   onOpen,
   focus,
+  reveal = 0,
 }: {
   queue: Queue;
   entries: readonly NeoAskEntry[];
@@ -53,6 +54,7 @@ export function NeoHumanQueue({
   onReply?: (question: NeoQuestionEntry) => void;
   onOpen?: (link: string, title: string) => void;
   focus?: NeoWorkFocus | null;
+  reveal?: number;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
@@ -89,13 +91,17 @@ export function NeoHumanQueue({
   useEffect(() => {
     if (ask !== null && !queue.counts[ask]) setAsk(null);
   }, [queue, ask]);
+  const revealed = useRef<{ reveal: number; done: boolean } | null>(null);
   useEffect(() => {
-    if (!focused) return;
+    if (!focused || revealed.current?.reveal === reveal) return;
+    revealed.current = { reveal, done: false };
     setState(focused.state);
     setAsk(null);
-  }, [focus, focused?.state]);
+  }, [reveal, focused]);
   useEffect(() => {
-    if (!focus || !focused || focused.state !== state || ask !== null) return;
+    const request = revealed.current;
+    if (!focus || !focused || !request || request.reveal !== reveal || request.done) return;
+    if (focused.state !== state || ask !== null) return;
     let restore = () => {};
     const frame = requestAnimationFrame(() => {
       const target = [
@@ -111,6 +117,7 @@ export function NeoHumanQueue({
       target.classList.add('ring-2', 'ring-accent');
       target.focus({ preventScroll: true });
       target.scrollIntoView?.({ block: 'center' });
+      if (focusReady || failed(focus.askId)) request.done = true;
       restore = () => {
         target.classList.remove('ring-2', 'ring-accent');
         if (prior === null) target.removeAttribute('tabindex');
@@ -121,7 +128,7 @@ export function NeoHumanQueue({
       cancelAnimationFrame(frame);
       restore();
     };
-  }, [focus, focused?.state, state, ask, focusReady]);
+  }, [focus, focused?.state, state, ask, focusReady, reveal]);
   const title = (id: string) =>
     entries.find((entry) => entry.ask.id === id)?.ask.title ?? details[id]?.ask.title ?? id;
   const count = (s: NeoHumanQueueState, a: string | null) =>
