@@ -7,6 +7,8 @@ import {
   registerSettingsHandlers,
 } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract';
+import { neoPackBriefs, neoPacks } from '../../../../src/lib/neo/pack-selection';
 import type { DaemonHub } from '../../../helpers/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
 import type {
@@ -289,6 +291,52 @@ describe('Settings RPC Handlers', () => {
           namespaceId: 'global',
         })
       );
+    });
+
+    it('refuses enabling a second pack that ranks model lines and keeps the saved packs', async () => {
+      const ranker = (id: string): NeoPack => ({
+        id,
+        describe: id,
+        instructions: () => null,
+        rankLines: () => ({ ranked: [], skipped: [], exhausted: true }),
+      });
+      const installed = [ranker('first-routing'), ranker('second-routing')];
+      let saved: GlobalSettings = { ...defaultGlobalSettings };
+      const settingsManager = {
+        getGlobalSettings: () => saved,
+        updateGlobalSettingsAsync: (updates: Partial<GlobalSettings>) => {
+          const before = saved;
+          saved = { ...saved, ...keepNeoOwnedSettings(updates, saved) };
+          return { settings: saved, before, after: saved };
+        },
+        rollbackGlobalSettingsAsync: ({ before }: { before: GlobalSettings }) => {
+          saved = before;
+        },
+      } as unknown as SettingsManager;
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        undefined,
+        () => installed
+      );
+      const handler = hubData.handlers.get('settings.global.update')!;
+
+      await handler({ updates: { neo: { packs: ['first-routing'] } } }, {});
+      await expect(
+        handler({ updates: { neo: { packs: ['first-routing', 'second-routing'] } } }, {})
+      ).rejects.toThrow(
+        'Only one enabled pack may rank model lines, but first-routing and second-routing both do.'
+      );
+
+      const enabled = saved.neo?.packs ?? [];
+      expect(enabled).toEqual(['first-routing']);
+      expect(neoPacks({ builtins: installed, filePacks: [], enabled }).map((p) => p.id)).toEqual([
+        'first-routing',
+      ]);
+      expect(neoPackBriefs(enabled, installed).map((brief) => brief.id)).toEqual(['first-routing']);
     });
 
     it('handles multiple updates', async () => {

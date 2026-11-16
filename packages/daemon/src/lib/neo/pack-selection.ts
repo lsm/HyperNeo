@@ -31,15 +31,24 @@ export function neoPacks(input: {
   enabled: readonly string[];
 }): NeoPack[] {
   const seen = new Set<string>();
-  let ranks = false;
   return [...input.builtins, ...input.filePacks].filter((pack) => {
     if (seen.has(pack.id) || (!pack.alwaysEnabled && !input.enabled.includes(pack.id)))
       return false;
-    if (pack.rankLines && ranks) return false;
-    ranks ||= Boolean(pack.rankLines);
     seen.add(pack.id);
     return true;
   });
+}
+
+export function refuseSecondLineRanker(
+  enabled: readonly string[],
+  installed: readonly NeoPack[]
+): string | null {
+  const rankers = neoPacks({ builtins: installed, filePacks: [], enabled })
+    .filter((pack) => pack.rankLines)
+    .map((pack) => pack.id);
+  return rankers.length > 1
+    ? `Only one enabled pack may rank model lines, but ${rankers.join(' and ')} both do.`
+    : null;
 }
 
 /** @public */

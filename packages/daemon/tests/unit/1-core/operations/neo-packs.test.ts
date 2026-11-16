@@ -103,21 +103,10 @@ describe('neoPacks', () => {
     expect(packs.map((item) => item.id)).toEqual(ids);
     expect(packs[0]).toBe(coding);
   });
-
-  test('refuses a second enabled pack that ranks lines', () => {
-    const ranks = (id: string): NeoPack => ({ ...pack(id), rankLines: () => none });
-    const packs = neoPacks({
-      builtins: [coding, ranks('model-routing')],
-      filePacks: [ranks('other-routing')],
-      enabled: ['coding', 'model-routing', 'other-routing'],
-    });
-    expect(packs.map((item) => item.id)).toEqual(['coding', 'model-routing']);
-  });
 });
 
 const lineA = { provider: 'anthropic', model: 'a' };
 const lineB = { provider: 'openai', model: 'b', harness: 'codex', effort: 'high' };
-const none = { ranked: [], skipped: [], exhausted: true };
 
 describe('chooseLine', () => {
   test('passes the candidates through in order when no pack ranks them', async () => {
