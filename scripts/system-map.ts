@@ -43,7 +43,8 @@ const IMPORT = /(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"\n]+)\1/g;
 const LITERAL = /(['"`])([a-zA-Z]\w*(?:\.[A-Za-z]\w*)*)\1/g;
 const SQL =
   /\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|FROM|JOIN|CREATE\s+(?:VIRTUAL\s+|TEMP\s+|TEMPORARY\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+([a-z_][a-z0-9_]{2,})\b/g;
-const OPEN_CALL = /\(\s*(?:[\w.()]+\s*,\s*)?(?:[^,;(){}?:'"`]+\?\s*(?:(['"`])[\w.]+\1\s*:\s*)?)?$/;
+const OPEN_CALL =
+  /\(\s*(?:[\w.()]+\s*,\s*)?(?:(?:[^,;(){}?:'"`]|\([^(){};]*\))+\?\s*(?:(['"`])[\w.]+\1\s*:\s*)?)?$/;
 const OWNING = new Set<Role>(['defines', 'handles', 'emits', 'writes']);
 const RPC_CALLS = new Set(['request', 'callIfConnected']);
 const EVENT_EMITS = new Set(['publish', 'event']);
