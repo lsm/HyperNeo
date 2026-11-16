@@ -59,12 +59,23 @@ describe('schedule.session.runs', () => {
     })(jobs.getJob(row.pendingJobId!)!);
     return row.nextRunAt!;
   };
-  const runs = async (scheduleId: string) => {
+  const runs = async (scheduleId: string, limit?: number) => {
     const op = createSessionScheduleOperations(scheduler).find(
       (operation) => operation.name === 'schedule.session.runs'
     );
-    return op?.execute({ scheduleId }, { source: 'internal', role: 'neo' });
+    return op?.execute({ scheduleId, limit }, { source: 'internal', role: 'neo' });
   };
+
+  test('a limit returns only the newest runs', async () => {
+    const row = create('limited');
+    await fire(row.id);
+    const second = await fire(row.id);
+    const third = await fire(row.id);
+
+    const reply = (await runs(row.id, 2)) as { runs: { dueAt: number }[] };
+
+    expect(reply.runs.map((run) => run.dueAt)).toEqual([third, second]);
+  });
 
   test('a send that lands while the schedule is paused still leaves one fired run', async () => {
     const row = create('paused-mid-send');
