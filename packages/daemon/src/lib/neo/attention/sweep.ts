@@ -46,7 +46,10 @@ export async function readNeoSteps(
   }));
   const waiting = await neoPackWaiting(
     deps.packs(),
-    steps.flatMap((row) => (owner(row).owner === 'neo' ? [row.todo] : []))
+    steps.flatMap((row) => {
+      const next = owner(row);
+      return next.owner === 'neo' && next.reason !== 'check_overdue' ? [row.todo] : [];
+    })
   );
   return steps.map((row) =>
     waiting.has(row.todo.id) ? { ...row, facts: { ...row.facts, packWaiting: true } } : row
