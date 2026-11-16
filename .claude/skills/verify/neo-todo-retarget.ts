@@ -86,6 +86,21 @@ for (const phase of ['request', 'recovery']) {
       const read = await handler({ name: 'neo.todo.read', input: { todoId: 'interrupted' } });
       assert.equal(read.isError ?? false, false, JSON.stringify(read));
       evidence.push({ phase, publicRead: read.content, target: todoSessions.get('interrupted'), starts });
+      for (const mode of ['adopted', 'unsupported']) {
+        const todo = todos.addTodo(mode, 'ask', { title: mode, doneWhen: 'Removed', instruction: 'Synthetic work', check: null, named: null, approvedAt: 1 }, 1);
+        if (mode === 'adopted') todoSessions.bind(mode, { adapter: 'hyperneo', id: oldId }, 1);
+        else {
+          const ref = { adapter: 'claude-code', id: 'synthetic-unsupported' };
+          todoSessions.create(mode, { verb: 'send', ref });
+          todoSessions.recordRef(mode, ref, 1);
+        }
+        todos.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
+        const removed = await handler({ name: 'neo.todo.remove', input: { todoId: mode, reason: 'Synthetic removal' } });
+        assert.equal(removed.isError ?? false, false, JSON.stringify(removed));
+        assert.equal(JSON.parse(removed.content[0]!.text).ok, true, JSON.stringify(removed));
+        assert.equal(todos.getTodo(mode)?.state, 'removed');
+        evidence.push({ phase, ordinaryRemoval: mode, result: removed.content });
+      }
     }
   } finally {
     await service?.dispose();
@@ -93,4 +108,4 @@ for (const phase of ['request', 'recovery']) {
     writeFileSync(join(run, 'evidence/retarget.json'), JSON.stringify(evidence, null, 2));
   }
 }
-console.log(`PASS starts=${starts}: MCP retarget clears a real held HyperNeo prompt; a restarted real sweep admits one unfinished move at its stored target.`);
+console.log(`PASS starts=${starts}, removals=2: MCP retarget clears a real held HyperNeo prompt; restart admits one unfinished move; ordinary adopted and unsupported workers remain removable.`);

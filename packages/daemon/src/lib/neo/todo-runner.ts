@@ -1216,7 +1216,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   const redispatchTodo = (superpipe({})('neo.todo.redispatch') as PipelineAPI)
     .input(['claim', 'now'])
-    .pipe(({ todo }: NudgeClaim) => stop(todo), 'claim', 'refused')
+    .pipe(({ todo }: NudgeClaim) => stop(todo, true), 'claim', 'refused')
     .pipe(
       (refused: string | null) =>
         refused
@@ -1602,7 +1602,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   type StopContext = NonNullable<ReturnType<NeoTodoSessionRepository['stopContext']>>;
   const stop = (superpipe({})('neo.todo.stop-current-worker') as PipelineAPI)
-    .input(['todo', 'fromRef'])
+    .input(['todo', 'confirm', 'fromRef'])
     .pipe(
       (todo: NeoTodo, fromRef?: WorkRef) =>
         fromRef
@@ -1612,14 +1612,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'context'
     )
     .pipe(
-      (context: StopContext | null) =>
+      (context: StopContext | null, confirm?: boolean) =>
         context?.ref &&
         context.ask &&
+        (!context.adopted || confirm) &&
         (context.todo.state === 'doing' ||
           !['done', 'failed', 'stopped'].includes(context.live ?? ''))
           ? { value: context as StopContext & { ask: NeoAsk; ref: WorkRef } }
           : { reason: null },
-      'context',
+      ['context', 'confirm'],
       'result:outcome'
     )
     .pipe(
@@ -1640,38 +1641,47 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'stopped'
     )
     .pipe(
-      (stopped: OperationOutcome) => {
+      (stopped: OperationOutcome, confirm?: boolean) => {
         if (stopped.kind !== 'completed')
           return {
             reason: `stop_failed: ${(stopped as { message?: string }).message ?? 'the stop did not complete'}`,
           };
         const value = stopped.value as { ok?: boolean; reason?: string; detail?: string } | null;
-        return value?.ok !== true
+        return (
+          confirm
+            ? value?.ok !== true
+            : value?.ok === false && value.reason !== 'unsupported'
+        )
           ? { reason: `stop_failed: ${value?.detail ?? value?.reason ?? 'the driver refused'}` }
           : { value: null };
       },
-      'stopped',
+      ['stopped', 'confirm'],
       'result:outcome'
     )
     .pipe(
-      async ({ ask, ref }: StopContext & { ask: NeoAsk; ref: WorkRef }) => {
+      async ({ ask, ref }: StopContext & { ask: NeoAsk; ref: WorkRef }, confirm?: boolean) => {
+        if (!confirm) return null;
         const outcome = await deps.invoke(caller(ask), 'work.status', { ref }).catch(() => null);
         const live = outcome && readDriverLive(outcome);
         return live && ['done', 'failed', 'stopped'].includes(live.status)
           ? null
           : 'stop_unconfirmed: the worker is still live or its status is unknown.';
       },
-      ['worker', 'outcome'],
+      ['worker', 'confirm', 'outcome'],
       'outcome'
     )
-    .endAsync('outcome') as (todo: NeoTodo, fromRef?: WorkRef) => Promise<string | null>;
+    .endAsync('outcome') as (
+    todo: NeoTodo,
+    confirm?: boolean,
+    fromRef?: WorkRef
+  ) => Promise<string | null>;
 
   const moves = createNeoTodoRetarget(
     deps.write,
     store,
     async (id, ref) => {
       const todo = store.getTodo(id);
-      return todo ? stop(todo, ref) : 'not_found: no such todo.';
+      return todo ? stop(todo, true, ref) : 'not_found: no such todo.';
     },
     start,
     (id, text, at) => note('todo.stalled', { id }, at, text)

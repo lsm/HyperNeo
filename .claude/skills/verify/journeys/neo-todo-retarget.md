@@ -11,7 +11,9 @@ MCP door, and observes the normal runner's admitted start. It stops a real held
 HyperNeo session through `work.stop`, checks its persisted prompt is cleared,
 and checks the target is unchanged. A second daemon boot finds a two-hour-old
 move fact; two real `NeoService.sweepPacks` calls must admit exactly one recovery
-start. `neo.todo.read` exposes the recovered todo. Evidence is `retarget.json`.
+start. `neo.todo.read` exposes the recovered todo. The MCP `neo.todo.remove`
+operation must also remove adopted work and work whose real adapter cannot stop,
+preserving ordinary stop semantics. Evidence is `retarget.json`.
 
 Only the final `work.start` backend is a recording fixture: no model or native
 worker launches. This proves core move admission, not coding line selection.

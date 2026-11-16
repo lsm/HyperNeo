@@ -79,7 +79,9 @@ class NeoTodoMoves {
     if (sessions.get(todoId)?.verb === 'adopt')
       return { reason: 'move_adopted: adopted work cannot move.' };
     const refs = this.db
-      .prepare(`SELECT todo_id AS id, COALESCE(ref, json_extract(target, '$.ref')) AS ref FROM neo_todo_sessions WHERE todo_id <> ?
+      .prepare(`SELECT s.todo_id AS id, COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref
+      FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+      WHERE s.todo_id <> ? AND t.state IN ('todo', 'doing', 'blocked', 'failed')
       UNION ALL SELECT todo_id AS id, json_extract(target, '$.ref') AS ref FROM work_delivery_inputs WHERE outcome IS NULL`)
       .all(todoId) as { id: string | null; ref: string | null }[];
     if (refs.some((row) => row.ref && neoWorkerKey(JSON.parse(row.ref)) === neoWorkerKey(fromRef)))
