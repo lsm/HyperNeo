@@ -42849,7 +42849,7 @@
                 "type": "null"
               }
             ],
-            "description": "Why it must wait; null releases it."
+            "description": "The card’s whole text: your question to the human; null releases it."
           },
           "todoId": {
             "minLength": 1,
@@ -43588,7 +43588,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "dependents": {
-            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.",
+            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; they then wait, and deciding is your next step.",
             "enum": [
               "continue",
               "remove"
