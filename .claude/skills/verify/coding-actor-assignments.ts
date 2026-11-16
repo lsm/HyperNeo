@@ -9,10 +9,10 @@ import { StartWorkInputSchema, StartWorkResultSchema } from '../../../packages/d
 import { configureWorkerSandbox } from '../../../packages/daemon/src/lib/drivers/worker-sandbox.ts';
 import { prepareCodingExecution } from '../../../packages/daemon/src/lib/neo/packs/coding/prepare-execution.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
-import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { CodingAssignmentsRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/assignments.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '../../../packages/prompts/src/mod.ts';
 
 const run = resolve(process.argv[2]);
@@ -23,7 +23,7 @@ assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'bin'), { recursive: true }); mkdirSync(join(run, 'evidence'), { recursive: true });
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
-const commands: unknown[] = [], evidence: unknown[] = [], starts: { role: string; ref: { adapter: string; id: string }; head: string; model: string; contractBytes: number; message: string }[] = [];
+const commands: unknown[] = [], evidence: unknown[] = [], starts: { role: string; ref: { adapter: string; id: string }; head: string; model: string; contractBytes: number; message: string; folder?: string }[] = [];
 function command(args: readonly string[], cwd: string) {
   const result = spawnSync(args[0], args.slice(1), { cwd, encoding: 'utf8', env });
   const observed = { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -65,7 +65,7 @@ try {
       configureWorkerSandbox(() => 'always');
       await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
       const db = app.db.getDatabase(); createCodingPackTables(db);
-      const ledger = new CodingPrLedgerRepository(db), todos = new CodingTodoPrRepository(db), assignments = new CodingAssignmentsRepository(db);
+      const ledger = new CodingPrLedgerRepository(db), assignments = new CodingAssignmentsRepository(db);
       const registry = app.sessionManager.getOperationRegistry();
       const harness = defineOperation({
         name: 'work.start', description: 'Synthetic harness boundary: real preparation, no native app or model.', inputSchema: StartWorkInputSchema, resultSchema: StartWorkResultSchema,
@@ -83,13 +83,13 @@ try {
           if (role === 'verify') { assert(contract.includes('## Coding-pack Verify override')); assert(input.message.includes('verify/SKILL.md')); }
           assert(input.message.includes(role === 'review' ? REVIEWER_SYSTEM_CONTRACT : QA_SYSTEM_CONTRACT)); assert(input.message.includes(expected)); assert(input.message.length < 100000);
           const ref = { adapter: input.adapter, id: `worker-${attempts}` };
-          starts.push({ role, ref, head: expected, model: input.model!, contractBytes: Buffer.byteLength(contract), message: input.message });
-          return { ok: true as const, value: { ref, title: input.title, place: input.place, status: 'running' as const, lastActivityAt: Date.now(), model: input.model, effort: input.effort } };
+          starts.push({ role, ref, head: expected, model: input.model!, contractBytes: Buffer.byteLength(contract), message: input.message, folder: input.place?.folder });
+          return { ok: true as const, value: { ref, title: input.title, place: input.place ?? place, status: 'running' as const, lastActivityAt: Date.now(), model: input.model, effort: input.effort } };
         },
       });
       const boundRegistry = createOperationRegistry(registry.entries.map(entry => entry.name === 'work.start' ? harness : entry));
       app.sessionManager.setOperationRegistryProvider(() => boundRegistry);
-      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+      ws = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
       const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) => {
         const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error(`RPC timeout: ${name}`)), 15000);
@@ -103,7 +103,7 @@ try {
         db.prepare('INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES (?,?,?,?,1,1)').run(`ask-${name}`, 'fixture-neo', name, name);
         db.prepare("INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES (?,?,1,?,'Merged','doing',1,1)").run(name, `ask-${name}`, name);
         const write = { adapter: 'fixture-author', id: `author-${name}` };
-        new NeoTodoSessionRepository(db).bind(name, write, 1); await todos.write('claim', name, [{ url, claim: 'named' }], 1); ledger.stageFacts.observeHead(url, head, 1);
+        new NeoTodoSessionRepository(db).bind(name, write, 1); db.prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?').run(JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } }), name); ledger.stageFacts.observeHead(url, head, 1);
         return { todoId: name, url, head, acceptanceContract: `artifact:contract-${name}` };
       };
       const setting = async (repo: string, key: string, value: unknown) => assert.deepEqual(await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: repo }, key, value }), { ok: true });
@@ -117,9 +117,11 @@ try {
         const botVerify = await assign({ ...bot, stage: 'verify', candidates: [verifyTarget] }); assert(botVerify.ok);
         assert.deepEqual(await rpc('neo.coding.result', { todoId: bot.todoId, ref: botVerify.assignment.ref, fact: { url: bot.url, head, stage: 'verify', actor: botVerify.assignment.actor, verdict: 'inconclusive', acceptanceContract: bot.acceptanceContract, evidence: ['artifact:inconclusive-observation'] } }), { ok: true });
         assert.equal(ledger.stageFacts.read(bot.url)[0].stage, 'qa');
+        assert.equal(starts.at(-1)!.folder, undefined, 'A repository without a read view gets no place, never the candidate folder');
         const session = await seed('session', 8, 'synthetic/session');
+        const readView = join(run, 'data/worktrees/synthetic/session/neo-read'); git(run, 'clone', '-q', origin, readView);
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
-        const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
+        const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, readView, 'Review starts in the repository read view'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
         const beforeRetry = attempts;
         assert((await assign({ ...session, stage: 'review', candidates: [] })).ok); assert((await assign({ ...session, stage: 'verify', candidates: [] })).ok); assert.equal(attempts, beforeRetry);

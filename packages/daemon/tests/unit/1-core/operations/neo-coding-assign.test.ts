@@ -84,7 +84,7 @@ function fixture(
       value: {
         ref: { adapter: input.adapter, id: `fresh-${count}` },
         title: input.title,
-        place: input.place,
+        place: input.place ?? place,
         status: 'running',
         lastActivityAt: 1,
         model: input.model ?? reviewer.model,
@@ -542,7 +542,7 @@ describe('coding actor assignments', () => {
 
 describe('review place', () => {
   const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
-  test("a repository with a read view hands the reviewer that checkout", async () => {
+  test('a repository with a read view hands the reviewer that checkout', async () => {
     const data = mkdtempSync(join(tmpdir(), 'neo-read-'));
     cleanups.push(() => rmSync(data, { recursive: true, force: true }));
     const view = join(data, 'worktrees', 'synthetic', 'actors', 'neo-read');

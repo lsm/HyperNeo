@@ -36,6 +36,8 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   kickoff remains below the message limit and names the immutable acceptance ref.
 - Repeating both assignments and restarting the daemon reuse recorded refs without
   duplicate starts. Each synthetic work slice retains one todo and its author.
+- An actor starts in the repository's read view under the data dir when it
+  exists, otherwise with no place; a candidate's folder is never passed through.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default
