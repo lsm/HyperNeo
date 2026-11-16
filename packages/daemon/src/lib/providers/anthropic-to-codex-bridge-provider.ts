@@ -269,6 +269,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
+      this.persistSuppliedCredentials(this.cachedCredentials);
       return;
     }
 
@@ -287,6 +288,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
+    this.persistSuppliedCredentials(stored);
+  }
+
+  private persistSuppliedCredentials(credentials: StoredCredentials): void {
+    this.saveCredentials(credentials).catch((error) => {
+      logger.warn('AnthropicToCodexBridgeProvider: failed to save supplied credentials:', error);
+    });
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
