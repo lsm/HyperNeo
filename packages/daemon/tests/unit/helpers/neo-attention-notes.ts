@@ -30,8 +30,9 @@ export function neoAttentionNotes(
     (queue: 'mailbox' | 'neo_notes', deliver: typeof delivery.wake): typeof delivery.wake =>
     async (uuid, text) => {
       const before = texts(queue).length;
-      await deliver(uuid, text);
+      const sent = await deliver(uuid, text);
       if (texts(queue).length > before) sink(text);
+      return sent;
     };
   const tell = createNeoAttention({
     kinds: () => NEO_ATTENTION_KINDS,
