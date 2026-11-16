@@ -236,7 +236,7 @@ describe('Runtime runner commits before external effects', () => {
     await reached;
     try {
       expect(store.getTodo('first')).toMatchObject({
-        state: 'failed',
+        state: 'blocked',
         report: 'Full prior report',
       });
       expect(sessions.readStartInterrupted('first')).toBe(true);

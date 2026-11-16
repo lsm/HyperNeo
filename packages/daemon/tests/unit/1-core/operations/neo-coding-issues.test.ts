@@ -269,7 +269,7 @@ test.each(['NOT_PLANNED', 'OPEN', null] as const)(
     f.add('next');
     f.issue(state);
     await f.at(10);
-    expect(f.store.getTodo('first')?.state).toBe(state === 'NOT_PLANNED' ? 'failed' : 'doing');
+    expect(f.store.getTodo('first')?.state).toBe(state === 'NOT_PLANNED' ? 'blocked' : 'doing');
     expect(f.store.getTodo('next')?.state).toBe('todo');
   }
 );

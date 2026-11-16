@@ -253,7 +253,8 @@ try {
     assert.equal(store.getTodo('first')?.state, 'done');
     assert.equal(store.getTodo('first')?.report, report);
     assert.equal(store.getTodo('next')?.state, 'doing');
-    assert.equal(store.getTodo('not-planned')?.state, 'failed');
+    assert.equal(store.getTodo('not-planned')?.state, 'blocked');
+    assert.equal(store.getTodo('not-planned')?.blockedBy, 'failure');
     assert.equal(store.getTodo('after-failed')?.state, 'todo');
     assert.equal(store.getTodo('unreadable')?.state, 'todo');
     assert.equal(starts(), 1);
