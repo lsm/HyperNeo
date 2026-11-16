@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { resolveStorageAdmission as admitArtifactStorage } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -6,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { captureGitArtifact } from '../../../packages/daemon/src/lib/artifacts/git-capture.ts';
+import { resolveCaptureSteps } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { readArtifactChunk } from '../../../packages/daemon/src/lib/artifacts/read-snapshot.ts';
 import { createArtifactRefReader } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import {
@@ -57,7 +59,12 @@ function movie(brand: string, length = 600_007) {
 }
 async function capture(bytes: Buffer, path: string) {
   const result = await captureGitArtifact(
-    'artifact.reference.resolve.capture',
+    resolveCaptureSteps(async () => ({
+      accepted: true as const,
+      bytes,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+    })),
     db,
     data,
     {
@@ -67,13 +74,7 @@ async function capture(bytes: Buffer, path: string) {
       context,
     },
     randomUUID(),
-    async () => true,
-    async () => ({
-      accepted: true,
-      bytes,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
-    })
+    async () => true
   );
   return result as { accepted: boolean; artifact: ArtifactRef; reason?: string };
 }
@@ -218,7 +219,7 @@ try {
     limitBytes: 16 * 1024 * 1024,
   });
   assert.equal((await owner.inspect()).retainedBytes, before);
-  const retained = await owner.capture(movie('mp42', 16 * 1024 * 1024 + 1));
+  const retained = await owner.capture(movie('mp42', 16 * 1024 * 1024 + 1), admitArtifactStorage);
   assert(retained.accepted);
   const historical = {
     ...first.artifact,

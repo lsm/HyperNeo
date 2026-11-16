@@ -15,7 +15,7 @@ type Receipt = ReturnType<ArtifactFileRepository['save']> & {
   createdAt: number;
 };
 
-const publish = (superpipe({})('artifact-file-row-publish') as PipelineAPI)
+const publish = (superpipe({})('artifact.file.row.write.publish') as PipelineAPI)
   .input(['db', 'args'])
   .pipe(
     (db: Database, args: PublicationArgs) =>

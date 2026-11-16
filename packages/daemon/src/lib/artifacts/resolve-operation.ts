@@ -11,9 +11,25 @@ import { isLocalUser } from '../operations/caller.ts';
 import { getDataDir } from '../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
 import { planStoredReference } from './reference-plan.ts';
-import { ArtifactPrSummarySchema, readBoundPrSummary } from './pr-summary.ts';
-import { readBoundGitBlob } from './git-blob.ts';
-import { captureGitArtifact } from './git-capture.ts';
+import { ArtifactPrSummarySchema, boundPrSummaryReader } from './pr-summary.ts';
+import { boundGitBlobReader } from './git-blob.ts';
+import { artifactStorageAdmission } from './capture-admission.ts';
+import { captureGitArtifact, type GitCaptureSteps } from './git-capture.ts';
+
+export const resolveGitBlob = boundGitBlobReader(superpipe({})('artifact.reference.resolve.blob'));
+export const resolvePrSummary = boundPrSummaryReader(
+  superpipe({})('artifact.reference.resolve.pr')
+);
+export const resolveStorageAdmission = artifactStorageAdmission(
+  superpipe({})('artifact.reference.resolve.admission')
+);
+export const resolveCaptureSteps = (
+  readBlob: GitCaptureSteps['readBlob'] = resolveGitBlob
+): GitCaptureSteps => ({
+  capture: superpipe({})('artifact.reference.resolve.capture'),
+  admission: resolveStorageAdmission,
+  readBlob,
+});
 
 const context = z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) });
 const inputSchema = z.strictObject({
@@ -39,8 +55,8 @@ export function createArtifactReferenceResolve(
   database: () => Database,
   data = getDataDir(),
   home = homedir(),
-  readPr = readBoundPrSummary,
-  readGit = readBoundGitBlob
+  readPr = resolvePrSummary,
+  readGit = resolveGitBlob
 ) {
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
@@ -81,13 +97,12 @@ export function createArtifactReferenceResolve(
     const result =
       selected.kind === 'git-blob'
         ? ((await captureGitArtifact(
-            'artifact.reference.resolve.capture',
+            resolveCaptureSteps(readGit),
             database(),
             data,
             selected,
             input.requestId,
             async () => JSON.stringify(await plan(input, caller)) === JSON.stringify(selected),
-            readGit,
             home
           )) as { accepted: boolean; reason?: string })
         : selected.kind === 'github-pr'

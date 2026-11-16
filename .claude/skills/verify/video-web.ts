@@ -9,6 +9,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { captureGitArtifact } from '../../../packages/daemon/src/lib/artifacts/git-capture.ts';
+import { resolveCaptureSteps } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -185,7 +186,12 @@ try {
   for (const name of ['sample.mp4', 'sample.mov', 'external.mp4']) {
     const bytes = readFileSync(join(workspace, name));
     const captured = (await captureGitArtifact(
-      'artifact.reference.resolve.capture',
+      resolveCaptureSteps(async () => ({
+        accepted: true as const,
+        bytes,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+      })),
       db,
       join(run, 'data'),
       {
@@ -195,13 +201,7 @@ try {
         context: { kind: 'todo', id: 'video' },
       },
       randomUUID(),
-      async () => true,
-      async () => ({
-        accepted: true,
-        bytes,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        blobSha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
-      })
+      async () => true
     )) as { accepted: boolean; artifact: ArtifactRef };
     assert(captured.accepted);
     refs[name] = captured.artifact;
