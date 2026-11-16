@@ -95,7 +95,7 @@ import {
 } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { sessionWorkerRef } from './worker-identity.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { WorkAdapter, WorkRef } from '../drivers/types.ts';
 import { WorkTurnRepository } from '../../storage/repositories/work-turn-repository.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -177,6 +177,7 @@ export class NeoService {
   }
 
   workerNames?: NeoWorkerNameSource;
+  workAdapters?: () => readonly WorkAdapter[];
 
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;

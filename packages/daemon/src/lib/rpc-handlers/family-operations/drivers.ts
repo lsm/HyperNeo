@@ -126,7 +126,7 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
-async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
   const { findInModels } = await import('../../model-service.ts');
   const available = usableModels(models);
   const exact = available.find((entry) => entry.id === requested);
@@ -632,6 +632,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   context.workerNameSource?.(
     createWorkerNameSource(currentAdapters, { machine, folder, name: folder })
   );
+  context.workAdapters?.(currentAdapters);
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
   const deps = {

@@ -11,7 +11,12 @@ import {
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
 import { planCodingSessionDispatch } from './session-strategy.ts';
-import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
+import {
+  type CodingLines,
+  codingLineScope,
+  codingStartAlternatives,
+  rankCodingTargets,
+} from './stage-lines.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
 type Pooled = { ref: WorkRef; name: string; held: boolean };
@@ -114,6 +119,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   )
   .pipe(
     async (
+      db: Database,
       lines: CodingLines | undefined,
       facts: Facts,
       plan: Plan,
@@ -121,17 +127,19 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       target: NeoTodoTarget
     ) => {
       if (!lines || target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
-        return { value: true };
+        return { value: target };
       const kind = todo.named?.workKind;
       const ranked = await rankCodingTargets(
         lines,
         typeof kind === 'string' ? kind : 'coding.write',
-        [target],
-        facts ? { repo: facts.repo } : {}
+        codingStartAlternatives(target, lines.models()),
+        codingLineScope(db, todo.id, facts?.repo)
       );
-      return 'reason' in ranked ? { reason: { reason: ranked.reason } } : { value: true };
+      return 'reason' in ranked
+        ? { reason: { reason: ranked.reason } }
+        : { value: ranked.value[0] };
     },
-    ['lines', 'facts', 'plan', 'todo', 'target'],
+    ['db', 'lines', 'facts', 'plan', 'todo', 'target'],
     'result:decision'
   )
   .pipe(
@@ -164,7 +172,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         };
       return { value: plan.name ? { ...target, name: plan.name } : target };
     },
-    ['plan', 'reserved', 'target'],
+    ['plan', 'reserved', 'decision'],
     'decision'
   )
   .endAsync('decision') as (

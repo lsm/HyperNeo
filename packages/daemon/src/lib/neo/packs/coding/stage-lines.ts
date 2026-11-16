@@ -1,17 +1,21 @@
 import type { ModelInfo } from '@hyperneo/shared';
-import { findInModels } from '../../../model-service.ts';
+import type { WorkAdapter } from '../../../drivers/types.ts';
+import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
+import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { usableModels } from '../../../usable-models.ts';
 import type { NeoLine, NeoLineRanking, NeoLineScope, NeoWorkKind } from '../../pack-contract.ts';
 
+type Candidate = { adapter: string; model?: string; effort?: string };
+type Resolved = Awaited<ReturnType<NonNullable<WorkAdapter['resolveStartConfiguration']>>>;
 export type CodingLines = {
   rank: (
     kind: string,
     candidates: readonly NeoLine[],
     scope: NeoLineScope
   ) => Promise<NeoLineRanking>;
+  resolve: (target: Candidate) => Promise<Resolved>;
   models: () => readonly ModelInfo[];
 };
-type Candidate = { adapter: string; model?: string; effort?: string };
 
 export const CODING_WORK_KINDS: readonly NeoWorkKind[] = [
   { id: 'coding.write', label: { en: 'Coding: write', 'zh-Hans': '编码：编写' } },
@@ -19,13 +23,29 @@ export const CODING_WORK_KINDS: readonly NeoWorkKind[] = [
   { id: 'coding.verify', label: { en: 'Coding: verify', 'zh-Hans': '编码：验证' } },
 ];
 
-export function codingCandidateLine(target: Candidate, models: readonly ModelInfo[]): NeoLine {
+export async function codingCandidateLine(lines: CodingLines, target: Candidate): Promise<NeoLine> {
+  const resolved = await lines.resolve(target).catch(() => null);
+  const value = resolved?.ok ? resolved.value : null;
+  const effort = value ? value.effort : target.effort;
   return {
-    provider: (target.model && findInModels(usableModels(models), target.model)?.provider) ?? '',
-    model: target.model ?? '',
+    provider: value?.provider ?? '',
+    model: value?.model ?? target.model ?? '',
     harness: target.adapter,
-    ...(target.effort ? { effort: target.effort } : {}),
+    ...(effort ? { effort } : {}),
   };
+}
+
+export function codingStartAlternatives<T extends Candidate>(
+  target: T,
+  models: readonly ModelInfo[]
+): T[] {
+  if (target.adapter !== 'hyperneo') return [target];
+  return [
+    target,
+    ...usableModels(models)
+      .filter((model) => model.id !== target.model)
+      .map((model) => ({ ...target, model: model.id })),
+  ];
 }
 
 const lineText = (line: NeoLine) =>
@@ -39,8 +59,7 @@ export async function rankCodingTargets<T extends Candidate>(
 ): Promise<{ value: T[]; skipped: string[] } | { reason: string }> {
   const routed = targets.filter((target) => target.adapter === 'hyperneo');
   if (!routed.length) return { value: [...targets], skipped: [] };
-  const models = lines.models();
-  const candidates = routed.map((target) => codingCandidateLine(target, models));
+  const candidates = await Promise.all(routed.map((target) => codingCandidateLine(lines, target)));
   const ranking = await lines.rank(kind, candidates, scope);
   const skipped = ranking.skipped.map(({ line, reason }) => `${lineText(line)}: ${reason}`);
   const ranked = ranking.ranked.flatMap(({ line }) => {
@@ -54,4 +73,11 @@ export async function rankCodingTargets<T extends Candidate>(
   return value.length
     ? { value, skipped }
     : { reason: `No usable model line for ${kind}: ${skipped.join('; ')}.` };
+}
+
+export function codingLineScope(db: Database, todoId: string, repo?: string): NeoLineScope {
+  const asks = new NeoAskTodoRepository(db);
+  const todo = asks.getTodo(todoId);
+  const projectId = todo ? asks.getAsk(todo.askId)?.projectId : null;
+  return { ...(repo ? { repo } : {}), ...(projectId ? { projectId } : {}) };
 }

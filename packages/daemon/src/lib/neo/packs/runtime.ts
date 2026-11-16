@@ -97,6 +97,16 @@ export function createNeoService(...args: NeoServiceArgs) {
       const configured = Object.assign(core, readers, { todoPrs });
       const lines: CodingLines = {
         rank: (kind, candidates, scope) => chooseLine(configured.packs(), kind, candidates, scope),
+        resolve: async (target) =>
+          (await configured
+            .workAdapters?.()
+            .find((adapter) => adapter.id === target.adapter)
+            ?.resolveStartConfiguration?.({
+              place: { machine: '', name: '' },
+              title: '',
+              message: '',
+              ...target,
+            })) ?? null,
         models: () => getAvailableModels('global'),
       };
       const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {

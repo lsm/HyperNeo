@@ -24,7 +24,7 @@ import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import { CodingStageTarget } from './stage-preferences.ts';
-import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
+import { type CodingLines, codingLineScope, rankCodingTargets } from './stage-lines.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
@@ -139,7 +139,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
         deps.lines,
         `coding.${input.stage}`,
         plan.choices.map((choice) => choice.target),
-        { repo: repoName(input) }
+        codingLineScope(deps.db, input.todoId, repoName(input))
       );
       if ('reason' in ranked) return { ok: false as const, reason: ranked.reason };
       const choice = plan.choices.find((entry) => entry.target === ranked.value[0])!;
