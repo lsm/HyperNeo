@@ -1296,6 +1296,31 @@ describe('neoQuestionAnswerLabel', () => {
   });
 });
 
+describe('NeoAskTodos open cards', () => {
+  it('shows the newest unanswered card first and held cards last', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'waiting',
+          questions: [
+            question('held-old', { state: 'open', createdAt: 10, heldAt: 11 }),
+            question('open-old', { state: 'open', createdAt: 20 }),
+            question('open-new', { state: 'open', createdAt: 30 }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[id^="neo-ref-question-"]')].map((node) => node.id)
+    ).toEqual([
+      'neo-ref-question-open-new',
+      'neo-ref-question-open-old',
+      'neo-ref-question-held-old',
+    ]);
+  });
+});
+
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
     expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
