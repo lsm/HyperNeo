@@ -14,14 +14,11 @@ rpc neo.conversation.read "{\"conversationId\":\"$CONVERSATION\"}" > "$RUN/evide
 python3 -c "
 import json, sys
 items = json.load(open(sys.argv[1]))['reply']['items']
-for item in items:
-    if item['role'] == 'session':
-        m = item['message']
-        print(f\"{m['fromName']} -> {m['toName']}: {m['text'].splitlines()[0]}\")
+print('human session rows:', sum(item['role'] == 'session' for item in items))
 " "$RUN/evidence/session-rows.json"
 rpc neo.snapshot '{}' > "$RUN/evidence/session-snapshot.json"
 python3 -c "
 import json, sys
-for m in json.load(open(sys.argv[1]))['reply'].get('sessionMessages', []):
-    print(f\"snapshot: {m['fromName']} -> {m['toName']}: {m['text'].splitlines()[0]}\")
+reply = json.load(open(sys.argv[1]))['reply']
+print('snapshot sessionMessages:', 'present' if 'sessionMessages' in reply else 'absent')
 " "$RUN/evidence/session-snapshot.json"

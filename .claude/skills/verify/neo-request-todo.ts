@@ -187,7 +187,17 @@ try {
       item.message.fromSession === root
   );
   assert.equal(answers.length, 1, "Neo's conversation holds exactly one outbound answer");
-  (evidence.checks as unknown[]).push({ name: 'Neo closed it', closed, replies, answers });
+  const humanAnswers = (
+    await new NeoConversationReader(db).read({ conversationId, limit: 100 }, true)
+  ).items.filter((item) => item.role === 'session');
+  assert.equal(humanAnswers.length, 0, 'the human view shows no session-to-session row');
+  (evidence.checks as unknown[]).push({
+    name: 'Neo closed it',
+    closed,
+    replies,
+    answers,
+    humanAnswers,
+  });
   const again = await invokeOperation(
     registry,
     'neo.todo.remove',
@@ -237,7 +247,7 @@ try {
   assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} reply_failed=woke_neo closed_repeat=rejected`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} human_answers=${humanAnswers.length} reply_failed=woke_neo closed_repeat=rejected`
   );
 } catch (error) {
   evidence.error = String(error);
