@@ -86,10 +86,20 @@ try {
   assert(!receipt.includes(humanCodex));
   assert(!receipt.includes(humanClaude));
   evidence.second = await rpc();
+  raw.prepare("UPDATE job_queue SET run_at = ? WHERE status = 'pending'").run(Date.now() + 2 * 86400000);
+  const job = app.jobQueue.enqueue({ queue: 'work.cleanup.sweep', payload: {}, runAt: Date.now() });
+  await app.jobProcessor.tick();
+  await app.jobProcessor.stop();
+  evidence.dailyJob = app.jobQueue.getJob(job.id);
+  assert.equal(app.jobQueue.getJob(job.id)?.status, 'completed');
+  const next = app.jobQueue.listJobs({ queue: 'work.cleanup.sweep', status: 'pending' });
+  assert.equal(next.length, 1);
+  assert(next[0].runAt >= Date.now() + 86300000);
+  evidence.nextDailyAt = next[0].runAt;
   evidence.mailbox = raw.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes'").all();
   assert(JSON.stringify(evidence.mailbox).includes('Work cleanup:'), 'cleanup reaches the attention digest');
   evidence.retained = [trees.unsaved, trees.live, unknown, humanCodex, humanClaude].length;
-  console.log('PASS: RPC removed the clean archived worktree; retained 5 live, unsaved, unknown or human folders; attention digest delivered; repeat sweep completed.');
+  console.log('PASS: RPC removed 2 finished worktrees; retained 5 live, unsaved, unknown or human folders; attention digest delivered; repeat sweep and daily job completed with one next-day run scheduled.');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/work-cleanup-sweep.json'), JSON.stringify(evidence, null, 2));
