@@ -67,6 +67,7 @@ export function createCodingDaemonMergeSweep(
   spawn: SpawnFn = spawnProcess
 ) {
   const actor = 'daemon:coding-sweep';
+  let holdRevision = 0;
   const signoffHolds = new Map<string, { key: string; at: number }>();
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
@@ -193,6 +194,7 @@ export function createCodingDaemonMergeSweep(
     )
     .endAsync('result') as (observed: Observed, now: number) => Promise<unknown>;
   const sweep = async (now: number): Promise<void> => {
+    const revision = holdRevision;
     for (const failure of await record({ kind: 'limits' }))
       await retryLimit(failure.url, failure.head);
     const rows = (await ledger.read('list')).filter(
@@ -304,7 +306,7 @@ export function createCodingDaemonMergeSweep(
       if (candidate.policy.mergeBy !== 'daemon') continue;
       const outcome = await merge({ ...candidate, facts: current }, now);
       signoffHolds.delete(candidate.url);
-      if (outcome === 'needs_human_signoff')
+      if (outcome === 'needs_human_signoff' && revision === holdRevision)
         signoffHolds.set(candidate.url, { key: candidate.holdKey, at: now });
       if (
         typeof outcome === 'string' &&
@@ -332,6 +334,7 @@ export function createCodingDaemonMergeSweep(
   };
   return Object.assign((now: number) => events.exclusive(() => sweep(now)), {
     invalidate: (url: string) => {
+      holdRevision++;
       signoffHolds.delete(url.toLowerCase());
     },
   });

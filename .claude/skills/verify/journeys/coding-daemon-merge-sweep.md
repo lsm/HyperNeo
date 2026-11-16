@@ -268,3 +268,7 @@ a recorded policy event. The synthetic CLI log records reads and the pinned merg
 Review coverage changes invalidate a cached sign-off hold on the next sweep.
 A successful human-label operation also invalidates its URL, including a label
 first observed during the final merge read rather than by ledger reconciliation.
+
+Add `label-invalidation-race` to pause a synthetic GitHub label read, remove the
+label through the real human-merge operation, then release the stale read. The
+next sweep must merge immediately rather than caching that stale sign-off hold.
