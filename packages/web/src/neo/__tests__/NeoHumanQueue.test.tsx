@@ -745,10 +745,11 @@ describe('NeoHumanQueue', () => {
     expect(pick().checked).toBe(true);
     view.rerender(<NeoHumanQueue {...props} entries={[at(2, true)]} />);
     await waitFor(() => expect(reads).toHaveLength(2));
+    const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
     expect(pick().checked).toBe(true);
-    expect(pick().disabled).toBe(true);
+    expect(confirm().disabled).toBe(true);
     reads[1](at(2, false));
-    await waitFor(() => expect(pick().disabled).toBe(false));
+    await waitFor(() => expect(confirm().disabled).toBe(false));
     expect(pick().checked).toBe(true);
   });
 
