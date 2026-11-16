@@ -18,28 +18,31 @@ plists and version-only CLI shims. Copilot discovery uses the repository's SDK
 fixture; its recorded methods must contain only connect, status.get and session.list.
 No real account, credential or human worker is used. A synthetic provider stores the dev-proxy key in the fresh database. An ephemeral
 local API mock handles any synthetic Neo turns, and external registry MCP servers
-are disabled before its binding is created. Real mailbox admission persists
-notices into its context. Observe those notices through public work.read RPC.
+are disabled before its binding is created. Notices reach Neo only through the
+attention entry: the helper runs Neo's real sweep (`NeoService.sweepPacks`), which
+reads the stored health and tells each incident as a `driver.health` digest.
+Observe those digests in the run database's mailbox and Neo notes queues.
 
 The explicitly enqueued startup health job checks all five local drivers. Then
 work.health and work.adapters must expose a missing synthetic Codex database as
-unavailable with a concrete reason. Repeated checks and a daemon restart must
-leave exactly one unavailable notice in Neo's context. Restoring the database
-must produce one recovery notice. Recording the fixture's passed discovery
+unavailable with a concrete reason. Repeated checks, sweeps and a daemon restart
+must leave exactly one unavailable notice. Restoring the database retires that
+incident with no recovery notice; only the still-unverified client version is
+told, once. Recording the fixture's passed discovery
 journey establishes its verified version; a newer fixture version remains ok,
 becomes unverified, and produces only one new warning. External database hashes
-must remain unchanged. Daily scheduling and a lost notice acknowledgement are
-also covered by the focused monitor tests.
+must remain unchanged. Daily scheduling and the incident start are also covered
+by the focused monitor tests.
 
 The review regression first records a passed Codex version while no Neo binding
-exists. Creating the binding must not deliver its obsolete unverified warning.
+exists. Creating the binding must not tell its obsolete unverified warning.
 Before that verification, direct calls through the real shared MCP invoke
 handler must refuse an ordinary worker and an unbound caller claiming the Neo
 role, leaving all stored health and pending warnings unchanged. Identity fields
 forged in the operation input must not affect admission. Human RPC verification
 and a bound Neo MCP session must both remain allowed.
 A generic settings RPC then attempts to forge the health records, verified
-versions and notice text; all daemon-owned values must remain unchanged while
+versions and incident start; all daemon-owned values must remain unchanged while
 an ordinary setting still updates. Finally, the helper holds a scheduled
 non-forced read while a real forced health RPC arrives. Its reply must show
 the new fixture client version, rather than the scheduled run's cached value.

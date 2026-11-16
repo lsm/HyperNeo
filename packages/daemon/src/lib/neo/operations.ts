@@ -1,5 +1,6 @@
 import { createNeoRelayOperations } from './relay-answer.ts';
 import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
+import { NEO_ANSWER_NOTE } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
 import { neoSessionTrackRootRead } from '../../storage/repositories/neo-session-track-write.ts';
@@ -895,7 +896,7 @@ export function createNeoOperations(
       (ask, question, note) =>
         service.deliverForward(
           ask.sessionId,
-          `neo-question:${question.id}`,
+          `${NEO_ANSWER_NOTE.button}${question.id}`,
           note,
           ask.sessionId,
           'event'
