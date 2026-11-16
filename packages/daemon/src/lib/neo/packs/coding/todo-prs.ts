@@ -184,12 +184,13 @@ export class CodingTodoPrRepository {
     ).flatMap(({ todoId, prs }) =>
       (JSON.parse(prs) as NeoWorkPr[]).flatMap((pr) => {
         const parsed = parsePrUrl(pr.url);
-        const row = parsed
-          ? (ledger.get(
-              codingCanonicalRepo(this.db, `${parsed.owner}/${parsed.repo}`),
-              Number(parsed.number)
-            ) as { state: CodingPrState; since: number; closedAt: number | null } | undefined)
-          : undefined;
+        const row =
+          parsed?.host.toLowerCase() === (process.env.GH_HOST ?? 'github.com').toLowerCase()
+            ? (ledger.get(
+                codingCanonicalRepo(this.db, `${parsed.owner}/${parsed.repo}`),
+                Number(parsed.number)
+              ) as { state: CodingPrState; since: number; closedAt: number | null } | undefined)
+            : undefined;
         return pr.state === 'OPEN' && !row?.closedAt
           ? [{ todoId, url: pr.url, state: row?.state ?? null, since: row?.since ?? null }]
           : [];
