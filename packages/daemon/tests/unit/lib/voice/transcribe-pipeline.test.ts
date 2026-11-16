@@ -418,6 +418,77 @@ describe('voice transcribe pipeline', () => {
     expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
   });
 
+  describe('keys by host', () => {
+    const storedKey = () =>
+      ({
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+      }) as unknown as Pick<ProviderCredentialManager, 'getCredentials'>;
+    const sent = () => {
+      const seen: { url?: string; authorization?: string } = {};
+      globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+        seen.url = url.toString();
+        seen.authorization = (init?.headers as Record<string, string>)?.Authorization;
+        return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+      }) as typeof fetch;
+      return seen;
+    };
+
+    it('sends a saved key to another address on the same host', async () => {
+      const seen = sent();
+      await transcribe(
+        createDeps(
+          {
+            endpoint: 'https://api.openai.com/v2/audio/transcriptions',
+            apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          },
+          createVoiceTranscribeLimiters(),
+          storedKey()
+        )
+      );
+      expect(seen.authorization).toBe('Bearer stored-key');
+    });
+
+    it('keeps a saved key off a batch endpoint on another host', async () => {
+      const seen = sent();
+      await transcribe(
+        createDeps(
+          {
+            endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
+            apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          },
+          createVoiceTranscribeLimiters(),
+          storedKey()
+        )
+      );
+      expect(seen.url).toBe('https://api.groq.com/openai/v1/audio/transcriptions');
+      expect(seen.authorization).toBeUndefined();
+    });
+
+    it('records through the recorded part when settings hold one', async () => {
+      const seen = sent();
+      await expect(
+        transcribe(
+          createDeps(
+            {
+              endpoint: '',
+              model: '',
+              recorded: {
+                provider: 'openai',
+                endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+                model: 'whisper-1',
+              },
+              apiKeyEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
+            },
+            createVoiceTranscribeLimiters(),
+            storedKey()
+          )
+        )
+      ).resolves.toEqual({ action: 'transcribed', text: 'hello' });
+      expect(seen.url).toBe('https://api.openai.com/v1/audio/transcriptions');
+      expect(seen.authorization).toBe('Bearer stored-key');
+    });
+  });
+
   it('refreshes endpoint and model from live settings inside the credential lock', async () => {
     const settingsSequence = [
       { endpoint: 'https://ai0:8090/v1/audio/transcriptions', model: 'old-model' },
