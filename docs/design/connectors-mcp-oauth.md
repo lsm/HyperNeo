@@ -68,8 +68,15 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 4. **Inject outside registry headers.** For an OAuth row the daemon itself is the
    MCP client: SDK `Client` plus `StreamableHTTPClientTransport` with the
    provider above. Sessions get an in-process SDK server (`createSdkMcpServer`,
-   the way the [operations MCP][ops] is attached, merged with
-   `mergeRuntimeMcpServers`) that lists the remote tools and forwards calls. The
+   like the [operations MCP][ops]) that lists the remote tools and forwards
+   calls. It enters the session at the existing conversion:
+   `appMcpServerToSdkConfig` in [query options][qob] returns this SDK config for
+   an OAuth row instead of `{type: 'http', headers}`. All three registry paths
+   (canonical inputs, MCP skills and plain registry rows) use that function.
+   So the proxy flows through `mergeSessionMcpServers` as a registry server,
+   with the usual enablement, layering and reserved-name handling. There are no
+   live updates: a connect or disconnect takes effect when the session's MCP
+   config is next computed, and an old proxy is fenced as described below. The
    token never reaches session config, the harness, prompts or logs, and a
    refresh in the middle of a long session just works.
 5. **Health and refresh.** Refresh goes through the SDK provider, serialized per
@@ -84,6 +91,20 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    late refresh or login callback cannot bring tokens back. Existing proxies
    check the generation on each call, refuse after disconnect without contacting
    the server, and close their client.
+   **Removing or replacing an OAuth row goes through Disconnect first.** The
+   vault bundle is keyed by row ID, so a row deleted without teardown would
+   orphan it. One human-only remove operation does the Disconnect steps above,
+   erases the bundle, and only then deletes the row. If the daemon stops between
+   the two steps, the row is left without tokens and shows Reconnect needed. The
+   `mcp.registry.delete` RPC routes an OAuth row to that operation. A change to
+   an OAuth row's `url` or `auth`, through `mcp.registry.update`, also
+   disconnects first. The registry repository's plain `delete`, and any plain
+   `update` of `url` or `auth`, refuses a row with `auth` set. Only the remove
+   and replace operations use the separate repository method that may touch
+   such a row. That covers the other writers: the MCP import service, which
+   creates, updates and deletes the rows it imports, and built-in seeding in
+   the skills manager. Neither ever sets `auth`. The one migration that deletes
+   registry rows removes only legacy IDs that predate the column.
 6. **Read-only until the approval gate exists.** [Connections](connectors.md)
    requires one human approval per external mutation, and remote MCP must use the
    same gate. That gate (phase 2) is not built. So this design is read-only: only
@@ -167,7 +188,7 @@ and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
 | 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
-| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. |
+| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID, and an existing proxy refuses calls. The import service cannot delete or retarget an OAuth row. |
 | 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
 | 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
