@@ -146,31 +146,33 @@ function fixture(
 }
 
 describe('coding actor assignments', () => {
-  test('review ranks only the eligible candidates as coding.review and starts the first ranked one', async () => {
-    const second = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' };
+  test('review ranks only its eligible hyperneo candidates as coding.review and starts the first ranked one', async () => {
+    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
     const calls: { kind: string; candidates: readonly NeoLine[]; scope: NeoLineScope }[] = [];
-    const f = fixture(undefined, {
-      models: () => [],
-      rank: async (kind, candidates, scope) => {
-        calls.push({ kind, candidates, scope });
-        return {
-          ranked: [...candidates].reverse().map((line) => ({ line })),
-          skipped: [],
-          exhausted: false,
-        };
-      },
-    });
-    expect(await f.assign({ candidates: [author, reviewer, second] })).toMatchObject({ ok: true });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].kind).toBe('coding.review');
-    expect(calls[0].scope).toEqual({ repo: 'synthetic/actors' });
-    expect(calls[0].candidates.map((line) => line.model).sort()).toEqual([
-      'claude-opus-5-5',
-      'claude-sonnet-5-5',
+    const rank: CodingLines['rank'] = async (kind, candidates, scope) => {
+      calls.push({ kind, candidates, scope });
+      return {
+        ranked: [...candidates].reverse().map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      };
+    };
+    const f = fixture(undefined, { models: () => [], rank });
+    expect(await f.assign({ candidates: [author, sonnet, opus] })).toMatchObject({ ok: true });
+    expect(calls.map(({ kind, scope }) => ({ kind, scope }))).toEqual([
+      { kind: 'coding.review', scope: { repo: 'synthetic/actors' } },
     ]);
-    expect(f.starts.map((start) => start.model)).toEqual([calls[0].candidates.at(-1)!.model]);
+    expect(calls[0].candidates.map((line) => line.model)).toEqual([
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+    ]);
+    expect(f.starts.map((start) => start.model)).toEqual(['claude-opus-5-5']);
+    const external = fixture(undefined, { models: () => [], rank });
+    expect(await external.assign()).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
   });
-  test('a review with no usable model line is refused with the skip reasons and starts nothing', async () => {
+  test('a review whose every candidate is refused names the skip reasons and starts nothing', async () => {
     const f = fixture(undefined, {
       models: () => [],
       rank: async (_kind, candidates) => ({
@@ -179,10 +181,12 @@ describe('coding actor assignments', () => {
         exhausted: true,
       }),
     });
-    expect(await f.assign()).toEqual({
+    expect(
+      await f.assign({ candidates: [{ adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' }] })
+    ).toEqual({
       ok: false,
       reason:
-        'No usable model line for coding.review: claude-code/claude-opus-5-5 via claude-code: held until later.',
+        'No usable model line for coding.review: claude-sonnet-5-5 via hyperneo: held until later.',
     });
     expect(f.starts).toEqual([]);
   });

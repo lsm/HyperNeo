@@ -92,11 +92,7 @@ describe('coding stage target preferences', () => {
       set('write.model', standard.model, '');
       set('write.model', preferred.model, 'Synthetic/Preferences');
       expect(
-        plan(
-          db,
-          { repo, stage: 'write', candidates: [standard, preferred], body: '' },
-          true
-        )
+        plan(db, { repo, stage: 'write', candidates: [standard, preferred], body: '' }, true)
       ).toEqual({ ok: true, target: preferred, fallback: [] });
       expect(
         plan(
@@ -163,19 +159,11 @@ describe('coding stage target preferences', () => {
         )
       ).toMatchObject({ ok: false, reason: expect.stringContaining('same_model') });
       expect(
-        plan(
-          db,
-          { repo, stage: 'review', candidates: [preferred], body: '' },
-          true
-        )
+        plan(db, { repo, stage: 'review', candidates: [preferred], body: '' }, true)
       ).toMatchObject({ ok: false, reason: expect.stringContaining('author_provenance_required') });
-      expect(
-        plan(
-          db,
-          { repo, stage: 'review', candidates: [preferred], body: '' },
-          false
-        )
-      ).toEqual({ ok: true, target: preferred, fallback: [] });
+      expect(plan(db, { repo, stage: 'review', candidates: [preferred], body: '' }, false)).toEqual(
+        { ok: true, target: preferred, fallback: [] }
+      );
     } finally {
       db.close();
     }

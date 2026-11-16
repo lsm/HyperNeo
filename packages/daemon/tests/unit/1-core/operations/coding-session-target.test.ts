@@ -102,7 +102,19 @@ function setup() {
 
 describe('coding session target decision', () => {
   const routed = (kinds: string[], held: boolean): CodingLines => ({
-    models: () => [],
+    models: () => [
+      {
+        id: 'glm-6',
+        name: 'GLM 6',
+        alias: 'glm-6',
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 1,
+        description: '',
+        releaseDate: '',
+        available: true,
+      },
+    ],
     rank: async (kind, candidates, scope) => {
       kinds.push(`${kind} ${scope.repo ?? ''}`);
       return rankLines({
@@ -111,25 +123,28 @@ describe('coding session target decision', () => {
         scope,
         prefs: { routes: [], rules: [] },
         holds: held
-          ? [{ provider: 'claude-desktop', model: '', reason: 'rate_limit', retryAt: 9e15 }]
+          ? [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }]
           : [],
         usage: {},
-        availability: { 'claude-desktop': 'ready' },
+        availability: { glm: 'ready' },
         now: 1,
       });
     },
   });
 
-  test('a start is ranked again as coding.write, and a held line waits with the reason', async () => {
+  test('a hyperneo start is ranked again as coding.write, and a held line waits with the reason', async () => {
     const { todo, decide } = setup();
     const kinds: string[] = [];
-    expect(await decide(todo(), start('backend'), routed(kinds, false))).toEqual({
-      value: start('backend'),
-    });
-    expect(await decide(todo(), start('backend'), routed(kinds, true))).toEqual({
-      reason: `No usable model line for coding.write: claude-desktop via claude-desktop: held (rate_limit) until ${new Date(9e15).toISOString()}.`,
+    const glm = { verb: 'start' as const, adapter: 'hyperneo', model: 'glm-6', name: 'backend' };
+    expect(await decide(todo(), glm, routed(kinds, false))).toEqual({ value: glm });
+    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({
+      reason: `No usable model line for coding.write: glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
     });
     expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
+    expect(await decide(todo('other'), start('desktop'), routed(kinds, true))).toEqual({
+      value: start('desktop'),
+    });
+    expect(kinds).toHaveLength(2);
   });
 
   test('a send to an existing session is not ranked', async () => {
