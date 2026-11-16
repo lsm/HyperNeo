@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   NeoResult,
   NeoSnapshot,
@@ -190,15 +191,29 @@ export function useNeo() {
   }
 
   async function answerQuestion(questionId: string, answer: NeoQuestionAnswer) {
-    await questionCall(questionId, 'neo.question.answer', { questionId, answer });
+    await questionCall(
+      questionId,
+      'neo.question.answer',
+      { questionId, answer },
+      'That answer could not be sent.'
+    );
   }
 
   async function holdQuestion(questionId: string, held: boolean) {
-    const requestId = crypto.randomUUID();
-    await questionCall(questionId, 'neo.question.hold', { questionId, held, requestId });
+    await questionCall(
+      questionId,
+      'neo.question.hold',
+      { questionId, held, requestId: generateUUID() },
+      'That card could not be held.'
+    );
   }
 
-  async function questionCall(questionId: string, operation: OperationName, input: object) {
+  async function questionCall(
+    questionId: string,
+    operation: OperationName,
+    input: object,
+    failure: string
+  ) {
     if (busyWork) return;
     setBusyWork(questionId);
     setError('');
@@ -208,8 +223,7 @@ export function useNeo() {
       if (!result.ok) throw new Error(result.reason);
       await refresh();
     } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That answer could not be sent.');
+      if (alive.current) setError(cause instanceof Error ? cause.message : failure);
     } finally {
       if (alive.current) setBusyWork(null);
     }
