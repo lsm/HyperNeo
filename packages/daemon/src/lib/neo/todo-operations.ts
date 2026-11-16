@@ -92,6 +92,10 @@ const TodoDraft = z.object({
       message:
         'Only the human can turn desktop control on, from the todo on the Neo page. Leave desktopControl out of named.',
     })
+    .refine((named) => !('requestFrom' in named), {
+      message:
+        'Only the daemon records worker requests, when a session messages Neo. Leave requestFrom out of named.',
+    })
     .nullable()
     .default(null),
   priority: TodoPriority.default('normal'),
