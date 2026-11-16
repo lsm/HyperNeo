@@ -27,11 +27,13 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 test.each(
   process.env.HYPERNEO_CLEANUP_FIXTURE
-    ? [process.env.HYPERNEO_CLEANUP_LISTING_FAILURE === '1']
-    : [false, true]
+    ? [process.env.HYPERNEO_CLEANUP_MODE ?? 'plain']
+    : ['plain', 'listing failure', 'rebound after listing']
 )(
-  'createWorkCleanupRuntime uses adapter roots and isolates listing failures: %s',
-  async (listingFailure) => {
+  'createWorkCleanupRuntime uses adapter roots and keeps listed or rebound folders safe: %s',
+  async (mode) => {
+    const listingFailure = mode === 'listing failure';
+    const rebound = mode === 'rebound after listing';
     if (!process.env.HYPERNEO_CLEANUP_FIXTURE) {
       const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
       mkdirSync(join(fixture, 'home'));
@@ -46,7 +48,7 @@ test.each(
               HOME: join(fixture, 'home'),
               PATH: process.env.PATH,
               HYPERNEO_CLEANUP_FIXTURE: fixture,
-              HYPERNEO_CLEANUP_LISTING_FAILURE: listingFailure ? '1' : '0',
+              HYPERNEO_CLEANUP_MODE: mode,
             },
             encoding: 'utf8',
           }
@@ -151,7 +153,7 @@ test.each(
     let active = 0;
     let peak = 0;
     let statusCalls = 0;
-    let archives = 0;
+    const archived: string[] = [];
     const registry = createOperationRegistry([
       defineOperation({
         name: 'work.status',
@@ -185,7 +187,7 @@ test.each(
         inputSchema: z.object({ ref: WorkRefSchema }),
         resultSchema: z.unknown(),
         execute: async ({ ref }) => {
-          archives++;
+          archived.push(ref.id);
           return {
             ok: true,
             value: {
@@ -209,7 +211,34 @@ test.each(
           getDatabase: () => db,
           gateway: {
             call: async (...args: unknown[]) => {
-              if (args[0] === workCleanupReads && args.length > 2) focused.push(args[2]);
+              if (args[0] === workCleanupReads && args.length > 2) {
+                if (rebound && focused.length === 0) {
+                  const todo = todos.addTodo(
+                    'rebound',
+                    'ask',
+                    {
+                      title: 'rebound',
+                      doneWhen: 'Done',
+                      instruction: null,
+                      named: null,
+                      check: null,
+                    },
+                    3
+                  );
+                  sessions.create(todo.id, { verb: 'start', adapter: 'codex-desktop' });
+                  db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(
+                    JSON.stringify({ adapter: 'codex-desktop', id: 'rebound' }),
+                    todo.id
+                  );
+                  paths.set('rebound', folders[0]);
+                  db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata,worktree_path,main_repo_path)
+              VALUES ('placed','placed','/work','now','now','active','{}','{}',?,?)`).run(
+                    folders[1],
+                    repo
+                  );
+                }
+                focused.push(args[2]);
+              }
               return Reflect.apply(gateway.call, gateway, args);
             },
           },
@@ -225,8 +254,11 @@ test.each(
         {},
         { source: 'rpc', principal: 'local' }
       );
-      expect(archives).toBe(6);
-      expect(statusCalls).toBe(6);
+      const kept = rebound ? folders.slice(2) : folders;
+      expect(archived.toSorted()).toEqual(
+        (rebound ? [2, 3, 4, 5] : [0, 1, 2, 3, 4, 5]).map((index) => `worker-${index}`)
+      );
+      expect(statusCalls).toBe(rebound ? 7 : 6);
       expect(peak).toBeLessThanOrEqual(4);
       expect(focused).toHaveLength(6);
       expect(focused.flat()).toEqual(
@@ -235,10 +267,14 @@ test.each(
         )
       );
       const digest = result as { kept: Record<string, string[]> };
-      expect(digest.kept['Unpublished branch; kept.'].toSorted()).toEqual(folders.toSorted());
-      expect(digest.kept.live).toHaveLength(2);
-      expect(digest.kept.live).toContain(paths.get('worker-6')!);
-      expect(digest.kept.live).toContain(paths.get('worker-7')!);
+      expect(digest.kept['Unpublished branch; kept.'].toSorted()).toEqual(kept.toSorted());
+      expect(digest.kept.live.toSorted()).toEqual(
+        [
+          ...(rebound ? folders.slice(0, 2) : []),
+          paths.get('worker-6')!,
+          paths.get('worker-7')!,
+        ].toSorted()
+      );
       if (listingFailure) expect(digest.kept.error).toContain(broken);
       const probes = readFileSync(trace, 'utf8');
       expect(probes).toContain(folders[0]);
