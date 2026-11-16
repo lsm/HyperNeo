@@ -54,31 +54,25 @@ const SESSION_FIELDS = `s.title AS name, ${STATE('status')} AS status, ${STATE('
   ${STATE('since')} AS since, ${STATE('retryAt')} AS retryAt,
   CASE WHEN json_valid(s.config) THEN json_extract(s.config, '$.provider') END AS provider`;
 
-export function readNeoWorking(db: BunDatabase): NeoWorkingSession[] {
+export function readNeoWorking(
+  db: BunDatabase,
+  conversationId: string | null
+): NeoWorkingSession[] {
   const columns = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
   if (!columns.some((column) => column.name === 'processing_state')) return [];
-  const conversation = (
-    db.prepare('SELECT id FROM neo_conversation').get() as { id: string } | null
-  )?.id;
-  const front = conversation
-    ? (db
-        .prepare(
-          `SELECT s.id AS sessionId, NULL AS projectId, NULL AS title, 'front' AS role, ${SESSION_FIELDS}
-             FROM sessions s WHERE s.id = ? AND s.status IS NOT 'archived'`
-        )
-        .all(frontSessionId(conversation)) as Row[])
-    : [];
-  return projectNeoWorking([
-    ...(db
+  return projectNeoWorking(
+    db
       .prepare(
         `SELECT b.session_id AS sessionId, b.concern_id AS projectId, c.title AS title,
            CASE WHEN b.concern_id IS NULL THEN 'neo' END AS role, ${SESSION_FIELDS}
            FROM neo_session_bindings b
            JOIN sessions s ON s.id = b.session_id
            LEFT JOIN neo_concerns c ON c.id = b.concern_id
-          WHERE b.kind = 'neo' AND s.status IS NOT 'archived'`
+          WHERE b.kind = 'neo' AND s.status IS NOT 'archived'
+         UNION ALL
+         SELECT s.id, NULL, NULL, 'front', ${SESSION_FIELDS}
+           FROM sessions s WHERE s.id = ? AND s.status IS NOT 'archived'`
       )
-      .all() as Row[]),
-    ...front,
-  ]);
+      .all(conversationId ? frontSessionId(conversationId) : null) as Row[]
+  );
 }

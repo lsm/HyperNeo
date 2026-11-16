@@ -129,7 +129,7 @@ describe('Neo working sessions', () => {
   test('the snapshot list holds main when it is working, never workers', async () => {
     await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
-    expect(readNeoWorking(db.getDatabase())).toEqual([
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())).toEqual([
       {
         sessionId: main,
         projectId: null,
@@ -147,7 +147,7 @@ describe('Neo working sessions', () => {
       .prepare('UPDATE sessions SET title = ? WHERE id = ?')
       .run('Renamed main', main);
     await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
-    expect(readNeoWorking(db.getDatabase())[0]).toEqual({
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())[0]).toEqual({
       sessionId: main,
       projectId: null,
       title: 'Neo',
@@ -197,7 +197,7 @@ describe('Neo working sessions', () => {
       },
       { working: [] },
     ]);
-    expect(readNeoWorking(db.getDatabase())).toEqual([]);
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())).toEqual([]);
   });
 
   const provider = (sessionId: string) =>
@@ -219,7 +219,7 @@ describe('Neo working sessions', () => {
   test('a held Neo session carries its role and model hold', async () => {
     provider(main);
     await state(main, held('login'));
-    expect(readNeoWorking(db.getDatabase())).toEqual([
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())).toEqual([
       {
         sessionId: main,
         projectId: null,
@@ -240,10 +240,10 @@ describe('Neo working sessions', () => {
     provider(front);
 
     await state(front, { status: 'processing', messageId: 'f1', phase: 'thinking' });
-    expect(readNeoWorking(db.getDatabase())).toEqual([]);
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())).toEqual([]);
 
     await state(front, held('limit'));
-    expect(readNeoWorking(db.getDatabase())).toEqual([
+    expect(readNeoWorking(db.getDatabase(), service.repo.readConversationId())).toEqual([
       expect.objectContaining({
         sessionId: front,
         status: 'rate_limit_cooldown',

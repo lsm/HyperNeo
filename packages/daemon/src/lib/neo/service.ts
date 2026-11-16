@@ -382,7 +382,7 @@ export class NeoService {
     };
     this.noteWorking = () => {
       try {
-        const working = readNeoWorking(this.db.getDatabase());
+        const working = readNeoWorking(this.db.getDatabase(), this.repo.readConversationId());
         const key = neoWorkingKey(working);
         if (key === this.workingKey) return;
         this.workingKey = key;

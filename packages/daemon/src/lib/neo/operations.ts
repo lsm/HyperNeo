@@ -439,7 +439,7 @@ export function createNeoOperations(
           ...page,
           ...(cursor === undefined ? todoAsks.filter((entry) => entry.ask.status !== 'open') : []),
         ];
-    const working = readNeoWorking(service.db.getDatabase());
+    const working = readNeoWorking(service.db.getDatabase(), service.repo.readConversationId());
     const remaining = Math.max(0, open.length - page.length);
     const more = {
       ...(remaining > 0 && last
