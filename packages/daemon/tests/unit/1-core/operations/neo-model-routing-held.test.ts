@@ -125,6 +125,8 @@ describe('the attention sweep with model-routing on', () => {
   let whileRanking = () => {};
   let signedIn = true;
   let authReads = 0;
+  let covered = false;
+  let neo: string | null = 'neo:root';
 
   const wakes = () =>
     (
@@ -186,6 +188,8 @@ describe('the attention sweep with model-routing on', () => {
     whileRanking = () => {};
     signedIn = true;
     authReads = 0;
+    covered = false;
+    neo = 'neo:root';
     runMigrations(db, () => {});
     createTables(db);
     new NeoAskTodoRepository(db).openAsk({
@@ -221,10 +225,10 @@ describe('the attention sweep with model-routing on', () => {
       scan: (now) => pack.attention!.scan!(now),
       tell: createNeoAttention({
         kinds: () => [...NEO_ATTENTION_KINDS, ...pack.attention!.kinds],
-        read: () => ({ covered: false, latestReportAt: null }),
+        read: () => ({ covered, latestReportAt: null }),
         ...neoAttentionDelivery(
           db,
-          () => 'neo:root',
+          () => neo,
           () => false
         ),
         dropped: () => {},
@@ -289,6 +293,37 @@ describe('the attention sweep with model-routing on', () => {
     await sweep(NOW + 5 * MINUTE);
     signedIn = true;
     await sweep(NOW + 10 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a hold under a covering card is told once the card clears', async () => {
+    heldTodo(31);
+    covered = true;
+    await sweep(NOW);
+    expect(wakes()).toEqual([]);
+    covered = false;
+    await sweep(NOW + 5 * MINUTE);
+    await sweep(NOW + 10 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('a hold found while Neo has no session is told once it has one', async () => {
+    heldTodo(31);
+    neo = null;
+    await sweep(NOW);
+    expect(wakes()).toEqual([]);
+    neo = 'neo:root';
+    await sweep(NOW + 5 * MINUTE);
+    await sweep(NOW + 10 * MINUTE);
+    expect(wakes()).toHaveLength(1);
+  });
+
+  test('two overlapping sweeps that render different text tell one hold once', async () => {
+    heldTodo(31);
+    whileRanking = () => {
+      signedIn = !signedIn;
+    };
+    await Promise.all([sweep(NOW), sweep(NOW)]);
     expect(wakes()).toHaveLength(1);
   });
 
