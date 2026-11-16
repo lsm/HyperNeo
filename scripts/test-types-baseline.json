@@ -153,7 +153,7 @@
     "packages/daemon/tests/unit/1-core/operations/neo-coding-ledger-source.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-merge-gates.test.ts": 2,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-merge-operation.test.ts": 1,
-    "packages/daemon/tests/unit/1-core/operations/neo-coding-policy.test.ts": 3,
+    "packages/daemon/tests/unit/1-core/operations/neo-coding-policy.test.ts": 1,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-pr-events.test.ts": 11,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-pr-ledger.test.ts": 2,
     "packages/daemon/tests/unit/1-core/operations/neo-coding-results.test.ts": 3,
