@@ -313,6 +313,7 @@ function TodoRow({
                     <input
                       type="checkbox"
                       class={`${FORM_CHECKBOX_CLASS} accent-accent`}
+                      disabled={disabled}
                       checked={todo.named?.desktopControl === true}
                       onChange={(event) =>
                         onDesktopControl(todo.id, (event.target as HTMLInputElement).checked)

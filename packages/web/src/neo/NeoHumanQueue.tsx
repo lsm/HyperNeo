@@ -315,6 +315,18 @@ export function NeoHumanQueue({
                 </button>
               )}
             </div>
+            {showFull && failed(id) && (
+              <p role="alert" class="mt-2 text-sm text-danger">
+                {t('queue.loadFailed')}{' '}
+                <button
+                  type="button"
+                  class={neoPlainClass}
+                  onClick={() => setAttempt((value) => value + 1)}
+                >
+                  {t('chat.retry')}
+                </button>
+              </p>
+            )}
             {showFull
               ? renderAsk(full, !validated)
               : run.map((item) => (
