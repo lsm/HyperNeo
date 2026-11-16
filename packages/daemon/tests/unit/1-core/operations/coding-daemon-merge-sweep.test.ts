@@ -20,6 +20,7 @@ import { CODING_ATTENTION_KINDS } from '../../../../src/lib/neo/packs/coding/att
 import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
+import { createCodingRetryMergeOperation } from '../../../../src/lib/neo/packs/coding/retry-merge-operation.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
@@ -484,6 +485,25 @@ describe('daemon merge sweep behavior', () => {
     const reads = calls.length;
     await run(600_011);
     expect(calls.length).toBeGreaterThan(reads);
+  });
+  test('an accepted retry makes the next unchanged pass read fresh facts and merge once', async () => {
+    for (let i = 0; i < 3; i++) {
+      const [receipt] = await reserve(i);
+      await ledger.write('daemonMerge', { ...receipt, kind: 'failed', error: 'Refused', at: i });
+      await ledger.write('daemonMerge', { ...receipt, kind: 'void', at: i });
+    }
+    unresolved = true;
+    const run = sweep();
+    await run(10);
+    expect(merges()).toEqual([]);
+    unresolved = false;
+    const retry = createCodingRetryMergeOperation(() => db, ledger, spawn, run.invalidate);
+    const caller = { role: 'neo' } as Parameters<typeof retry.execute>[1];
+    expect(await retry.execute({ url, head }, caller)).toEqual({ accepted: true });
+    await run(11);
+    expect(merges()).toHaveLength(1);
+    await run(12);
+    expect(merges()).toHaveLength(1);
   });
   test('a final read that finds an unresolved thread is what the next unchanged pass uses', async () => {
     let threadReads = 0;
