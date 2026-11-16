@@ -17,7 +17,13 @@ describe('data-dir', () => {
   });
 
   test('getDataDir returns ~/.hyperneo', () => {
-    expect(getDataDir()).toBe(join(homedir(), '.hyperneo'));
+    const prior = process.env.HYPERNEO_DATA_DIR;
+    delete process.env.HYPERNEO_DATA_DIR;
+    try {
+      expect(getDataDir()).toBe(join(homedir(), '.hyperneo'));
+    } finally {
+      if (prior !== undefined) process.env.HYPERNEO_DATA_DIR = prior;
+    }
   });
 
   test('getDataDir resolves inside the test temp directory, never the real home', () => {
