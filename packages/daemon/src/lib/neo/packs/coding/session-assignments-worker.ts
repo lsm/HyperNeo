@@ -35,7 +35,8 @@ class CodingSessionAssignments {
          WHERE (pack_coding_feature_sessions.todo_id = ?5 AND EXISTS (
              SELECT 1 FROM neo_todo_sessions r WHERE r.todo_id = ?5
                AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.adapter') = ?6
-               AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.id') = ?7))
+               AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.id') = ?7
+               AND json_extract(COALESCE(r.ref, json_extract(r.target, '$.ref')), '$.daemon') IS ?8))
            OR ${RELEASED('pack_coding_feature_sessions')}`
       )
       .run(
@@ -45,7 +46,8 @@ class CodingSessionAssignments {
         input.now,
         input.replace?.todoId ?? null,
         input.replace?.ref.adapter ?? null,
-        input.replace?.ref.id ?? null
+        input.replace?.ref.id ?? null,
+        input.replace?.ref.daemon ?? null
       );
     return this.feature(input.repo, input.featureKey)!;
   }
