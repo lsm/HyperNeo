@@ -253,6 +253,7 @@ export function NeoHumanQueue({
                 key={'questionId' in item ? item.questionId : item.todoId}
                 item={item}
                 entry={card(id) ?? details[id]}
+                listed={entries.find((candidate) => candidate.ask.id === id)}
                 refreshing={!card(id)}
                 onDesktopControl={onDesktopControl}
                 failed={failed(id)}
@@ -274,6 +275,7 @@ export function NeoHumanQueue({
 function QueueItem({
   item,
   entry,
+  listed,
   failed,
   refreshing,
   onRetry,
@@ -287,6 +289,7 @@ function QueueItem({
 }: {
   item: NeoHumanQueueItem;
   entry?: NeoAskEntry;
+  listed?: NeoAskEntry;
   failed?: boolean;
   refreshing?: boolean;
   onDesktopControl?: (todoId: string, on: boolean) => void;
@@ -300,7 +303,9 @@ function QueueItem({
 }) {
   const [open, setOpen] = useState(false);
   if (item.state === 'progress') {
-    const todo = entry?.todos.find((candidate) => candidate.id === item.todoId);
+    const todo = [...(entry?.todos ?? []), ...(listed?.todos ?? [])].find(
+      (candidate) => candidate.id === item.todoId
+    );
     const desktop =
       onDesktopControl &&
       todo &&
@@ -331,6 +336,7 @@ function QueueItem({
             <input
               type="checkbox"
               class={`${FORM_CHECKBOX_CLASS} accent-accent`}
+              disabled={disabled || refreshing}
               checked={desktop.named?.desktopControl === true}
               onChange={(event) =>
                 onDesktopControl?.(item.todoId, (event.target as HTMLInputElement).checked)
