@@ -51,20 +51,19 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
 
 ## The inbox projection
 
-`neoHumanQueue({questions, asks, todos, owners, now})` is pure. `owners` is `nextStepOwner` for each unfinished todo, read once by the caller. Each todo and each card lands in exactly one state bucket, first match wins:
+`neoHumanQueue({questions, asks, todos, owners, now})` is pure. `owners` is `nextStepOwner` for each unfinished todo, read once by the caller. Each unfinished todo and each open card lands in exactly one state bucket, first match wins:
 1. **waiting on you**: an open card without a hold (one item per card, with the titles of its todos, or "the whole ask");
 2. **held**: an open card with a hold;
 3. **in progress**: every other todo in `todo`, `doing`, `blocked` or `failed` that no card covers. Each item says whose step it is, from the attention design's `nextStepOwner` (`lib/neo/attention/owner.ts`), so the inbox and Neo's wakes always agree;
-4. **recent results**: a todo that ended in the last 7 days, by `finishedAt`, shown once even if it had an answered card: `done`; `closed_unverified` after it started (closed, check not passed); `removed`, or `closed_unverified` before it started (both count as cancelled, as in `neoTodoCancelledDependencies`).
 
-A todo covered by cards appears only under its cards. Every todo state lands in bucket 3 or 4, so nothing falls outside. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); two open cards on the same todo (two items; the todo appears under both); an ask-level card; an uncovered blocked todo (in progress, with the owner `nextStepOwner` gives); `closed_unverified` with and without `startedAt` (results).
+A todo covered by cards appears only under its cards. Every unfinished todo lands in a bucket, so nothing that still needs work falls outside. A finished todo (`done`, `closed_unverified`, `removed`) is not in the inbox. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo, with or without an answered card, is not listed; a card covering two todos (one item); two open cards on the same todo (two items; the todo appears under both); an ask-level card; an uncovered blocked todo (in progress, with the owner `nextStepOwner` gives).
 
 It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` keeps its meaning, a number of asks: the asks with at least one waiting-on-you item. `neoWorkCounts` ignores held cards in both of its terms: the open-card term, and the waiting-todo term, where a todo covered only by held cards does not count as waiting. So an ask whose only card is held no longer raises it. Web, phone and iPad render the same data.
 
 ## Clients
 
 One rule everywhere:
-- Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, in progress, recent results) and **ask** (all, then each ask). The default is "waiting on you" and "all".
+- Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, in progress) and **ask** (all, then each ask). The default is "waiting on you" and "all".
 - Each row shows the choices that fit, and the rest under a final "More" menu. No horizontal scrolling.
 - Items are grouped by ask. Each item says which todo it is about. The agree button is on the right; "Hold" offers: tomorrow, next week, until I come back, and drop this todo.
 
@@ -109,3 +108,4 @@ Each step is one PR within the repo's slice budget.
 - Holding a card stops its todos until it reopens. "Drop this todo" is the way to stop the work for good.
 - Asks are not cards. An ask-level question is a card written without todos; it stops the ask's waiting todos.
 - The inbox is a view. It adds no new record of what the human was asked.
+- Finished work is not listed. A view of all items sorted by time, finished ones included, is later work.
