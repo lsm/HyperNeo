@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
-  neoCheckOverdue,
   neoDaemonCardCodes,
   neoStartRetryDue,
   planNeoDaemonCardActions,
@@ -116,39 +115,6 @@ describe('planNeoDaemonCardPrune', () => {
     expect(planNeoDaemonCardPrune(overdue, [failed('check', 'done', null, check)])).toMatchObject({
       state: 'retired',
     });
-  });
-});
-
-describe('neoCheckOverdue', () => {
-  const todo = { id: 'check', createdAt: 0 };
-  test('a check-only todo is overdue 24 hours after it was added', () => {
-    expect(neoCheckOverdue(todo, [], DAY - 1)).toBe(false);
-    expect(neoCheckOverdue(todo, [], DAY)).toBe(true);
-  });
-
-  test('an open card covering it means no new one, and Keep waiting restarts the clock', () => {
-    expect(neoCheckOverdue(todo, [card({ todos: ['check'] })], 2 * DAY)).toBe(false);
-    const waited = card({
-      cause: 'check_overdue',
-      state: 'answered',
-      todos: ['check'],
-      answer: ['Keep waiting'],
-      answeredAt: DAY,
-    });
-    expect(neoCheckOverdue(todo, [waited], 2 * DAY - 1)).toBe(false);
-    expect(neoCheckOverdue(todo, [waited], 2 * DAY)).toBe(true);
-  });
-
-  test('a free reply to the overdue card also restarts the clock', () => {
-    const replied = card({
-      cause: 'check_overdue',
-      state: 'answered',
-      todos: ['check'],
-      answer: ['The CI is slow today, give it time'],
-      answeredAt: DAY,
-    });
-    expect(neoCheckOverdue(todo, [replied], 2 * DAY - 1)).toBe(false);
-    expect(neoCheckOverdue(todo, [replied], 2 * DAY)).toBe(true);
   });
 });
 

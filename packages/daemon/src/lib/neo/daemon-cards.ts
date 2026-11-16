@@ -1,11 +1,13 @@
 import type { NeoQuestion, NeoStatusCode, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoQuestionDraft } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStatusLine } from './status-codes.ts';
+import { neoTodoReady } from './todo-dependencies.ts';
 import { neoQuestionCoversTodo, neoTodoCovered } from './todo-state.ts';
 
 export const NEO_WORKER_BLOCKER = 'worker_blocker';
 export const NEO_RETRIES_EXHAUSTED = 'retries_exhausted';
 export const NEO_CHECK_OVERDUE = 'check_overdue';
+export const NEO_HUMAN_STEP = 'human_step';
 export const NEO_HOLD = 'hold';
 export const NEO_PAUSE = 'pause';
 export const NEO_AUTOMATIC_RETRIES = 2;
@@ -22,6 +24,7 @@ type Cause =
   | typeof NEO_WORKER_BLOCKER
   | typeof NEO_RETRIES_EXHAUSTED
   | typeof NEO_CHECK_OVERDUE
+  | typeof NEO_HUMAN_STEP
   | typeof NEO_HOLD
   | typeof NEO_PAUSE;
 
@@ -29,6 +32,7 @@ const OPTIONS: Record<Cause, string[]> = {
   [NEO_WORKER_BLOCKER]: [MARK_DONE, REMOVE],
   [NEO_RETRIES_EXHAUSTED]: [RETRY, MARK_DONE, REMOVE],
   [NEO_CHECK_OVERDUE]: [KEEP_WAITING, MARK_DONE, REMOVE],
+  [NEO_HUMAN_STEP]: [MARK_DONE, REMOVE],
   [NEO_HOLD]: [START, REMOVE],
   [NEO_PAUSE]: [RESUME, REMOVE],
 };
@@ -49,6 +53,7 @@ const DAEMON_EN = {
     '{steps} could not start after {retries} automatic retries: {reason}. Retry, mark done, or remove?',
   'question.checkOverdue':
     "{steps} has waited {hours} hours and its check hasn't passed. Keep waiting, mark it done, or remove it?",
+  'question.humanStep': '{steps} is yours to do now. Do it, then mark it done, or remove it?',
   'question.held': '{steps} is on hold: {reason}. Start it, or remove it?',
   'question.paused': '{steps} is paused: {reason}. Resume it, or remove it?',
 } as const;
@@ -57,6 +62,7 @@ const TEXT_CODES: Record<Cause, keyof typeof DAEMON_EN> = {
   [NEO_WORKER_BLOCKER]: 'question.workerBlocker',
   [NEO_RETRIES_EXHAUSTED]: 'question.retriesExhausted',
   [NEO_CHECK_OVERDUE]: 'question.checkOverdue',
+  [NEO_HUMAN_STEP]: 'question.humanStep',
   [NEO_HOLD]: 'question.held',
   [NEO_PAUSE]: 'question.paused',
 };
@@ -154,6 +160,8 @@ const covers: Record<Cause, (todo: Covered) => boolean> = {
   [NEO_RETRIES_EXHAUSTED]: (todo) => blockedBy(todo, 'failure'),
   [NEO_CHECK_OVERDUE]: (todo) =>
     !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
+  [NEO_HUMAN_STEP]: (todo) =>
+    !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
   [NEO_HOLD]: (todo) =>
     todo.startedAt === null && (todo.state === 'todo' || blockedBy(todo, 'question')),
   [NEO_PAUSE]: (todo) =>
@@ -220,22 +228,11 @@ export function planNeoRetriesCard<C extends Card>(
   return { replaces: shared, draft: neoDaemonCardDraft(NEO_RETRIES_EXHAUSTED, covered) };
 }
 
-export function neoCheckOverdue(
-  todo: Pick<NeoTodo, 'id' | 'createdAt'>,
-  cards: readonly Card[],
-  now: number
-): boolean {
-  if (neoTodoCovered(todo, cards)) return false;
-  const waited = cards
-    .filter(
-      (card) =>
-        card.cause === NEO_CHECK_OVERDUE &&
-        card.state === 'answered' &&
-        card.todos.includes(todo.id)
-    )
-    .reduce((at, card) => Math.max(at, card.answeredAt ?? 0), todo.createdAt);
-  return now - waited >= NEO_CHECK_DEADLINE_MS;
-}
+export const neoHumanStepDue = (
+  todo: Pick<NeoTodo, 'id'>,
+  family: readonly NeoTodo[],
+  cards: readonly Card[]
+) => !neoTodoCovered(todo, cards) && neoTodoReady(family, todo.id);
 
 export type NeoDaemonCardAction = {
   todoId: string;

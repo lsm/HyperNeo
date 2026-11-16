@@ -58,36 +58,35 @@ try {
   new NeoRepository(app!.db.getDatabase()).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
 
   service!.todos.openAsk({ id: 'checks', sessionId: root, projectId: null, originMessageId: null, title: 'Synthetic check-only work', request: 'Wait for evidence', createdAt: start });
-  service!.todos.addTodo('check-todo', 'checks', { title: 'Evidence exists', doneWhen: 'Evidence exists', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'never-written') } }, instruction: null, named: null }, start);
-  clock += 24 * hour - 1;
-  await refresh();
-  assert.deepEqual(openCards('check_overdue'), []);
-  step('overdue check: none before 24 hours', cards('check_overdue'));
-  clock++;
+  const evidenceCheck = { pack: 'core', kind: 'evidence', params: { path: join(run, 'never-written') } };
+  service!.todos.addTodo('first-todo', 'checks', { title: 'Form signed', doneWhen: 'Form signed', check: evidenceCheck, instruction: null, named: null, dependsOn: [] }, start);
+  service!.todos.addTodo('check-todo', 'checks', { title: 'Evidence exists', doneWhen: 'Evidence exists', check: evidenceCheck, instruction: null, named: null, dependsOn: ['first-todo'] }, start);
+  clock += 1;
   await Promise.all([refresh(), refresh()]);
-  const [overdue, ...extra] = openCards('check_overdue');
+  const stepCards = (id: string) => openCards('human_step').filter((card) => JSON.parse(card.todos).includes(id));
+  const [first, ...extra] = stepCards('first-todo');
   assert.deepEqual(extra, []);
-  assert.deepEqual(JSON.parse(overdue.todos), ['check-todo']);
-  assert.deepEqual(JSON.parse(overdue.options), ['Keep waiting', 'Mark done', 'Remove']);
-  assert.equal(overdue.text, `"Evidence exists" has waited 24 hours and its check hasn't passed. Keep waiting, mark it done, or remove it?`);
-  const noted = (app!.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[]).filter((row) => row.payload.includes('check-todo'));
+  assert.deepEqual(JSON.parse(first.options), ['Mark done', 'Remove']);
+  assert.equal(first.text, '"Form signed" is yours to do now. Do it, then mark it done, or remove it?');
+  assert.deepEqual(stepCards('check-todo'), []);
+  assert.deepEqual(openCards('check_overdue'), []);
+  const noted = (app!.db.getDatabase().prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox'").all() as { payload: string }[]).filter((row) => row.payload.includes('first-todo'));
   assert.deepEqual(noted, []);
-  step('overdue check: one card at 24 hours, no note to Neo', overdue);
+  step('human step: a ready check-only todo gets one card at once, its unfinished dependent none, no note to Neo', cards('human_step'));
   await close(); await open();
   await refresh();
-  assert.equal(openCards('check_overdue').length, 1);
-  step('overdue check: still one card after a restart', cards('check_overdue'));
-  await human(overdue.id, 'Keep waiting');
+  assert.equal(stepCards('first-todo').length, 1);
+  step('human step: still one card after a restart', cards('human_step'));
+  await human(first.id, 'Mark done');
+  await settle('first-todo', 'done');
   await refresh();
-  assert.deepEqual(openCards('check_overdue'), []);
-  clock += 24 * hour;
-  await refresh();
-  const [again] = openCards('check_overdue');
-  assert(again && again.id !== overdue.id);
-  step('overdue check: a new card 24 hours after Keep waiting', again);
-  await human(again.id, 'Mark done');
+  const [next, ...nextExtra] = stepCards('check-todo');
+  assert.deepEqual(nextExtra, []);
+  assert.equal(next.text, '"Evidence exists" is yours to do now. Do it, then mark it done, or remove it?');
+  step('human step: Mark done finishes it, and its dependent gets its card at once', next);
+  await human(next.id, 'Mark done');
   await settle('check-todo', 'done');
-  step('overdue check: Mark done finishes the todo', service!.todos.getTodo('check-todo'));
+  step('human step: Mark done finishes the dependent', service!.todos.getTodo('check-todo'));
 
   const ask = await neo('neo.ask.open', { title: 'Synthetic failing start', request: 'Start on a missing daemon' });
   assert.equal(ask.ok, true, JSON.stringify(ask));
@@ -156,6 +155,6 @@ try {
   assert.deepEqual(claimed, [['accepted', 'card-action']]);
   assert(service!.todos.getQuestion(blocker.id)?.actionsAppliedAt, 'the card records that its action was applied');
   evidence.passed = true;
-  console.log('PASS: on the real daemon an overdue check, a twice-failed start and an ignored blocker each end in exactly one card, and the daemon carries out the human answer.');
+  console.log('PASS: on the real daemon a ready human step, a twice-failed start and an ignored blocker each end in exactly one card, and the daemon carries out the human answer.');
 } catch (error) { evidence.error = String(error); throw error; }
 finally { await close(); Date.now = realNow; evidence.resourcesClosed = true; writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2)); }

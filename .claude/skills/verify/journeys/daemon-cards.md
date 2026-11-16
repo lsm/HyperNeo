@@ -1,4 +1,4 @@
-**An overdue check, a twice-failed start and an ignored blocker each end in one card.**
+**A ready human step, a twice-failed start and an ignored blocker each end in one card.**
 
 Use the shared metadata-only isolated setup in SKILL.md. No model, provider,
 worker or credential is used; the clock is a fixture.
@@ -11,9 +11,10 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
 On a real daemon, driving its Neo refresh and answering on the human door
 (`neo.question.answer`):
 
-- A check-only todo gets no card before 24 hours and exactly one at 24 hours,
-  even with two refreshes at once and after a restart. No note goes to Neo.
-  Keep waiting holds the next card off for another 24 hours; Mark done finishes it.
+- A check-only todo with nothing unfinished before it gets exactly one Mark done /
+  Remove card at once, even with two refreshes at once and after a restart; one
+  that waits on it gets none. No note goes to Neo. Mark done finishes it, and
+  the todo waiting on it then gets its own card at once.
 - A todo added through the agent door whose start the driver refuses is retried
   twice by the daemon, then waits on one Retry / Mark done / Remove card.
   A retry from Neo retires that card; the new failures get two fresh automatic
