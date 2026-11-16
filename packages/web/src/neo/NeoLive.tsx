@@ -309,7 +309,7 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
-  const askCard = (entry: NeoAskEntry) => (
+  const askCard = (entry: NeoAskEntry, listed = false) => (
     <NeoAskTodos
       key={entry.ask.id}
       entry={entry}
@@ -360,9 +360,7 @@ export function NeoLive() {
         )
       }
       onLoadDetails={
-        entry.ask.id === outsideQueue
-          ? (input) => loadNeoAskDetails(input).then(withoutQueued)
-          : loadNeoAskDetails
+        listed ? (input) => loadNeoAskDetails(input).then(withoutQueued) : loadNeoAskDetails
       }
       onOpen={openSession}
     />
@@ -505,7 +503,7 @@ export function NeoLive() {
   const outsideQueue =
     fullQueue && cardTarget && !neoHumanQueueHolds(fullQueue, cardTarget) ? cardTarget.askId : null;
   const withoutQueued = (entry: NeoAskEntry): NeoAskEntry =>
-    fullQueue && entry.ask.id === outsideQueue
+    fullQueue
       ? {
           ...entry,
           questions: entry.questions.filter(
@@ -1195,7 +1193,10 @@ export function NeoLive() {
                 )
                   .filter(
                     (entry) =>
-                      !fullQueue || group.key === 'outcomes' || entry.ask.id === outsideQueue
+                      !fullQueue ||
+                      group.key === 'outcomes' ||
+                      entry.ask.id === outsideQueue ||
+                      !fullQueue.counts[entry.ask.id]
                   )
                   .map(withoutQueued),
               }))
@@ -1213,7 +1214,7 @@ export function NeoLive() {
                     ? attentionCount
                     : group.entries.length}
                 </h2>
-                {group.entries.map(askCard)}
+                {group.entries.map((entry) => askCard(entry, true))}
               </section>
             )
           )}

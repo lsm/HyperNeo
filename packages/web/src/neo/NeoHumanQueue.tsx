@@ -141,7 +141,12 @@ export function NeoHumanQueue({
     };
   }, [focus, focused?.state, state, ask, focusReady, reveal]);
   const title = (id: string) =>
-    entries.find((entry) => entry.ask.id === id)?.ask.title ?? details[id]?.ask.title ?? id;
+    entries.find((entry) => entry.ask.id === id)?.ask.title ??
+    details[id]?.ask.title ??
+    queue.items
+      .filter((item) => item.askId === id)
+      .map((item) => ('questionId' in item ? item.text : item.title))[0] ??
+    id;
   const count = (s: NeoHumanQueueState, a: string | null) =>
     Object.entries(queue.counts).reduce(
       (total, [id, counts]) => total + (a === null || a === id ? counts[s] : 0),
