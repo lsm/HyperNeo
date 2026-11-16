@@ -59,7 +59,6 @@ export function packWorkerStartFixture(
     workerNames: () => options.workerNames,
     write: gateway.run.bind(gateway),
     limits: () => ({ running: 99, perGroup: 99 }),
-    tell: async () => {},
     attend: async () => {},
     changed: () => {},
     invoke: recordedWorkInvoke(sessions.inputs, async (_caller, name, input) => {

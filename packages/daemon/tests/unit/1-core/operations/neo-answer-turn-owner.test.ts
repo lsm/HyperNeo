@@ -7,7 +7,6 @@ import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -22,7 +21,6 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
-  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const at = Date.now() - 10_000;
@@ -121,9 +119,6 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
     sessions,
     invoke,
     packs: () => [],
-    tell: async (_ask, todo, note) => {
-      if (note.startsWith('Worker turn report')) reported.push(todo.id);
-    },
     attend: async () => {},
     changed: () => {},
   });

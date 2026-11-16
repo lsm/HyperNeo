@@ -6,7 +6,6 @@ import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -25,7 +24,6 @@ function world(packs: NeoPack[] = []) {
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
-  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   for (const [id, originMessageId] of [
@@ -124,9 +122,6 @@ function world(packs: NeoPack[] = []) {
       });
     },
     packs: () => packs,
-    tell: async (_ask, _todo, note) => {
-      told.push(note);
-    },
     attend: async (event) => {
       if (knobs.tellRefused) throw new Error('synthetic notification refusal');
       knobs.onTell?.();

@@ -47,10 +47,6 @@ beforeEach(() => {
     ],
     limits: () => ({ running: 9, perGroup: 9 }),
     changed: () => {},
-    tell: async (_ask, _todo, note) => {
-      if (failNotes) throw new Error('Synthetic mailbox failure');
-      notes.push(note);
-    },
     attend: async (event) => {
       if (failNotes) throw new Error('Synthetic mailbox failure');
       notes.push(String(event.facts.text));

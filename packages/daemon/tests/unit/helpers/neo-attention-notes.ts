@@ -35,11 +35,11 @@ export function neoAttentionNotes(
     };
   const tell = createNeoAttention({
     kinds: () => NEO_ATTENTION_KINDS,
-    read: ({ subject }) => {
+    read: ({ subject, facts }) => {
       const todo = subject.type === 'todo' ? store.getTodo(subject.id) : null;
       return {
         covered: !!todo && neoTodoCovered(todo, store.todoCards(todo)),
-        latestReportAt: null,
+        latestReportAt: typeof facts.latestAt === 'number' ? facts.latestAt : null,
       };
     },
     wake: sunk('mailbox', delivery.wake),

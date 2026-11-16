@@ -53,7 +53,6 @@ function setup() {
       calls.push(name);
       throw new Error('Unexpected worker call');
     },
-    tell: async () => {},
     attend: async () => {},
     changed: () => {},
   });

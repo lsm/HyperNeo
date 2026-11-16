@@ -43,9 +43,6 @@ describe('Runtime runner commits before external effects', () => {
       changed: () => {
         effects.push('changed');
       },
-      tell: async () => {
-        effects.push('tell');
-      },
       attend: async () => {
         effects.push('tell');
       },

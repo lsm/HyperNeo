@@ -2,7 +2,6 @@ import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree'
 import { spawnSync } from 'node:child_process';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index';
 
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
@@ -250,11 +249,6 @@ describe('owned Copilot lifecycle', () => {
     try {
       runMigrations(db, () => {});
       createTables(db);
-      new JobQueueRepository(db).commitSubmissionReceipt(
-        'neo-turn-report:v2:cutoff',
-        'v2',
-        () => 0
-      );
       const store = new NeoAskTodoRepository(db);
       const sessions = new NeoTodoSessionRepository(db);
       store.openAsk({
@@ -308,9 +302,6 @@ describe('owned Copilot lifecycle', () => {
               work.receipt
             ),
           };
-        },
-        tell: async (_ask, _todo, note) => {
-          told.push(note);
         },
         attend: async (event) => {
           told.push(String(event.facts.text));

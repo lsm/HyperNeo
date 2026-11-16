@@ -313,7 +313,6 @@ test('a queued confirmation starts its successor exactly once when the answer ar
     write: gateway.run.bind(gateway),
     packs: () => service.installedPacks(),
     changed: () => {},
-    tell: async () => {},
     attend: async () => {},
     invoke: async (_caller, name, input) => {
       if (name === 'work.send') dispatches.push(input.ref);

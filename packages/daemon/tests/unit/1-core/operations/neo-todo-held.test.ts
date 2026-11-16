@@ -5,7 +5,6 @@ import { planNeoTodoEdit } from '../../../../src/lib/neo/todo-operations.ts';
 import { createNeoTodoRunner, planNeoTodoCheck } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -22,7 +21,6 @@ function world() {
   db.prepare(
     "INSERT INTO neo_conversation (singleton,id,created_at) VALUES (1,'conversation',0)"
   ).run();
-  new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const started: string[] = [];
@@ -42,7 +40,6 @@ function world() {
       return completed({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
     },
     packs: () => [],
-    tell: async () => {},
     attend: async () => {},
     changed: () => {},
   });

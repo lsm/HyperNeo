@@ -64,7 +64,6 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
       calls.push(name);
       throw new Error('Unexpected worker call');
     },
-    tell: async () => {},
     attend: async () => {},
     changed: () => {},
   });

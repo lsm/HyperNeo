@@ -34,7 +34,6 @@ function setup() {
     store,
     sessions,
     packs: () => packs,
-    tell: async (_ask, _todo, note) => void told.push(note),
     attend: async (event) => void told.push(String(event.facts.text)),
     changed: () => {},
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: {} } }),

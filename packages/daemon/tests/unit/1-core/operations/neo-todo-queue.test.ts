@@ -5,7 +5,6 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -32,7 +31,6 @@ function world(
     db.exec(
       "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p','P','','',1,1,1), ('q','Q','','',1,1,1)"
     );
-    new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   }
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
@@ -78,9 +76,6 @@ function world(
       });
     },
     packs: () => [],
-    tell: async (_ask, todo, note, key) => {
-      told.push({ id: todo.id, note, key });
-    },
     attend: (event) => notes.attend(event),
     changed: () => {},
     limits: () => {

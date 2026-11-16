@@ -37,7 +37,6 @@ function setup(
     store,
     sessions,
     packs: () => packs,
-    tell: async () => {},
     attend: async () => {},
     changed: () => {},
     invoke: async (_caller, name, input) => {

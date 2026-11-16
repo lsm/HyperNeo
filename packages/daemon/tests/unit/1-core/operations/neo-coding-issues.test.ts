@@ -89,9 +89,6 @@ function fixture() {
       sessions,
       packs: () => [pack],
       changed: () => {},
-      tell: async (_ask, _todo, text) => {
-        notes.push(text);
-      },
       attend: async (event) => {
         notes.push(String(event.facts.text));
       },

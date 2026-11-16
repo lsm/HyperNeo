@@ -119,7 +119,6 @@ function fixture(legacyCheck = false, legacyResult?: NeoTodoCheckResult) {
           },
         };
       },
-      tell: async () => {},
       attend: async () => {},
       changed: () => {},
     });

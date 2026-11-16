@@ -59,7 +59,6 @@ describe('current worker stop context', () => {
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       packs: () => [],
       changed: () => {},
-      tell: async () => {},
       attend: async () => {},
       invoke: async (caller, name, input) => {
         expect(name).toBe('work.stop');
