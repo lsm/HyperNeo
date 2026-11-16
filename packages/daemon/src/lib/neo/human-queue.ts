@@ -6,21 +6,26 @@ import { neoTodoCovered } from './todo-state.ts';
 const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked', 'failed'];
 
 export function neoHumanQueue(input: {
-  questions: readonly Pick<NeoQuestion, 'id' | 'askId' | 'state' | 'text' | 'todos' | 'heldAt'>[];
+  questions: readonly Pick<
+    NeoQuestion,
+    'id' | 'askId' | 'state' | 'text' | 'todos' | 'heldAt' | 'createdAt'
+  >[];
   todos: readonly Pick<NeoTodo, 'id' | 'askId' | 'title' | 'state'>[];
   owners: ReadonlyMap<string, NeoStepOwner>;
 }): NeoHumanQueue {
   const cards = input.questions.filter((card) => card.state === 'open');
   const items: NeoHumanQueueItem[] = [
-    ...cards.map((card) => ({
-      state: card.heldAt ? ('held' as const) : ('waiting' as const),
-      askId: card.askId,
-      questionId: card.id,
-      text: card.text,
-      todos: input.todos
-        .filter((todo) => card.todos.includes(todo.id))
-        .map(({ id, title }) => ({ id, title })),
-    })),
+    ...[...cards]
+      .sort((a, b) => Number(!!a.heldAt) - Number(!!b.heldAt) || b.createdAt - a.createdAt)
+      .map((card) => ({
+        state: card.heldAt ? ('held' as const) : ('waiting' as const),
+        askId: card.askId,
+        questionId: card.id,
+        text: card.text,
+        todos: input.todos
+          .filter((todo) => card.todos.includes(todo.id))
+          .map(({ id, title }) => ({ id, title })),
+      })),
     ...input.todos
       .filter((todo) => UNFINISHED.includes(todo.state) && !neoTodoCovered(todo, cards))
       .map((todo) => ({

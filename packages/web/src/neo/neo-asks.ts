@@ -17,14 +17,26 @@ export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state'>): NeoAskGroup
       : 'running';
 }
 
-export function neoAskEntriesInOrder<T extends Pick<NeoAskEntry, 'ask' | 'state' | 'todos'>>(
-  entries: readonly T[]
-): T[] {
+const newestOpenCardAt = (entry: Pick<NeoAskEntry, 'questions'>) =>
+  Math.max(
+    0,
+    ...entry.questions
+      .filter((question) => question.state === 'open' && !question.heldAt)
+      .map((question) => question.createdAt)
+  );
+
+export function neoAskEntriesInOrder<
+  T extends Pick<NeoAskEntry, 'ask' | 'state' | 'todos' | 'questions'>,
+>(entries: readonly T[]): T[] {
   return [...entries].sort((a, b) => {
     const waiting = Number(b.state === 'waiting') - Number(a.state === 'waiting');
     if (waiting) return waiting;
     if (a.state === 'waiting') {
-      return b.ask.createdAt - a.ask.createdAt || a.ask.id.localeCompare(b.ask.id);
+      return (
+        newestOpenCardAt(b) - newestOpenCardAt(a) ||
+        b.ask.createdAt - a.ask.createdAt ||
+        a.ask.id.localeCompare(b.ask.id)
+      );
     }
     return Number(holdsBlocked(b)) - Number(holdsBlocked(a));
   });

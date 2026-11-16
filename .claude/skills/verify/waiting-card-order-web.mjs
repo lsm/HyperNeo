@@ -11,11 +11,22 @@ const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
 const expected = ['waiting-old', 'waiting-a', 'waiting-b', 'blocked', 'queued', 'running', 'done'];
 const observations = [];
+const pair = async (page) => {
+  const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.create', JSON.stringify({ kind: 'human', name: 'Synthetic order browser' })], {
+    encoding: 'utf8',
+    env: { ...process.env, VERIFY_PORT: String(port), HYPERNEO_DATA_DIR: `${run}/data` },
+  }).match(/"code":\s*"([^"]+)"/)?.[1];
+  assert(code, 'no pairing code');
+  await page.goto(`http://127.0.0.1:${port}/pair#${code}`);
+  await page.getByRole('button', { name: 'Pair this browser' }).click();
+  await page.getByText('This browser is paired.').waitFor({ timeout: 10000 });
+};
 try {
   for (const width of [1280, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US', isMobile: width < 800 });
     try {
       const page = await context.newPage();
+      await pair(page);
       await page.goto(`http://127.0.0.1:${port}/neo`);
       const openWork = async () => {
         if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
