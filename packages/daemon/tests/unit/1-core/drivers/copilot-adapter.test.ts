@@ -27,6 +27,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createWorkVerbOperations, pickRoute } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes';
 
 const STALL_TIMEOUT_MS = 4000;
 
@@ -303,9 +304,7 @@ describe('owned Copilot lifecycle', () => {
             ),
           };
         },
-        attend: async (event) => {
-          told.push(String(event.facts.text));
-        },
+        attend: neoAttentionNotes(db, store, (text) => told.push(text)).attend,
       });
       await runner.refresh(() => {});
       await runner.refresh(() => {});

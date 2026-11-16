@@ -11,6 +11,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker' };
 
@@ -119,7 +120,10 @@ test('a HyperNeo worker holding two todos reports an answered turn only to that 
     sessions,
     invoke,
     packs: () => [],
-    attend: async () => {},
+    attend: neoAttentionNotes(db, store, (text) => {
+      const todo = /^Worker turn report \(todo ([^,]+),/.exec(text)?.[1];
+      if (todo) reported.push(todo);
+    }).attend,
     changed: () => {},
   });
   const deliver = createNeoQuestionAnswerDelivery(
