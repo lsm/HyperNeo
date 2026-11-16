@@ -3393,6 +3393,66 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)(
+    'tells the refresh which access token each overlapping request had rejected',
+    async () => {
+      const rejected: string[] = [];
+      let held: Array<() => void> = [];
+      server = await createOpenAIResponsesBridgeServer({
+        auth: {
+          source: 'chatgpt_oauth',
+          apiKey: 'token-a',
+          accountId: 'acct',
+          refreshAuthTokens: async (rejectedAccessToken?: string) => {
+            rejected.push(String(rejectedAccessToken));
+            return { accessToken: 'token-b', accountId: 'acct' };
+          },
+        },
+        models,
+        fetchImpl: async (_url, init) => {
+          const authorization = new Headers(init?.headers).get('authorization');
+          if (authorization === 'Bearer token-a') {
+            await new Promise<void>((release) => {
+              held.push(release);
+              if (held.length === 2) {
+                for (const go of held) go();
+                held = [];
+              }
+            });
+            return new Response(JSON.stringify({ error: { message: 'expired' } }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              },
+            },
+          ]);
+        },
+      });
+
+      const send = () =>
+        fetch(`http://127.0.0.1:${server!.port}/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5.3-codex',
+            max_tokens: 128,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+      const statuses = (await Promise.all([send(), send()])).map((r) => r.status);
+
+      expect(statuses).toEqual([200, 200]);
+      expect(rejected).toEqual(['token-a', 'token-a']);
+    }
+  );
+
   it.skipIf(!isBun)('uses a fresh stream controller for SDK retry requests', async () => {
     let upstreamRequests = 0;
     server = await createOpenAIResponsesBridgeServer({

@@ -1871,6 +1871,62 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2c: a stored login holding the refresh token Codex still holds is never refreshed', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
+      });
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'codex-access-token',
+        refresh: 'codex-refresh-token',
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      await p.refreshToken();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as { openai: { refresh?: string } };
+      expect(hyperneoAuth.openai.refresh).toBeUndefined();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2d: a late 401 for the old token reuses the Codex token already re-read', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      const tokenA = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct' },
+        n: 'a',
+      });
+      const tokenB = makeJwt({
+        'https://api.openai.com/auth': { chatgpt_account_id: 'acct' },
+        n: 'b',
+      });
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: tokenA, refresh_token: 'codex-refresh' },
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe(tokenA);
+      const auth = (
+        p as unknown as {
+          resolveBridgeAuth(): {
+            refreshAuthTokens?: (rejected: string) => Promise<{ accessToken: string } | null>;
+          };
+        }
+      ).resolveBridgeAuth();
+
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: tokenB, refresh_token: 'codex-refresh-2' },
+      });
+      expect((await auth.refreshAuthTokens?.(tokenA))?.accessToken).toBe(tokenB);
+      expect((await auth.refreshAuthTokens?.(tokenA))?.accessToken).toBe(tokenB);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
     it('Test 4: second call uses in-memory cachedApiKey (no further file I/O)', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
