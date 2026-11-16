@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
+import { getCodexBridgeModelInfos } from '../../../../src/lib/providers/codex-models.ts';
 import { chooseLine } from '../../../../src/lib/neo/pack-selection.ts';
 import {
   CODING_WORK_KINDS,
@@ -315,5 +316,47 @@ describe('rankCodingTargets with route effort', () => {
         {}
       )
     ).toMatchObject({ value: [{ ...target, effort: 'medium' }, glm] });
+  });
+});
+
+describe('rankCodingTargets with real catalog efforts', () => {
+  test('a Codex model with no catalog effort list still offers the driver efforts a route can pick', async () => {
+    const codex = getCodexBridgeModelInfos();
+    const sol = { adapter: 'hyperneo', place, model: 'gpt-6.1-sol' };
+    const line = { provider: 'anthropic-codex', model: 'gpt-6.1-sol' };
+    const routes = [{ kind: 'coding.write', lines: [{ ...line, effort: 'high' }] }];
+    expect(
+      await rankCodingTargets(
+        driverCodingLines(codex, { routes, effort: 'medium' }),
+        'coding.write',
+        [sol],
+        {}
+      )
+    ).toMatchObject({ value: [{ ...sol, effort: 'high' }] });
+    const rules = [{ line: { ...line, effort: 'medium' }, never: { kinds: ['coding.write'] } }];
+    const result = await rankCodingTargets(
+      driverCodingLines(codex, { rules, effort: 'medium' }),
+      'coding.write',
+      [sol],
+      {}
+    );
+    expect('value' in result && result.value[0].effort).not.toBe('medium');
+    expect(result).toMatchObject({ value: [{ model: 'gpt-6.1-sol' }] });
+  });
+
+  test('catalog xhigh is offered in driver vocabulary and a route written as xhigh picks it', async () => {
+    const opus = {
+      ...catalogModel('claude-opus-5-5', 'anthropic'),
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+    } as ModelInfo;
+    const routes = [{ kind: 'coding.review', lines: [{ ...opusLine, effort: 'xhigh' }] }];
+    expect(
+      await rankCodingTargets(
+        driverCodingLines([opus], { routes, effort: 'medium' }),
+        'coding.review',
+        [hyperneo],
+        {}
+      )
+    ).toMatchObject({ value: [{ ...hyperneo, effort: 'extra high' }] });
   });
 });
