@@ -94,7 +94,7 @@ const cases: {
   {
     name: 'failure does not advance',
     judgement: { state: 'failed', reason: 'Refused' },
-    expected: 'failed',
+    expected: 'blocked',
     next: null,
   },
   {

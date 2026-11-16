@@ -7,7 +7,7 @@ import { workerSandboxOn } from '../drivers/worker-sandbox.ts';
 import { withWorkerProvenance } from '../drivers/worker-provenance.ts';
 import { planWorkQueue } from '../work-queue/capacity.ts';
 import { createWorkQueue } from '../work-queue/sweep.ts';
-import { neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
+import { NEO_TODO_FAILURE_NEXT, neoQuestionCoversTodo, neoTodoAwaitsHuman } from './todo-state.ts';
 import { workerBlockerReminderDue } from './worker-blocker.ts';
 import { neoStartRetryDue } from './daemon-cards.ts';
 import { neoDaemonCardWrite } from '../../storage/repositories/neo-daemon-card-write.ts';
@@ -290,27 +290,15 @@ export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, m
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
 }
 
-export function planNeoTodoFailure(
-  todo: NeoTodo,
-  reason: string,
-  now: number
-): NeoTodoPatch | null {
-  return todo.reason === reason
-    ? planNeoTodoBlocked(
-        todo,
-        'failure',
-        `Failed twice: ${reason}`,
-        'Ask the human how to go on, or take another approach.'
-      )
-    : { state: 'failed', reason, finishedAt: now };
+export function planNeoTodoFailure(todo: NeoTodo, reason: string): NeoTodoPatch | null {
+  return planNeoTodoBlocked(todo, 'failure', reason, NEO_TODO_FAILURE_NEXT);
 }
 
 export function planNeoTodoSettled(
   todo: NeoTodo,
-  settled: { status: 'reported' | 'failed'; report: string },
-  now: number
+  settled: { status: 'reported' | 'failed'; report: string }
 ): NeoTodoPatch | null {
-  if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
+  if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report);
   return todo.report === settled.report ? null : { report: settled.report };
 }
 
@@ -322,9 +310,9 @@ export function planNeoTodoCheck(
   if (!result || todo.state === 'done') return null;
   if (result.done && !result.failed)
     return { state: 'done', evidence: result.evidence, finishedAt: now };
-  if (todo.state === 'failed' || todo.state === 'closed_unverified' || todo.blockedBy === 'held')
+  if (neoTodoFailed(todo) || todo.state === 'closed_unverified' || todo.blockedBy === 'held')
     return null;
-  if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
+  if (result.failed) return planNeoTodoFailure(todo, result.failed);
   if (result.blocked)
     return todo.state === 'blocked' && todo.blockedBy !== 'check'
       ? null
@@ -442,10 +430,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (sessions.readStartInterrupted(todo.id))
       return {
         ok: true as const,
-        todo: await finish(todo, ask, planNeoTodoFailure(todo, reason, now), now),
+        todo: await finish(todo, ask, planNeoTodoFailure(todo, reason), now),
       };
     if (neoStartRetryDue(sessions.readRetries(todo.id))) {
-      await recompute(todo, { state: 'failed', reason, finishedAt: now }, now);
+      await recompute(todo, planNeoTodoFailure(todo, reason) ?? {}, now);
       return retry(todo.id, true);
     }
     await deps.write(neoDaemonCardWrite, {
@@ -955,7 +943,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const todo = store.getTodo(card.id);
       if (!todo || todo.state !== 'doing' || todo.updatedAt !== card.updatedAt) return null;
       const now = Date.now();
-      const patch = planNeoTodoSettled(todo, settled, now);
+      const patch = planNeoTodoSettled(todo, settled);
       return patch ? neoTodoCard(store.updateTodo(todo, patch, now), ask) : null;
     },
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
@@ -993,7 +981,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const live = store.getCheckable(todo.id);
       if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
       if (
-        (live.state === 'failed' || live.state === 'closed_unverified') &&
+        (neoTodoFailed(live) || live.state === 'closed_unverified') &&
         completion?.state !== 'done'
       )
         continue;
