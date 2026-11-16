@@ -68,7 +68,6 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket 
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 try {
   assert(!existsSync(projects) && !existsSync(join(run, 'home/Library/Application Support/Claude/claude-code-sessions')));
-  // A failed refresh reuses the last good listing (also primed at startup), so fail discovery from the start.
   if (!installed) writeFileSync(stateFile, 'invalid discovery output');
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
