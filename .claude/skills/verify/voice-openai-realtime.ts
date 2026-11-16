@@ -105,7 +105,7 @@ try {
   assert(stopMs < 2_000, `stop took ${stopMs} ms`);
   for (let i = 0; i < 200 && !seen.closed; i++) await new Promise((done) => setTimeout(done, 5));
   assert.equal(seen.closed, true);
-  assert.equal(seen.appended, 4800);
+  assert.equal(seen.appended, 4798);
   assert.deepEqual(seen.opening, ['session.update']);
   console.log(JSON.stringify({ started, stopped, stopMs, ...seen }, null, 2));
 } finally {

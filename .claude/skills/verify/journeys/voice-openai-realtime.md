@@ -17,7 +17,7 @@ socket open, as the real service does. It sets that live address with protocol
 public stream RPC.
 
 End state: the stop returns `realtime heard` `via: streaming` in well under the
-5 s close timeout; the server saw one `session.update`, 4800 bytes of audio for
+5 s close timeout; the server saw one `session.update`, 4798 bytes of audio for
 3200 bytes captured (16 to 24 kHz), and the daemon closed the socket. Error and
 missing-completed cleanup is covered by the focused stream relay suite. Stop
 the owned daemon and remove its temporary data.

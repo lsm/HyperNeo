@@ -111,7 +111,7 @@ export function startAsrCore(open: AsrRelayOpen, emit: (event: AsrRelayEvent) =>
           sinceLastPongMs: since(lastPongAt),
         },
       });
-      finishWaiter?.(true);
+      finishWaiter?.(!protocol?.needsEndMessage);
       finishWaiter = null;
       emit({ type: 'dead' });
     });

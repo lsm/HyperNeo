@@ -14,6 +14,7 @@ export interface StreamProtocol {
   audio: (pcm: Uint8Array) => string | Uint8Array;
   finish: () => string;
   parse: (raw: string) => AsrText | null;
+  needsEndMessage?: boolean;
 }
 
 const withDefaults = (endpoint: URL, params: Record<string, string>): URL => {
@@ -53,23 +54,34 @@ export const deepgram: StreamProtocol = {
   },
 };
 
-function pcm16To24k(pcm: Uint8Array): Uint8Array {
-  const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength & ~1);
-  const samples = view.byteLength / 2;
-  const out = new DataView(new ArrayBuffer(Math.floor((samples * 3) / 2) * 2));
-  for (let i = 0; i < out.byteLength / 2; i++) {
-    const at = (i * 2) / 3;
-    const j = Math.floor(at);
-    const a = view.getInt16(j * 2, true);
-    const b = view.getInt16(Math.min(j + 1, samples - 1) * 2, true);
-    out.setInt16(i * 2, Math.round(a + (b - a) * (at - j)), true);
-  }
-  return new Uint8Array(out.buffer);
-}
+const resampler16To24k = () => {
+  let carry: number | null = null;
+  let at = 0;
+  return (pcm: Uint8Array): Uint8Array => {
+    const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength & ~1);
+    const input = Array.from({ length: view.byteLength / 2 }, (_, i) => view.getInt16(i * 2, true));
+    const samples = carry === null ? input : [carry, ...input];
+    if (!samples.length) return new Uint8Array(0);
+    const out: number[] = [];
+    for (; ; at += 2) {
+      const j = Math.floor(at / 3);
+      const f = at % 3;
+      if (f ? j + 1 >= samples.length : j >= samples.length) break;
+      out.push(f ? Math.round(samples[j] + ((samples[j + 1] - samples[j]) * f) / 3) : samples[j]);
+    }
+    at -= 3 * (samples.length - 1);
+    carry = samples[samples.length - 1];
+    const bytes = new DataView(new ArrayBuffer(out.length * 2));
+    out.forEach((sample, i) => bytes.setInt16(i * 2, sample, true));
+    return new Uint8Array(bytes.buffer);
+  };
+};
 
 const openaiRealtime = (): StreamProtocol => {
   let partial = '';
+  const resample = resampler16To24k();
   return {
+    needsEndMessage: true,
     url: (endpoint) => withDefaults(endpoint, { intent: 'transcription' }),
     authorization: (apiKey) => `Bearer ${apiKey}`,
     opening: () => [
@@ -90,7 +102,7 @@ const openaiRealtime = (): StreamProtocol => {
     audio: (pcm) =>
       JSON.stringify({
         type: 'input_audio_buffer.append',
-        audio: Buffer.from(pcm16To24k(pcm)).toString('base64'),
+        audio: Buffer.from(resample(pcm)).toString('base64'),
       }),
     finish: () => JSON.stringify({ type: 'input_audio_buffer.commit' }),
     parse: (raw) => {
