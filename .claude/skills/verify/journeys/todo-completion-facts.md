@@ -24,6 +24,8 @@ refresh must close the todo and the public ask RPC must show Done. Run this
 fixture before the fix and retain its failing RPC observation, then repeat on
 the fixed tree. Extra owned PRs may remain in the todo view without changing
 the verdict of a check that names its required PRs.
+Pass `named` instead of `verify` to the same helper for the focused named-PR
+regression without the independent legacy-pack and issue-completion fixtures.
 
 A synthetic legacy pack is installed at the test daemon's pack seam and returns
 both done and an explicit failure. The scheduled refresh must preserve failure

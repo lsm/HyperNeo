@@ -60,6 +60,44 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
+  test('an unread named PR cannot be replaced by another merged PR', async () => {
+    const named = 'https://github.com/acme/app/pull/1';
+    const { db, pack, todo } = setup(async () => [
+      { ...pr(2, 'MERGED'), url: 'https://github.com/acme/app/pull/2' },
+    ]);
+    try {
+      expect(
+        await pack.check(todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named] } }))
+      ).toEqual({ done: false, evidence: null });
+    } finally {
+      db.close();
+    }
+  });
+  test('approval checks consult only their named PR', async () => {
+    const named = 'https://github.com/acme/app/pull/1';
+    const read: string[] = [];
+    const { db, repo, todo } = setup(async () => {
+      throw new Error('Approval must not depend on turn PR reads');
+    });
+    const pack = createCodingTodoPack(
+      repo,
+      async () => null,
+      undefined,
+      undefined,
+      async (url) => {
+        read.push(url);
+        return { done: true, evidence: 'Named PR approved' };
+      }
+    );
+    try {
+      expect(
+        await pack.check(todo({ pack: 'coding', kind: 'pr_approved', params: { url: named } }))
+      ).toEqual({ done: true, evidence: 'Named PR approved' });
+      expect(read).toEqual([named]);
+    } finally {
+      db.close();
+    }
+  });
   test.each(['mentioned', 'reported', 'partial'] as const)(
     'a named merged PR closes its todo despite an extra %s PR',
     async (extra) => {
