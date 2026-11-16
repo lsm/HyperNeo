@@ -454,19 +454,27 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   doingTodoOn(
     ref: WorkRef,
-    startedAfter: number | null = null
+    startedAfter: number | null = null,
+    states: readonly string[] = ['doing']
   ): { id: string; title: string } | null {
     return (
       (this.db
         .prepare(
           `SELECT t.id, t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-            WHERE t.state = 'doing' AND (? IS NULL OR t.started_at > ?)
+            WHERE t.state IN (SELECT value FROM json_each(?)) AND (? IS NULL OR t.started_at > ?)
               AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
               AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
               AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
             LIMIT 1`
         )
-        .get(startedAfter, startedAfter, ref.adapter, ref.id, ref.daemon ?? null) as {
+        .get(
+          JSON.stringify(states),
+          startedAfter,
+          startedAfter,
+          ref.adapter,
+          ref.id,
+          ref.daemon ?? null
+        ) as {
         id: string;
         title: string;
       } | null) ?? null

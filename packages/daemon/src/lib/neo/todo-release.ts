@@ -46,7 +46,8 @@ async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: 
       : null;
   const directory = status?.value?.execution?.directory ?? null;
   const clean = { ref, directory, dirty: false, unpushed: 0 };
-  if (!directory || !existsSync(directory)) return { value: clean };
+  if (!directory) return { value: clean };
+  if (!existsSync(directory)) return { value: { ...clean, directory: null } };
   const git = simpleGit(directory);
   if (!(await git.checkIsRepo())) return { value: clean };
   const [state, unpushed] = await Promise.all([

@@ -37,7 +37,11 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
     !isNeoConversationSession(caller, binding)
   )
     return reject('human_only', 'This action needs the user or a bound Neo session.');
-  const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(ref);
+  const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(
+    ref,
+    null,
+    caller.source === 'internal' ? ['todo', 'doing', 'blocked'] : ['doing']
+  );
   return todo
     ? reject(
         'live_todo',
