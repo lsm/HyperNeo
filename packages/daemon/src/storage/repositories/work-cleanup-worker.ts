@@ -4,6 +4,43 @@ import type { WorkOwner } from '../../lib/work-cleanup/plan.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 
+const text = (columns: string[]) =>
+  columns.map((column) => `COALESCE(${column}, '')`).join(' || char(10) || ');
+const QUESTION_TEXT = text([
+  'text',
+  'options',
+  'labels',
+  'no_label',
+  'yes_label',
+  'todos',
+  'confirm_json',
+  'document',
+  'reply_to_json',
+  'todo_id',
+  'artifacts_json',
+  'source_session_json',
+  'worker_answers_json',
+  'retire_when_json',
+  'answer',
+  'cause',
+  'hold_requests',
+]);
+const TODO_TEXT = text([
+  'title',
+  'done_when',
+  'check_json',
+  'instruction',
+  'named',
+  'reason',
+  'report',
+  'evidence',
+  'blocked_reason',
+  'next_action',
+  'blocked_by',
+  'artifacts_json',
+  'depends_on',
+]);
+
 class WorkCleanupRepository {
   constructor(private db: Database) {}
 
@@ -105,20 +142,22 @@ class WorkCleanupRepository {
       .get(name) as { goneAt: number } | null;
     const referenced = this.db
       .prepare(`SELECT EXISTS (SELECT 1 FROM neo_questions WHERE state = 'open'
-          AND instr(text || COALESCE(document, '') || COALESCE(artifacts_json, ''), ?1) > 0)
+          AND instr(${QUESTION_TEXT}, ?1) > 0)
         OR EXISTS (SELECT 1 FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')
-          AND instr(done_when || COALESCE(check_json, '') || COALESCE(instruction, '')
-            || COALESCE(artifacts_json, ''), ?1) > 0) AS referenced`)
+          AND instr(${TODO_TEXT}, ?1) > 0) AS referenced`)
       .get(path) as { referenced: number };
     return { todo, goneAt: gone?.goneAt ?? null, referenced: referenced.referenced === 1 };
   }
 
-  releasedFolders(): string[] {
+  workerFolders(): string[] {
     return (
       this.db
-        .prepare(`SELECT DISTINCT json_extract(value_json, '$.value.worktree.directory') AS path
+        .prepare(`SELECT json_extract(value_json, '$.value.worktree.directory') AS path
         FROM pack_facts WHERE pack = 'core' AND key = 'released'
-          AND json_extract(value_json, '$.value.worktree.directory') IS NOT NULL`)
+          AND json_extract(value_json, '$.value.worktree.directory') IS NOT NULL
+        UNION SELECT path FROM (SELECT CASE WHEN json_valid(metadata)
+          THEN json_extract(metadata, '$.archivedWorktree.worktreePath') END AS path FROM sessions)
+        WHERE path IS NOT NULL`)
         .all() as { path: string }[]
     ).map(({ path }) => path);
   }
@@ -158,7 +197,7 @@ export const workCleanupReads = defineRepositoryOp(
   'work.cleanup.reads',
   'read',
   WorkCleanupRepository,
-  ['owners', 'liveBindings', 'evidence', 'releasedFolders', 'gone']
+  ['owners', 'liveBindings', 'evidence', 'workerFolders', 'gone']
 );
 
 export const workCleanupWrites = defineRepositoryOp(

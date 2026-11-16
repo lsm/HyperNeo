@@ -3,8 +3,10 @@
 Step 5c of the work cleanup. The daily sweep now also lists `work/evidence`:
 todo evidence goes 7 days after its todo finished unless an open card or a live
 todo still cites its path; worker `hn-*` evidence stays while its worktree exists
-and goes 7 days after `work_cleanup_gone.gone_at`. A finished worker folder kept
-for unsaved work reaches Neo in the cleanup digest once, after 3 days.
+and goes 7 days after `work_cleanup_gone.gone_at`. Evidence whose parent resolves
+outside the data directory, or that a process still uses, is kept. A finished
+worker folder kept for unsaved or unverifiable work reaches Neo once, after 3
+days, in its own note; it counts as told only once the note is queued.
 
 Use the isolated metadata-only setup in `../SKILL.md` with pinned Bun:
 
@@ -22,7 +24,7 @@ the owner RPC three times.
 The first sweep removes only the old todo's evidence and the old worker's
 evidence, keeps the fresh, cited and newly gone evidence, and records the newly
 gone worker's `gone_at`. The helper then moves the unsaved folder's first-seen
-time back 4 days; the second sweep's digest names that folder, and the third
+time back 4 days; the second sweep's note names that folder, and the third
 sweep does not repeat it. The unsaved worktree is never removed.
 
 `work-cleanup-evidence.json` records the three RPC receipts and the delivered

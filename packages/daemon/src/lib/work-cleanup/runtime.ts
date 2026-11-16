@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs';
-import { readdir, rm, statfs } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { lstat, readdir, realpath, rm, statfs } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
   workCleanupReads,
@@ -8,7 +8,7 @@ import {
 } from '../../storage/repositories/work-cleanup-worker.ts';
 import { neoTodoSessionWrites } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { getDataDir } from '../data-dir.ts';
-import { folderInUse, WORKTREE_UNSAVED } from '../drivers/work-placement.ts';
+import { folderInUse, WORKTREE_UNSAVED, WORKTREE_UNVERIFIED } from '../drivers/work-placement.ts';
 import { workerWorkKey } from '../work-locations.ts';
 import { codexWorkerHome, copilotWorkerDirectory } from '../drivers/worker-directories.ts';
 import { WorkSummarySchema, type WorkRef } from '../drivers/types.ts';
@@ -93,9 +93,16 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     const data = getDataDir();
     const before = await statfs(data);
     const evidenceRoot = join(data, 'work', 'evidence');
-    const known = new Set<string>();
-    const present = new Set<string>();
-    const readEvidence = async (folder: string): Promise<WorkFolderFacts> => {
+    const worktrees = new Map<string, string[]>();
+    const insideEvidence = async (folder: string) => {
+      const parent = await realpath(dirname(folder));
+      if (
+        parent !== join(await realpath(data), 'work', 'evidence') ||
+        (await lstat(folder)).isSymbolicLink()
+      )
+        throw new Error(`${folder} resolves outside the evidence folder; kept.`);
+    };
+    const evidenceOwner = async (folder: string): Promise<WorkFolderFacts> => {
       const name = basename(folder);
       const facts = await db.gateway.call(workCleanupReads, 'evidence', name, folder);
       const settled = { inUse: false, unsaved: false } as const;
@@ -107,11 +114,12 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
               evidence: { since: facts.todo.since, referenced: facts.referenced },
             }
           : { ...settled, owner: null };
-      if (present.has(name)) {
+      const paths = worktrees.get(name);
+      if (!paths) return { ...settled, owner: null };
+      if (paths.some((path) => existsSync(path))) {
         await db.gateway.call(workCleanupWrites, 'forgetGone', [name]);
         return { ...settled, owner: { kind: 'worktree', present: true } };
       }
-      if (!known.has(name)) return { ...settled, owner: null };
       if (facts.goneAt === null)
         await db.gateway.call(workCleanupWrites, 'markGone', name, Date.now());
       return {
@@ -119,6 +127,12 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         owner: { kind: 'worktree', present: false },
         evidence: { since: facts.goneAt, referenced: facts.referenced },
       };
+    };
+    const readEvidence = async (folder: string): Promise<WorkFolderFacts> => {
+      await insideEvidence(folder);
+      const facts = await evidenceOwner(folder);
+      if ('keep' in planWorkRelease(facts, Date.now())) return facts;
+      return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
     };
     const digest = await sweepWorkCleanup({
       list: async () => {
@@ -145,10 +159,10 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         for (const path of [
           ...folders,
           ...owned.flatMap((row) => (row.path ? [row.path] : [])),
-          ...(await db.gateway.call(workCleanupReads, 'releasedFolders')),
+          ...(await db.gateway.call(workCleanupReads, 'workerFolders')),
         ]) {
-          known.add(workerWorkKey(path));
-          if (existsSync(path)) present.add(workerWorkKey(path));
+          const key = workerWorkKey(path);
+          worktrees.set(key, [...(worktrees.get(key) ?? []), path]);
         }
         return [
           ...(await list(evidenceRoot)),
@@ -216,6 +230,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       },
       release: async (folder) => {
         if (insideFolder(evidenceRoot, folder)) {
+          await insideEvidence(folder);
           await rm(folder, { recursive: true, force: true });
           return true;
         }
@@ -233,39 +248,57 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       tell: async (digest) => {
         const after = await statfs(data);
         const now = Date.now();
-        const unsaved = WORKTREE_UNSAVED.flatMap((reason) => digest.kept[reason] ?? []);
+        const unsaved = Object.entries(digest.kept).flatMap(([reason, folders]) =>
+          (WORKTREE_UNSAVED as readonly string[]).includes(reason) ||
+          reason.startsWith(WORKTREE_UNVERIFIED)
+            ? folders
+            : []
+        );
+        const settled = new Set([
+          ...digest.removed.map(({ directory }) => directory),
+          ...(digest.kept.live ?? []),
+        ]);
         const rows = new Map(
           (await db.gateway.call(workCleanupReads, 'gone')).map(({ key, goneAt }) => [key, goneAt])
         );
-        const notices = unsaved.filter((folder) => {
-          const since = rows.get(`unsaved:${folder}`);
-          return since !== undefined && now - since >= 3 * DAY && !rows.has(`told:${folder}`);
-        });
-        for (const folder of unsaved)
-          await db.gateway.call(workCleanupWrites, 'markGone', `unsaved:${folder}`, now);
-        for (const folder of notices)
-          await db.gateway.call(workCleanupWrites, 'markGone', `told:${folder}`, now);
         await db.gateway.call(
           workCleanupWrites,
           'forgetGone',
-          [...rows.keys()].filter(
-            (key) =>
-              /^(unsaved|told):/.test(key) && !unsaved.includes(key.slice(key.indexOf(':') + 1))
-          )
+          [...rows.keys()].filter((key) => {
+            const folder = key.slice(key.indexOf(':') + 1);
+            return (
+              /^(unsaved|told):/.test(key) &&
+              !unsaved.includes(folder) &&
+              (settled.has(folder) || !existsSync(folder))
+            );
+          })
         );
+        for (const folder of unsaved)
+          await db.gateway.call(workCleanupWrites, 'markGone', `unsaved:${folder}`, now);
         await context.workCleanupAttention?.({
           kind: 'work.cleanup',
           subject: { type: 'work_cleanup', id: 'local' },
-          since: Date.now(),
+          since: now,
           facts: {
-            text: `Work cleanup: removed ${digest.removed.length} folders; volume available-space change: ${(after.bavail - before.bavail) * after.bsize} bytes. Kept by reason: ${JSON.stringify(digest.kept)}.${notices
-              .map(
-                (folder) =>
-                  ` Unsaved work kept for 3 days at ${folder} (todo ${(todos.get(folder) ?? []).join(', ')}); Neo decides with the human.`
-              )
-              .join('')}`,
+            text: `Work cleanup: removed ${digest.removed.length} folders; volume available-space change: ${(after.bavail - before.bavail) * after.bsize} bytes. Kept by reason: ${JSON.stringify(digest.kept)}.`,
           },
         });
+        for (const folder of unsaved) {
+          const since = rows.get(`unsaved:${folder}`);
+          if (since === undefined || now - since < 3 * DAY || rows.has(`told:${folder}`)) continue;
+          const outcome = await context
+            .workCleanupAttention?.({
+              kind: 'work.cleanup',
+              subject: { type: 'work_cleanup', id: `unsaved:${folder}` },
+              since,
+              facts: {
+                text: `Unsaved work kept for 3 days at ${folder} (todo ${(todos.get(folder) ?? []).join(', ')}); Neo decides with the human.`,
+              },
+            })
+            .catch(() => null);
+          if (outcome && 'told' in outcome)
+            await db.gateway.call(workCleanupWrites, 'markGone', `told:${folder}`, now);
+        }
       },
     });
     return digest;
