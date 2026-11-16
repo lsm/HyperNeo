@@ -299,6 +299,26 @@ describe('neo.question operations', () => {
     }
   });
 
+  test('a hold that lands after the retire read still keeps the card', async () => {
+    const h = setup();
+    try {
+      const card = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
+      const read = h.store.getQuestion.bind(h.store);
+      h.store.getQuestion = (id) => {
+        const before = read(id);
+        h.store.getQuestion = read;
+        h.store.holdQuestion(id, true, crypto.randomUUID(), 5);
+        return before;
+      };
+      expect(
+        await h.call('neo.question.retire', { questionId: card.id, reason: 'Not needed' })
+      ).toMatchObject({ ok: false, reason: expect.stringMatching(/^question_held:/) });
+      expect(h.store.getQuestion(card.id)).toMatchObject({ state: 'open', heldAt: 5 });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('Neo cannot retire or replace a card the human holds', async () => {
     const h = setup();
     try {
