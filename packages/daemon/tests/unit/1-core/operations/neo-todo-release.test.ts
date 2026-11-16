@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -309,6 +309,51 @@ describe('neo todo runner refresh retries a folder whose process check failed', 
       h.db.close();
     }
   });
+});
+
+describe('neo todo runner refresh without lsof', () => {
+  test.if(process.platform === 'linux')(
+    'still finds a process inside the folder and removes it once the process exits',
+    async () => {
+      const h = setup();
+      const root = join(scratch, `nolsof-${crypto.randomUUID()}`);
+      const bin = join(scratch, `bin-${crypto.randomUUID()}`);
+      mkdirSync(root);
+      mkdirSync(bin);
+      for (const tool of ['git', 'sleep'])
+        symlinkSync(
+          execFileSync('sh', ['-c', `command -v ${tool}`])
+            .toString()
+            .trim(),
+          join(bin, tool)
+        );
+      const linked = join(root, 'worker');
+      git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+      h.setFolder(linked);
+      h.setArchive(async () => ({
+        ok: true,
+        value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+      }));
+      const busy = spawn('sleep', ['60'], { cwd: linked, stdio: 'ignore' });
+      const path = process.env.PATH;
+      try {
+        await h.finishTodo(h.add(started));
+        process.env.PATH = bin;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(true);
+        expect(h.released()).toEqual([]);
+        busy.kill();
+        await new Promise((done) => busy.once('exit', done));
+        await h.refresh();
+        expect(existsSync(linked)).toBe(false);
+        expect(h.released()).toHaveLength(1);
+      } finally {
+        process.env.PATH = path;
+        busy.kill();
+        h.db.close();
+      }
+    }
+  );
 });
 
 describe('neo todo runner refresh keeps workers with unsaved work', () => {
