@@ -141,7 +141,7 @@ describe('hyperneoSessionControl interrupt', () => {
           });
         }
         const before = { jobs: fixture.rows(), messages: fixture.sdkRows() };
-        let status = initial;
+        let status: string = initial;
         const runtime = {
           getProcessingState: () => ({ status }),
           cancelRateLimitRetry: async () => {
