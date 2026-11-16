@@ -165,6 +165,16 @@ describe('neo.todo.retarget', () => {
       reason: 'not_found: no such todo.',
     });
   });
+  test('a todo deleted during stop is omitted from the typed result', async () => {
+    const h = setup();
+    h.stop(async () => {
+      h.db.prepare("DELETE FROM neo_todos WHERE id = 'todo'").run();
+    });
+    const result = await h.boot().retarget('todo', old);
+    expect(result.ok).toBe(true);
+    expect('todo' in result ? result.todo : undefined).toBeUndefined();
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
+  });
   test('claims before stopping, reopens at the stored target and ignores an old fromRef', async () => {
     const h = setup();
     h.stop(async () => {
