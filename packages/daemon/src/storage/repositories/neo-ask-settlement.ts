@@ -214,34 +214,52 @@ const sessionFacts = (db: Database, sessionId: string): SessionFacts => ({
     .get(sessionId) as { seq: number; timestamp: string } | null,
 });
 
-const wakeBatches = (db: Database, asks: readonly Candidate[]): Map<string, string[]> => {
+type Recipients = Map<string, Map<string, string[]>>;
+
+const wakeRecipients = (db: Database, asks: readonly Candidate[]): Recipients => {
+  const neo = (
+    db.prepare("SELECT session_id AS id FROM neo_session_bindings WHERE kind = 'neo'").get() as {
+      id: string;
+    } | null
+  )?.id;
   const told = new Map(asks.flatMap((ask) => ask.uuids.map((uuid) => [uuid, ask.id] as const)));
-  const batches = new Map<string, string[]>();
+  const recipients: Recipients = new Map(
+    asks.map((ask) => [
+      ask.id,
+      new Map([ask.session_id, neo ?? ask.session_id].map((id) => [id, [...ask.uuids]])),
+    ])
+  );
   for (const row of db
-    .prepare(`SELECT json_extract(payload, '$.messageUuid') AS message_uuid,
+    .prepare(`SELECT json_extract(payload, '$.to.sessionId') AS session_id,
+      json_extract(payload, '$.messageUuid') AS message_uuid,
       json_extract(payload, '$.neoBatchUuid') AS batch_uuid
       FROM job_queue WHERE queue = 'neo_notes' AND status = 'completed'`)
-    .iterate() as Iterable<{ message_uuid: string | null; batch_uuid: string | null }>) {
-    const askId = row.message_uuid && told.get(row.message_uuid);
-    if (askId && row.batch_uuid)
-      batches.set(askId, [...(batches.get(askId) ?? []), row.batch_uuid]);
+    .iterate() as Iterable<Record<'session_id' | 'message_uuid' | 'batch_uuid', string | null>>) {
+    const sessions = recipients.get(told.get(row.message_uuid ?? '') ?? '');
+    if (sessions && row.session_id && row.batch_uuid)
+      sessions.set(row.session_id, [...(sessions.get(row.session_id) ?? []), row.batch_uuid]);
   }
-  return batches;
+  return recipients;
 };
 
 const askWakeEnded = (
   db: Database,
   ask: Candidate,
-  fact: SessionFacts,
-  batches: Map<string, string[]>
+  recipients: Recipients,
+  facts: Map<string, SessionFacts>
 ): boolean => {
-  if (
-    fact.maxConsumedInput !== null &&
-    (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
-  )
-    return false;
-  const wakeSeqs = wakeTurnSeqs(db, ask.session_id, [...ask.uuids, ...(batches.get(ask.id) ?? [])]);
-  return wakeTurnEnded(db, ask.session_id, fact.lastTerminal, wakeSeqs, ask.updated_at);
+  for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
+    let fact = facts.get(sessionId);
+    if (!fact) facts.set(sessionId, (fact = sessionFacts(db, sessionId)));
+    if (
+      fact.maxConsumedInput !== null &&
+      (fact.lastTerminal === null || fact.lastTerminal.seq < fact.maxConsumedInput)
+    )
+      continue;
+    const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids);
+    if (wakeTurnEnded(db, sessionId, fact.lastTerminal, wakeSeqs, ask.updated_at)) return true;
+  }
+  return false;
 };
 
 const settleReadyAsks = (db: Database): string[] => {
@@ -257,15 +275,9 @@ const settleReadyAsks = (db: Database): string[] => {
       .all() as Parameters<typeof candidate>[0][]
   ).map(candidate);
   if (!candidates.length) return [];
-  const batches = wakeBatches(db, candidates);
+  const recipients = wakeRecipients(db, candidates);
   const facts = new Map<string, SessionFacts>();
-  const ready: string[] = [];
-  for (const ask of candidates) {
-    let fact = facts.get(ask.session_id);
-    if (!fact) facts.set(ask.session_id, (fact = sessionFacts(db, ask.session_id)));
-    if (askWakeEnded(db, ask, fact, batches)) ready.push(ask.id);
-  }
-  return ready;
+  return candidates.filter((ask) => askWakeEnded(db, ask, recipients, facts)).map((ask) => ask.id);
 };
 
 const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
@@ -365,15 +377,13 @@ export const neoAskTurnedSettleWrites = defineDbOp<
         | undefined;
       return row?.since == null ? [] : [candidate(row)];
     });
-    const batches = wakeBatches(db, asks);
+    const recipients = wakeRecipients(db, asks);
     const facts = new Map<string, SessionFacts>();
     const settled: string[] = [];
     for (const ask of asks) {
       const id = ask.id;
       if (versions && neoAskTodosVersion(store.listTodos(id)) !== versions[id]) continue;
-      let fact = facts.get(ask.session_id);
-      if (!fact) facts.set(ask.session_id, (fact = sessionFacts(db, ask.session_id)));
-      if (!askWakeEnded(db, ask, fact, batches)) continue;
+      if (!askWakeEnded(db, ask, recipients, facts)) continue;
       const outcome = turnedSettle(store, id, now, changes);
       if (typeof outcome === 'string') settled.push(outcome);
     }

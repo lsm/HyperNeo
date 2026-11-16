@@ -7,7 +7,6 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
-import { wakeStalledAsks } from '../../../packages/daemon/src/lib/neo/stalled-asks.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -42,22 +41,33 @@ try {
     metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
   });
   service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
-  const ask = service.todos.openAsk({ id: 'stalled', sessionId: root, projectId: null, originMessageId: null,
+  service.todos.openAsk({ id: 'stalled', sessionId: root, projectId: null, originMessageId: null,
     title: 'Synthetic stalled ask', request: 'Complete work', createdAt: now - 3 * 3_600_000 });
-  await wakeStalledAsks(service.todos, (service as unknown as { attention: Parameters<typeof wakeStalledAsks>[1] }).attention, now);
-  service.installedPacks = () => [{ id: 'synthetic-proof', describe: 'Fixture completion check', todos: {
-    schema: () => {}, check: async () => ({ done: true, evidence: 'Observed' }), statusLine: () => null,
-  } }];
-  service.todos.addTodo('completed', ask.id, { title: 'Synthetic task', doneWhen: 'Observed', instruction: null,
-    named: null, check: { pack: 'synthetic-proof', kind: 'observed', params: {} } }, now);
-  await service.todoRunner.refresh((message, error) => { throw new Error(message, { cause: error }); });
+  const held = () => (app.db.getDatabase().prepare("SELECT status, json_extract(payload, '$.neoBatchUuid') AS batch, json_extract(payload, '$.message.message.content') AS text FROM job_queue WHERE queue = 'neo_notes' AND json_extract(payload, '$.to.sessionId') = ?").all(root) as { status: string; batch: string | null; text: string }[]);
+  const realNow = Date.now;
+  let clock = now;
+  Date.now = () => clock;
+  try {
+    await service.refreshDriverWork();
+    assert.deepEqual(held().map(note => [note.status, note.text]), [['pending', 'Ask: Synthetic stalled ask (stalled)\nThis ask has nothing in progress. Add the next todo, or settle it.']]);
+    assert.equal(app.db.getSDKMessages(root).messages.length, 0, 'a held digest line is not in the session yet');
+    clock += 16 * 60_000;
+    await service.refreshDriverWork();
+  } finally {
+    Date.now = realNow;
+  }
+  const batch = held()[0]?.batch;
+  assert(batch, 'the production flush released the digest');
+  const queued = app.db.getMessageByStatusAndUuid(root, 'enqueued', batch);
+  assert(queued, 'the released digest waits for the next turn');
+  await app.db.updateMessageStatus([queued.dbId], 'consumed');
   const humanId = crypto.randomUUID();
   await app.db.saveUserMessage(root, { type: 'user', uuid: humanId, session_id: root, parent_tool_use_id: null,
     message: { role: 'user', content: 'An actual human input stays a human bubble.' }, inputKind: 'human' });
   const rows = app.db.getSDKMessages(root).messages;
   writeFileSync(join(run, 'evidence/messages.json'), JSON.stringify(rows, null, 2));
-  const notices = rows.filter(row => row.type === 'user' && /^neo-(stalled-ask|todo):/.test(row.uuid ?? ''));
-  assert.equal(notices.length, 2);
+  const notices = rows.filter(row => row.type === 'user' && row.uuid === batch);
+  assert.equal(notices.length, 1);
   const { chromium } = createRequire(import.meta.url)('playwright');
   browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
@@ -72,7 +82,7 @@ try {
   for (const row of notices) {
     const bubble = page.locator(`[data-message-uuid="${row.uuid}"]`);
     await bubble.waitFor();
-    await bubble.getByText(row.uuid?.startsWith('neo-stalled-ask:') ? 'This ask has nothing in progress.' : 'Todo "Synthetic task" is done:', { exact: false }).waitFor();
+    await bubble.getByText('This ask has nothing in progress.', { exact: false }).waitFor();
     observed.push({ uuid: row.uuid, role: await bubble.getAttribute('data-message-role'), text: await bubble.innerText() });
   }
   await page.screenshot({ path: join(run, 'evidence/notices.png'), fullPage: true });
@@ -82,10 +92,10 @@ try {
   for (const row of notices) assert.equal((row as { isSynthetic?: boolean }).isSynthetic, true);
   await page.reload();
   await page.locator('[data-testid="synthetic-message"]').first().waitFor();
-  assert.equal(await page.locator('[data-testid="synthetic-message"]').count(), 2);
+  assert.equal(await page.locator('[data-testid="synthetic-message"]').count(), 1);
   assert.equal(await page.locator(`[data-message-uuid="${humanId}"]`).getAttribute('data-message-role'), 'user');
   await page.screenshot({ path: join(run, 'evidence/notices-reloaded.png'), fullPage: true });
-  console.log('PASS: actual stalled-ask and completed-todo notices have synthetic cards in the served session UI, including after reload; human input stays human.');
+  console.log('PASS: the stalled-ask digest released by the production flush is a synthetic card in the served session UI, including after reload; human input stays human.');
 } catch (error) {
   if (page) {
     await page.screenshot({ path: join(run, 'evidence/failure.png'), fullPage: true });
