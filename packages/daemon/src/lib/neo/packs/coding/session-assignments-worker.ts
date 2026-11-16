@@ -73,7 +73,14 @@ class CodingSessionAssignments {
     todoId: string;
     prUrl?: string;
   }): Owner | null {
-    const held = input.prUrl ? this.prHolders(input.prUrl)[0] : undefined;
+    return this.ownerAmong(input.prUrl ? this.prHolders(input.prUrl) : [], input);
+  }
+
+  private ownerAmong(
+    holders: Holder[],
+    input: { strategy: CodingSessionStrategy; repo: string; featureKey: string; todoId: string }
+  ): Owner | null {
+    const held = holders[0];
     if (held) return { todoId: held.todoId, ref: held.ref };
     if (input.strategy === 'long_lived') return this.feature(input.repo, input.featureKey);
     const own = this.session(input.todoId);
@@ -104,6 +111,7 @@ class CodingSessionAssignments {
       known.held ||= row.id !== input.todoId && ['doing', 'blocked', 'failed'].includes(row.state);
       pool.set(workKey(ref), known);
     }
+    const holders = input.prUrl ? this.prHolders(input.prUrl) : [];
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,
@@ -113,11 +121,9 @@ class CodingSessionAssignments {
     return {
       repo,
       strategy,
-      owner: pooled(this.owner({ ...input, repo, strategy })),
+      owner: pooled(this.ownerAmong(holders, { ...input, repo, strategy })),
       feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
-      successors: (input.prUrl ? this.prHolders(input.prUrl) : [])
-        .sort((a, b) => b.assignedAt - a.assignedAt)
-        .map(pooled),
+      successors: [...holders].sort((a, b) => b.assignedAt - a.assignedAt).map(pooled),
       pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
     };
   }
