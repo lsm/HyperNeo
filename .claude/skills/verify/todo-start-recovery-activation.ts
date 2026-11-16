@@ -35,11 +35,8 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
   try { return await app.db.gateway.run(op,args); }
   finally { if((args as {method?:string}).method==='recover') admission=false; }
 },packs:()=>[],changed:()=>{effects.push('changed');},
-  tell:async(_ask,todo,note)=>{
-    assert.equal(sessions.readStartInterrupted(todo.id),true);
-    assert((await visible()).entry.todos.some(card=>card.id===todo.id && card.state===todo.state && card.report===todo.report));
-    effects.push('tell'); notes.push(note);
-  },
+  tell:async(_ask,_todo,note)=>{ effects.push('tell'); notes.push(note); },
+  attend:async(event)=>{ effects.push('tell'); notes.push(String(event.facts.text)); },
   invoke:async(_caller,name)=>{
     calls.push(name); assert.equal(name,'work.status','Recovery must never dispatch work');
     return {kind:'completed',value:{ok:true,value:{status:'running',lastActivityAt:4}}};
@@ -79,10 +76,10 @@ try {
   assert.deepEqual(await visible(),before); await hub.request('system.health',{});
   db.exec('ROLLBACK'); held=false;
   await pending; admission=false; watchTables=false;
-  assert.deepEqual(warnings,[]); assert.deepEqual(effects,['changed','tell']);
+  assert.deepEqual(warnings,[]); assert.deepEqual(effects,['changed']);
   assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='failed' && todo.report===report));
   assert.equal(sessions.readStartInterrupted('recover'),true); assert(tables.includes('neo_todo_sessions'));
-  assert(notes[0].includes('Start was interrupted')); result.commitBeforeReply=true; result.postCommitNotice=true;
+  assert.deepEqual(notes,[]); result.commitBeforeReply=true; result.failureLeftToSweep=true;
   result.fullReport={bytes:Buffer.byteLength(report),sha256:createHash('sha256').update(report).digest('hex')};
   const prior=effects.length; await refresh(); await refresh(); assert.equal(effects.length,prior); result.repeatedRecoveryQuiet=true;
   const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.continue',input:{todoId:'recover'}});
@@ -92,7 +89,7 @@ try {
   sessions.read=((method:string,...args:unknown[])=>method==='unrecordedStarts'?Promise.resolve(stale):Reflect.apply(read,sessions,[method,...args])) as typeof sessions.read;
   admission=true; await refresh(); admission=false; sessions.read=read;
   assert.equal(sessions.readStartInterrupted('late'),false); assert.equal(store.getTodo('late')!.state,'doing');
-  assert.equal(notes.length,1); assert.deepEqual(warnings,[]); result.lateBindingPreserved=true;
+  assert.equal(notes.length,0); assert.deepEqual(warnings,[]); result.lateBindingPreserved=true;
   assert.equal(mainSql,0); result.recoveryAdmissionMainSql=mainSql; result.noDispatch=calls.every(name=>name==='work.status'); result.verified=true;
 } finally {
   if(held) db.exec('ROLLBACK'); db.prepare=prepare; app.db.gateway.onChanges=replay; sessions.read=read;

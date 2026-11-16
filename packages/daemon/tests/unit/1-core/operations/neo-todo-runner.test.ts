@@ -2553,8 +2553,8 @@ describe('a todo session waiting on the human', () => {
     expect(events.at(-1)).toMatchObject({
       kind: 'turn.report',
       subject: { type: 'todo', id: todo.id },
-      facts: { status: 'needs_you' },
     });
+    expect(events.at(-1)?.facts).toEqual({ text: notes[0] });
     const sends = calls.filter((call) => call.name === 'work.send').length;
     expect(await runner.proceed(todo.id, 'next')).toEqual({
       ok: false,

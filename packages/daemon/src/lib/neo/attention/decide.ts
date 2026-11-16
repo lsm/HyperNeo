@@ -80,7 +80,6 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
       `Todo "${facts.title}" (${subject.id}) needs your next step: ${NEO_STEP[facts.reason as NeoStepReason](String(facts.detail ?? ''))}`,
   },
   { id: 'todo.stalled', render: carried, decide: always('wake'), ladder: [4 * HOUR] },
-  { id: 'todo.notice', render: carried, decide: always('digest') },
   { id: 'ask.idle', render: carried, decide: always('digest'), ladder: [DAY] },
   { id: 'worker.session_error', render: carried, decide: always('wake') },
   { id: 'driver.health', render: carried, decide: always('digest'), ladder: [DAY] },

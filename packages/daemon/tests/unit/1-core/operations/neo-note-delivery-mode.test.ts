@@ -79,7 +79,7 @@ describe('Neo daemon notes', () => {
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
 
-  test('stalled-ask nudges and todo-done notices are persisted as synthetic inputs', async () => {
+  test('a stalled-ask nudge is persisted as a synthetic input and a finished todo adds no note', async () => {
     const now = Date.now();
     const ask = service.todos.openAsk({
       id: 'stalled-synthetic',
@@ -125,14 +125,10 @@ describe('Neo daemon notes', () => {
           inputKind: 'system',
           isSynthetic: true,
         }),
-        expect.objectContaining({
-          uuid: expect.stringMatching(/^neo-todo:/),
-          inputKind: 'system',
-          isSynthetic: true,
-          message: expect.objectContaining({ content: expect.stringContaining('is done') }),
-        }),
       ])
     );
+    expect(service.todos.getTodo('synthetic-done')?.state).toBe('done');
+    expect(JSON.stringify([rows, db.getJobQueueRepo().listJobs({})])).not.toContain('is done');
   });
 
   test('wakeNeo keeps structured PR events immediate', async () => {

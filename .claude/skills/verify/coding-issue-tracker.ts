@@ -200,6 +200,11 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
           if (rejectNotes) throw new Error('Synthetic mailbox failure');
           notes.push(note);
         },
+        attend: async (event) => {
+          const note = String(event.facts.text);
+          if (rejectNotes) throw new Error('Synthetic mailbox failure');
+          notes.push(note);
+        },
         invoke: async (_caller, name, input) => {
           if (name === 'work.send') sends.push(String(input.message));
           return {
@@ -237,7 +242,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       prepareStart('public-child');
       await runner.fill();
       assert.equal(sends.length, 2);
-      assert(notes.some((note) => note.includes('Tracker item is missing')));
+      assert(notes.some((note) => note.includes('its tracker item is missing')));
       const adapter = neo.pack('coding')!.tracker!;
       const originalHome = adapter.home;
       const beforeNoHome = external().issues.length;

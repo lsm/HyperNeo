@@ -576,7 +576,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const plan = planNeoTrackerStarts(facts, enabled);
     for (const todo of plan.missing)
       await note(
-        'todo.notice',
+        'driver.health',
         todo,
         todo.updatedAt,
         `Todo "${todo.title}" (${todo.id}): its tracker item is missing after three failures; work continues.`
@@ -840,7 +840,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const now = Date.now();
     const todo = await sessions.write('claimNeedsYou', todoId, now);
     if (!todo) return;
-    await note('turn.report', todo, now, neoTodoNeedsYouNote(todo, live), { status: 'needs_you' });
+    await note('turn.report', todo, now, neoTodoNeedsYouNote(todo, live));
   };
 
   const settleDeps = (ask: NeoAsk): NeoDriverSettleDeps => ({

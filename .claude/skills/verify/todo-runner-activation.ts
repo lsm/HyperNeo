@@ -37,7 +37,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
   const receipt=await app.db.gateway.run(op,args);
   record=false;
   return receipt;
-},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},
+},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},attend:async()=>{effects.push({name:'tell'});},
   invoke:async(_caller,name,input)=>{
     record=false;
     if(name==='work.status') return {kind:'completed',value:{ok:true,value:{status:'done',lastActivityAt:1}}};
@@ -143,12 +143,13 @@ try {
     limits: () => ({ running: 0, perGroup: 99 }),
     store, sessions, write: app.db.gateway.run.bind(app.db.gateway), packs: () => [],
     changed: () => {},
-    tell: async (_ask, todo, note) => { if (todo.id === 'capacity') capacityNotes.push(note); },
+    tell: async () => {},
+    attend: async (event) => { if (event.subject.id === 'capacity') capacityNotes.push(String(event.facts.text)); },
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: { status: 'done', lastActivityAt: Date.now() } } }),
   });
   await heldRunner.refresh((_message, error) => { throw error; });
   assert.equal((await visible('capacity')).entry.todos.find(todo => todo.id === 'capacity')?.state, 'todo');
-  assert(capacityNotes.some(note => /\d+ workers running; total limit is 0/.test(note)), JSON.stringify(capacityNotes));
+  assert.deepEqual(capacityNotes, [], 'a todo the queue holds is not told to Neo');
   result.capacityNotes = capacityNotes;
   result.verified=true;
 } finally {

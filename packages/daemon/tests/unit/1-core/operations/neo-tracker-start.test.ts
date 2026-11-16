@@ -12,7 +12,7 @@ import type { NeoTrackerAdapter } from '../../../../src/lib/neo/pack-contract.ts
 
 let db: Database, store: NeoAskTodoRepository, sessions: NeoTodoSessionRepository;
 let mirrors: NeoTrackerMirrorRepository, gateway: DbGateway;
-let enabled: boolean, sends: string[], notes: string[];
+let enabled: boolean, sends: string[], notes: string[], kinds: string[];
 let runner: ReturnType<typeof createNeoTodoRunner>;
 let tracker: NeoTrackerAdapter;
 let failNotes: boolean;
@@ -27,6 +27,7 @@ beforeEach(() => {
   enabled = true;
   sends = [];
   notes = [];
+  kinds = [];
   failNotes = false;
   tracker = {
     id: 'synthetic',
@@ -53,6 +54,7 @@ beforeEach(() => {
     attend: async (event) => {
       if (failNotes) throw new Error('Synthetic mailbox failure');
       notes.push(String(event.facts.text));
+      kinds.push(event.kind);
     },
     invoke: async (_caller, name) => {
       if (name === 'work.send' || name === 'work.start') sends.push(name);
@@ -141,6 +143,7 @@ test('three failures release the hold and say so', async () => {
   expect(notes).toContain(
     'Todo "Step" (todo): its tracker item is missing after three failures; work continues.'
   );
+  expect(new Set(kinds)).toEqual(new Set(['driver.health']));
 });
 
 test('no tracker never holds', async () => {
