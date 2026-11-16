@@ -7,7 +7,7 @@ appendFileSync(join(run, 'evidence/gh.log'), `gh ${JSON.stringify(args)}\n`);
 const store = join(run, 'comments.json');
 const comments: { path: string; body: string }[] = existsSync(store) ? JSON.parse(readFileSync(store, 'utf8')) : [];
 if (args[0] === 'api' && args.includes('/rate_limit')) {
-  const reset = Math.floor(Date.now() / 1000) + 600;
+  const reset = Math.floor(Date.now() / 1000) + 5;
   console.log(JSON.stringify({ resources: { core: { remaining: 0, reset } } }));
   process.exit(0);
 }

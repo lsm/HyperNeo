@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -88,14 +88,26 @@ try {
   await restarted.sweepPacks();
   await restarted.sweepPacks();
   assert.equal(ghCalls().length, limited, 'after a rate-limit error no GitHub calls until the reset');
-  writeFileSync(join(run, 'pr.json'), JSON.stringify({ head: 'head-b', state: 'MERGED' }));
+  const heldUntil = ledger.readReviewCommentHold('github.com');
+  assert(heldUntil !== null && heldUntil > Date.now(), 'the hold is stored in the DB');
+  await Bun.sleep(heldUntil - Date.now() + 1_000);
+  rmSync(join(run, 'rate-limited'));
+  await restarted.sweepPacks();
+  const resumed = comments().length;
+  assert.equal(resumed, 3, 'once the hold ends, the pending review on the open PR posts once');
+  writeFileSync(join(run, 'pr.json'), JSON.stringify({ head: 'head-c', state: 'OPEN' }));
+  await restarted.sweepPacks();
+  assert(ledger.recordStage({ ...fact, head: 'head-c' }));
+  writeFileSync(join(run, 'pr.json'), JSON.stringify({ head: 'head-c', state: 'MERGED' }));
+  const beforeMerge = ghCalls().length;
   const afterMerge = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   await afterMerge.sweepPacks();
   await afterMerge.sweepPacks();
-  assert.equal(ghCalls().length, limited, 'a PR that merged while its review was pending gets no comment');
-  evidence.push({ restartCalls: 0, rateLimitedCalls: ghCalls().slice(before), mergedAfterPendingCalls: 0 });
+  assert.equal(ghCalls().length, beforeMerge, 'a PR that merged while its review was pending gets no comment, with no hold active');
+  assert.equal(comments().length, resumed);
+  evidence.push({ restartCalls: 0, rateLimitedCalls: ghCalls().slice(before, limited), resumedAfterHold: comments()[2], mergedAfterPendingCalls: 0 });
   evidence.push({ comments: posted, ghCalls: readFileSync(join(run, 'evidence/gh.log'), 'utf8').trim().split('\n') });
-  console.log(`PASS: pack sweeps posted ${posted.length} labelled comments through gh for recorded review results, none on repeat sweeps, none after a restart, none after a rate-limit error until the reset, and none for a pending review once the ledger reads its PR as merged. Evidence: ${run}/evidence/review-comment.json`);
+  console.log(`PASS: pack sweeps posted ${comments().length} labelled comments through gh for recorded review results, none on repeat sweeps, none after a restart, none after a rate-limit error until the reset, one once the hold ended, and none for a pending review once the ledger reads its PR as merged. Evidence: ${run}/evidence/review-comment.json`);
   console.log(`--- sample comment ---\n${posted[0].body}`);
 } finally {
   writeFileSync(join(run, 'evidence/review-comment.json'), JSON.stringify(evidence, null, 2));

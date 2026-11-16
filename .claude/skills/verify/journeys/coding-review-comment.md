@@ -32,10 +32,14 @@ session id never appears. The helper prints the first comment as a sample.
 Then a second Neo service on the same DB stands in for a restart: two sweeps
 make no issue-comment calls, because each PR's posted marker is stored in the DB.
 Next the PR moves to a new open head with a new review, and the stub answers
-comment calls with a rate-limit error (and `/rate_limit` with a reset ten minutes
-out): one sweep tries once and the next sweeps make no comment calls. Last, the
-stub reports the PR merged and a third service starts: the still-pending review
-gets no comment call, because the ledger read in that sweep shows the PR merged.
+comment calls with a rate-limit error (and `/rate_limit` with a reset seconds
+out, so the hold is the one-minute floor): one sweep tries once and the next
+sweeps make no comment calls. The helper checks the hold is stored in the DB and
+waits until it ends. Then the stub stops refusing and the pending review on the
+open PR posts once, so an unheld pending review does make a call. Last, the PR
+moves to a third head with a new review, the stub reports it merged and a third
+service starts: that review gets no comment call, because the ledger read in that
+sweep shows the PR merged; no hold is active.
 
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
 

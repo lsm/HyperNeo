@@ -459,6 +459,37 @@ describe('codingGithubApi rate limits', () => {
       db.close();
     }
   });
+  test('an exhausted quota holds until its reset even when Retry-After is shorter, across a restart', async () => {
+    const reset = Math.floor(start / 1000) + 2_400;
+    const { db, ledger, calls, sweep, restart } = sweepWith((args) =>
+      args.includes('--include')
+        ? reply(
+            `HTTP/2.0 403 Forbidden\r\nRetry-After: 60\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: ${reset}\r\nContent-Type: application/json\r\n\r\n{"message":"Forbidden"}`,
+            1,
+            'gh: request failed'
+          )
+        : reply('', 1, 'gh: request failed')
+    );
+    try {
+      secondPr(db, ledger);
+      jest.setSystemTime(start);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + 61_000);
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + 1_200_000);
+      restart();
+      await sweep();
+      expect(calls).toHaveLength(1);
+      jest.setSystemTime(start + 2_401_000);
+      await sweep();
+      expect(calls.length).toBeGreaterThan(1);
+    } finally {
+      jest.useRealTimers();
+      db.close();
+    }
+  });
   test('a comment scan that runs past one minute stops and posts nothing', async () => {
     const { db, ledger, calls, sweep } = sweepWith((args) => {
       if (args.includes('POST')) return reply('{}', 0);
