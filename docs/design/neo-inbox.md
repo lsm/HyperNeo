@@ -65,7 +65,8 @@ It reads only rows that exist. The Neo snapshot carries it next to the ask entri
 One rule everywhere:
 - Two filter rows that are independent and can be used in either order: **state** (waiting on you, held, in progress) and **ask** (all, then each ask). The default is "waiting on you" and "all".
 - Each row shows the choices that fit, and the rest under a final "More" menu. No horizontal scrolling.
-- Items are grouped by ask. Each item says which todo it is about. The agree button is on the right; "Hold" offers: tomorrow, next week, until I come back, and drop this todo.
+- Items are grouped by ask. Each item says which todo it is about. The agree button is on the right. "Hold" only puts the card aside and offers: tomorrow, next week, until I come back. It never changes a todo.
+- Removing is not holding. A card that offers "remove" (today the daemon's own cards, `planNeoDaemonCardActions` in `daemon-cards.ts`, and the human-step card of rule 5) shows it as one of its answers, and the answer runs the existing `neo.todo.remove`. The inbox adds no remove action of its own.
 
 ## Files
 
@@ -105,7 +106,7 @@ Each step is one PR within the repo's slice budget.
 
 ## Limits
 
-- Holding a card stops its todos until it reopens. "Drop this todo" is the way to stop the work for good.
+- Holding a card stops its todos until it reopens. Stopping the work for good is the card's own "remove" answer, where the card offers one, or asking Neo to remove the todo.
 - Asks are not cards. An ask-level question is a card written without todos; it stops the ask's waiting todos.
 - The inbox is a view. It adds no new record of what the human was asked.
 - Finished work is not listed. A view of all items sorted by time, finished ones included, is later work.
