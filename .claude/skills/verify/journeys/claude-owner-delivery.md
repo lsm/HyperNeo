@@ -31,7 +31,8 @@ Observe observed.json, proof.log and run-status.json for every invocation:
   in its transcript, and use one auto headless turn when stopped. Registered
   sdk-cli owners must still use the shared receiver-mode matcher.
 - Unknown modes, unknown ownership, duplicate live candidates and a wrong local_
-  ID or failed native discovery writes no input. A stopped CLI target is not resumed. Explicit
+  ID or native discovery failing since daemon start writes no input (a later
+  failed refresh reuses the last good listing). A stopped CLI target is not resumed. Explicit
   receiver hold/refuse policies remain effective; waiting produces no resend.
 - Each native run first sends an opposite-class control directly: the installed
   receive-side gate reports peer_message_hold / mode-mismatch then expired.
