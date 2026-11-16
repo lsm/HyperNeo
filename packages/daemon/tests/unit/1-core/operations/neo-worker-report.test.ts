@@ -757,6 +757,7 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
   const sweep = createNeoAttentionSweep({
     sessions: service.todoSessions,
     packs: () => [],
+    scan: async () => [],
     limits: () => ({ running: 6, perGroup: 3 }),
     tell: createNeoAttention({
       kinds: () => NEO_ATTENTION_KINDS,
