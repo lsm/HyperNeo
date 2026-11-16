@@ -14,6 +14,7 @@ export type {
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
   TokenRefreshOutcome,
+  TokenRefreshResult,
   CuratedModel,
   ListRemoteModelsOptions,
 } from './types.js';

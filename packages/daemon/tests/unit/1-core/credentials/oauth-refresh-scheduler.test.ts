@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test';
-import type { Provider, TokenRefreshOutcome } from '@hyperneo/shared/provider';
+import { describe, expect, it, spyOn } from 'bun:test';
+import type { Provider, TokenRefreshOutcome, TokenRefreshResult } from '@hyperneo/shared/provider';
+import { Logger } from '../../../../src/lib/logger';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
@@ -198,9 +199,9 @@ describe('OAuthRefreshScheduler', () => {
     expect(observed).toEqual([{ providerId: 'oauth-provider', stored: 1, health: 'healthy' }]);
   });
 
-  it('marks provider unhealthy after max refresh retries', async () => {
+  it('marks provider unhealthy after max transient refresh retries', async () => {
     const registry = new ProviderRegistry();
-    registry.register(createProvider('definitive'));
+    registry.register(createProvider('transient'));
     const manager = new FakeCredentialManager();
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -209,9 +210,10 @@ describe('OAuthRefreshScheduler', () => {
       expiresAt: 1_000,
     });
     const changed: string[] = [];
+    let now = 0;
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
-      now: () => 0,
+      now: () => now,
       refreshWindowMs: 10_000,
       maxRetries: 2,
       onProviderChanged: (providerId) => {
@@ -222,6 +224,7 @@ describe('OAuthRefreshScheduler', () => {
     await scheduler.tick();
     expect(changed).toEqual([]);
     expect(manager.health.has('oauth-provider')).toBe(false);
+    now += refreshDelayMs(1);
     await scheduler.tick();
 
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
@@ -625,7 +628,7 @@ describe('OAuthRefreshScheduler', () => {
     }
   });
 
-  it('stops retrying a revoked pasted credential after maxRetries', async () => {
+  it('stops retrying a revoked pasted credential after a definitive refusal', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider('definitive'));
     const manager = new FakeCredentialManager();
@@ -656,7 +659,7 @@ describe('OAuthRefreshScheduler', () => {
       await scheduler.tick();
       await scheduler.tick();
 
-      expect(attempts).toBe(2);
+      expect(attempts).toBe(1);
       expect(manager.health.get('oauth-provider')).toBe('unhealthy');
     } finally {
       clearProviderFailureRecords();
@@ -953,5 +956,199 @@ describe('refresh clock', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('background refresh outcomes', () => {
+  function backgroundScheduler(refresh: () => Promise<TokenRefreshResult>, clock: { now: number }) {
+    const registry = new ProviderRegistry();
+    const provider = createProvider('transient');
+    provider.refreshToken = refresh;
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'secret-access-token',
+      refreshToken: 'secret-refresh-token',
+      expiresAt: 1_000,
+    });
+    const needsLogin: Array<{ providerId: string; at: number }> = [];
+    const changed: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => clock.now,
+      refreshWindowMs: 10_000,
+      setNeedsLogin: (providerId, at) => needsLogin.push({ providerId, at }),
+      onProviderChanged: (providerId) => changed.push(providerId),
+    });
+    return { scheduler, manager, needsLogin, changed };
+  }
+
+  it('after a transient outcome waits for the refresh clock and never gives up', async () => {
+    const clock = { now: 0 };
+    let refreshes = 0;
+    const { scheduler, needsLogin } = backgroundScheduler(async () => {
+      refreshes += 1;
+      return 'transient';
+    }, clock);
+
+    await scheduler.tick();
+    await scheduler.tick();
+    expect(refreshes).toBe(1);
+
+    for (let attempt = 1; attempt <= 6; attempt += 1) {
+      clock.now += refreshDelayMs(attempt) - 1;
+      await scheduler.tick();
+      expect(refreshes).toBe(attempt);
+      clock.now += 1;
+      await scheduler.tick();
+      expect(refreshes).toBe(attempt + 1);
+    }
+    expect(needsLogin).toEqual([]);
+  });
+
+  it('after a definitive outcome stops and marks the provider needs_login', async () => {
+    const clock = { now: 50 };
+    let refreshes = 0;
+    const { scheduler, manager, needsLogin, changed } = backgroundScheduler(async () => {
+      refreshes += 1;
+      return 'definitive';
+    }, clock);
+
+    await scheduler.tick();
+    clock.now += 2 * 60 * 60_000;
+    await scheduler.tick();
+
+    expect(refreshes).toBe(1);
+    expect(needsLogin).toEqual([{ providerId: 'oauth-provider', at: 50 }]);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(changed).toEqual(['oauth-provider']);
+  });
+
+  it('a credential write restarts a stopped background refresh', async () => {
+    const clock = { now: 0 };
+    let refreshes = 0;
+    const { scheduler } = backgroundScheduler(async () => {
+      refreshes += 1;
+      return 'definitive';
+    }, clock);
+
+    await scheduler.tick();
+    scheduler.resetClock('oauth-provider');
+    await scheduler.tick();
+
+    expect(refreshes).toBe(2);
+  });
+
+  it('a refreshed outcome after transient failures leaves the provider signed in', async () => {
+    const clock = { now: 0 };
+    const outcomes: TokenRefreshResult[] = ['transient', 'transient', 'refreshed'];
+    const { scheduler, manager, needsLogin } = backgroundScheduler(
+      async () => outcomes.shift() ?? 'refreshed',
+      clock
+    );
+
+    await scheduler.tick();
+    clock.now += refreshDelayMs(1);
+    await scheduler.tick();
+    clock.now += refreshDelayMs(2);
+    await scheduler.tick();
+
+    expect(scheduler.clock('oauth-provider')).toMatchObject({
+      attempt: 0,
+      lastOutcome: 'refreshed',
+    });
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(needsLogin).toEqual([]);
+  });
+
+  it('logs each failure with its outcome and OAuth error code, never a token', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      const clock = { now: 0 };
+      const outcomes: TokenRefreshResult[] = [
+        { outcome: 'transient', oauthError: 'temporarily_unavailable' },
+        'transient',
+        { outcome: 'definitive', oauthError: 'invalid_grant' },
+      ];
+      const { scheduler } = backgroundScheduler(async () => outcomes.shift() ?? 'transient', clock);
+
+      await scheduler.tick();
+      clock.now += refreshDelayMs(1);
+      await scheduler.tick();
+      clock.now += refreshDelayMs(2);
+      await scheduler.tick();
+
+      const lines = warn.mock.calls.map((call) => call.map(String).join(' '));
+      expect(lines).toHaveLength(3);
+      expect(lines[0]).toContain('outcome=transient');
+      expect(lines[0]).toContain('oauthError=temporarily_unavailable');
+      expect(lines[1]).toContain('outcome=transient');
+      expect(lines[1]).toContain('oauthError=none');
+      expect(lines[2]).toContain('outcome=definitive');
+      expect(lines[2]).toContain('oauthError=invalid_grant');
+      for (const line of lines) {
+        expect(line).toContain('oauth-provider');
+        expect(line).not.toContain('secret-');
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs an unrecognized OAuth error code as unrecognized, never the echoed value', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    try {
+      const clock = { now: 0 };
+      const outcomes: TokenRefreshResult[] = [
+        { outcome: 'transient', oauthError: 'secret-access-token' },
+        { outcome: 'definitive', oauthError: 'secret-refresh-token' },
+      ];
+      const { scheduler } = backgroundScheduler(async () => outcomes.shift() ?? 'transient', clock);
+
+      await scheduler.tick();
+      clock.now += refreshDelayMs(1);
+      await scheduler.tick();
+
+      const lines = warn.mock.calls.map((call) => call.map(String).join(' '));
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(line).toContain('oauthError=unrecognized');
+        expect(line).not.toContain('secret-');
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('ignores a refresh outcome that a credential write superseded mid-flight', async () => {
+    const clock = { now: 0 };
+    let refreshes = 0;
+    let answer: (result: TokenRefreshResult) => void = () => {};
+    const { scheduler, manager, needsLogin } = backgroundScheduler(() => {
+      refreshes += 1;
+      return new Promise<TokenRefreshResult>((resolve) => {
+        answer = resolve;
+      });
+    }, clock);
+
+    const stale = scheduler.tick();
+    while (refreshes === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    scheduler.resetClock('oauth-provider');
+    answer({ outcome: 'definitive', oauthError: 'invalid_grant' });
+    await stale;
+
+    expect(needsLogin).toEqual([]);
+    expect(manager.health.has('oauth-provider')).toBe(false);
+    expect(scheduler.clock('oauth-provider')).toEqual({
+      nextRefreshAt: 0,
+      attempt: 0,
+      lastOutcome: 'none',
+    });
+    const next = scheduler.tick();
+    while (refreshes === 1) await new Promise((resolve) => setTimeout(resolve, 1));
+    answer('transient');
+    await next;
+    expect(refreshes).toBe(2);
   });
 });
