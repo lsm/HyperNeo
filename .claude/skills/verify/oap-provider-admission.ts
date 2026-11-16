@@ -61,7 +61,7 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   rpc.registerTransport(transport);
   await transport.initialize();
-  const create = async (harness?: 'codex') => {
+  const create = async (harness?: 'oxap-codex') => {
     const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', {
       workspacePath: join(run, 'workspace'),
       title: harness ?? 'SDK provider hold',
@@ -69,7 +69,7 @@ try {
     });
     return sessionId;
   };
-  const codex = await create('codex');
+  const codex = await create('oxap-codex');
   const agent = app.sessionManager.getSession(codex);
   assert(agent);
   (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {

@@ -39,10 +39,15 @@ works no open todo. Observe `neo-request-todo.json` and the mailbox queue:
   delivered `<session-message>` carries no `ask` attribute;
 - a new request is delivered as `<session-message from-session="..." ask="<id>">`
   with the recorded request ask, and the real `neo.todo.add` with that `askId`
-  files the work on that ask.
+  files the work on that ask;
+- closing that request with the real `neo.todo.done` sends one reply naming the
+  added todo, and the ask stays open; after the todo is removed and the real
+  `neo.ask.settle` settles the ask, the sender gets one more reply with each
+  todo's final state, and nothing after that. The automatic settle path is
+  covered by unit tests.
 
 Pass prints `PASS request_todos=1 wakes_at_30m=<n> wakes_at_1h=<n+1> replies=1
 answers=1 human_answers=0 reply_failed=woke_neo closed_repeat=rejected snapshot_marker=request_only human_queue=no_request
-envelope_ask=request_only work_on_request_ask=yes`. A remote requester is
+envelope_ask=request_only work_on_request_ask=yes close_reply=lists_todos settle_reply=once`. A remote requester is
 covered by unit tests with a stubbed attached-daemon forwarder. This does not show a model turn
 or the sender session processing the reply.

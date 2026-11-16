@@ -1,5 +1,6 @@
 export const WORK_OPERATION_NAMES = [
   'work.adapters',
+  'work.cleanup.sweep',
   'work.find',
   'work.health',
   'work.project.addFolder',

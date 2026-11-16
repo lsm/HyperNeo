@@ -6155,7 +6155,7 @@ describe('AgentSession', () => {
 
     it('does not replay an uncertain submitted Codex delivery on job recovery', async () => {
       const uuid = 'codex-uncertain-submission';
-      agentSession.session.config.harness = 'codex';
+      agentSession.session.config.harness = 'oxap-codex';
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(
         sessionId,
@@ -6671,11 +6671,11 @@ describe('AgentSession', () => {
       registry.unregister('anthropic');
       try {
         const bus = await createTestInternalEventBus();
-        for (const harness of ['codex', 'sdk'] as const) {
+        for (const harness of ['oxap-codex', 'sdk'] as const) {
           const session = createTestSession(`provider-gate-${harness}`);
           session.config = {
             ...session.config,
-            ...(harness === 'codex' ? { harness } : {}),
+            ...(harness === 'oxap-codex' ? { harness } : {}),
             model: 'model-no-provider-owns',
           };
           await db.createSession(session);
@@ -6704,7 +6704,7 @@ describe('AgentSession', () => {
             ensureQueryStarted: startup,
           };
           const drive = agent.driveDeliveryTurn(uuid, 'hello', null, false, () => true);
-          if (harness === 'codex') {
+          if (harness === 'oxap-codex') {
             await expect(drive).rejects.toThrow('harness startup reached');
             expect(startup).toHaveBeenCalledTimes(1);
           } else {

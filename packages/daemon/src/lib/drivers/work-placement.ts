@@ -163,7 +163,7 @@ async function testRunProcesses(): Promise<string[]> {
   });
 }
 
-async function folderInUse(directory: string): Promise<boolean> {
+export async function folderInUse(directory: string): Promise<boolean> {
   const root = realpathSync(directory);
   const inside = (path: string) => `${path}/`.startsWith(`${root}/`);
   if (process.platform === 'linux')

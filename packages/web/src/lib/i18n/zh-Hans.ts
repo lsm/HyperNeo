@@ -140,6 +140,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.markDone': '标记完成',
   'todo.hold': '暂缓',
   'todo.pause': '暂停',
+  'todo.holdQuestion': '你暂缓了这一步。开始，还是移除？',
+  'todo.pauseQuestion': '你暂停了这一步。继续，还是移除？',
   'todo.cancel': '取消这一步',
   'todo.priorityItem': '优先级：{priority}',
   'todo.priority.urgent': '紧急',
