@@ -1145,7 +1145,10 @@ export class AgentSession
           })
           .catch((error: unknown) =>
             this.logger.warn(`Restoring a login hold failed: ${String(error)}`)
-          );
+          )
+          .finally(() => {
+            this.restoredHold = null;
+          });
         return;
       }
       if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
@@ -1158,6 +1161,9 @@ export class AgentSession
           .catch(() => {
             this.networkPause.stop();
             void this.stateManager.setIdle().catch(() => {});
+          })
+          .finally(() => {
+            this.restoredHold = null;
           });
         return;
       }
