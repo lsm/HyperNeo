@@ -30,7 +30,7 @@ export function codingSessionStrategy(db: Database, repo: string): CodingSession
   return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
 }
 
-type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' };
+type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' | 'archived' };
 type Plan =
   | { verb: 'send'; ref: WorkRef; bind: boolean }
   | { verb: 'queue'; ref: WorkRef }

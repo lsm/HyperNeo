@@ -58,7 +58,13 @@ function setup() {
       .run(todoId, JSON.stringify({ verb: 'send', ref: ref(session) }));
   const run = runDbOpOn(db);
   const assignments = {
-    reserveFeature: (input: { repo: string; featureKey: string; todoId: string; now: number }) =>
+    reserveFeature: (input: {
+      repo: string;
+      featureKey: string;
+      todoId: string;
+      now: number;
+      replace?: { todoId: string; ref: { adapter: string; id: string; daemon?: string } };
+    }) =>
       run(codingSessionAssignmentWrites, { method: 'reserveFeature', args: [input] }) as Promise<{
         todoId: string;
         ref: { adapter: string; id: string } | null;
@@ -185,5 +191,25 @@ describe('durable session assignments', () => {
         prUrl: 'https://example.test/notes/b',
       })
     ).toBeNull();
+  });
+
+  test('a takeover replaces only the exact session it saw, daemon included', async () => {
+    const { db, assignments, todo, started } = setup();
+    const [first, second, third] = [todo(), todo(), todo()];
+    const feature = { repo: 'synthetic/repo', featureKey: 'ask', now: 1 };
+    await assignments.reserveFeature({ ...feature, todoId: first });
+    started(first, 'backend');
+    const seen = { todoId: first, ref: ref('backend') };
+    db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(
+      JSON.stringify({ ...ref('backend'), daemon: 'other' }),
+      first
+    );
+    expect(
+      (await assignments.reserveFeature({ ...feature, todoId: second, replace: seen })).todoId
+    ).toBe(first);
+    started(first, 'backend');
+    expect(
+      (await assignments.reserveFeature({ ...feature, todoId: third, replace: seen })).todoId
+    ).toBe(third);
   });
 });
