@@ -100,6 +100,16 @@ describe('GitHub health reaches Neo through the attention entry', () => {
       ).toBe(false);
     }));
 
+  test('a merge preference changed between two sweeps on the same rung is still one digest', () =>
+    using(async ({ db, sweep, digests }) => {
+      for (const minutes of [0, 5, 10]) await sweep(T0 + minutes * MIN);
+      db.prepare(
+        `INSERT OR REPLACE INTO neo_pack_preferences VALUES ('coding', 'repo', ?, 'mergePolicy', '"review_bot"', 'human', 1)`
+      ).run(repo);
+      await sweep(T0 + 15 * MIN);
+      expect(digests()).toEqual([STALLED]);
+    }));
+
   test('an approved pull request whose readiness read stalls is one digest until a complete read', () =>
     using(async ({ db, sweep, digests }) => {
       new CodingPrLedgerRepository(db).replace(
