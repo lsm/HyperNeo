@@ -15,7 +15,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable';
+type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived';
 
 function setup() {
   const db = new Database(':memory:');
@@ -68,7 +68,7 @@ function setup() {
           ref: work,
           title: work.id,
           place: { machine: 'm', name: 'w' },
-          status: state === 'idle' ? 'done' : state,
+          status: state === 'idle' ? 'done' : state === 'archived' ? 'stopped' : state,
           lastActivityAt: 1,
         },
       },
@@ -167,5 +167,27 @@ describe('coding session target decision', () => {
     const next = todo();
     expect(await decide(next, start())).toEqual({ value: start('dev') });
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test('an archived session is never reused; a live idle one is, and with none a new one starts', async () => {
+    for (const idleLive of [true, false]) {
+      const { todo, worked, live, decide } = setup();
+      worked(todo('other'), 'gone', 'dev', 'done');
+      worked(todo('other'), 'idle', 'dev-2', 'done');
+      live.gone = 'archived';
+      if (!idleLive) live.idle = 'archived';
+      expect(await decide(todo(), start())).toMatchObject(
+        idleLive ? { value: { verb: 'send', ref: ref('idle') } } : { value: { verb: 'start' } }
+      );
+    }
+  });
+
+  test("a feature whose own session was archived starts a new one", async () => {
+    const { todo, worked, live, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    live['backend-1'] = 'archived';
+    expect(await decide(todo(), start())).toMatchObject({ value: { verb: 'start' } });
   });
 });
