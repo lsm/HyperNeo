@@ -27,6 +27,7 @@ session id never appears. The helper prints the first comment as a sample.
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
 
 Run `neo-coding-review-comment` unit tests for the outage retry, closed PRs,
-moved heads, overlapping sweeps and a verdict that returns at one head.
+moved heads, overlapping sweeps, a verdict that returns at one head and a PR
+merged during a GitHub outage.
 
 Not verified here: real GitHub, the human's gh account, or the PR page rendering.

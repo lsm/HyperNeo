@@ -27,7 +27,7 @@ import {
   reconcileCodingPrLedger,
 } from './pr-ledger.ts';
 import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events.ts';
-import { readCodingOpenReviews } from './review-comment.ts';
+import { readCodingPostableReviews } from './review-comment.ts';
 import type { CodingStageFact } from './stage-facts.ts';
 import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
 import { type NeoWorkPrReader } from './work-prs.ts';
@@ -262,7 +262,9 @@ export function createCodingPack(deps: {
     judge: todos.judge,
     sweep: async (now) => {
       if (deps.postReviewComments)
-        await deps.postReviewComments(() => readCodingOpenReviews(deps.database(), deps.prLedger));
+        await deps.postReviewComments(() =>
+          readCodingPostableReviews(deps.database(), deps.prLedger)
+        );
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),

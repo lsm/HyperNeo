@@ -89,8 +89,8 @@ export function createCodingReviewComments(api: CodingGithubApi) {
     (queue = queue.then(() => post(read)));
 }
 
-export async function readCodingOpenReviews(db: Database, ledger: CodingPrLedgerRepository) {
-  const open = (await ledger.read('list')).filter((row) => row.closedAt === null);
+export async function readCodingPostableReviews(db: Database, ledger: CodingPrLedgerRepository) {
+  const open = (await ledger.read('list')).filter((row) => row.state !== 'closed');
   const facts = await Promise.all(
     open.map(async (row) =>
       (

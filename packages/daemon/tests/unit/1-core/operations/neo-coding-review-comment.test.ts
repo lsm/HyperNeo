@@ -5,7 +5,7 @@ import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/sch
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import {
   createCodingReviewComments,
-  readCodingOpenReviews,
+  readCodingPostableReviews,
 } from '../../../../src/lib/neo/packs/coding/review-comment.ts';
 import type { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
 
@@ -51,7 +51,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null, state = 'w
     return {};
   };
   const sweep = (post = createCodingReviewComments(github)) =>
-    post(() => readCodingOpenReviews(db, ledger));
+    post(() => readCodingPostableReviews(db, ledger));
   return { db, ledger, comments, outage, github, sweep };
 }
 
