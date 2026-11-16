@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef } from '../drivers/types.ts';
@@ -38,6 +38,19 @@ export function requireNeoWorkerSaved(folder: Folder): { value: WorkRef } | { re
   return { value: folder.ref };
 }
 
+export function neoBranchesHeldElsewhere(porcelain: string, own: string): string[] {
+  return porcelain
+    .split('\n\n')
+    .map((block) => block.split('\n'))
+    .filter((lines) => {
+      const path = lines.find((line) => line.startsWith('worktree '))?.slice(9);
+      return !!path && existsSync(path) && realpathSync(path) !== own;
+    })
+    .flatMap((lines) =>
+      lines.filter((line) => line.startsWith('branch ')).map((line) => line.slice(7))
+    );
+}
+
 async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: Folder }> {
   const outcome = await invoke(daemon, 'work.status', { ref });
   const status =
@@ -50,19 +63,11 @@ async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: 
   if (!existsSync(directory)) return { value: { ...clean, directory: null } };
   const git = simpleGit(directory);
   if (!(await git.checkIsRepo())) return { value: clean };
-  const branch = (await git.raw(['symbolic-ref', '-q', '--short', 'HEAD']).catch(() => '')).trim();
+  const own = realpathSync((await git.revparse(['--show-toplevel'])).trim());
+  const held = neoBranchesHeldElsewhere(await git.raw(['worktree', 'list', '--porcelain']), own);
   const [state, unpushed] = await Promise.all([
     git.status(['--ignore-submodules=none']),
-    git.raw([
-      'rev-list',
-      '--count',
-      'HEAD',
-      '--not',
-      '--remotes',
-      '--tags',
-      ...(branch ? [`--exclude=${branch}`] : []),
-      '--branches',
-    ]),
+    git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes', '--tags', ...held]),
   ]);
   return { value: { ...clean, dirty: !state.isClean(), unpushed: Number(unpushed.trim()) } };
 }
