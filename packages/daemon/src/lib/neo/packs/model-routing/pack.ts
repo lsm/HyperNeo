@@ -1,4 +1,4 @@
-import type { RateLimitHoldReason } from '@hyperneo/shared';
+import { type RateLimitHoldReason, THINKING_OPTIONS } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -95,6 +95,7 @@ function readCooldowns(db: Database): Cooldown[] {
     .prepare(`SELECT t.id, t.title, t.named, x.id AS worker,
         json_extract(x.config, '$.provider') AS provider,
         json_extract(x.config, '$.model') AS model,
+        json_extract(x.config, '$.thinkingLevel') AS thinkingLevel,
         json_extract(x.processing_state, '$.reason') AS reason,
         json_extract(x.processing_state, '$.since') AS since,
         json_extract(x.processing_state, '$.retryAt') AS retryAt,
@@ -113,6 +114,11 @@ function readCooldowns(db: Database): Cooldown[] {
         AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'`)
     .all() as Cooldown[];
 }
+
+const effortOf = (level: unknown) => {
+  const option = THINKING_OPTIONS.find((entry) => entry.value === level);
+  return option ? { effort: option.label.toLowerCase() } : {};
+};
 
 const waitsOnSomeone = ({ reason, manualRetry }: Cooldown) =>
   reason === 'login' || manualRetry === 1;
@@ -137,7 +143,7 @@ function readHeldTodos(db: Database, now: number): HeldTodo[] {
                 ? { since: told, text: String(toldText ?? ''), sent: row.sent === 1 }
                 : null,
             hold: {
-              line: { provider, model, harness: 'hyperneo' },
+              line: { provider, model, harness: 'hyperneo', ...effortOf(row.thinkingLevel) },
               reason: reason as RateLimitHoldReason,
               since,
               ...(typeof retryAt === 'number' ? { retryAt } : {}),
