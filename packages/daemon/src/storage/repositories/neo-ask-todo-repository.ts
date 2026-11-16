@@ -1121,13 +1121,15 @@ export class NeoAskTodoRepository {
     question: NeoQuestion,
     reason: string,
     replacedBy: string | null,
-    now: number
+    now: number,
+    unheld = false
   ): NeoQuestion | null {
     const changed = this.db.transaction(() => {
       const retired = this.changeQuestion(
         question.id,
         { state: 'retired', retired_reason: reason, replaced_by: replacedBy },
-        'open'
+        'open',
+        unheld
       );
       if (retired) this.pruneQuestions(question.askId, now);
       return retired;
@@ -1249,13 +1251,14 @@ export class NeoAskTodoRepository {
   private changeQuestion(
     id: string,
     patch: Record<string, string | number | null>,
-    state?: NeoQuestion['state']
+    state?: NeoQuestion['state'],
+    unheld = false
   ): number {
     return this.db
       .prepare(`UPDATE neo_questions SET ${Object.keys(patch)
         .map((key) => `${key} = ?`)
         .join(', ')}
-      WHERE id = ?${state ? ' AND state = ?' : ''}`)
+      WHERE id = ?${state ? ' AND state = ?' : ''}${unheld ? ' AND held_at IS NULL' : ''}`)
       .run(...Object.values(patch), id, ...(state ? [state] : [])).changes;
   }
 

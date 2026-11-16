@@ -887,10 +887,10 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (question: NeoQuestion, input: z.infer<typeof Retire>): QuestionReceipt | Rejection => {
-        const retired = store.retireQuestion(question, input.reason, null, Date.now());
-        return retired
-          ? { ok: true, question: retired }
-          : { ok: false, reason: 'question_closed: this question is no longer open.' };
+        const retired = store.retireQuestion(question, input.reason, null, Date.now(), true);
+        if (retired) return { ok: true, question: retired };
+        const held = store.getQuestion(question.id)?.heldAt;
+        return { ok: false, reason: held ? QUESTION_HELD : QUESTION_CLOSED };
       },
       ['outcome', 'input'],
       'outcome'
