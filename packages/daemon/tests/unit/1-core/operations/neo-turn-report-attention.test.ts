@@ -168,6 +168,14 @@ describe('worker turn reports through the attention entry', () => {
     }
   );
 
+  test('a turn told before the human focused its worker is not told again', async () => {
+    const turn = { id: 'turn-1', at: T0 + 100, message: 'Stopped' };
+    await report(turn, 'failed');
+    await report(turn, 'failed', turn.at, undefined, true);
+    expect(notes.wakes()).toHaveLength(1);
+    expect(notes.wakes()[0]).toContain('Worker turn report');
+  });
+
   test('a focused discussion turn on a blocked todo still wakes Neo', async () => {
     store.updateTodo(
       store.getTodo(todo.id)!,

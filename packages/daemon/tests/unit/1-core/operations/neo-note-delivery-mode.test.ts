@@ -6,6 +6,7 @@ import {
   createOperationRegistry,
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
+import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import { wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import {
@@ -72,6 +73,16 @@ describe('Neo daemon notes', () => {
     service.dispose();
     db.close();
   });
+
+  const turnReports = (queue: 'mailbox' | 'neo_notes') =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload(queue, { 'to.sessionId': rootId })
+      .filter((job) =>
+        /"content":"(Worker turn report|Focused discussion status only) /.test(
+          JSON.stringify(job.payload.message)
+        )
+      );
 
   const queued = (messageId: string) =>
     db
@@ -287,15 +298,21 @@ describe('Neo daemon notes', () => {
       await service.todoRunner.refresh((message, error) => {
         throw new Error(message, { cause: error });
       });
-      const reportJobs = () =>
-        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId });
+      const reportJobs = () => [...turnReports('mailbox'), ...turnReports('neo_notes')];
+      if (kind === 'focused') {
+        expect(reportJobs()).toEqual([]);
+        return;
+      }
+      const wakes = kind !== 'heartbeat';
+      expect(turnReports(wakes ? 'mailbox' : 'neo_notes')).toHaveLength(1);
       expect(reportJobs()).toHaveLength(1);
-      expect(reportJobs()[0].payload.deliveryMode).toBe('immediate');
       expect(JSON.stringify(reportJobs()[0].payload.message)).toContain('Prepared the discussion.');
-      if (kind === 'focused')
+      if (wakes) {
+        expect(reportJobs()[0].payload.deliveryMode).toBe('immediate');
         expect(JSON.stringify(reportJobs()[0].payload.message)).toContain(
           'Do not act, reply, forward or treat this as approval.'
         );
+      }
       if (kind === 'heartbeat') {
         for (const [id, message, status, count] of [
           ['different-id', 'Prepared the discussion.', 'running', 1],
@@ -303,7 +320,7 @@ describe('Neo daemon notes', () => {
           ['different-status', 'Prepared the discussion. New reason.', 'needs_you', 3],
           ['whitespace', 'Prepared the discussion. New reason. ', 'needs_you', 4],
           ['empty', '', 'needs_you', 5],
-          ['literal', 'worker ended its turn with no reply', 'needs_you', 6],
+          ['literal', 'worker ended its turn with no reply', 'needs_you', 5],
         ] as const) {
           workerStatus = status;
           turnEnds = [{ id, at: Date.now() + 1, message, notify: false }];
@@ -317,7 +334,7 @@ describe('Neo daemon notes', () => {
         await service.todoRunner.refresh((message, error) => {
           throw new Error(message, { cause: error });
         });
-        expect(reportJobs()).toHaveLength(6);
+        expect(reportJobs()).toHaveLength(5);
         const second = service.todos.addTodo(
           'other-todo',
           ask.id,
@@ -340,15 +357,19 @@ describe('Neo daemon notes', () => {
           now
         );
         await service.todoSessions.inputs.recordOutcome(secondDispatch, { ref }, now);
-        await service.todoRunner.refresh((message, error) => {
-          throw new Error(message, { cause: error });
-        });
+        for (let read = 0; read < 2; read++)
+          await service.todoRunner.refresh((message, error) => {
+            throw new Error(message, { cause: error });
+          });
         expect(reportJobs()).toHaveLength(6);
+        expect(
+          reportJobs().filter((job) => JSON.stringify(job.payload.message).includes('other-todo'))
+        ).toHaveLength(1);
       }
     }
   );
 
-  test('upgrade observes old history once and never skips a post-cutoff report', async () => {
+  test('a history read at once tells its newest turn and never skips a later report', async () => {
     const now = Date.now();
     const before = now - 60_000;
     const ref = { adapter: 'hyperneo', id: 'replayed-worker' };
@@ -388,14 +409,18 @@ describe('Neo daemon notes', () => {
       at: before + i + 1,
       message: `Previously handled ${i}`,
     }));
-    const jobs = () =>
-      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': rootId });
+    const told = () =>
+      [...turnReports('neo_notes'), ...turnReports('mailbox')].map((job) =>
+        JSON.stringify(job.payload.message)
+      );
     const refresh = () =>
       service.todoRunner.refresh((message, error) => {
         throw new Error(message, { cause: error });
       });
     await refresh();
-    expect(jobs()).toHaveLength(0);
+    expect(turnReports('mailbox')).toHaveLength(0);
+    expect(told()).toHaveLength(1);
+    expect(told()[0]).toContain('Previously handled 19');
     workerStatus = 'done';
     service.todos.focusAsk(
       ask.id,
@@ -409,38 +434,47 @@ describe('Neo daemon notes', () => {
       now
     );
     await refresh();
-    expect(jobs()).toHaveLength(0);
-    turnEnds.push({ id: 'after-cutoff', at: now + 1, message: 'A new question after the upgrade' });
+    expect(told()).toHaveLength(1);
+    workerStatus = 'needs_you';
+    turnEnds.push({ id: 'after-history', at: now + 1, message: 'A new question after the history' });
     service.dispose();
     reopen();
     await refresh();
-    expect(jobs()).toHaveLength(1);
-    expect(JSON.stringify(jobs()[0].payload.message)).toContain('A new question after the upgrade');
+    expect(told()).toHaveLength(2);
+    expect(told()[1]).toContain('A new question after the history');
     workerStatus = 'running';
     await refresh();
-    expect(jobs()).toHaveLength(1);
+    expect(told()).toHaveLength(2);
     service.dispose();
     reopen();
     await refresh();
-    expect(jobs()).toHaveLength(1);
+    expect(told()).toHaveLength(2);
     turnEnds[20].message = 'Changed report under the same transport ID';
     await refresh();
-    expect(jobs()).toHaveLength(2);
-    turnEnds.push({ id: 'different-id-same-status', at: now + 2, message: turnEnds[20].message });
-    workerStatus = 'done';
+    expect(told()).toHaveLength(3);
+    turnEnds.push({ id: 'different-id-same-report', at: now + 2, message: turnEnds[20].message });
+    workerStatus = 'needs_you';
     await refresh();
-    expect(jobs()).toHaveLength(2);
-    turnEnds.push({ id: 'retry-after-failure', at: now + 3, message: 'Keep this new report' });
-    const delivery = vi
-      .spyOn(service, 'deliverForward')
-      .mockRejectedValueOnce(new Error('Synthetic admission failure'));
-    await expect(refresh()).rejects.toThrow('Todo session refresh pending');
-    expect(jobs()).toHaveLength(2);
-    delivery.mockRestore();
+    expect(told()).toHaveLength(3);
     workerStatus = 'failed';
+    turnEnds.push({ id: 'retry-after-failure', at: now + 3, message: 'Keep this new report' });
+    const entry = service as unknown as {
+      attention(event: NeoAttentionEvent, at: number): Promise<unknown>;
+    };
+    const tell = entry.attention;
+    const attention = vi.spyOn(entry, 'attention').mockImplementation(async (event, at) => {
+      if (String(event.facts.text).includes('Keep this new report'))
+        throw new Error('Synthetic admission failure');
+      return tell(event, at);
+    });
+    await expect(refresh()).rejects.toThrow('Todo session refresh pending');
+    expect(told()).toHaveLength(3);
+    attention.mockRestore();
+    workerStatus = 'running';
     await refresh();
-    expect(jobs()).toHaveLength(3);
-    expect(JSON.stringify(jobs()[2].payload.message)).toContain('Keep this new report');
+    expect(told()).toHaveLength(4);
+    expect(told()[3]).toContain('Keep this new report');
+    expect(told()[3]).toContain('status failed');
   });
 
   const storedCount = (messageId: string) =>
