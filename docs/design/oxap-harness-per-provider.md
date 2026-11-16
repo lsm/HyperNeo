@@ -60,11 +60,15 @@ without changing this shape.
   chat to another engine. The values are `sdk` or a harness id. Today's
   `'codex'` value becomes `oxap-codex`. Only raw-RPC test sessions ever used
   it, and no migration code is written for them.
-- At create, `harness` changes from a creation-only client field to a derived
-  one, like `provider` and `model`. A `session.create` that still sends
-  `harness` is refused with the existing unsupported-field error, so a session
-  can never be created with a harness its provider does not use. The verify
-  skill's OXAP scripts choose the provider instead, in PR 2.
+- `harness`'s policy in `create-session-config.ts` changes from
+  `creation-only` to `rejected`. Clients can no longer set it at either door.
+  `session.create` and `session.update` both refuse it with the existing
+  unsupported-field error. A `derived` policy would not work: create silently
+  drops derived fields, and update lets them through. The daemon writes
+  `harness` itself, once, after admission at create, from
+  `engineForProvider(provider)`. So a chat's harness always matches its
+  provider and never changes. The verify skill's OXAP scripts choose the
+  provider instead, in PR 2.
 - An OXAP session's adapter is its `config.provider`, which is already
   stored. Neither field changes after creation. An OXAP chat may switch models
   only within its own provider, so a cached open session can never carry
