@@ -86,8 +86,9 @@ the release itself published.
 
 ### Adding a harness
 
-All harness knowledge lives in one daemon table, `OXAP_HARNESSES`, keyed by
-harness id. A row says:
+All harness knowledge lives in one code registry, `OXAP_HARNESSES`: a
+constant TypeScript map keyed by harness id. It is not a database table, so it
+needs no migration or schema change. A row says:
 
 - its label (**OXAP Codex**) and its OXAP adapter type (`codex`);
 - which provider ids may choose it;
