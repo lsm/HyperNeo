@@ -759,7 +759,7 @@ describe('NeoHumanQueue', () => {
       { worker: { id: 'w', adapter: 'codex', name: null, label: 'Remote', daemon: 'remote' } },
       true,
     ],
-    ['a failed todo', { state: 'failed' }, true],
+    ['a failed todo', { state: 'failed' as const }, true],
     ['a todo the summary leaves out', {}, false],
   ])('says when the read for %s failed and retries it', async (_name, patch, listed) => {
     const garage = testTodo('t4', { title: 'Call the garage', state: 'doing', ...patch });

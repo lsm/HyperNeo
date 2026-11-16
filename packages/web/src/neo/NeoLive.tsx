@@ -309,12 +309,12 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
-  const askCard = (entry: NeoAskEntry, listed = false) => (
+  const askCard = (entry: NeoAskEntry, listed = false, refreshing = false) => (
     <NeoAskTodos
       key={entry.ask.id}
       entry={entry}
       focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
-      disabled={!connected || !!neo.busyWork}
+      disabled={!connected || !!neo.busyWork || refreshing}
       onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
       onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
       onControl={(todo, control) => neo.controlTodo(todo, control)}
@@ -1158,7 +1158,7 @@ export function NeoLive() {
               onOpen={openSession}
               focus={cardTarget}
               reveal={reveal}
-              renderAsk={askCard}
+              renderAsk={(entry, refreshing) => askCard(entry, false, refreshing)}
               onStale={() =>
                 neo.refresh().catch((cause: unknown) => {
                   neo.setError(cause instanceof Error ? cause.message : t('queue.refreshFailed'));

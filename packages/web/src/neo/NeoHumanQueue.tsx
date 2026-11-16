@@ -61,13 +61,14 @@ export function NeoHumanQueue({
   reveal?: number;
   onStale?: () => Promise<unknown>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
-  renderAsk?: (entry: NeoAskEntry) => ComponentChildren;
+  renderAsk?: (entry: NeoAskEntry, refreshing?: boolean) => ComponentChildren;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const [attempt, setAttempt] = useState(0);
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const shown = useRef<Record<string, NeoAskEntry>>({});
   const [settled, setSettled] = useState(0);
   const requests = useRef(
     new Map<string, { pending: boolean; queue: Queue; known: string; attempt: number }>()
@@ -267,7 +268,12 @@ export function NeoHumanQueue({
         )}
       </div>
       {groups.map((id) => {
-        const full = renderAsk && id !== outside && card(id);
+        const validated = renderAsk && id !== outside ? card(id) : undefined;
+        if (validated) shown.current[id] = validated;
+        const full =
+          renderAsk &&
+          id !== outside &&
+          (validated ?? (opened.has(id) ? shown.current[id] : undefined));
         const showFull = !!full && opened.has(id);
         return (
           <section
@@ -298,7 +304,7 @@ export function NeoHumanQueue({
               )}
             </div>
             {showFull
-              ? renderAsk(full)
+              ? renderAsk(full, !validated)
               : items
                   .filter((item) => item.askId === id)
                   .map((item) => (
@@ -399,7 +405,7 @@ function QueueItem({
             {t('todo.desktopControl')}
           </label>
         )}
-        {desktop && open && failed && (
+        {failed && (
           <p role="alert" class="mt-1 text-xs text-danger">
             {t('queue.stepFailed')}{' '}
             <button type="button" class={neoPlainClass} onClick={onRetry}>
