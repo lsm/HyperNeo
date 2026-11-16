@@ -12,6 +12,7 @@ import type { NeoAskHistoryPage, NeoResult } from '@hyperneo/shared/types/neo-sn
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import { NeoGoals } from './NeoGoals.tsx';
+import { NeoHumanQueue } from './NeoHumanQueue.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
@@ -1052,6 +1053,15 @@ export function NeoLive() {
             <p role="status" class="mt-6 text-sm text-fg-muted">
               {t('live.noWork')}
             </p>
+          )}
+          {!workQuery.trim() && view?.humanQueue && (
+            <NeoHumanQueue
+              queue={view.humanQueue}
+              entries={workEntries}
+              disabled={!connected || !!neo.busyWork}
+              onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+              onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+            />
           )}
           {!workQuery.trim() && (
             <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />

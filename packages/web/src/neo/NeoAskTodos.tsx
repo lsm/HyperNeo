@@ -20,6 +20,7 @@ import {
   neoTodoControllable,
   neoTodoHoldable,
 } from './todo-controls.ts';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
@@ -498,15 +499,17 @@ function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   );
 }
 
-function QuestionBox({
+export function QuestionBox({
   question,
   disabled,
+  extra,
   onAnswer,
   onReply,
   onOpen,
 }: {
   question: NeoQuestionEntry;
   disabled?: boolean;
+  extra?: ComponentChildren;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
@@ -594,6 +597,7 @@ function QuestionBox({
         </div>
       )}
       <div class="mt-2 flex flex-wrap items-center justify-end gap-2">
+        {extra}
         {reply}
         {question.kind === 'yesno' && (
           <>

@@ -62,20 +62,17 @@ const entries = [
 
 function show(props: Partial<Parameters<typeof NeoHumanQueue>[0]> = {}) {
   return render(
-    <NeoHumanQueue
-      queue={queue}
-      entries={entries}
-      onAnswer={vi.fn()}
-      onHold={vi.fn()}
-      {...props}
-    />
+    <NeoHumanQueue queue={queue} entries={entries} onAnswer={vi.fn()} onHold={vi.fn()} {...props} />
   );
 }
 
 const states = (view: ReturnType<typeof show>) =>
   within(view.getByRole('group', { name: 'State' }))
     .getAllByRole('button')
-    .map((button) => `${button.textContent}${button.getAttribute('aria-pressed') === 'true' ? '*' : ''}`);
+    .map(
+      (button) =>
+        `${button.textContent}${button.getAttribute('aria-pressed') === 'true' ? '*' : ''}`
+    );
 
 describe('NeoHumanQueue', () => {
   it('opens on what waits on you across all asks, grouped by ask', () => {
@@ -102,7 +99,9 @@ describe('NeoHumanQueue', () => {
   it('puts a card aside with one Hold button and takes a held card back', () => {
     const onHold = vi.fn();
     const view = show({ onHold });
-    fireEvent.click(within(view.getByRole('region', { name: 'Release' })).getByRole('button', { name: 'Hold' }));
+    fireEvent.click(
+      within(view.getByRole('region', { name: 'Release' })).getByRole('button', { name: 'Hold' })
+    );
     expect(onHold).toHaveBeenLastCalledWith('q1', true);
     fireEvent.click(view.getByRole('button', { name: 'Held 1' }));
     expect(view.getByText('Question q3')).toBeTruthy();
@@ -146,12 +145,11 @@ describe('NeoHumanQueue', () => {
       entries: ['a1', 'a2', 'a3', 'a4', 'a5'].map((id) => entry(id, `Ask ${id}`)),
     });
     const row = view.getByRole('group', { name: 'Ask' });
-    expect(within(row).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'All 5',
-      'Ask a1 1',
-      'Ask a2 1',
-      'More',
-    ]);
+    expect(
+      within(row)
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+    ).toEqual(['All 5', 'Ask a1 1', 'Ask a2 1', 'More']);
     fireEvent.click(within(row).getByRole('button', { name: 'More' }));
     fireEvent.click(view.getByRole('menuitem', { name: 'Ask a5 1' }));
     expect(view.getAllByRole('region').map((group) => group.getAttribute('aria-label'))).toEqual([

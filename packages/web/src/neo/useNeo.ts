@@ -208,6 +208,27 @@ export function useNeo() {
     }
   }
 
+  async function holdQuestion(questionId: string, held: boolean) {
+    if (busyWork) return;
+    setBusyWork(questionId);
+    setError('');
+    try {
+      const hub = await connectionManager.getHub();
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.question.hold', {
+        questionId,
+        held,
+        requestId: crypto.randomUUID(),
+      });
+      if (!result.ok) throw new Error(result.reason);
+      await refresh();
+    } catch (cause) {
+      if (alive.current)
+        setError(cause instanceof Error ? cause.message : 'That card could not be moved.');
+    } finally {
+      if (alive.current) setBusyWork(null);
+    }
+  }
+
   const publicConversation = projectNeoPublicConversation(
     snapshot?.sessionId ?? null,
     asks,
@@ -240,6 +261,7 @@ export function useNeo() {
     setDesktopControl,
     muteSession,
     answerQuestion,
+    holdQuestion,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,
