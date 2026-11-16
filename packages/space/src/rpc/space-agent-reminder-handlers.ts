@@ -5,8 +5,6 @@ import {
   type AgentReminderCreateInput,
 } from '../../../daemon/src/lib/agents/reminder-create-input.ts';
 
-const METHOD_PREFIX = 'spaceAgentReminder';
-
 export interface SpaceAgentReminderDeps {
   reminders: SpaceAgentReminderRepository;
 }
@@ -15,9 +13,7 @@ export function setupSpaceAgentReminderHandlers(
   messageHub: MessageHub,
   deps: SpaceAgentReminderDeps
 ): void {
-  const method = (name: string): string => `${METHOD_PREFIX}.${name}`;
-
-  messageHub.onRequest(method('listCounts'), async (data) => {
+  messageHub.onRequest('spaceAgentReminder.listCounts', async (data) => {
     const params = data as { agentIds: string[] };
     if (!Array.isArray(params.agentIds)) throw new Error('agentIds is required');
     const counts: Record<string, number> = {};
@@ -28,13 +24,13 @@ export function setupSpaceAgentReminderHandlers(
     return { counts };
   });
 
-  messageHub.onRequest(method('create'), async (data) => {
+  messageHub.onRequest('spaceAgentReminder.create', async (data) => {
     const params = prepareAgentReminderCreateInput(data as AgentReminderCreateInput);
     const reminder = deps.reminders.createReminder(params);
     return { reminder };
   });
 
-  messageHub.onRequest(method('delete'), async (data) => {
+  messageHub.onRequest('spaceAgentReminder.delete', async (data) => {
     const params = data as { reminderId: string };
     if (!params.reminderId) throw new Error('reminderId is required');
     await deps.reminders.deleteReminderAsync(params.reminderId);
