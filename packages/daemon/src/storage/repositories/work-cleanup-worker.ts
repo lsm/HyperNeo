@@ -87,6 +87,60 @@ class WorkCleanupRepository {
     ];
   }
 
+  evidence(
+    name: string,
+    path: string
+  ): {
+    todo: { state: NeoTodo['state']; since: number } | null;
+    goneAt: number | null;
+    referenced: boolean;
+  } {
+    const todo = this.db
+      .prepare(
+        'SELECT state, COALESCE(finished_at, updated_at) AS since FROM neo_todos WHERE id = ?'
+      )
+      .get(name) as { state: NeoTodo['state']; since: number } | null;
+    const gone = this.db
+      .prepare('SELECT gone_at AS goneAt FROM work_cleanup_gone WHERE key = ?')
+      .get(name) as { goneAt: number } | null;
+    const referenced = this.db
+      .prepare(`SELECT EXISTS (SELECT 1 FROM neo_questions WHERE state = 'open'
+          AND instr(text || COALESCE(document, '') || COALESCE(artifacts_json, ''), ?1) > 0)
+        OR EXISTS (SELECT 1 FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')
+          AND instr(done_when || COALESCE(check_json, '') || COALESCE(instruction, '')
+            || COALESCE(artifacts_json, ''), ?1) > 0) AS referenced`)
+      .get(path) as { referenced: number };
+    return { todo, goneAt: gone?.goneAt ?? null, referenced: referenced.referenced === 1 };
+  }
+
+  releasedFolders(): string[] {
+    return (
+      this.db
+        .prepare(`SELECT DISTINCT json_extract(value_json, '$.value.worktree.directory') AS path
+        FROM pack_facts WHERE pack = 'core' AND key = 'released'
+          AND json_extract(value_json, '$.value.worktree.directory') IS NOT NULL`)
+        .all() as { path: string }[]
+    ).map(({ path }) => path);
+  }
+
+  gone(): { key: string; goneAt: number }[] {
+    return this.db.prepare('SELECT key, gone_at AS goneAt FROM work_cleanup_gone').all() as {
+      key: string;
+      goneAt: number;
+    }[];
+  }
+
+  markGone(key: string, at: number): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO work_cleanup_gone (key, gone_at) VALUES (?, ?)')
+      .run(key, at);
+  }
+
+  forgetGone(keys: readonly string[]): void {
+    const forget = this.db.prepare('DELETE FROM work_cleanup_gone WHERE key = ?');
+    for (const key of keys) forget.run(key);
+  }
+
   liveBindings(): { ref: WorkRef | null; todoId: string; state: NeoTodo['state'] }[] {
     return (
       this.db
@@ -104,5 +158,12 @@ export const workCleanupReads = defineRepositoryOp(
   'work.cleanup.reads',
   'read',
   WorkCleanupRepository,
-  ['owners', 'liveBindings']
+  ['owners', 'liveBindings', 'evidence', 'releasedFolders', 'gone']
+);
+
+export const workCleanupWrites = defineRepositoryOp(
+  'work.cleanup.writes',
+  'write',
+  WorkCleanupRepository,
+  ['markGone', 'forgetGone']
 );

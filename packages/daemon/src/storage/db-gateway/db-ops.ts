@@ -267,6 +267,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     reserveNeoHomeProjects,
     neoTodoSessionReads,
     workCleanupReads,
+    workCleanupWrites,
     neoTodoSessionWrites,
     neoStallReminderWrite,
     neoDaemonCardWrite,
@@ -408,4 +409,4 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     gitHubWatchPollingWrite,
   ].map((op) => [op.name, op])
 );
-import { workCleanupReads } from '../repositories/work-cleanup-worker.ts';
+import { workCleanupReads, workCleanupWrites } from '../repositories/work-cleanup-worker.ts';

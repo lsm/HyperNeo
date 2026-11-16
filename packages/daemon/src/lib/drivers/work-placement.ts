@@ -79,6 +79,12 @@ export async function prepareWorkerFolder(
 }
 
 type Cleanup = NonNullable<WorkArchived['worktree']>;
+export const WORKTREE_UNSAVED = [
+  'The worktree has uncommitted changes; kept.',
+  'The worktree has unpushed commits or cannot be verified; kept.',
+  'The clone has a stash or another worktree; kept.',
+  'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.',
+] as const;
 type Facts = { dirty: boolean; unpushed: string; submodules: boolean };
 export async function workerWorktreeHasSubmodules(directory: string): Promise<boolean> {
   return (await simpleGit(directory).raw(['submodule', 'status', '--recursive'])).trim() !== '';
@@ -94,18 +100,13 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
     'result:ready'
   )
   .pipe(
-    (facts: Facts) =>
-      facts.dirty
-        ? { reason: { reason: 'The worktree has uncommitted changes; kept.' } }
-        : { value: true },
+    (facts: Facts) => (facts.dirty ? { reason: { reason: WORKTREE_UNSAVED[0] } } : { value: true }),
     'facts',
     'result:ready'
   )
   .pipe(
     (facts: Facts) =>
-      facts.unpushed === '0'
-        ? { value: true }
-        : { reason: { reason: 'The worktree has unpushed commits or cannot be verified; kept.' } },
+      facts.unpushed === '0' ? { value: true } : { reason: { reason: WORKTREE_UNSAVED[1] } },
     'facts',
     'result:ready'
   )
@@ -287,7 +288,7 @@ export async function cleanupOwnedWorktree(
       return {
         directory,
         removed: false,
-        reason: 'The clone has a stash or another worktree; kept.',
+        reason: WORKTREE_UNSAVED[2],
       };
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
