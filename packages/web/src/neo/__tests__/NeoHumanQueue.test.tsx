@@ -624,6 +624,30 @@ describe('NeoHumanQueue', () => {
     expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
   });
 
+  it('names a group by its queued card until the ask title is known', () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={{
+          items: [
+            {
+              state: 'waiting',
+              askId: 'far',
+              questionId: 'qf',
+              text: 'Book the far trip?',
+              todos: [],
+            },
+          ],
+          counts: { far: { waiting: 1, held: 0, progress: 0 } },
+        }}
+        entries={[]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(view.queryByText('far')).toBeNull();
+    expect(view.getByRole('region', { name: 'Book the far trip?' })).toBeTruthy();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue

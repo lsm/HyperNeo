@@ -1110,6 +1110,36 @@ describe('card reply notice navigation', () => {
     ).toBeTruthy();
   });
 
+  it('keeps listing an open ask the queue holds nothing for', () => {
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('tax', 'Fictional tax', { state: 'doing' }),
+            testAskEntry('empty', 'Fictional empty ask', { state: 'todo' }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'progress',
+                askId: 'tax',
+                todoId: 'tax-step',
+                title: 'tax step',
+                owner: 'worker',
+              },
+            ],
+            counts: { tax: { waiting: 0, held: 0, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    expect(document.querySelector('[data-ask="empty"]')).toBeTruthy();
+    expect(document.querySelector('article[data-ask="tax"]')).toBeNull();
+  });
+
   it('applies the chosen topic to the queue', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
