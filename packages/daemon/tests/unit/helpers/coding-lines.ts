@@ -32,7 +32,6 @@ export function driverCodingLines(
     rules?: LineRule[];
     holds?: LineHold[];
     ready?: string[];
-    effort?: string;
   } = {},
   calls: string[] = []
 ): CodingLines {
@@ -44,7 +43,6 @@ export function driverCodingLines(
   } as unknown as HyperneoAdapterDeps);
   return {
     active: () => true,
-    defaultEffort: () => prefs.effort,
     models: () => catalog,
     resolve: async (target) =>
       target.adapter === 'hyperneo'

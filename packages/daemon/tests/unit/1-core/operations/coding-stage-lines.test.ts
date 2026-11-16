@@ -1,6 +1,4 @@
-import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
-import { getCodexBridgeModelInfos } from '../../../../src/lib/providers/codex-models.ts';
 import { chooseLine } from '../../../../src/lib/neo/pack-selection.ts';
 import {
   CODING_WORK_KINDS,
@@ -28,27 +26,23 @@ describe('codingCandidateLine', () => {
   const lines = driverCodingLines(catalog);
 
   test('a hyperneo candidate resolves to the canonical model and provider the driver starts', async () => {
-    expect((await codingCandidateLine(lines, hyperneo)).line).toEqual({
-      ...opusLine,
-      effort: 'high',
-    });
+    expect((await codingCandidateLine(lines, hyperneo)).line).toEqual(opusLine);
     for (const model of ['claude-opus-5-5-alias', 'CLAUDE-OPUS-5-5', 'Claude Opus 5.5'])
-      expect((await codingCandidateLine(lines, { ...hyperneo, model })).line).toEqual({
-        ...opusLine,
-        effort: 'high',
-      });
+      expect((await codingCandidateLine(lines, { ...hyperneo, model })).line).toEqual(opusLine);
     expect((await codingCandidateLine(lines, { ...glm, model: 'glm-6-alias' })).line.provider).toBe(
       'glm'
     );
   });
 
-  test('an omitted model resolves to the default line, also with only an effort', async () => {
+  test('an omitted model resolves to the default line; effort is not part of the line and is kept as given', async () => {
     expect((await codingCandidateLine(lines, { adapter: 'hyperneo' })).line).toEqual(opusLine);
-    for (const effort of ['think24k', 'High', 'high'])
-      expect((await codingCandidateLine(lines, { adapter: 'hyperneo', effort })).line).toEqual({
-        ...opusLine,
-        effort: 'high',
+    for (const effort of ['think24k', 'High', 'high']) {
+      const offer = await codingCandidateLine(lines, { adapter: 'hyperneo', effort });
+      expect(offer).toEqual({
+        line: opusLine,
+        target: { adapter: 'hyperneo', model: 'claude-opus-5-5', effort },
       });
+    }
   });
 
   test('a hyperneo model that is unknown or unavailable has no provider', async () => {
@@ -97,22 +91,6 @@ describe('rankCodingTargets', () => {
           {}
         )
       ).toMatchObject({ value: [glm], skipped: [`${heldText}`] });
-  });
-
-  test('an effort spelled think24k or High meets a rule written for high; the nearest allowed effort is used', async () => {
-    const rules = [{ line: { ...opusLine, effort: 'high' }, never: { kinds: ['coding.write'] } }];
-    for (const effort of ['think24k', 'High'])
-      expect(
-        await rankCodingTargets(
-          driverCodingLines(catalog, { rules }),
-          'coding.write',
-          [{ ...hyperneo, effort }, glm],
-          {}
-        )
-      ).toMatchObject({
-        value: [{ ...hyperneo, effort: 'medium' }, glm],
-        skipped: ['anthropic/claude-opus-5-5 via hyperneo: excluded by a rule'],
-      });
   });
 
   test('project rules apply to the scope: never excludes, only allows', async () => {
@@ -217,64 +195,36 @@ describe('codingStartAlternatives', () => {
 });
 
 describe('rankCodingTargets with an inherited start', () => {
-  const route = (effort: string) => [
-    { kind: 'coding.write', lines: [{ provider: 'glm', model: 'glm-6', effort }] },
-  ];
-
-  test('an omitted effort ranks as the inherited effort for rules and routes; the nearest allowed effort is used', async () => {
-    const rules = [{ line: { ...opusLine, effort: 'high' }, never: { kinds: ['coding.write'] } }];
-    const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
-    expect(
-      await rankCodingTargets(
-        driverCodingLines(catalog, { rules, effort: 'high' }),
-        'coding.write',
-        [target, glm],
-        {}
-      )
-    ).toMatchObject({
-      value: [
-        { ...target, effort: 'medium' },
-        { ...glm, effort: 'high' },
-      ],
-    });
-    expect(
-      await rankCodingTargets(
-        driverCodingLines(catalog, { routes: route('high'), effort: 'high' }),
-        'coding.write',
-        [target, glm],
-        {}
-      )
-    ).toMatchObject({
-      value: [
-        { ...glm, effort: 'high' },
-        { ...target, effort: 'high' },
-      ],
-    });
-  });
-
   test('the dispatched start names the resolved model, so an idle worker on an excluded model is not reused', async () => {
     const rules = [
       { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
     ];
-    const defaulted: { adapter: string; place: typeof place; model?: string; effort?: string } = {
+    const defaulted: { adapter: string; place: typeof place; model?: string } = {
       adapter: 'hyperneo',
       place,
     };
     const result = await rankCodingTargets(
-      driverCodingLines(catalog, { rules, effort: 'medium' }),
+      driverCodingLines(catalog, { rules }),
       'coding.write',
       codingStartAlternatives(defaulted, catalog),
       {}
     );
     if ('reason' in result) throw new Error(result.reason);
-    expect(result.value.map((entry) => entry.model)).not.toContain('glm-6');
-    expect(result.value[0]).toEqual({
-      adapter: 'hyperneo',
-      place,
-      model: 'claude-opus-5-5',
-      effort: 'medium',
-    });
+    expect(result.value.some((entry) => entry.model === 'glm-6')).toBe(false);
+    expect(result.value[0]).toEqual({ adapter: 'hyperneo', place, model: 'claude-opus-5-5' });
     expect(result.sources[0]).toBe(defaulted);
+  });
+
+  test('a route naming an effort does not change the effort a start runs at', async () => {
+    const routes = [{ kind: 'coding.write', lines: [{ ...opusLine, effort: 'max' }] }];
+    expect(
+      await rankCodingTargets(
+        driverCodingLines(catalog, { routes }),
+        'coding.write',
+        [hyperneo],
+        {}
+      )
+    ).toMatchObject({ value: [hyperneo] });
   });
 });
 
@@ -285,133 +235,6 @@ describe('CODING_WORK_KINDS', () => {
       'coding.review',
       'coding.verify',
     ]);
-  });
-});
-
-describe('rankCodingTargets with route effort', () => {
-  const graded = [
-    { ...catalogModel('claude-opus-5-5', 'anthropic'), effortLevels: ['low', 'medium', 'high'] },
-    catalogModel('glm-6', 'glm'),
-  ] as ModelInfo[];
-  const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
-
-  test.each(['coding.write', 'coding.review', 'coding.verify'])(
-    'a %s route naming high wins over the medium default and the target carries high',
-    async (kind) => {
-      const routes = [{ kind, lines: [{ ...opusLine, effort: 'high' }] }];
-      const result = await rankCodingTargets(
-        driverCodingLines(graded, { routes, effort: 'medium' }),
-        kind,
-        [target, glm],
-        {}
-      );
-      expect(result).toMatchObject({
-        value: [{ ...target, effort: 'high' }, glm],
-        sources: [target, glm],
-      });
-    }
-  );
-
-  test('with no effort route the default effort stays first', async () => {
-    expect(
-      await rankCodingTargets(
-        driverCodingLines(graded, { effort: 'medium' }),
-        'coding.write',
-        [target, glm],
-        {}
-      )
-    ).toMatchObject({ value: [{ ...target, effort: 'medium' }, glm] });
-  });
-});
-
-describe('rankCodingTargets with real catalog efforts', () => {
-  test('a Codex model with no catalog effort list still offers the driver efforts a route can pick', async () => {
-    const codex = getCodexBridgeModelInfos();
-    const sol = { adapter: 'hyperneo', place, model: 'gpt-6.1-sol' };
-    const line = { provider: 'anthropic-codex', model: 'gpt-6.1-sol' };
-    const routes = [{ kind: 'coding.write', lines: [{ ...line, effort: 'high' }] }];
-    expect(
-      await rankCodingTargets(
-        driverCodingLines(codex, { routes, effort: 'medium' }),
-        'coding.write',
-        [sol],
-        {}
-      )
-    ).toMatchObject({ value: [{ ...sol, effort: 'high' }] });
-    const rules = [{ line: { ...line, effort: 'medium' }, never: { kinds: ['coding.write'] } }];
-    const result = await rankCodingTargets(
-      driverCodingLines(codex, { rules, effort: 'medium' }),
-      'coding.write',
-      [sol],
-      {}
-    );
-    expect(result).toMatchObject({ value: [{ ...sol, effort: 'low' }] });
-  });
-
-  test('catalog xhigh is offered in driver vocabulary and a route written as xhigh picks it', async () => {
-    const opus = {
-      ...catalogModel('claude-opus-5-5', 'anthropic'),
-      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-    } as ModelInfo;
-    const routes = [{ kind: 'coding.review', lines: [{ ...opusLine, effort: 'xhigh' }] }];
-    expect(
-      await rankCodingTargets(
-        driverCodingLines([opus], { routes, effort: 'medium' }),
-        'coding.review',
-        [hyperneo],
-        {}
-      )
-    ).toMatchObject({ value: [{ ...hyperneo, effort: 'extra high' }] });
-  });
-});
-
-describe('rankCodingTargets with executed efforts', () => {
-  const graded = (effortLevels: ModelInfo['effortLevels']) =>
-    [{ ...catalogModel('claude-opus-5-5', 'anthropic'), effortLevels }] as ModelInfo[];
-  const never = (efforts: string[]) =>
-    efforts.map((effort) => ({
-      line: { ...opusLine, effort },
-      never: { kinds: ['coding.write'] },
-    }));
-
-  test('ultra on a model whose top level is max ranks as max, so a max rule catches it', async () => {
-    const result = await rankCodingTargets(
-      driverCodingLines(graded(['low', 'medium', 'high', 'max']), { rules: never(['max']) }),
-      'coding.write',
-      [{ ...hyperneo, effort: 'ultra' }],
-      {}
-    );
-    expect(result).toMatchObject({
-      value: [{ ...hyperneo, effort: 'high' }],
-      skipped: ['anthropic/claude-opus-5-5 via hyperneo: excluded by a rule'],
-    });
-  });
-
-  test('an inherited medium on a model without medium ranks as the low it runs at', async () => {
-    const lines = driverCodingLines(graded(['low', 'high', 'max']), {
-      rules: never(['low']),
-      effort: 'medium',
-    });
-    const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
-    expect(await rankCodingTargets(lines, 'coding.write', [target], {})).toMatchObject({
-      value: [{ ...target, effort: 'high' }],
-    });
-  });
-
-  test('a route can select off, and off is the fallback when every effort is excluded', async () => {
-    const routes = [{ kind: 'coding.write', lines: [{ ...opusLine, effort: 'off' }] }];
-    const levels = graded(['low', 'medium', 'high', 'xhigh', 'max']);
-    expect(
-      await rankCodingTargets(driverCodingLines(levels, { routes }), 'coding.write', [hyperneo], {})
-    ).toMatchObject({ value: [{ ...hyperneo, effort: 'off' }] });
-    expect(
-      await rankCodingTargets(
-        driverCodingLines(levels, { rules: never(['low', 'medium', 'high', 'xhigh', 'max']) }),
-        'coding.write',
-        [hyperneo],
-        {}
-      )
-    ).toMatchObject({ value: [{ ...hyperneo, effort: 'off' }] });
   });
 });
 

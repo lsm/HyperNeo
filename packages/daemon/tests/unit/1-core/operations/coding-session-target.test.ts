@@ -1,4 +1,3 @@
-import type { ModelInfo } from '@hyperneo/shared';
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
@@ -156,36 +155,41 @@ describe('coding session target decision', () => {
     expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });
   });
 
-  test('a start runs at a route effort, not the medium default', async () => {
-    const { todo, decide } = setup();
-    const graded = [
-      { ...catalogModel('glm-6', 'glm'), effortLevels: ['medium', 'high'] },
-    ] as ModelInfo[];
-    const routes = [
-      { kind: 'coding.write', lines: [{ provider: 'glm', model: 'glm-6', effort: 'high' }] },
-    ];
-    expect(
-      await decide(todo(), glm, driverCodingLines(graded, { routes, effort: 'medium' }))
-    ).toEqual({ value: { ...glm, effort: 'high' } });
-  });
-
-  test('saved legacy write model and effort apply to a start that names neither, with routing off', async () => {
-    const { db, todo, decide } = setup();
+  const saveWrite = (db: ReturnType<typeof setup>['db'], model: string, effort: string) => {
     const save = db.prepare(`INSERT INTO neo_pack_preferences
       (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
       VALUES ('coding', 'repo', ?, ?, ?, 'human', 1)`);
-    save.run(repo, 'write.model', JSON.stringify('glm-6'));
-    save.run(repo, 'write.effort', JSON.stringify('high'));
-    const bare = { verb: 'start' as const, adapter: 'hyperneo', name: 'backend' };
-    expect(await decide(todo(), bare)).toEqual({
+    save.run(repo, 'write.model', JSON.stringify(model));
+    save.run(repo, 'write.effort', JSON.stringify(effort));
+  };
+  const routingOff = () => ({ ...driverCodingLines(catalog), active: () => false });
+  const bare = { verb: 'start' as const, adapter: 'hyperneo', name: 'backend' };
+
+  test('saved legacy write model and effort apply to a start that names neither, with routing off', async () => {
+    const { db, todo, decide } = setup();
+    saveWrite(db, 'glm-6', 'high');
+    expect(await decide(todo(), bare, routingOff())).toEqual({
       value: { ...bare, model: 'glm-6', effort: 'high' },
     });
-    expect(await decide(todo('other'), { ...glm, effort: 'low' })).toEqual({
+    expect(await decide(todo('other'), { ...glm, effort: 'low' }, routingOff())).toEqual({
       value: { ...glm, effort: 'low' },
     });
-    expect(await decide(todo('third'), start('desktop'))).toEqual({ value: start('desktop') });
+    expect(await decide(todo('third'), start('desktop'), routingOff())).toEqual({
+      value: start('desktop'),
+    });
     const remote = { ...bare, place: { machine: 'm', name: 'w', daemon: 'other-host' } };
-    expect(await decide(todo('fourth'), remote)).toEqual({ value: remote });
+    expect(await decide(todo('fourth'), remote, routingOff())).toEqual({ value: remote });
+  });
+
+  test('a stale saved write model or effort is dropped, so the start still runs on the default', async () => {
+    const { db, todo, decide } = setup();
+    saveWrite(db, 'retired-9', 'bogus');
+    expect(await decide(todo(), bare, routingOff())).toEqual({ value: bare });
+    const other = setup();
+    saveWrite(other.db, 'retired-9', 'high');
+    expect(await other.decide(other.todo(), bare, routingOff())).toEqual({
+      value: { ...bare, effort: 'high' },
+    });
   });
 
   test('a send to an existing session is not ranked', async () => {

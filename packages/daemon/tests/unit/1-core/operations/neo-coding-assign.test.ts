@@ -191,7 +191,6 @@ describe('coding actor assignments', () => {
     const lines: CodingLines = {
       models: () => [],
       active: () => true,
-      defaultEffort: () => undefined,
       resolve: async (target) => ({ ok: true, value: { model: target.model } }),
       rank,
     };
@@ -217,7 +216,6 @@ describe('coding actor assignments', () => {
     const f = fixture(undefined, {
       models: () => [],
       active: () => true,
-      defaultEffort: () => undefined,
       resolve: async (target) => ({ ok: true, value: { model: target.model } }),
       rank: async (_kind, candidates) => ({
         ranked: [],

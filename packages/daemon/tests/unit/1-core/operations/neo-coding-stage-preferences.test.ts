@@ -169,7 +169,7 @@ describe('coding stage target preferences', () => {
       db.close();
     }
   });
-  test('declares only the three harness fields as bounded text; model and effort moved to routes', () => {
+  test('declares the harness and effort fields as bounded text; model moved to routes', () => {
     const pack = {
       id: 'coding',
       describe: '',
@@ -178,8 +178,11 @@ describe('coding stage target preferences', () => {
     };
     expect(Object.keys(pack.preferences)).toEqual([
       'write.harness',
+      'write.effort',
       'review.harness',
+      'review.effort',
       'verify.harness',
+      'verify.effort',
     ]);
     for (const key of Object.keys(pack.preferences)) {
       for (const value of ['', 'openai/gpt-6', 'high'])
@@ -198,7 +201,7 @@ describe('coding stage target preferences', () => {
         ).toHaveProperty('reason');
     }
   });
-  test('the coding skill names only declared stage keys and sends model and effort to routes', () => {
+  test('the coding skill names only declared stage keys and sends model to routes', () => {
     const named = [
       ...NEO_PACK_CODING_INSTRUCTIONS.matchAll(/\b(write|review|verify)\.([a-z]+)(\/[a-z/]+)?/g),
     ].flatMap(([, stage, field, more]) =>
