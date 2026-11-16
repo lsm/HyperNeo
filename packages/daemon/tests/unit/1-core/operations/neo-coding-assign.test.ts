@@ -22,11 +22,13 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { invokeOperation, type OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
 const initialPath = process.env.PATH;
+const initialDataDir = process.env.HYPERNEO_DATA_DIR;
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   process.env.PATH = initialPath;
-  delete process.env.HYPERNEO_DATA_DIR;
+  if (initialDataDir === undefined) delete process.env.HYPERNEO_DATA_DIR;
+  else process.env.HYPERNEO_DATA_DIR = initialDataDir;
   configureWorkerSandbox(() => 'off');
 });
 const url = 'https://github.com/synthetic/actors/pull/7';
