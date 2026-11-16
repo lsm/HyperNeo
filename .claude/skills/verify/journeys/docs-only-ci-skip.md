@@ -1,7 +1,8 @@
 # Docs-only changes skip code checks
 
 `scripts/lib/inert-docs.sh` defines inert docs: Markdown and plain text under
-`docs/`, and top-level `*.md`. Paths are read NUL-delimited, so non-ASCII names
+`docs/`, top-level `*.md`, and `AGENTS.md` or `CLAUDE.md` at any depth. Other
+nested Markdown such as `SKILL.md` is code. Paths are read NUL-delimited, so non-ASCII names
 match. The CI Path Filter and the pre-commit hook both use it.
 
 Hook: run `bash .claude/skills/verify/docs-only-hook.sh`. It makes real
