@@ -102,8 +102,11 @@ checks `ref.adapter === 'codex'`, parses only `codex://threads/…` links, asks
 for `capabilities` of `codex`, and its recovery notices say "Codex thread".
 The daemon also compares the harness id by its literal `'codex'` value in
 `session-engine.ts`, `create-session-config.ts`, `query-lifecycle-manager.ts`
-(two places), `agent-session.ts` (four places) and `oap-runtime.ts`. A
-mechanical rename would be wrong there. For example,
+(two places), `agent-session.ts` (four places), `oap-runtime.ts`, and
+`query-runner.ts` (five places). In `query-runner.ts` they are the
+`engine === 'codex'` run dispatch, two on its error path and two stale-query
+closes. If the dispatch is missed, OXAP chats silently run on the SDK. A
+mechanical rename would be wrong in all of them. For example,
 `harness !== 'codex'` in `agent-session.ts` picks a fallback SDK provider, and
 renamed to `!== 'oxap-codex'` it would rewrite a future OXAP DeepSeek chat's
 provider.
@@ -159,6 +162,13 @@ Codex adapter. At session start and on each refresh request, the adapter asks
 the session's client for tokens through one new host interaction, and the
 client answers. HyperNeo answers from its provider. The tokens travel only on
 that live channel, never in the config file or the hub environment.
+
+This needs an OAuth login on the OpenAI Codex provider. The provider can also
+hold an API key instead: from `OPENAI_API_KEY` in its environment, or
+imported from Codex's `auth.json`. An API key has no access token or account
+id. So `decideOxapOpen` refuses that case before any open, with "OXAP Codex
+needs an OpenAI sign-in, not an API key; sign in on the OpenAI Codex
+provider". The harness dropdown shows the same reason.
 
 A DeepSeek row is not written yet. The Go DeepSeek adapter takes an
 executable, a `provider`, a `model` and an environment. Before that row
@@ -288,7 +298,7 @@ production-line estimates, sized against `oap-hub-config.ts`,
 
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
-| 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check, `'codex'` → `oxap-codex` | daemon | ~80 |
+| 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex` | daemon | ~100 |
 | 2 | `engineForProvider`, session create copies `harness`, open/clear/reopen read adapter name, link parser and label from the row, synthetic second row in tests | daemon | ~120 |
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
