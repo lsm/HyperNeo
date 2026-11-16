@@ -17,6 +17,7 @@ import {
 import { runMigration455 } from '../../../../src/storage/schema/m455-work-started-sessions';
 import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { runMigration517 } from '../../../../src/storage/schema/m517-work-released';
+import { runMigration519 } from '../../../../src/storage/schema/m519-work-started-role';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
 
@@ -44,6 +45,7 @@ beforeEach(() => {
   runMigration455(db);
   runMigration465(db);
   runMigration517(db);
+  runMigration519(db);
 });
 
 afterEach(() => {
