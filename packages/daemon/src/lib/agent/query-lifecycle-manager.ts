@@ -2,6 +2,7 @@ import { runLagPhase } from '../event-loop-activity.ts';
 import type { MessageContent, Session, MessageHub, HyperNeoActionMessage } from '@hyperneo/shared';
 import type { QueryLike } from './query-like.ts';
 import { generateUUID } from '@hyperneo/shared';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
@@ -385,7 +386,7 @@ export class QueryLifecycleManager {
 
   private async gateOnMissingTranscript(caller: string): Promise<boolean> {
     const { session, db } = this.ctx;
-    if (!session.sdkSessionId || session.config.harness === 'codex') {
+    if (!session.sdkSessionId || isOxapHarness(session.config.harness)) {
       return true;
     }
     const transcript = await this.validateAndRepairWithMigration();
@@ -432,7 +433,7 @@ export class QueryLifecycleManager {
 
   async validateSdkTranscript(): Promise<SDKTranscriptCheck> {
     const { session } = this.ctx;
-    if (!session.sdkSessionId || session.config.harness === 'codex') {
+    if (!session.sdkSessionId || isOxapHarness(session.config.harness)) {
       return { valid: true };
     }
     return this.validateAndRepairWithMigration();

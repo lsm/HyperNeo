@@ -1,4 +1,5 @@
 import type { SessionConfig } from '@hyperneo/shared';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { isDeepStrictEqual } from 'node:util';
 import { codexSessionRefusal, selectSessionEngine } from '../agent/session-engine.ts';
 
@@ -128,7 +129,7 @@ export function admitCreateSessionConfig(
   requested: Partial<SessionConfig> | undefined
 ): Partial<SessionConfig> {
   if (!requested) return {};
-  if (requested.harness !== undefined && selectSessionEngine(requested.harness) === 'codex') {
+  if (requested.harness !== undefined && isOxapHarness(selectSessionEngine(requested.harness))) {
     const refusal = codexSessionRefusal(requested, false, false);
     if (refusal) throw new Error(refusal);
   }
@@ -153,7 +154,7 @@ export function admitUpdateSessionConfig(
   currentHarness?: SessionConfig['harness']
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
-  if (currentHarness === 'codex') {
+  if (isOxapHarness(currentHarness)) {
     const refusal = codexSessionRefusal(requested, false, false);
     if (refusal) throw new Error(refusal);
   }
