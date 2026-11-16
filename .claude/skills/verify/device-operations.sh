@@ -46,18 +46,15 @@ terminal() { HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=$PORT bun .claude/skills/
 outcome() { python3 -c "
 import json,sys
 r=json.load(sys.stdin)['reply']
+if 'error' in r:
+    sys.exit('RPC error: %s' % r['error'])
 keys=sorted(k for k in r if k not in ('ok','reason','code','codeId','expiresAt'))
 print('ok' if r['ok'] else 'refused: '+r['reason'].split(':')[0], *('%s=%s'%(k,len(r[k]) if isinstance(r[k],list) else r[k]) for k in keys))"; }
 
 laptop() {
   local op=$1
   shift
-  if [ "$op" = "${DEVICE_OPS_FAIL:-}" ]; then
-    rpc "$op.unknown" "$@" > "$RUN/injected.json" || return 1
-    python3 -c "import json,sys;print('injected', sys.argv[1], 'RPC answered error:', json.load(open(sys.argv[2]))['reply']['error'])" \
-      "$op" "$RUN/injected.json" >&2
-    return 1
-  fi
+  [ "$op" = "${DEVICE_OPS_FAIL:-}" ] && op=$op.unknown
   rpc "$op" "$@" | outcome
 }
 local_tools() { terminal "$@" | outcome; }

@@ -5,9 +5,10 @@ when one of them changes. It stops with a non-zero exit at the first failed call
 diffs the whole transcript against the expected one below, exiting non-zero on any difference.
 It also fails when the daemon does not shut down cleanly (a non-zero exit, or no
 `Graceful shutdown complete` in its log), and keeps the run with its `daemon.log` whenever it fails.
-The second command proves the RPC check: it breaks the `device.list` call and passes only if the
-journey fails at that step after the daemon answered it with an error. It first checks that a
-run refused before any RPC (port 8399) does not count.
+The second command proves the RPC check: it renames the `device.list` call to an unknown
+operation, so the daemon's error reply goes through the same outcome check as every call. It
+passes only if that check printed `RPC error`, the journey stopped at that step and the daemon
+still shut down cleanly. It first checks that a run refused before any RPC (port 8399) does not count.
 
 ```bash
 .claude/skills/verify/device-operations.sh 9337
