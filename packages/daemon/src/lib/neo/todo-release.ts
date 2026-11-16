@@ -92,7 +92,8 @@ export function readNeoTodoArchive(
     outcome.kind === 'completed'
       ? (outcome.value as { ok?: boolean; value?: { worktree?: { reason?: string } } })
       : null;
-  return result?.ok && result.value?.worktree?.reason !== WORKTREE_IN_USE
+  const kept = result?.value?.worktree?.reason;
+  return result?.ok && kept !== WORKTREE_IN_USE && !kept?.startsWith('Could not verify or remove')
     ? { value: { released: result } }
     : { reason: { pending: JSON.stringify(result ?? outcome).slice(0, 300) } };
 }

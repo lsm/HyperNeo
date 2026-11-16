@@ -22,6 +22,7 @@ import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
+import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
@@ -36,6 +37,7 @@ export function buildTitleGenerationPrompt(messageText: string): string {
 
 export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive' | 'work_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
+type WorktreeCleanup = NonNullable<WorkArchived['worktree']>;
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
 type TitleGenerationProviderService = Pick<
@@ -569,7 +571,30 @@ export class SessionLifecycle {
     return outcome;
   }
 
-  async archiveResources(sessionId: string, trigger: ArchiveResourcesTrigger): Promise<void> {
+  private async cleanupSessionWorktree(worktree: WorktreeMetadata): Promise<WorktreeCleanup> {
+    const cleanup = (await cleanupOwnedWorktree(worktree.worktreePath, [
+      getWorktreeBaseDir(worktree.mainRepoPath),
+    ])) ?? {
+      directory: worktree.worktreePath,
+      removed: false,
+      reason: 'The worktree is outside its project root; kept.',
+    };
+    if (cleanup.removed) await this.worktreeManager.removeWorktree(worktree, true);
+    return cleanup;
+  }
+
+  async cleanupArchivedWorktree(sessionId: string): Promise<WorktreeCleanup | undefined> {
+    const session = this.db.getSession(sessionId);
+    if (session?.status !== 'archived' || !session.worktree) return undefined;
+    const cleanup = await this.cleanupSessionWorktree(session.worktree);
+    if (cleanup.removed) await this.update(sessionId, { worktree: undefined });
+    return cleanup;
+  }
+
+  async archiveResources(
+    sessionId: string,
+    trigger: ArchiveResourcesTrigger
+  ): Promise<WorktreeCleanup | undefined> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     const session = this.db.getSession(sessionId);
     if (!session) {
@@ -652,23 +677,27 @@ export class SessionLifecycle {
       this.logger.error(`[SessionLifecycle] archiveResources: SDK file archive failed:`, error);
     }
 
+    let cleanup: WorktreeCleanup | undefined;
     if (session.worktree) {
       try {
-        if (trigger === 'work_archive') {
-          const { worktreePath, mainRepoPath } = session.worktree;
-          const cleanup = await cleanupOwnedWorktree(worktreePath, [
-            getWorktreeBaseDir(mainRepoPath),
-          ]);
-          if (!cleanup?.removed)
-            throw new Error(cleanup?.reason ?? 'The worktree is outside its project root; kept.');
+        if (trigger === 'work_archive')
+          cleanup = await this.cleanupSessionWorktree(session.worktree);
+        else {
+          await this.worktreeManager.removeWorktree(session.worktree, true);
+          await releaseRemovedWorkerFolders(session.worktree.worktreePath);
         }
-        await this.worktreeManager.removeWorktree(session.worktree, true);
-        await releaseRemovedWorkerFolders(session.worktree.worktreePath);
-        completedPhases.push('worktree-remove');
+        if (cleanup?.removed !== false) completedPhases.push('worktree-remove');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] archiveResources: worktree removal failed:`, error);
+        if (trigger === 'work_archive')
+          cleanup = {
+            directory: session.worktree.worktreePath,
+            removed: false,
+            reason: `Could not verify or remove the worktree; kept: ${error instanceof Error ? error.message : String(error)}`,
+          };
       }
     }
+    const keepWorktree = cleanup?.removed === false;
 
     try {
       const archivedWorktreeMetadata = session.worktree
@@ -688,7 +717,7 @@ export class SessionLifecycle {
       await this.update(sessionId, {
         status: 'archived',
         archivedAt,
-        ...(session.worktree ? { worktree: undefined } : {}),
+        ...(session.worktree && !keepWorktree ? { worktree: undefined } : {}),
         ...(Object.keys(metadataUpdate).length > 0
           ? {
               metadata: {
@@ -707,6 +736,7 @@ export class SessionLifecycle {
     this.logger.info(
       `[SessionLifecycle] archiveResources: session ${sessionId} archived (trigger=${trigger}, phases=${completedPhases.join(',')})`
     );
+    return cleanup;
   }
 
   async deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {

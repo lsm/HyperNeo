@@ -174,7 +174,7 @@ async function folderInUse(directory: string): Promise<boolean> {
   return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
 }
 
-async function unpublishedCloneCommits(git: SimpleGit, own: string): Promise<string> {
+async function fetchCanonicalBranches(git: SimpleGit, own: string): Promise<void> {
   const source = (await readFile(join(own, 'hyperneo-source-checkout'), 'utf8')).trim();
   if (!isAbsolute(source)) throw new Error('The clone names no source checkout.');
   const url = (await simpleGit(source).raw(['remote', 'get-url', 'origin'])).trim();
@@ -188,14 +188,18 @@ async function unpublishedCloneCommits(git: SimpleGit, own: string): Promise<str
     url,
     '+refs/heads/*:refs/hyperneo-check/*',
   ]);
-  return git.raw([
-    'rev-list',
-    '--count',
-    'HEAD',
-    '--branches',
-    '--not',
-    '--glob=refs/hyperneo-check/*',
-  ]);
+}
+
+async function cloneState(git: SimpleGit): Promise<string> {
+  return JSON.stringify(
+    await Promise.all([
+      git.raw(['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']),
+      git.raw(['stash', 'list']),
+      git.raw(['worktree', 'list', '--porcelain']),
+      git.raw(['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads']),
+      git.raw(['rev-parse', 'HEAD']),
+    ])
+  );
 }
 
 export async function cleanupOwnedWorktree(
@@ -230,11 +234,15 @@ export async function cleanupOwnedWorktree(
         removed: false,
         reason: 'The folder is not a linked worker worktree; kept.',
       };
+    if (clone) await fetchCanonicalBranches(git, own);
+    const state = clone ? await cloneState(git) : '';
     const [status, unpushed, submodules, stash, worktrees] = await Promise.all([
       git.status(['--ignore-submodules=none']),
-      clone
-        ? unpublishedCloneCommits(git, own)
-        : git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']),
+      git.raw(
+        clone
+          ? ['rev-list', '--count', 'HEAD', '--branches', '--not', '--glob=refs/hyperneo-check/*']
+          : ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']
+      ),
       workerWorktreeHasSubmodules(directory),
       clone ? git.raw(['stash', 'list']) : '',
       clone ? git.raw(['worktree', 'list', '--porcelain']) : '',
@@ -249,6 +257,8 @@ export async function cleanupOwnedWorktree(
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
     if (await folderInUse(directory).catch(() => true))
       return { directory, removed: false, reason: WORKTREE_IN_USE };
+    if (clone && (await cloneState(git)) !== state)
+      return { directory, removed: false, reason: 'The clone changed while it was checked; kept.' };
     if (clone) await rm(directory, { recursive: true, force: true });
     else
       await simpleGit(dirname(directory)).raw([
