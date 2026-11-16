@@ -1,5 +1,5 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import type { NeoStepRow } from '../../lib/neo/attention/sweep.ts';
+import type { NeoStepRead } from '../../lib/neo/attention/sweep.ts';
 import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
@@ -347,7 +347,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       family: open.family(ask),
       cards: open.cards(ask),
     }));
-    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRow => {
+    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRead => {
       const nudge = open.nudge(todo.id);
       const answered = cards.flatMap((card) =>
         card.state === 'answered' && card.todos.includes(todo.id) ? (card.answeredAt ?? []) : []
