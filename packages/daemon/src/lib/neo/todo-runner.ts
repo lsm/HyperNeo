@@ -59,6 +59,7 @@ import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
+import { releaseNeoTodoWorkers } from './todo-release.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -1730,6 +1731,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
+      await releaseNeoTodoWorkers(sessions, deps.invoke, warn);
     },
   };
 }
