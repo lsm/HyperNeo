@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   validateSDKSessionFile,
@@ -554,6 +554,83 @@ describe('SDK Session File Manager', () => {
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain('Could not find tool_use message for unfindable_tool');
     });
+
+    test('recovers a tool_use missing from the DB out of the transcript request blob', async () => {
+      const assistantContent = [
+        { type: 'thinking', thinking: 'plan', signature: 'sig-abc' },
+        { type: 'tool_use', id: 'blob_t1', name: 'Bash', input: { command: 'ls' } },
+      ];
+      const lines = [
+        JSON.stringify({ type: 'user', uuid: 'u0', message: { role: 'user', content: 'go' } }),
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: 'h1',
+          message: { role: 'assistant', content: assistantContent },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          parentUuid: 'lost-assistant',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'blob_t1' }] },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      const result = await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      expect(result).toMatchObject({ success: true, repairedCount: 1 });
+      expect((await validateSDKSessionFile(testWorkspacePath, testSdkSessionId)).valid).toBe(true);
+      const repaired = readFileSync(testSessionFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const inserted = repaired[2];
+      expect(inserted.type).toBe('assistant');
+      expect(inserted.message.content).toEqual(assistantContent);
+      expect(repaired[3].parentUuid).toBe(inserted.uuid);
+    });
+
+    test('keeps only the newest two backups of the repaired session', async () => {
+      writeFileSync(
+        testSessionFile,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'gone' }] },
+        }) + '\n',
+        'utf-8'
+      );
+      const backupDir = join(testSessionDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const own = `${testSdkSessionId}.jsonl.backup.`;
+      for (const stamp of ['2020-01-01', '2020-01-02', '2020-01-03']) {
+        writeFileSync(join(backupDir, `${own}${stamp}`), 'old');
+      }
+      writeFileSync(join(backupDir, 'other-session.jsonl.backup.2020-01-01'), 'other');
+      writeFileSync(join(backupDir, 'notes.txt'), 'keep');
+
+      const result = await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      expect(readdirSync(backupDir).sort()).toEqual(
+        [
+          'notes.txt',
+          'other-session.jsonl.backup.2020-01-01',
+          `${own}2020-01-03`,
+          result.backupPath!.split('/').pop()!,
+        ].sort()
+      );
+    });
   });
 
   describe('validateAndRepairSDKSession', () => {
@@ -583,7 +660,7 @@ describe('SDK Session File Manager', () => {
         mockDb
       );
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ valid: true });
     });
 
     test('should return true after successful repair', async () => {
@@ -623,7 +700,7 @@ describe('SDK Session File Manager', () => {
         mockDb
       );
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ valid: true });
     });
 
     test('should return false when repair fails', async () => {
@@ -649,7 +726,8 @@ describe('SDK Session File Manager', () => {
         mockDb
       );
 
-      expect(result).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.repairError).toContain('Could not find tool_use message for unfindable');
     });
   });
 
