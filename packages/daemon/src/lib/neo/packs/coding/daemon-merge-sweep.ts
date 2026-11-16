@@ -67,6 +67,7 @@ export function createCodingDaemonMergeSweep(
   spawn: SpawnFn = spawnProcess
 ) {
   const actor = 'daemon:coding-sweep';
+  const signoffHolds = new Map<string, { key: string; at: number }>();
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
   const read = async (url: string, human = false) => {
@@ -201,11 +202,13 @@ export function createCodingDaemonMergeSweep(
     );
     const handedOff = await ledger.read('humanHandoffs');
     const observed = await Promise.all(
-      rows.map(async ({ repo, number, head, state, stateSince }) => {
+      rows.map(async (row) => {
+        const { repo, number, head, state, stateSince } = row;
         const { policy, health } = await ledger.pollContextCurrent(repo);
         return {
           url: `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`.toLowerCase(),
           head,
+          holdKey: JSON.stringify([head, state, stateSince, row.ci, row.replyAt, policy]),
           ledgerState: state,
           stateSince,
           policy,
@@ -223,8 +226,14 @@ export function createCodingDaemonMergeSweep(
         };
       })
     );
+    for (const url of signoffHolds.keys())
+      if (!observed.some((row) => row.url === url)) signoffHolds.delete(url);
     const candidates = observed.filter(
       (row) =>
+        !(
+          signoffHolds.get(row.url)?.key === row.holdKey &&
+          now - signoffHolds.get(row.url)!.at < 600_000
+        ) &&
         !row.settled &&
         row.readable &&
         (row.policy.mergeBy === 'daemon' || codingNoChecksNeedsHuman(row.policy, 0))
@@ -280,6 +289,9 @@ export function createCodingDaemonMergeSweep(
       }
       if (candidate.policy.mergeBy !== 'daemon') continue;
       const outcome = await merge({ ...candidate, facts: current }, now);
+      signoffHolds.delete(candidate.url);
+      if (outcome === 'needs_human_signoff')
+        signoffHolds.set(candidate.url, { key: candidate.holdKey, at: now });
       if (
         typeof outcome === 'string' &&
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)
@@ -295,13 +307,15 @@ export function createCodingDaemonMergeSweep(
             .reviewHoldsCurrent(candidate.url, candidate.head)
             .catch(() => [])
         )
-      )
-        await delivery
+      ) {
+        const notified = await delivery
           .wake(
             `coding-daemon-signoff:${candidate.url}:${candidate.head}`,
             `${candidate.url} requires human sign-off or a resolved merge policy; daemon merge is held.`
           )
           .catch(() => false);
+        if (!notified) signoffHolds.delete(candidate.url);
+      }
     }
   };
   return (now: number) => events.exclusive(() => sweep(now));

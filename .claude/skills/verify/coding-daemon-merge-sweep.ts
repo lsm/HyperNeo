@@ -102,7 +102,27 @@ try{
  const runSweep=()=>pack.sweep!(tick+=61_000);
  const mergeCalls=()=>readFileSync(join(run,'evidence/gh.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(args=>args[0]==='pr'&&args[1]==='merge');
  const seedStoppedBudget=async()=>{for(let i=0;i<3;i++){const[receipt]=await ledger.write('daemonMerge',{kind:'begin',url,head,actor:'daemon:coding-sweep',at:tick+i});assert(receipt);await ledger.write('daemonMerge',{...receipt,kind:'failed',error:'The base branch policy prohibits the merge.',at:receipt.startedAt});await ledger.write('daemonMerge',{...receipt,kind:'void',at:receipt.startedAt});}};
- if (crossModel) {
+ if (process.argv.includes('signoff-throttle')) {
+   rejectSignoff = false;
+   const reads = () => readFileSync(join(run, 'evidence/gh.jsonl'), 'utf8').split('\n').filter(Boolean).length;
+   await runSweep();
+   const firstReads = reads();
+   await runSweep();
+   assert.equal(reads(), firstReads, 'Held head must avoid redundant GitHub reads');
+   tick += 600_000;
+   await runSweep();
+   assert(reads() > firstReads, 'Expired hold must refresh');
+   assert.equal(mergeCalls().length, 0);
+   publish({ labels: [[]] });
+   assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/merge' }, key: 'humanSignoff', value: [] })).ok);
+   await runSweep();
+   assert.equal(mergeCalls().length, 1, 'Policy event must immediately refresh all gates');
+   evidence.heldReads = firstReads;
+   evidence.sameHeadReadsSkipped = true;
+   evidence.expiredHoldRefreshed = true;
+   evidence.policyEventMerged = true;
+   evidence.verified = true;
+ } else if (crossModel) {
    assert((await rpc('pack.preferences.set', { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/merge' },
      key: 'crossModelReview', value: true })).ok);
    preferences = await rpc('pack.preferences.list', {});

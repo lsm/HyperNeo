@@ -259,3 +259,7 @@ execute no merge. A passing Review fact by the same model must still hold. A
 passing Review fact by a different model on the head must then allow exactly one
 SHA-pinned squash, with saved preferences unchanged. Unit tests cover the sweep's
 single Neo wake for this state.
+
+Add `signoff-throttle` to prove a same-head sign-off hold avoids GitHub reads
+for ten minutes, refreshes on expiry, and immediately rechecks every gate after
+a recorded policy event. The synthetic CLI log records reads and the pinned merge.
