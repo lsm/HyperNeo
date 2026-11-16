@@ -1684,7 +1684,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return todo ? stop(todo, true, ref) : 'not_found: no such todo.';
     },
     start,
-    (id, text, at) => note('todo.stalled', { id }, at, text)
+    (id, text, at) => note('todo.stalled', { id }, at, text),
+    deps.changed
   );
 
   return {

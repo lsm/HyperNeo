@@ -11,7 +11,10 @@ MCP door, and observes the normal runner's admitted start. It stops a real held
 HyperNeo session through `work.stop`, checks its persisted prompt is cleared,
 and checks the target is unchanged. An ordinary processing session's stop must
 preserve two queued delivery jobs. The real reactive database must announce the
-reopened todo before the next start. A second daemon boot finds a two-hour-old
+reopened todo before the next start. A WebSocket client listens to `neo.changed`
+and refreshes with `neo.snapshot`, exactly as the board does. With a prerequisite
+refusing the replacement start without another write, that event must still
+refresh the todo as `todo` with no worker. A second daemon boot finds a two-hour-old
 move fact; two real `NeoService.sweepPacks` calls must admit exactly one recovery
 start. `neo.todo.read` exposes the recovered todo. Retargeting a `send` todo must
 refuse without stopping its peer or changing the peer's persisted held prompt.

@@ -13,7 +13,8 @@ export function createNeoTodoRetarget(
   store: NeoAskTodoRepository,
   stop: (todoId: string, ref: WorkRef) => Promise<string | null>,
   start: (todoId: string) => Promise<unknown>,
-  tell: (todoId: string, text: string, at: number) => Promise<unknown>
+  tell: (todoId: string, text: string, at: number) => Promise<unknown>,
+  changed: () => void
 ) {
   const resume = (superpipe({})('neo.todo.retarget') as PipelineAPI)
     .input(['move'])
@@ -47,7 +48,10 @@ export function createNeoTodoRetarget(
     )
     .pipe(
       async (move: NeoTodoMove, reopened: boolean) => {
-        if (reopened) await start(move.todoId);
+        if (reopened) {
+          changed();
+          await start(move.todoId);
+        }
         return { ok: true, todo: store.getTodo(move.todoId) };
       },
       ['move', 'reopened'],
