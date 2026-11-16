@@ -3409,7 +3409,10 @@ describe('openai-responses-bridge server', () => {
           },
         },
         models,
-        fetchImpl: async (_url, init) => {
+        fetchImpl: (async (
+          _url: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ) => {
           const authorization = new Headers(init?.headers).get('authorization');
           if (authorization === 'Bearer token-a') {
             await new Promise<void>((release) => {
@@ -3433,7 +3436,7 @@ describe('openai-responses-bridge server', () => {
               },
             },
           ]);
-        },
+        }) as typeof fetch,
       });
 
       const send = () =>
