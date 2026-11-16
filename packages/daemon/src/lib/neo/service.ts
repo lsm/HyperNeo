@@ -52,6 +52,7 @@ import {
   closedNeoRequest,
   NEO_REQUEST_REPLY,
   type NeoRequestReply,
+  neoRequestAskId,
   recordNeoRequestTodo,
 } from './request-todo.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
@@ -869,7 +870,7 @@ export class NeoService {
         const files = input.handoff?.files ?? [];
         const jobs = this.db.getJobQueueRepo();
         let receipt: z.infer<typeof SendMessageResultSchema> | null = null;
-        const wake = (incident: string, note: string) => {
+        const wake = (incident: string, note: string, ask?: string) => {
           if (files.length) note += `\n${JSON.stringify({ handoffFiles: files })}`;
           type Prior = { mailboxId: string; messageId: string };
           let key = `worker-question:${incident}`;
@@ -905,7 +906,7 @@ export class NeoService {
                         media.length
                           ? [{ type: 'text', text: note || 'Worker report' }, ...media]
                           : note,
-                        { sessionId: sender, name: null }
+                        { sessionId: sender, name: null, ask }
                       ) as MailboxMessageContent,
                     },
                   },
@@ -943,7 +944,8 @@ export class NeoService {
               incident,
               input.handoff && typeof content !== 'string'
                 ? (content.find((b) => b.type === 'text')?.text ?? text)
-                : text
+                : text,
+              request ? neoRequestAskId(incident) : undefined
             );
             const sent = receipt as z.infer<typeof SendMessageResultSchema> | null;
             if (request && sent?.kind === 'accepted')
