@@ -41,6 +41,7 @@ import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-sea
 import {
   markWorkUnusable,
   readReusableWorkers,
+  forgetWorkGone,
   recordStartedWork,
   type StartedWork,
 } from '../../../storage/work-started-sessions.ts';
@@ -671,7 +672,10 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           Date.now()
         ),
     } satisfies WorkVerbDeps['workInputs'],
-    recordStarted: (ref: StartedWork) => recordStartedWork(db(), ref),
+    recordStarted: (ref: StartedWork, directory?: string) => {
+      recordStartedWork(db(), ref);
+      if (directory) forgetWorkGone(db(), directory);
+    },
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),

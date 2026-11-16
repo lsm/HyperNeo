@@ -6,7 +6,10 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { workerWorkKey } from '../../../../src/lib/work-locations.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { forgetWorkGone, recordStartedWork } from '../../../../src/storage/work-started-sessions.ts';
+import {
+  forgetWorkGone,
+  recordStartedWork,
+} from '../../../../src/storage/work-started-sessions.ts';
 
 test("a worker placed again at a folder clears that folder's old gone row and no other", async () => {
   const db = new Database(':memory:');
@@ -18,6 +21,7 @@ test("a worker placed again at a folder clears that folder's old gone row and no
   const adapter: WorkAdapter = {
     id: 'codex-desktop',
     capabilities: ['start'],
+    find: () => [],
     start: async (request) => ({
       ok: true,
       value: {
@@ -29,7 +33,7 @@ test("a worker placed again at a folder clears that folder's old gone row and no
         execution: { directory: root, machine: 'imac' },
       },
     }),
-  } as WorkAdapter;
+  };
   const registry = createOperationRegistry(
     createWorkVerbOperations({
       adapters: () => [adapter],

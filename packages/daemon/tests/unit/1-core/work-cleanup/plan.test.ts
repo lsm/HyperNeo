@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  planWorkRelease,
-  type WorkFolderFacts,
-} from '../../../../src/lib/work-cleanup/plan.ts';
+import { planWorkRelease, type WorkFolderFacts } from '../../../../src/lib/work-cleanup/plan.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const now = 100 * DAY;
@@ -12,18 +9,22 @@ const clean: WorkFolderFacts = { owner: done, inUse: false, unsaved: false };
 describe('planWorkRelease', () => {
   test('a folder with no owner record is never removed, whatever else holds', () => {
     for (const evidence of [undefined, { since: 0, referenced: false as const }])
-      expect(planWorkRelease({ ...clean, owner: null, evidence }, now)).toEqual({ keep: 'unknown' });
+      expect(planWorkRelease({ ...clean, owner: null, evidence }, now)).toEqual({
+        keep: 'unknown',
+      });
   });
 
   test('a live or unreadable owner keeps the folder', () => {
     for (const state of ['todo', 'doing', 'blocked', 'failed'] as const)
-      expect(planWorkRelease({ ...clean, owner: { ...done, state } }, now)).toEqual({ keep: 'live' });
+      expect(planWorkRelease({ ...clean, owner: { ...done, state } }, now)).toEqual({
+        keep: 'live',
+      });
     expect(planWorkRelease({ ...clean, owner: { ...done, boundToLiveTodo: true } }, now)).toEqual({
       keep: 'live',
     });
-    expect(
-      planWorkRelease({ ...clean, owner: { kind: 'session', archived: false } }, now)
-    ).toEqual({ keep: 'live' });
+    expect(planWorkRelease({ ...clean, owner: { kind: 'session', archived: false } }, now)).toEqual(
+      { keep: 'live' }
+    );
     expect(planWorkRelease({ ...clean, owner: 'unreadable' }, now)).toEqual({ keep: 'live' });
   });
 
@@ -52,8 +53,8 @@ describe('planWorkRelease', () => {
     expect(planWorkRelease({ ...clean, owner: { ...done, state: 'removed' } }, now)).toEqual({
       remove: 'todo removed',
     });
-    expect(
-      planWorkRelease({ ...clean, owner: { kind: 'session', archived: true } }, now)
-    ).toEqual({ remove: 'session archived' });
+    expect(planWorkRelease({ ...clean, owner: { kind: 'session', archived: true } }, now)).toEqual({
+      remove: 'session archived',
+    });
   });
 });

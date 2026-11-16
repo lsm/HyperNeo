@@ -106,7 +106,7 @@ export interface WorkVerbDeps {
     recordFailure(id: string, error: unknown): Promise<void>;
   };
   queueInput?: (input: WorkerInput, from: string, caller: OperationCaller) => Promise<string>;
-  recordStarted?: (ref: WorkRef) => void;
+  recordStarted?: (ref: WorkRef, directory?: string) => void;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
@@ -580,7 +580,7 @@ export async function startWork(
           }
         : input;
     const result = await route.local(request, { from, caller });
-    if (result.ok) deps.recordStarted?.(result.value.ref);
+    if (result.ok) deps.recordStarted?.(result.value.ref, result.value.execution?.directory);
     return result;
   }
   const { daemon: _daemon, ...place } = input.place;
