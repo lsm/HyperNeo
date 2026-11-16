@@ -68,40 +68,6 @@ describe('Wake and conversation explicit disclosures', () => {
     );
   });
 
-  it('keeps a session-message preview inert and preserves full text for selection', () => {
-    render(
-      <NeoPublicConversation
-        conversation={conversation([
-          {
-            kind: 'session',
-            key: 'session',
-            message: {
-              messageId: 'msg',
-              conversationId: root.slice(4),
-              sequence: 1,
-              fromSession: root,
-              fromName: 'Neo',
-              toSession: 'worker',
-              toName: 'Synthetic worker',
-              createdAt: new Date().toISOString(),
-              text: 'Synthetic preview\nLong message detail. '.repeat(8),
-              kind: 'session' as const,
-            },
-          },
-        ])}
-      />
-    );
-    const summary = screen.getByText('Synthetic preview');
-    fireEvent.click(summary);
-    const row = summary.closest('details')!;
-    expect(row.open).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: /more.*Synthetic worker/ }));
-    const detail = screen.getByText(/Long message detail/, { selector: 'p' });
-    const less = assertTrailingControl(detail, /less.*Synthetic worker/);
-    fireEvent.click(less);
-    expect(row.open).toBe(false);
-  });
-
   it('keeps Edited as a marker and folds revision history from its bottom-right control', async () => {
     const publication = {
       conversationId: root.slice(4),

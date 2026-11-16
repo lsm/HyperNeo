@@ -78,10 +78,8 @@ describe('neo session message kind', () => {
         createdAt: new Date(Date.parse('2026-10-25T12:01:00.000Z') + index).toISOString(),
         kind: 'worker-batch',
       });
-    expect(repo.latest(conversationId, 10).map((row) => [row.messageId, row.kind])).toEqual([
-      ['note', 'session'],
-    ]);
-    expect(repo.latest(conversationId, 1).map((row) => row.messageId)).toEqual(['note']);
+    expect(repo.get(conversationId, 'batch')?.kind).toBe('worker-batch');
+    expect(repo.get(conversationId, 'note')?.kind).toBe('session');
     db.close();
   });
 });

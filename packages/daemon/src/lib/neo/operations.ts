@@ -14,7 +14,6 @@ import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './messag
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { createNeoRuleQuestions } from './rule-questions.ts';
 import { createPackPreferenceQuestions } from './preference-questions.ts';
-import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
   NeoConversationWakeRepository,
   NeoConversationWakeSchema,
@@ -144,23 +143,6 @@ const SnapshotOk = z.object({
     .optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
-  sessionMessages: z
-    .array(
-      z.object({
-        messageId: z.string(),
-        conversationId: z.string(),
-        sequence: z.number(),
-        fromSession: z.string(),
-        fromName: z.string().nullable(),
-        toSession: z.string(),
-        toName: z.string().nullable(),
-        text: z.string(),
-        createdAt: z.string(),
-        kind: z.enum(['session', 'worker-batch']),
-      })
-    )
-    .max(NEO_SESSION_MESSAGES_SHOWN)
-    .optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   wakes: z.array(NeoConversationWakeSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
@@ -557,11 +539,6 @@ export function createNeoOperations(
       sessionNoticeGroups: groups,
       ...(caller.source === 'rpc'
         ? {
-            sessionMessages: await Promise.all(
-              new NeoSessionMessageRepository(service.db.getDatabase())
-                .latest(service.repo.conversationId() ?? '', NEO_SESSION_MESSAGES_SHOWN)
-                .map((message) => service.messageNames(message))
-            ),
             wakes: new NeoConversationWakeRepository(service.db.getDatabase()).latest(
               service.repo.conversationId() ?? '',
               NEO_SESSION_MESSAGES_SHOWN

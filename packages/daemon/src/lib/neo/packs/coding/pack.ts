@@ -6,7 +6,7 @@ import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
-import { CODING_ATTENTION_KINDS, type CodingAttend } from './attention.ts';
+import { CODING_ATTENTION_KINDS, type CodingAttend, scanCodingIdleOpenPrs } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
 import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
@@ -263,7 +263,7 @@ export function createCodingPack(deps: {
     },
     readFacts: todos.readFacts,
     judge: todos.judge,
-    attention: { kinds: CODING_ATTENTION_KINDS },
+    attention: { kinds: CODING_ATTENTION_KINDS, scan: scanCodingIdleOpenPrs(deps.todoPrs) },
     sweep: async (now) => {
       if (deps.postReviewComments)
         await deps.postReviewComments(() =>

@@ -3,6 +3,12 @@ import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
+import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
+import {
+  CODING_ATTENTION_KINDS,
+  scanCodingIdleOpenPrs,
+} from '../../../../src/lib/neo/packs/coding/attention.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -648,5 +654,70 @@ describe('a doing todo never sits idle without someone on it', () => {
       w.store.updateTodo(w.todo(todo.id), { state: 'done', evidence: 'Merged.' }, Date.now());
     await w.at(60);
     expect(w.todo(todo.id).state).toBe('done');
+  });
+});
+
+describe('an idle worker with an open pull request is timed from when it went idle', () => {
+  const setup = () => {
+    const packs: NeoPack[] = [];
+    const w = (current = world(packs));
+    const prs = new CodingTodoPrRepository(w.db);
+    const scan = scanCodingIdleOpenPrs(prs);
+    packs.push({
+      id: 'coding',
+      todos: { waiting: (todos: NeoTodo[]) => prs.readWaiting(todos.map((todo) => todo.id)) },
+      attention: { kinds: CODING_ATTENTION_KINDS, scan },
+    } as never as NeoPack);
+    const notes = neoAttentionNotes(w.db, w.store, () => {}, CODING_ATTENTION_KINDS);
+    const sweep = createNeoAttentionSweep({
+      sessions: w.sessions,
+      packs: () => packs,
+      limits: () => ({ running: 6, perGroup: 3 }),
+      scan,
+      tell: notes.tell,
+      failed: (_event, error) => {
+        throw error;
+      },
+    });
+    const todo = w.adopt('Ship the pull request.');
+    prs.record(todo.id, [{ url: 'https://github.com/acme/app/pull/7', state: 'OPEN' } as never], 1);
+    w.db
+      .prepare(
+        `INSERT INTO pack_coding_pr_ledger
+           (repo, number, title, branch, head, state, state_since, closed_at, read_at)
+         VALUES ('acme/app', 7, 'Ship it', 'ship', 'abc1234', 'waiting_review', ?, NULL, ?)`
+      )
+      .run(Date.now(), Date.now());
+    const status = (value: string) => {
+      w.workers.get('adopted-session')!.status = value;
+    };
+    const minute = async (minutes: number) => {
+      await w.at(minutes);
+      await sweep(Date.now());
+    };
+    return { status, minute, digests: notes.digests };
+  };
+
+  test('a worker that ran for five hours is told once when it goes idle, and again four hours later', async () => {
+    const { status, minute, digests } = setup();
+    status('running');
+    for (let minutes = 0; minutes <= 300; minutes += 60) await minute(minutes);
+    expect(digests()).toEqual([]);
+    status('done');
+    for (const minutes of [300, 330, 539]) await minute(minutes);
+    expect(digests()).toHaveLength(1);
+    await minute(540);
+    expect(digests()).toHaveLength(2);
+  });
+
+  test('a worker that goes idle, runs again and goes idle again is told each time it goes idle', async () => {
+    const { status, minute, digests } = setup();
+    status('done');
+    await minute(0);
+    status('running');
+    await minute(60);
+    status('done');
+    await minute(120);
+    expect(digests()).toHaveLength(2);
   });
 });
