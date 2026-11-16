@@ -24,11 +24,11 @@ Every folder here is created by core (work placement, sessions, the todo runner)
 - `neo.session.archive` admits only the user or a bound Neo session, and refuses while a todo is `doing` on the worker (`admitSessionArchive`).
 - In flight, without a design so far, and kept as steps 1 and 2 below:
   - HyperNeo #10733 removes a worker's `builds`, `scratch` and `gh-config` once its worktree is gone.
-  - HyperNeo #10735 archives the worker a todo started once the todo is `done`, on the todo runner's 5-minute sweep. It keeps a worker a human named, one another live todo is bound to, a remote one, and one with uncommitted or unpushed work. It records the release as a core `released` fact.
+  - HyperNeo #10735 archives the worker a todo started once the todo is `done`, on the todo runner's 5-minute sweep. It keeps a worker a human named, one another live todo is bound to, a remote one, and one with uncommitted or unpushed work; those are logged as pending and rechecked on the next sweep. Its final admission for an internal caller refuses while a `todo`, `doing` or `blocked` todo is bound to the worker. It records the release as a core `released` fact.
 
 Gaps after those two:
 - A `removed` todo never releases its worker.
-- Unsaved work in a finished todo's folder stays forever and nobody is told.
+- Unsaved work in a finished todo's folder is only logged; nobody is told.
 - Evidence folders are never removed.
 - Nothing checks for a running process inside a folder before removing it.
 - No sweep finds leftovers, and no one watches free space.
@@ -39,13 +39,15 @@ A **work folder** is one folder the daemon created: a worker worktree, one of it
 
 One pure rule, `planWorkRelease(facts)` (`lib/work-cleanup/plan.ts`), decides for every folder, first match wins:
 1. no owner record: **keep** (`unknown`);
-2. owner still live (todo `todo`, `doing`, `blocked` or `failed`; session not archived; another live todo bound to the worker): **keep**;
+2. owner still live (todo `todo`, `doing`, `blocked` or `failed`; session not archived; another live todo bound to the worker): **keep**; an owner that cannot be read also keeps;
 3. a process has its working folder inside: **keep** (`in_use`); a failed check also keeps;
-4. uncommitted or unpushed work: **keep** (`unsaved`);
-5. evidence finished less than 7 days ago: **keep**;
+4. uncommitted or unpushed work, or Git status that cannot be read: **keep** (`unsaved`);
+5. evidence whose todo finished less than 7 days ago, or that something still references: **keep**. A reference is the evidence path in an open card, a live todo's `done_when`, check or instruction, or an artifact link; if the references cannot be read, keep;
 6. otherwise: **remove**, with the evidence that allowed it (`todo done`, `todo removed`, `session archived`).
 
-`failed` counts as live because Neo can still retry it.
+`failed` counts as live because Neo can still retry it. Step 3 adds `failed` to #10735's final internal admission, so the release and the sweep keep the same todos.
+
+All facts are read through the daemon's own database interface. The live `daemon.db` is never copied.
 
 ## Release at the end
 
@@ -56,12 +58,12 @@ One pure rule, `planWorkRelease(facts)` (`lib/work-cleanup/plan.ts`), decides fo
 `work.cleanup.sweep` is one superpipe, run once a day and once when the disk guard asks:
 1. list the folders under the swept roots, and read their owner facts in one read;
 2. pure `planWorkRelease` for each;
-3. remove each `remove` through the existing helpers (`cleanupOwnedWorktree`, the #10733 folder removal), re-checking the process rule right before;
+3. right before each removal, read that folder's owner and binding again and run `planWorkRelease` on the fresh facts, including the process check; remove only if it still says `remove`. A worker goes through #10735's release and its final admission, never a direct delete; its work folders go only through #10733, after the worktree is gone;
 4. tell Neo one digest through the attention entry (`neo.attention.tell`, kind `work.cleanup`): space freed, and the kept folders grouped by reason.
 
 It is idempotent and keeps no table. Each decision is logged with its evidence.
 
-**Unsaved work is told, never deleted.** A finished todo whose folder stays `unsaved` for 3 days goes into the digest with the todo and folder. Neo decides with the human; the daemon never discards changes.
+**Unsaved work is told, never deleted.** #10735 already keeps and logs it. What is new is the digest: a finished todo whose folder stays `unsaved` for 3 days goes to Neo with the todo and folder, once. Neo decides with the human; the daemon never discards changes.
 
 ## Disk guard
 
@@ -88,8 +90,8 @@ packages/daemon/src/lib/neo/attention/        kind work.cleanup
 Each step is one PR within the repo's slice budget.
 1. **#10733** (in flight): a worker's work folders go with its worktree.
 2. **#10735** (in flight): a `done` todo archives the worker it started.
-3. **Build + wire:** release for `removed` todos, and the process check before every removal. Tests: a removed todo's clean worker is archived; a folder with a running process inside is kept and retried; a `failed` todo is kept.
-4. **Build:** `planWorkRelease` and `work.cleanup.sweep` with the digest. **Wire:** run it daily. Tests: each rule; a folder with no owner is never removed; a human Codex thread under the Codex root is never listed; evidence older than 7 days goes, younger stays; unsaved work is kept and told after 3 days, once.
+3. **Build + wire:** release for `removed` todos, `failed` in the final internal admission, and the process check before every removal. Tests: a removed todo's clean worker is archived; a folder with a running process inside is kept and retried; a worker bound to a `failed` todo is refused at final admission.
+4. **Build:** `planWorkRelease` and `work.cleanup.sweep` with the digest. **Wire:** run it daily. Tests: each rule; a folder with no owner is never removed; a human Codex thread under the Codex root is never listed; evidence older than 7 days goes, younger stays, and old evidence referenced by an open card or a live todo stays; a todo rebound between the read and the removal keeps its folder; unsaved work is kept and told after 3 days, once.
 5. **Build + wire:** the disk guard and the start hold. Tests: warning, floor, recovery above the floor releases the hold; running work is not stopped.
 
 ## Limits
