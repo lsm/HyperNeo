@@ -272,4 +272,27 @@ describe('coding session target decision', () => {
       value: { verb: 'send', ref: ref('spare') },
     });
   });
+
+  test('per-PR slices follow the live replacement of an archived holder, and queue there', async () => {
+    const { db, todo, worked, live, decide } = setup();
+    db.prepare(
+      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
+    ).run(repo);
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    const first = todo('feature', repo, url);
+    expect(await decide(first, start('dev'))).toEqual({ value: start('dev') });
+    worked(first, 'a', 'dev', 'done');
+    live.a = 'archived';
+    const second = todo('feature', repo, url);
+    expect(await decide(second, start('dev'))).toEqual({ value: start('dev') });
+    worked(second, 'b', 'dev', 'done');
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+    live.b = 'running';
+    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
+      value: { verb: 'send', ref: ref('b') },
+    });
+  });
 });
