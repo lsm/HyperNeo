@@ -1264,6 +1264,29 @@ describe('Provider RPC handlers', () => {
       });
     });
 
+    it('hydrateOAuth: submitted tokens do not inherit the stored login owner', async () => {
+      const importedCm = {
+        getCredentials: mock(async () => ({
+          type: 'oauth' as const,
+          accessToken: 'imported-tok',
+          raw: { accountId: 'acct-1', owner: 'codex' },
+        })),
+      } as unknown as ProviderCredentialManager;
+
+      const creds = await resolveCredentialsForHydration(importedCm, 'anthropic-codex', {
+        oauthAccessToken: 'supplied-tok',
+        oauthRefreshToken: 'supplied-ref',
+      });
+
+      expect(creds).toEqual({
+        type: 'oauth',
+        accessToken: 'supplied-tok',
+        refreshToken: 'supplied-ref',
+        expiresAt: undefined,
+        raw: { accountId: 'acct-1' },
+      });
+    });
+
     it('hydrateOAuth: falls back to submitted tokens with no raw when store is empty', async () => {
       const emptyCm = {
         getCredentials: mock(async () => null),

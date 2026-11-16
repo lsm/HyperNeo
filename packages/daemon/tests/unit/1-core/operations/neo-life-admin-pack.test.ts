@@ -11,6 +11,7 @@ describe('life-admin brief', () => {
       'coding',
       'life-admin',
       'delegation',
+      'model-routing',
     ]);
     expect(neoPackBriefs(NEO_DEFAULT_PACKS).map((brief) => brief.id)).toEqual([
       'coding',

@@ -242,6 +242,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private discoveryGeneration = 0;
 
   private credentialRefreshInFlight: Promise<StoredRefreshAttempt> | null = null;
+  private authFileWrites: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
@@ -253,7 +254,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     > = startCodexBootstrapServer
   ) {
     this.authPath = path.join(authDir ?? getDataDir(), 'auth.json');
-    this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
+    this.codexAuthPath = path.join(
+      codexAuthDir ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex'),
+      'auth.json'
+    );
     this.modelsCache = new CodexModelsCache(
       path.join(authDir ?? getDataDir(), CODEX_MODELS_CACHE_FILE_NAME)
     );
@@ -263,13 +267,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return (await this.getBridgeAuth()) !== undefined;
   }
 
-  setCredentials(credentials: ProviderCredentials): void {
+  setCredentials(credentials: ProviderCredentials): Promise<void> {
     this.resetDiscoveryState();
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
-      return;
+      return this.persistSuppliedCredentials(this.cachedCredentials);
     }
 
     const raw = credentials.raw ?? {};
@@ -287,6 +291,18 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
+    return this.persistSuppliedCredentials(stored);
+  }
+
+  private persistSuppliedCredentials(credentials: StoredCredentials): Promise<void> {
+    return this.saveCredentials(credentials).catch((error) => {
+      if (this.cachedCredentials === credentials) {
+        this.cachedCredentials = null;
+        this.cachedBridgeAuth = undefined;
+        this.cachedApiKey = undefined;
+      }
+      throw error;
+    });
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
@@ -422,7 +438,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.discoveryAttemptAt = Date.now();
     if (!auth) return;
     const bridgeKey = `responses:${this.bridgeAuthCacheKey(auth)}`;
-    const bridgeServer = this.bridgeServers.get(bridgeKey);
+    let bridgeServer = this.bridgeServers.get(bridgeKey);
     bridgeServer?.updateModels?.(
       this.responsesBridgeModels(auth.source === 'chatgpt_oauth'),
       this.modelAliases()
@@ -876,7 +892,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
     const bridgeKey = `responses:${authKey}`;
-    let bridgeServer = this.bridgeServers.get(bridgeKey);
+    const bridgeServer = this.bridgeServers.get(bridgeKey);
     for (const [key, server] of this.bridgeServers) {
       if (key === bridgeKey) continue;
       server.stop();
@@ -1187,6 +1203,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
     this.resetDiscoveryState();
+    await this.queueAuthFileWrite(() => this.removeCredentialsFile());
+  }
+
+  private async removeCredentialsFile(): Promise<void> {
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
@@ -1228,7 +1248,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return null;
   }
 
-  private async saveCredentials(credentials: StoredCredentials): Promise<void> {
+  private queueAuthFileWrite(write: () => Promise<void>): Promise<void> {
+    const next = this.authFileWrites.then(write);
+    this.authFileWrites = next.catch(() => {});
+    return next;
+  }
+
+  private saveCredentials(credentials: StoredCredentials): Promise<void> {
+    return this.queueAuthFileWrite(() => this.writeCredentialsFile(credentials));
+  }
+
+  private async writeCredentialsFile(credentials: StoredCredentials): Promise<void> {
     const dir = path.dirname(this.authPath);
     await fs.mkdir(dir, { recursive: true });
 

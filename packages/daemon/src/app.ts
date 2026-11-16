@@ -315,7 +315,7 @@ export async function applyStoredProviderCredentials(
 
       const credentials = await credentialManager.getCredentials(provider.id);
       if (credentials && provider.setCredentials) {
-        provider.setCredentials(credentials);
+        await provider.setCredentials(credentials);
       }
     } catch (error) {
       if (error instanceof KeychainUnavailableError) {

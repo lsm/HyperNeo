@@ -78,7 +78,7 @@ export async function syncProviderToRegistry(
           return;
         }
       }
-      provider.setCredentials(credentials);
+      await provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }
     bumpProviderCatalogEpoch(record.providerId);

@@ -118,7 +118,8 @@ export async function resolveCredentialsForHydration(
   }
   if (requestCreds?.oauthAccessToken) {
     const stored = await credentialManager.getCredentials(providerId);
-    const raw = stored?.type === 'oauth' ? stored.raw : undefined;
+    const raw = stored?.type === 'oauth' && stored.raw ? { ...stored.raw } : undefined;
+    if (raw) delete raw.owner;
     return {
       type: 'oauth',
       accessToken: requestCreds.oauthAccessToken,
