@@ -91,7 +91,7 @@ export function createCodingDaemonMergeSweep(
     const key = `coding-daemon-${receipt.mergeCommit ? 'merged' : 'held'}:${receipt.url}:${receipt.head}`;
     const text = receipt.mergeCommit
       ? `Merge confirmed: ${receipt.url} head ${receipt.head}, commit ${receipt.mergeCommit}. Receipt executor ${receipt.actor}; confirmation sweep ${new Date(receipt.mergedAt!).toISOString()}.`
-      : `Daemon merge held: ${receipt.url} head ${receipt.head}. No merge confirmed; automatic retries are held. Inspect GitHub/auth status and the receipt before manual action.`;
+      : `Daemon merge held: ${receipt.url} head ${receipt.head}. The daemon started a merge on this head and never confirmed it, and the pull request is no longer open.${receipt.error ? ` Last error: ${receipt.error}.` : ''} Check on GitHub how it closed before any manual action.`;
     const told = owner && (await delivery.tell(owner, key, text, receipt.url).catch(() => false));
     const notified =
       told ||
