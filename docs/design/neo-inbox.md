@@ -59,7 +59,7 @@ The existing 5-minute pack sweep (`pack-sweep.ts`) clears the hold when `held_un
 
 A todo covered by cards appears only under its cards. Every todo state lands in bucket 3 or 4, so nothing falls outside. It returns `items` for the selected state and `counts`, a state × ask table, so each filter shows the numbers that follow the other's choice. Tests: running work with no card; a finished todo with an answered card (results, once); a card covering two todos (one item); two open cards on the same todo (two items; the todo appears under both); an ask-level card; an uncovered blocked todo (in progress, with the owner `nextStepOwner` gives); `closed_unverified` with and without `startedAt` (results).
 
-It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` keeps its meaning, a number of asks: the asks with at least one waiting-on-you item. `neoWorkCounts` stops counting held cards, so a held card no longer raises it. Web, phone and iPad render the same data.
+It reads only rows that exist. The Neo snapshot carries it next to the ask entries; `needsYou` keeps its meaning, a number of asks: the asks with at least one waiting-on-you item. `neoWorkCounts` ignores held cards in both of its terms: the open-card term, and the waiting-todo term, where a todo covered only by held cards does not count as waiting. So an ask whose only card is held no longer raises it. Web, phone and iPad render the same data.
 
 ## Clients
 
@@ -82,8 +82,6 @@ packages/daemon/src/
   lib/neo/
     human-card.ts                             no card_open refusal (rule 2)
     question-hold.ts                          new: pure planHold
-packages/shared/src/types/operation-names/neo.ts   registers neo.question.hold
-.claude/skills/verify/                        worker-question-storage journey: a second card is accepted
     question-operations.ts                    neo.question.hold superpipe; todoId description without the one-card limit
     pack-sweep.ts                             clears expired holds
     daemon-cards.ts                           human-step card text
@@ -91,6 +89,8 @@ packages/shared/src/types/operation-names/neo.ts   registers neo.question.hold
     operations.ts                             adds it to the Neo snapshot
 packages/web/src/neo/                         filter rows and items
 api-surface.json                              regenerated for the description change
+packages/shared/src/types/operation-names/neo.ts   registers neo.question.hold
+.claude/skills/verify/                        worker-question-storage journey: a second card is accepted
 ```
 
 The migration number is taken when its PR lands.
