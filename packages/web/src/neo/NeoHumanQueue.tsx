@@ -57,9 +57,14 @@ export function NeoHumanQueue({
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
-  const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [attempt, setAttempt] = useState(0);
-  const loading = useRef(new Set<string>());
+  const [settled, setSettled] = useState(0);
+  const requests = useRef(
+    new Map<string, { pending: boolean; queue: Queue; known: string; attempt: number }>()
+  );
+  const known = entries.map((entry) => `${entry.ask.id}:${entry.ask.updatedAt}`).join();
+  const current = (request: { queue: Queue; known: string; attempt: number }) =>
+    request.queue === queue && request.known === known && request.attempt === attempt;
   const covers = (loaded: NeoAskEntry, askId: string) =>
     queue.items.every(
       (item) =>
@@ -74,8 +79,16 @@ export function NeoHumanQueue({
     if (!loaded || !covers(loaded, askId)) return undefined;
     return !entry || loaded.ask.updatedAt >= entry.ask.updatedAt ? loaded : undefined;
   };
+  const failed = (askId: string) => {
+    const request = requests.current.get(askId);
+    return !!request && !request.pending && current(request) && !card(askId);
+  };
   const focusReady = !!focus && !!card(focus.askId);
   const focused = focus && queue.items.find((item) => holds(item, focus));
+  const outside = focus && !focused ? focus.askId : null;
+  useEffect(() => {
+    if (ask !== null && !queue.counts[ask]) setAsk(null);
+  }, [queue, ask]);
   useEffect(() => {
     if (!focused) return;
     setState(focused.state);
@@ -125,19 +138,27 @@ export function NeoHumanQueue({
   useEffect(() => {
     if (!onLoadDetails) return;
     for (const id of stale) {
-      if (loading.current.has(id)) continue;
-      loading.current.add(id);
+      const previous = requests.current.get(id);
+      if (previous && (previous.pending || current(previous))) continue;
+      const request = { pending: true, queue, known, attempt };
+      requests.current.set(id, request);
       void onLoadDetails(id)
         .then(
-          (value) => {
-            setDetails((current) => ({ ...current, [id]: value }));
-            setFailed((current) => ({ ...current, [id]: !covers(value, id) }));
-          },
-          () => setFailed((current) => ({ ...current, [id]: true }))
+          (value) => setDetails((loaded) => ({ ...loaded, [id]: value })),
+          () => {}
         )
-        .finally(() => loading.current.delete(id));
+        .finally(() => {
+          request.pending = false;
+          setSettled((value) => value + 1);
+        });
     }
-  }, [stale.join(), onLoadDetails, entries, attempt]);
+  }, [stale.join(), onLoadDetails, known, queue, attempt, settled]);
+  const anchored = new Set<string>();
+  const anchor = (todoId: string) => {
+    if (anchored.has(todoId)) return undefined;
+    anchored.add(todoId);
+    return `neo-ref-todo-${todoId}`;
+  };
   if (!queue.items.length) return null;
   return (
     <div data-human-queue class="mt-6 space-y-3">
@@ -193,7 +214,7 @@ export function NeoHumanQueue({
       {groups.map((id) => (
         <section
           key={id}
-          id={`neo-ref-ask-${id}`}
+          id={id === outside ? undefined : `neo-ref-ask-${id}`}
           aria-label={title(id)}
           class="rounded-2xl border border-line p-4"
         >
@@ -205,11 +226,9 @@ export function NeoHumanQueue({
                 key={'questionId' in item ? item.questionId : item.todoId}
                 item={item}
                 entry={card(id)}
-                failed={failed[id]}
-                onRetry={() => {
-                  setFailed((current) => ({ ...current, [id]: false }));
-                  setAttempt((value) => value + 1);
-                }}
+                failed={failed(id)}
+                onRetry={() => setAttempt((value) => value + 1)}
+                anchor={anchor}
                 disabled={disabled}
                 onAnswer={onAnswer}
                 onHold={onHold}
@@ -228,6 +247,7 @@ function QueueItem({
   entry,
   failed,
   onRetry,
+  anchor,
   disabled,
   onAnswer,
   onHold,
@@ -238,6 +258,7 @@ function QueueItem({
   entry?: NeoAskEntry;
   failed?: boolean;
   onRetry: () => void;
+  anchor: (todoId: string) => string | undefined;
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onHold: (questionId: string, held: boolean) => void;
@@ -246,10 +267,7 @@ function QueueItem({
 }) {
   if (item.state === 'progress')
     return (
-      <p
-        id={`neo-ref-todo-${item.todoId}`}
-        class="mt-2 flex flex-wrap justify-between gap-2 text-sm"
-      >
+      <p id={anchor(item.todoId)} class="mt-2 flex flex-wrap justify-between gap-2 text-sm">
         <span>{item.title}</span>
         {item.owner && <span class="text-fg-muted">{t(`queue.owner.${item.owner}`)}</span>}
       </p>
@@ -262,7 +280,7 @@ function QueueItem({
       <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-fg-muted">
         {item.todos.length ? (
           item.todos.map((todo) => (
-            <span key={todo.id} id={`neo-ref-todo-${todo.id}`}>
+            <span key={todo.id} id={anchor(todo.id)}>
               {todo.title}
             </span>
           ))
