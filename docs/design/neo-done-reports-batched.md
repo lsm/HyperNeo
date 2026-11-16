@@ -50,12 +50,12 @@ entry.origin === 'chat' ||
 ```
 
 and `attach` uses the same helper to hold a pending `done` report with the other quiet
-entries. A `done` report then
-reaches Neo in the next batch, in order with everything else held: at once if anything wakes
-Neo, otherwise on the first flush once the oldest held message is 15 minutes old.
+entries. A `done` report then reaches Neo in the next batch, in order with everything else
+held: at once if anything wakes Neo, otherwise on the first flush once the oldest held message
+is 15 minutes old.
 
 Nothing is dropped or rewritten. The human, card answers, the attention entry's wakes, and
-`blocked`, `question` and `failed` reports wake Neo as today. A session's request is sent as
+every report kind the helper does not hold wake Neo as today. A session's request is sent as
 `question` or `blocked` (`neo-session-requests.md`), so requests still wake.
 
 ## What it costs
