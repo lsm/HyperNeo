@@ -65,6 +65,9 @@ try {
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'keep.txt'), 'human or unknown');
   }
+  const broken = join(run, 'data/projects/broken/worktrees');
+  mkdirSync(join(run, 'data/projects/broken'), { recursive: true });
+  writeFileSync(broken, 'not a directory');
   const rpc = () => new Promise<unknown>((resolveReply, reject) => {
     const child = Bun.spawn([process.execPath, join(import.meta.dir, 'rpc.ts'), 'work.cleanup.sweep', '{}'], {
       env: { ...process.env, VERIFY_PORT: String(app.server.port) }, stdout: 'pipe', stderr: 'inherit',
@@ -75,6 +78,12 @@ try {
     }, reject);
   });
   evidence.first = await rpc();
+  const first = evidence.first as { reply: { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> } };
+  assert.deepEqual(first.reply.removed.toSorted((a, b) => a.directory.localeCompare(b.directory)), [
+    { directory: trees.clean, reason: 'session archived' },
+    { directory: trees.todo, reason: 'todo done' },
+  ].toSorted((a, b) => a.directory.localeCompare(b.directory)));
+  assert(first.reply.kept.error.includes(broken), 'listing failure is retained without aborting the sweep');
   assert.equal(existsSync(trees.clean), false, JSON.stringify(evidence.first));
   assert.equal(existsSync(trees.todo), false, JSON.stringify(evidence.first));
   assert(raw.prepare('SELECT released_at FROM work_started_sessions WHERE id = ?').get(todoWorker));

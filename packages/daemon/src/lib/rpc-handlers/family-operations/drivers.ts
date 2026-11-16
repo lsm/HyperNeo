@@ -18,7 +18,7 @@ import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.t
 import { createWorkCleanupRuntime } from '../../work-cleanup/runtime.ts';
 import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
-import { dirname, resolve } from 'node:path';
+import { codexWorkerHome, copilotWorkerDirectory } from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -410,7 +410,7 @@ function copilotAdapters(
   context: FamilyOperationContext
 ): WorkAdapter[] {
   if (!findExecutable(COPILOT_CLIENT.bin)) return [];
-  const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+  const directory = copilotWorkerDirectory(context.deps.config.dbPath);
   const resolveCliPath = async (waitMs?: number) =>
     (await resolveCopilotRuntime(process.env, waitMs)).path;
   const discovery = createCopilotDiscovery({
@@ -454,7 +454,7 @@ function codexDesktopAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
-  const codexHome = join(homedir(), '.codex');
+  const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
   if (!existsSync(statePath)) return [];
   return [

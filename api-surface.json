@@ -54628,7 +54628,20 @@
               },
               "removed": {
                 "items": {
-                  "type": "string"
+                  "additionalProperties": false,
+                  "properties": {
+                    "directory": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "directory",
+                    "reason"
+                  ],
+                  "type": "object"
                 },
                 "type": "array"
               }

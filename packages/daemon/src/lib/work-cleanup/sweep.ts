@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { planWorkRelease, type WorkFolderFacts } from './plan.ts';
 
-type Digest = { removed: string[]; kept: Record<string, string[]> };
+type Digest = { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> };
 type Dependencies = {
   list(): Promise<string[]>;
   read(folder: string): Promise<WorkFolderFacts>;
@@ -32,21 +32,29 @@ export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as Pipeline
   .pipe(
     async (folders: string[], deps: Dependencies) => {
       const digest: Digest = { removed: [], kept: {} };
-      const initial: { folder: string; plan: ReturnType<typeof planWorkRelease> }[] = [];
+      const plan = async (folder: string) => {
+        try {
+          return planWorkRelease(await deps.read(folder), Date.now());
+        } catch {
+          return { keep: 'error' } as const;
+        }
+      };
+      const initial: { folder: string; plan: Awaited<ReturnType<typeof plan>> }[] = [];
       for (let offset = 0; offset < folders.length; offset += 4)
         initial.push(
           ...(await Promise.all(
             folders.slice(offset, offset + 4).map(async (folder) => ({
               folder,
-              plan: planWorkRelease(await deps.read(folder), Date.now()),
+              plan: await plan(folder),
             }))
           ))
         );
-      for (const { folder, plan } of initial) {
-        const fresh =
-          'remove' in plan ? planWorkRelease(await deps.read(folder), Date.now()) : plan;
-        const outcome = 'remove' in fresh ? await deps.release(folder) : fresh;
-        if (outcome === true) digest.removed.push(folder);
+      for (const { folder, plan: first } of initial) {
+        const fresh = 'remove' in first ? await plan(folder) : first;
+        const released =
+          'remove' in fresh ? await deps.release(folder).catch(() => ({ keep: 'error' })) : fresh;
+        const outcome = released === true ? fresh : released;
+        if ('remove' in outcome) digest.removed.push({ directory: folder, reason: outcome.remove });
         else (digest.kept[outcome.keep] ??= []).push(folder);
       }
       return digest;

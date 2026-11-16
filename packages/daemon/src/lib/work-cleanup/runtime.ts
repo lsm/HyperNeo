@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import { readdir, statfs } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
 import { z } from 'zod';
@@ -8,6 +7,7 @@ import { workCleanupReads } from '../../storage/repositories/work-cleanup-worker
 import { neoTodoSessionWrites } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { getDataDir } from '../data-dir.ts';
 import { folderInUse } from '../drivers/work-placement.ts';
+import { codexWorkerHome, copilotWorkerDirectory } from '../drivers/worker-directories.ts';
 import { WorkSummarySchema, type WorkRef } from '../drivers/types.ts';
 import { NEO_TODO_RELEASE_PRINCIPAL } from '../neo/session-archive-operation.ts';
 import { isNeoConversationSession } from '../neo/publication-read-operation.ts';
@@ -23,19 +23,19 @@ import { releaseWorkCleanup } from './release.ts';
 const DAY = 24 * 60 * 60 * 1000;
 const caller = { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL } as const;
 
-async function children(root: string): Promise<string[]> {
+async function children(root: string, errors: Set<string>): Promise<string[]> {
   try {
     return (await readdir(root, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
       .map((entry) => join(root, entry.name));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') errors.add(root);
+    return [];
   }
 }
 
 export function createWorkCleanupRuntime(context: FamilyOperationContext) {
-  const { db, jobQueue, jobProcessor, sessionManager } = context.deps;
+  const { db, jobQueue, jobProcessor, sessionManager, config } = context.deps;
   const invoke = (name: string, input: Record<string, unknown>) =>
     invokeOperation(sessionManager.getOperationRegistry(), name, input, caller);
   const snapshot = async () => {
@@ -46,6 +46,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       rows.push(
         ...(await Promise.all(
           owners.slice(offset, offset + 4).map(async (row) => {
+            if (row.path) return { ...row, readable: true };
             const key = JSON.stringify([row.ref.adapter, row.ref.id]);
             if (!statuses.has(key)) statuses.set(key, invoke('work.status', { ref: row.ref }));
             const result = await statuses.get(key)!;
@@ -70,6 +71,8 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     return rows;
   };
   const execute = async () => {
+    const errors = new Set<string>();
+    const list = (root: string) => children(root, errors);
     const refs = new Map<string, WorkRef>();
     const todos = new Map<string, string[]>();
     let initial: Awaited<ReturnType<typeof snapshot>> = [];
@@ -82,13 +85,13 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         initial = owned;
         const repos = [...new Set(owned.flatMap((row) => (row.repo ? [row.repo] : [])))];
         const shared = [
-          join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'worktrees'),
+          join(codexWorkerHome(), 'worktrees'),
           ...repos.map((repo) => join(repo, '.claude', 'worktrees')),
         ];
-        const projects = await children(join(data, 'projects'));
-        const claude = await children(join(data, 'claude-worktrees'));
-        const codex = await children(shared[0]);
-        const copilot = await children(join(data, 'copilot-workers', 'worktrees'));
+        const projects = await list(join(data, 'projects'));
+        const claude = await list(join(data, 'claude-worktrees'));
+        const codex = await list(shared[0]);
+        const copilot = await list(join(copilotWorkerDirectory(config.dbPath), 'worktrees'));
         const roots = [
           join(data, 'worktrees'),
           ...projects.map((project) => join(project, 'worktrees')),
@@ -97,14 +100,18 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           ...copilot,
           ...shared.slice(1),
         ];
-        const folders = (await Promise.all(roots.map(children))).flat();
-        return listWorkCleanupFolders(
-          folders,
-          owned.flatMap((row) => (row.path ? [{ path: row.path }] : [])),
-          shared
-        );
+        const folders = (await Promise.all(roots.map(list))).flat();
+        return [
+          ...listWorkCleanupFolders(
+            folders,
+            owned.flatMap((row) => (row.path ? [{ path: row.path }] : [])),
+            shared
+          ),
+          ...errors,
+        ];
       },
       read: async (folder): Promise<WorkFolderFacts> => {
+        if (errors.has(folder)) throw new Error('Folder listing failed');
         const matched = initial.filter((row) => row.path === folder);
         const owners = read.has(folder)
           ? (
@@ -204,7 +211,10 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     description: 'Remove finished workers’ saved worktrees and tell Neo what was kept.',
     inputSchema: z.object({}),
     resultSchema: z.union([
-      z.object({ removed: z.array(z.string()), kept: z.record(z.string(), z.array(z.string())) }),
+      z.object({
+        removed: z.array(z.object({ directory: z.string(), reason: z.string() })),
+        kept: z.record(z.string(), z.array(z.string())),
+      }),
       z.object({ accepted: z.literal(false), reason: z.literal('human_or_neo_only') }),
     ]),
     policy: { safetyClass: 'mutate', roles: ['neo'] },

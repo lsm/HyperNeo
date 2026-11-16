@@ -12,6 +12,10 @@ import {
   defineOperation,
 } from '../../../../src/lib/operations/registry.ts';
 import type { FamilyOperationContext } from '../../../../src/lib/rpc-handlers/family-operations/context.ts';
+import {
+  codexWorkerHome,
+  copilotWorkerDirectory,
+} from '../../../../src/lib/drivers/worker-directories.ts';
 import { WorkRefSchema } from '../../../../src/lib/drivers/types.ts';
 import { createWorkCleanupRuntime } from '../../../../src/lib/work-cleanup/runtime.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -19,10 +23,41 @@ import { workCleanupReads } from '../../../../src/storage/repositories/work-clea
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-test.each([false, true])(
+test.each(
+  process.env.HYPERNEO_CLEANUP_FIXTURE
+    ? [process.env.HYPERNEO_CLEANUP_LISTING_FAILURE === '1']
+    : [false, true]
+)(
   'createWorkCleanupRuntime uses adapter roots and isolates listing failures: %s',
   async (listingFailure) => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
+    if (!process.env.HYPERNEO_CLEANUP_FIXTURE) {
+      const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
+      mkdirSync(join(fixture, 'home'));
+      try {
+        const child = Bun.spawn([process.execPath, 'test', import.meta.path], {
+          env: {
+            NODE_ENV: 'test',
+            HOME: join(fixture, 'home'),
+            PATH: process.env.PATH,
+            HYPERNEO_CLEANUP_FIXTURE: fixture,
+            HYPERNEO_CLEANUP_LISTING_FAILURE: listingFailure ? '1' : '0',
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [stdout, stderr, code] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        if (code !== 0) throw new Error(stdout + stderr);
+        expect(stdout + stderr).toContain('1 pass');
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+      return;
+    }
+    const root = realpathSync(process.env.HYPERNEO_CLEANUP_FIXTURE);
     const previous = process.env.HYPERNEO_DATA_DIR;
     const previousCodex = process.env.CODEX_HOME;
     const previousHome = process.env.HOME;
@@ -34,12 +69,16 @@ test.each([false, true])(
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     const repo = join(root, 'source');
+    const copilotDirectory = copilotWorkerDirectory(config.dbPath);
+    const codexHome = codexWorkerHome();
+    expect(copilotDirectory).toBe(join(root, 'database', 'copilot-workers'));
+    expect(codexHome).toBe(join(root, 'home', '.codex'));
     const folders = [
       join(root, 'worktrees', 'worker'),
       join(root, 'projects', 'project', 'worktrees', 'worker'),
       join(root, 'claude-worktrees', 'repo', 'worker'),
-      join(root, 'database', 'copilot-workers', 'worktrees', 'id8', 'repo'),
-      join(root, 'home', '.codex', 'worktrees', 'id', 'repo'),
+      join(copilotDirectory, 'worktrees', 'id8', 'repo'),
+      join(codexHome, 'worktrees', 'id', 'repo'),
       join(repo, '.claude', 'worktrees', 'neo-worker'),
     ];
     for (const folder of [

@@ -15,8 +15,16 @@ class WorkCleanupRepository {
     todoId: string | null;
   }[] {
     const selected = refs ? JSON.stringify(refs) : null;
+    const removed = `WITH removed AS MATERIALIZED (
+      SELECT json_extract(s.ref, '$.adapter') AS adapter, json_extract(s.ref, '$.id') AS id
+      FROM neo_todo_sessions s JOIN pack_facts f ON f.todo_id = s.todo_id
+      WHERE f.pack = 'core' AND f.key = 'released'
+        AND json_extract(s.ref, '$.daemon') IS NULL
+        AND json_extract(f.value_json, '$.ok') = 1
+        AND json_extract(f.value_json, '$.value.worktree.removed') = 1
+    )`;
     const bindings = this.db
-      .prepare(`SELECT s.ref, t.state, t.id AS todoId,
+      .prepare(`${removed} SELECT s.ref, t.state, t.id AS todoId,
         EXISTS (SELECT 1 FROM neo_todo_sessions peer JOIN neo_todos live ON live.id = peer.todo_id
           WHERE live.state IN ('todo', 'doing', 'blocked', 'failed')
             AND COALESCE(json_extract(peer.ref, '$.adapter'), json_extract(peer.target, '$.ref.adapter')) = json_extract(s.ref, '$.adapter')
@@ -25,6 +33,7 @@ class WorkCleanupRepository {
         ) AS live
       FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
       WHERE s.ref IS NOT NULL AND json_extract(s.ref, '$.daemon') IS NULL
+        AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = json_extract(s.ref, '$.adapter') AND removed.id = json_extract(s.ref, '$.id'))
         AND json_extract(s.target, '$.verb') = 'start'
         AND COALESCE(json_extract(s.target, '$.name'), '') = ''
         AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
@@ -42,8 +51,9 @@ class WorkCleanupRepository {
       owned.filter(({ ref }) => ref.adapter === 'hyperneo').map(({ ref }) => ref.id)
     );
     const sessions = this.db
-      .prepare(`SELECT id, status, worktree_path AS path,
+      .prepare(`${removed} SELECT id, status, worktree_path AS path,
       main_repo_path AS repo FROM sessions WHERE worktree_path IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = 'hyperneo' AND removed.id = sessions.id)
         AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
           WHERE json_extract(requested.value, '$.adapter') = 'hyperneo'
             AND json_extract(requested.value, '$.id') = sessions.id))`)
