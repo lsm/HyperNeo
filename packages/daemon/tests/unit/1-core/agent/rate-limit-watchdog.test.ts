@@ -1715,6 +1715,41 @@ describe('RateLimitWatchdog', () => {
       }
     });
 
+    it('gives a new message a new start after the hold was cancelled', async () => {
+      const now = spyOn(Date, 'now');
+      try {
+        const start = 1_800_000_000_000;
+        now.mockReturnValue(start);
+        const { deps } = createMockDeps({ chain: [] });
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+        await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+        watchdog.cancel();
+        now.mockReturnValue(start + 30 * 60 * 1000);
+        await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+        const writes = writesOf(stateManager.setRateLimitCooldown);
+        expect(writes.map((w) => w.since)).toEqual([start, start + 30 * 60 * 1000]);
+        watchdog.cancel();
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it.each(['limit', 'overloaded'] as const)(
+      'keeps a restored %s hold reason and start on its next cooldown',
+      async (reason) => {
+        const since = Date.now() - 20 * 60 * 1000;
+        const { deps } = createMockDeps({ chain: [] });
+        const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+        watchdog.armPersistedCooldown(Date.now() + 10, 'm1', undefined, 0, { reason, since });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+        const [next] = writesOf(stateManager.setRateLimitCooldown);
+        expect(next.reason).toBe(reason);
+        expect(next.since).toBe(since);
+        watchdog.cancel();
+      }
+    );
+
     it('keeps reason and start when a failed refinement re-arms the cooldown', async () => {
       const { deps } = createMockDeps({ chain: [] });
       deps.classifyUnknownLimit = mock(async () => ({

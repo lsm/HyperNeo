@@ -1548,6 +1548,43 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
+    it.each(['limit', 'overloaded'] as const)(
+      'keeps a restored %s hold reason and start after a restart',
+      async (reason) => {
+        const since = Date.now() - 20 * 60 * 1000;
+        mockDb.getSession = mock(
+          () =>
+            ({
+              id: 'test-session-id',
+              processingState: JSON.stringify({
+                status: 'rate_limit_cooldown',
+                retryAt: Date.now() + 60_000,
+                retryCount: 0,
+                maxRetries: 5,
+                messageId: 'msg-held',
+                reason,
+                since,
+              }),
+            }) as never
+        );
+        (
+          agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
+        ).armPersistedRateLimitCooldown.call(agentSession);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        const state = agentSession.stateManager.getState();
+        expect(state.status).toBe('rate_limit_cooldown');
+        if (state.status === 'rate_limit_cooldown') {
+          expect(state.reason).toBe(reason);
+          expect(state.since).toBe(since);
+        }
+        (
+          agentSession as unknown as { rateLimitWatchdog: { cancel: () => void } }
+        ).rateLimitWatchdog.cancel();
+        await agentSession.stateManager.setIdle();
+      }
+    );
+
     it('retryNowAfterRateLimit commits the persisted episode release through the writer', async () => {
       const commit = attachRetryWriter();
       armRetry();
