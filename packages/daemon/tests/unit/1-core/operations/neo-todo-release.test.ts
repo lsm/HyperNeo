@@ -278,6 +278,39 @@ describe('neo todo runner refresh releases removed todos and busy folders', () =
   });
 });
 
+describe('neo todo runner refresh retries a folder whose process check failed', () => {
+  test('keeps the folder and leaves the worker releasable when lsof fails', async () => {
+    const h = setup();
+    const root = join(scratch, `probe-${crypto.randomUUID()}`);
+    const bin = join(scratch, `bin-${crypto.randomUUID()}`);
+    mkdirSync(root);
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const linked = join(root, 'worker');
+    git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+    h.setFolder(linked);
+    h.setArchive(async () => ({
+      ok: true,
+      value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+    }));
+    const path = process.env.PATH;
+    try {
+      await h.finishTodo(h.add(started));
+      process.env.PATH = `${bin}:${path}`;
+      await h.refresh();
+      expect(existsSync(linked)).toBe(true);
+      expect(h.released()).toEqual([]);
+      process.env.PATH = path;
+      await h.refresh();
+      expect(existsSync(linked)).toBe(false);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      process.env.PATH = path;
+      h.db.close();
+    }
+  });
+});
+
 describe('neo todo runner refresh keeps workers with unsaved work', () => {
   test('keeps a worker with uncommitted changes until they are pushed', async () => {
     const h = setup();

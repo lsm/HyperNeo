@@ -117,6 +117,26 @@ describe('readFreeWorkers', () => {
       expect(sessions.readRef('next')).toBeNull();
     });
 
+    test('a start without a todo cannot claim a worker a finished todo may release', () => {
+      bind('finished', 'w-done', 'done');
+      expect(claimStartedWork(db, ref)).toBeNull();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
+    test('a start without a todo claims a worker no todo was ever bound to', () => {
+      recordStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' });
+      expect(claimStartedWork(db, { adapter: 'claude-desktop', id: 'w-new' })).not.toBeNull();
+    });
+
+    test('a claim for a todo that is not live binds nothing and fences nothing', () => {
+      bind('finished', 'w-done', 'done');
+      bind('closed', 'w-other', 'done');
+      expect(claimStartedWork(db, ref, 'closed')).toBeNull();
+      expect(claimStartedWork(db, ref, 'missing')).toBeNull();
+      expect(sessions.readRef('closed')).toMatchObject({ id: 'w-other' });
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
     test('a start whose first message fails gives the binding back', () => {
       bind('finished', 'w-done', 'done');
       nextTodo();
