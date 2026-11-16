@@ -268,6 +268,24 @@ test('a validated replacement worker receives the existing card answer route', a
   }
 });
 
+test('a replacement worker with a different report does not take over the open card', async () => {
+  const f = await fixture();
+  try {
+    const replacement = { ...f.source, id: 'replacement' };
+    new NeoTodoSessionRepository(f.db).bind('todo', replacement, 3);
+    expect(
+      await f.write(replacement, { ...f.report, report: 'A different blocker' })
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(f.store.getQuestion(f.question.id)?.document).toBe(f.report.report);
+    expect(await f.read()).toMatchObject({ answerDelivery: [{ sourceSession: f.source }] });
+  } finally {
+    f.db.close();
+  }
+});
+
 test('question reads stay coherent when a peer connection tries to answer between projections', async () => {
   const run = mkdtempSync(join(tmpdir(), 'answer-read-race-'));
   const f = await fixture(join(run, 'daemon.db'));
