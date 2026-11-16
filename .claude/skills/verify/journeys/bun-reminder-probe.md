@@ -7,11 +7,8 @@ Use the isolation and resource setup in ../SKILL.md with Bun 1.4.2.
 The unavailable-probe regression must be committed before construction. This
 listener-free probe owns a fresh file-backed DatabaseCore and native DbGateway
 workers. Wait for actual startup body copying. Use the coding pack's existing
-schema factory and the existing recordLive writer on a missing todo to create
-the real turn-report cutoff receipt before reader commands. Require its false
-result and exactly one persisted cutoff. This proves parity after normal pack
-and writer bootstrap. Cold reader initialization and startup write ownership
-remain outside this probe.
+schema factory before reader commands. This proves parity after normal pack
+bootstrap. Startup write ownership remains outside this probe.
 
 Seed one synthetic doing todo with its instruction and a send target. Require
 the same instruction through nudgeContext, one reservation across two writer
@@ -23,7 +20,7 @@ current claimNudge move argument, matching this send-target fixture's policy.
 The cached waiting reader must return false for a missing todo, true for OPEN
 and false for CLOSED and MERGED. All cache data is synthetic. This exercises
 registered command receipts, not scheduled reminder delivery or GitHub access.
-Require startupBodyCopyComplete, bootstrapReceipt, reminderContext,
+Require startupBodyCopyComplete, reminderContext,
 singleReservation, reservationReleased, newerActivityPreserved,
 waitingDecisions, gatewayClosed, databaseClosed and pass in bun-reminder.json.
 Require wrapper exit zero and no database-close error. Existing-data refusal

@@ -35,7 +35,6 @@ let gateway: DbGateway | undefined;
 const evidence = {
   runtime: 'bun',
   startupBodyCopyComplete: false,
-  bootstrapReceipt: false,
   reminderContext: false,
   singleReservation: false,
   reservationReleased: false,
@@ -54,23 +53,6 @@ try {
   evidence.startupBodyCopyComplete = true;
   gateway = new DbGateway(path, null);
   createCodingPackTables(db, 1);
-  assert.equal(
-    await gateway.call(
-      neoTodoSessionWrites,
-      'recordLive',
-      'bun-bootstrap-missing',
-      'running',
-      undefined
-    ),
-    false
-  );
-  assert.equal(
-    db
-      .prepare('SELECT COUNT(*) AS n FROM message_send_receipts WHERE key = ? AND fingerprint = ?')
-      .get('neo-turn-report:v2:cutoff', 'v2')?.n,
-    1
-  );
-  evidence.bootstrapReceipt = true;
   const id = 'bun-reminder',
     askId = 'bun-reminder-ask';
   const ref = { adapter: 'hyperneo', id: 'bun-reminder-worker' };

@@ -8,7 +8,7 @@ import { sentDuringTurn } from '../../storage/repositories/neo-session-message-r
 import { qualifyRemoteOrigin, renderAddress } from '../mailbox/address.ts';
 
 type Live = { status: string; waitingFor?: string; turnQuestion?: unknown } | null;
-type Observation = { live: Live; facts?: NeoTurnReportFacts };
+type Observation = { live: Live; facts?: NeoTurnReportFacts; focused?: boolean };
 
 export class NeoTurnReportReceipts {
   private readonly receipts: JobQueueRepository;
@@ -30,6 +30,7 @@ export class NeoTurnReportReceipts {
       humanInput?: string;
     },
     recipient: string,
+    focused: boolean,
     facts?: NeoTurnReportFacts
   ) {
     const observation = this.receipts.commitSubmissionReceipt<Observation>(
@@ -45,7 +46,7 @@ export class NeoTurnReportReceipts {
         ])
       ),
       'v2',
-      () => ({ live, facts })
+      () => ({ live, facts, focused })
     );
     const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
     const sender = ref.daemon
@@ -63,6 +64,11 @@ export class NeoTurnReportReceipts {
         from: turn.startedAt,
         to: turn.at,
       }));
-    return { live: observation.live, facts: observation.facts, sent };
+    return {
+      live: observation.live,
+      facts: observation.facts,
+      focused: observation.focused ?? focused,
+      sent,
+    };
   }
 }

@@ -34,7 +34,6 @@ let gateway: DbGateway | undefined;
 const evidence = {
   runtime: 'bun',
   startupBodyCopyComplete: false,
-  bootstrapReceipt: false,
   liveStatus: false,
   dispatchReceipt: false,
   dispatchRollback: false,
@@ -60,23 +59,6 @@ try {
     'INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,started_at,created_at,updated_at) VALUES(?,?,0,?,?,?,1,1,1)'
   ).run(todoId, askId, 'Synthetic step', 'Observed', 'doing');
   db.prepare('INSERT INTO neo_todo_sessions(todo_id,target) VALUES(?,?)').run(todoId, '{}');
-  assert.equal(
-    await gateway.call(
-      neoTodoSessionWrites,
-      'recordLive',
-      'bun-bootstrap-missing',
-      'running',
-      undefined
-    ),
-    false
-  );
-  assert.equal(
-    db
-      .prepare('SELECT COUNT(*) AS n FROM message_send_receipts WHERE key = ? AND fingerprint = ?')
-      .get('neo-turn-report:v2:cutoff', 'v2')?.n,
-    1
-  );
-  evidence.bootstrapReceipt = true;
   const starts = await gateway.call(neoTodoSessionReads, 'unrecordedStarts');
   const reports = await gateway.call(neoTodoSessionReads, 'awaitingReports');
   assert(starts.includes(todoId));

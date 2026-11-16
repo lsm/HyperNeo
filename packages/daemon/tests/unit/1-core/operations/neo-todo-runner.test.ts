@@ -1791,7 +1791,8 @@ describe('neo todo runner', () => {
             ref,
             { status: 'done' },
             { id: 'empty-observation', at },
-            'neo'
+            'neo',
+            false
           );
         h.setStatus({
           ok: true,

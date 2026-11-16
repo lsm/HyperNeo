@@ -436,7 +436,11 @@ describe('Neo daemon notes', () => {
     await refresh();
     expect(told()).toHaveLength(1);
     workerStatus = 'needs_you';
-    turnEnds.push({ id: 'after-history', at: now + 1, message: 'A new question after the history' });
+    turnEnds.push({
+      id: 'after-history',
+      at: now + 1,
+      message: 'A new question after the history',
+    });
     service.dispose();
     reopen();
     await refresh();

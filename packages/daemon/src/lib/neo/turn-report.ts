@@ -40,6 +40,16 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
     'latestAt',
   ])
   .pipe(
+    (ask: NeoAsk, ref: WorkRef) => {
+      const focused = ask.focusedSession;
+      return (
+        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon
+      );
+    },
+    ['ask', 'ref'],
+    'focus'
+  )
+  .pipe(
     (
       todo: NeoTodo,
       dispatchId: string,
@@ -48,6 +58,7 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
       turn: Turn,
       receipts: NeoTurnReportReceipts,
       ask: NeoAsk,
+      focus: boolean,
       facts?: NeoTurnReportFacts
     ) =>
       receipts.observe(
@@ -57,9 +68,10 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
         live,
         turn,
         ask.sessionId,
+        focus,
         facts
       ),
-    ['todo', 'dispatchId', 'ref', 'seen', 'turn', 'receipts', 'ask', 'facts'],
+    ['todo', 'dispatchId', 'ref', 'seen', 'turn', 'receipts', 'ask', 'focus', 'facts'],
     'observation'
   )
   .pipe((observation: { live: Live }) => observation.live, ['observation'], 'live')
@@ -69,16 +81,7 @@ export const deliverNeoTurnReport = (superpipe({})('neo.deliver-turn-report') as
     ['turn', 'observation'],
     'quiet'
   )
-  .pipe(
-    (ask: NeoAsk, ref: WorkRef) => {
-      const focused = ask.focusedSession;
-      return (
-        focused?.adapter === ref.adapter && focused.id === ref.id && focused.daemon === ref.daemon
-      );
-    },
-    ['ask', 'ref'],
-    'statusOnly'
-  )
+  .pipe((observation: { focused: boolean }) => observation.focused, ['observation'], 'statusOnly')
   .pipe(
     (
       ask: NeoAsk,
