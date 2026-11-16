@@ -52,6 +52,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'work_turn_urls',
   'work_sessions',
   'work_started_sessions',
+  'work_cleanup_gone',
   'neo_questions',
   'neo_pack_preferences',
   'neo_pack_preference_proposals',
