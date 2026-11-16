@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   NEO_CHECK_OVERDUE,
@@ -400,6 +400,21 @@ describe('daemon cards in the store', () => {
     const [stepCard] = open();
     store.updateTodo(store.getTodo('check')!, { dependsOn: ['build'] }, 2);
     expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
+  });
+
+  test('the sweep reads a family once however many human steps it holds', async () => {
+    after('second', []);
+    after('third', []);
+    const reads = spyOn(NeoAskTodoRepository.prototype, 'listTodosForAsks');
+    try {
+      await sweep(1);
+      expect(open()).toHaveLength(3);
+      expect(reads).toHaveBeenCalledTimes(1);
+      await sweep(2);
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 
   test('a free reply to a human-step card holds off the next card for 24 hours', async () => {
