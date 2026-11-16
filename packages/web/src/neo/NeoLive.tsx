@@ -1070,7 +1070,9 @@ export function NeoLive() {
           {(workQuery.trim()
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
             : sceneGroups
-                .filter((group) => !(humanQueue && group.key === 'attention'))
+                .filter(
+                  (group) => !(humanQueue && (group.key === 'attention' || group.key === 'running'))
+                )
                 .map((group) => ({
                   ...group,
                   entries: topic

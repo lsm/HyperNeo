@@ -198,6 +198,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'queue.wholeAsk': '整件事',
   'queue.hold': '先放着',
   'queue.takeBack': '拿回来',
+  'queue.onHold': '已放着',
   'queue.owner.human': '该你做',
   'queue.owner.nobody': '还没人接',
   'queue.owner.prerequisite': '等前一步',

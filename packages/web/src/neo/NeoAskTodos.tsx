@@ -529,7 +529,7 @@ export function QuestionBox({
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
       <div class="neo-time-line neo-question-time">
-        <span>{t('time.waiting')}</span>
+        <span>{t(hold?.held ? 'queue.onHold' : 'time.waiting')}</span>
         <NeoTime at={question.createdAt} />
       </div>
       {question.sourceSession?.link && onOpen && (

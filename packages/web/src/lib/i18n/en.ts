@@ -197,6 +197,7 @@ export const en = {
   'queue.wholeAsk': 'The whole ask',
   'queue.hold': 'Hold',
   'queue.takeBack': 'Take back',
+  'queue.onHold': 'On hold',
   'queue.owner.human': 'Your step',
   'queue.owner.nobody': 'Nobody yet',
   'queue.owner.prerequisite': 'Waits on an earlier step',

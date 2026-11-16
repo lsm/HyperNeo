@@ -74,6 +74,7 @@ try {
   const progressShots = async (width) => {
     for (const scheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(400);
       await page.screenshot({ path: join(evidence, `queue-${width}-progress-${scheme}.png`) });
     }
     await page.emulateMedia({ colorScheme: 'light' });
