@@ -22,6 +22,7 @@ import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
+import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
 
 let warnings: unknown[][], restoreWarnings: () => void;
 const head = 'a'.repeat(40),
@@ -32,6 +33,7 @@ let db: Database,
   notices: string[],
   fail: string;
 let mergeStateStatus: string;
+let mergeable: string;
 let state: string,
   actualHead: string,
   labels: string[],
@@ -107,7 +109,7 @@ const spawn: SpawnFn = (args) => {
       headRefOid: actualHead,
       baseRefOid: 'd'.repeat(40),
       isDraft: false,
-      mergeable: 'MERGEABLE',
+      mergeable,
       mergeStateStatus,
       author: { login: 'author' },
       changedFiles: files.length,
@@ -193,6 +195,7 @@ beforeEach(async () => {
   fail = '';
   state = 'OPEN';
   mergeStateStatus = 'CLEAN';
+  mergeable = 'MERGEABLE';
   actualHead = head;
   labels = [];
   files = ['src/app.ts'];
@@ -425,6 +428,98 @@ describe('daemon merge sweep behavior', () => {
       expect(merges()).toHaveLength(0);
     }
   );
+  test('turning issue mirroring off releases a cached linked-issue hold without a GitHub read', async () => {
+    const store = new NeoAskTodoRepository(db);
+    store.openAsk({
+      id: 'ask',
+      sessionId: 'synthetic',
+      projectId: null,
+      originMessageId: null,
+      title: 'Plan',
+      request: 'Work',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'todo',
+      'ask',
+      {
+        title: 'Step',
+        instruction: 'Work',
+        named: null,
+        doneWhen: 'Merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [url] } },
+      },
+      2,
+      'synthetic/merge'
+    );
+    policy('mirror_issues', true);
+    const mirrors = new NeoTrackerMirrorRepository(db);
+    for (const ownerKind of ['ask', 'todo'] as const)
+      mirrors.put({
+        ownerKind,
+        ownerId: ownerKind,
+        tracker: 'github-issues',
+        home: 'synthetic/merge',
+        ref: `synthetic/merge#${ownerKind === 'ask' ? 20 : 21}`,
+        parentRef: null,
+        state: 'bound',
+        failures: 0,
+        updatedAt: 3,
+      });
+    const run = sweep();
+    await run(10);
+    expect(merges()).toEqual([]);
+    policy('mirror_issues', false);
+    await run(11);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+  });
+  test('a sign-off hold told on a cached read still refreshes ten minutes after that read', async () => {
+    labels = ['human-merge'];
+    deliver = false;
+    const run = sweep();
+    await run(10);
+    deliver = true;
+    await run(300_000);
+    const reads = calls.length;
+    await run(600_011);
+    expect(calls.length).toBeGreaterThan(reads);
+  });
+  test('a final read that finds an unresolved thread is what the next unchanged pass uses', async () => {
+    let threadReads = 0;
+    const racing: SpawnFn = (args, options) => {
+      const isThreads =
+        args.includes('graphql') && !args.some((arg) => arg.includes('CodingMergeFiles'));
+      if (isThreads && threadReads++ === 1) unresolved = true;
+      return spawn(args, options);
+    };
+    const run = sweep(racing);
+    await run(10);
+    expect(threadReads).toBe(2);
+    expect(merges()).toEqual([]);
+    const afterFirst = calls.length;
+    await run(11);
+    expect(calls.slice(afterFirst)).toEqual([]);
+  });
+  test('a PR that leaves the daemon candidates is read again when it returns', async () => {
+    reviewHead = 'b'.repeat(40);
+    const run = sweep();
+    await run(10);
+    policy('mergeBy', 'owner');
+    await run(11);
+    policy('mergeBy', 'daemon');
+    const before = calls.length;
+    await run(12);
+    expect(calls.length).toBeGreaterThan(before);
+  });
+  test('an UNKNOWN mergeable read is not reused once GitHub settles it', async () => {
+    mergeable = 'UNKNOWN';
+    const run = sweep();
+    await run(10);
+    expect(merges()).toEqual([]);
+    mergeable = 'MERGEABLE';
+    await run(11);
+    expect(merges()).toEqual([['gh', 'pr', 'merge', url, '--squash', '--match-head-commit', head]]);
+  });
   test('two passes over an unchanged held PR read its merge facts from GitHub once', async () => {
     reviewHead = 'b'.repeat(40);
     const run = sweep();
