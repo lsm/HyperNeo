@@ -42,6 +42,7 @@ export function planNeoSweepEvents(
               facts: {
                 title: row.todo.title,
                 reason: next.reason,
+                requestFrom: row.todo.named?.requestFrom,
                 detail:
                   next.reason === 'failed'
                     ? (row.todo.blockedReason ?? row.todo.reason ?? '').replace(/[.。\s]+$/, '')

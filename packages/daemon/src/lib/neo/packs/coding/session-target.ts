@@ -18,9 +18,13 @@ type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   owner: { todoId: string; session: Pooled | null } | null;
+  feature: { todoId: string; session: Pooled | null } | null;
+  successors: { todoId: string; session: Pooled | null }[];
   pool: Pooled[];
 } | null;
-type Plan = ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' };
+type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
+  takeover?: { todoId: string; ref: WorkRef };
+};
 
 const WAIT = 'session_unknown: the session for this work is starting or unreachable; wait.';
 const LIVE_BUSY = new Set(['queued', 'running', 'needs_you']);
@@ -30,15 +34,17 @@ async function sessionState(session: Pooled, status: Status) {
   const reply =
     outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
-  const state: 'available' | 'busy' | 'unknown' = !live?.success
+  const state: 'available' | 'busy' | 'unknown' | 'archived' = !live?.success
     ? 'unknown'
-    : live.data.busy || LIVE_BUSY.has(live.data.status)
-      ? 'busy'
-      : 'available';
+    : live.data.archived
+      ? 'archived'
+      : live.data.busy || LIVE_BUSY.has(live.data.status)
+        ? 'busy'
+        : 'available';
   return {
     ref: session.ref,
     name: session.name,
-    state: session.held && state !== 'unknown' ? ('busy' as const) : state,
+    state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
   };
 }
 
@@ -65,18 +71,42 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   .pipe(
     async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {
       if (!facts) return { verb: 'keep' };
-      const { owner } = facts;
+      let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-      const assigned = owner?.session ? await sessionState(owner.session, status) : undefined;
+      let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
+      for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
+        if (!next.session || next.todoId === owner?.todoId) continue;
+        const nextState = await sessionState(next.session, status);
+        if (nextState.state === 'archived') continue;
+        owner = next;
+        ownerState = nextState;
+        break;
+      }
+      if (
+        ownerState?.state === 'archived' &&
+        facts.feature &&
+        facts.feature.todoId !== owner?.todoId
+      ) {
+        owner = facts.feature;
+        if (!owner.session && owner.todoId !== todo.id) return { verb: 'held' };
+        ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
+      }
+      const archived = ownerState?.state === 'archived';
+      const assigned = archived ? undefined : ownerState;
       const pool = assigned
         ? []
         : await Promise.all(facts.pool.map((s) => sessionState(s, status)));
-      return planCodingSessionDispatch({
-        strategy: facts.strategy,
-        workType: (target.verb === 'start' && target.name) || 'dev',
-        assigned,
-        pool,
-      });
+      return {
+        ...planCodingSessionDispatch({
+          strategy: facts.strategy,
+          workType: (target.verb === 'start' && target.name) || 'dev',
+          assigned,
+          pool,
+        }),
+        ...(archived && owner?.session
+          ? { takeover: { todoId: owner.todoId, ref: owner.session.ref } }
+          : {}),
+      };
     },
     ['facts', 'todo', 'target', 'status'],
     'plan'
@@ -85,13 +115,14 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
       const binds =
         (plan.verb === 'send' && plan.bind) ||
-        (plan.verb === 'start' && !facts?.owner && target.verb === 'start');
+        (plan.verb === 'start' && (!facts?.owner || plan.takeover) && target.verb === 'start');
       if (!facts || facts.strategy !== 'long_lived' || !binds) return true;
       const owner = await gatewayFor(db).call(codingSessionAssignmentWrites, 'reserveFeature', {
         repo: facts.repo,
         featureKey: todo.askId,
         todoId: todo.id,
         now: Date.now(),
+        replace: plan.takeover,
       });
       return owner.todoId === todo.id;
     },

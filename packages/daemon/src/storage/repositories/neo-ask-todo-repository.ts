@@ -1,3 +1,4 @@
+import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
@@ -553,10 +554,16 @@ export class NeoAskTodoRepository {
   }
 
   listChildAsks(parentId: string): NeoAsk[] {
+    return this.listChildAsksOf([parentId]);
+  }
+
+  listChildAsksOf(parentIds: readonly string[]): NeoAsk[] {
     return (
       this.db
-        .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
-        .all(parentId) as AskRow[]
+        .prepare(
+          `${ASK_SELECT} WHERE parent_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, rowid`
+        )
+        .all(JSON.stringify(parentIds)) as AskRow[]
     ).map(toAsk);
   }
 
@@ -592,10 +599,16 @@ export class NeoAskTodoRepository {
       .run(status, outcome, now, now, ask.id);
     for (const todo of this.listTodos(ask.id))
       if (['todo', 'doing', 'blocked'].includes(todo.state))
-        this.updateTodo(
+        queueNeoRequestReply(
+          this.db,
           todo,
-          { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
-          now
+          this.updateTodo(
+            todo,
+            { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
+            now
+          ),
+          outcome,
+          ask.sessionId
         );
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;

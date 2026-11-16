@@ -242,6 +242,7 @@ export function createCopilotAdapter(
           : snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
             ? input!.outcome!
             : snapshot.status,
+        ...(record.archived ? { archived: true } : {}),
         startReceipt: work.receipt,
         ...readCopilotObservations(
           join(deps.directory, work.ref.id, 'session-state', work.ref.id, 'events.jsonl'),

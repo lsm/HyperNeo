@@ -53,6 +53,12 @@ export const WorkSummarySchema = z.object({
   title: z.string(),
   place: PlaceSchema,
   status: WorkStatusSchema,
+  archived: z
+    .boolean()
+    .describe(
+      'The work was archived or ended and takes no new messages; a stopped turn alone is not archived.'
+    )
+    .optional(),
   lastActivityAt: z.number(),
   desktopUI: DesktopUIEvidenceSchema.optional(),
   permissionMode: z.string().optional(),

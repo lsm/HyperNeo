@@ -1,4 +1,7 @@
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const requestTodoId = (incident: string) => neoDerivedId(`neo-request-todo:${incident}`);
@@ -47,4 +50,39 @@ export function recordNeoRequestTodo(
     },
     input.now
   );
+}
+
+export const NEO_REQUEST_REPLY = 'neo.request.reply';
+
+export type NeoRequestReply = {
+  todoId: string;
+  to: string;
+  from: string | null;
+  text: string;
+  deferred?: number;
+};
+
+export function queueNeoRequestReply(
+  db: Database,
+  before: NeoTodo,
+  after: NeoTodo,
+  reason: string | undefined,
+  from: string | null
+): void {
+  const to = before.named?.requestFrom;
+  const terminal = (todo: NeoTodo) => ['done', 'removed'].includes(todo.state);
+  if (typeof to !== 'string' || terminal(before) || !terminal(after)) return;
+  const reply: NeoRequestReply = {
+    todoId: before.id,
+    to,
+    from,
+    text: `Neo closed your request "${after.title}" as ${after.state}${reason ? `: ${reason}` : '.'}`,
+  };
+  new JobQueueRepository(db).enqueueUniquePending({
+    queue: NEO_REQUEST_REPLY,
+    payload: reply,
+    matchPayload: { todoId: before.id },
+    activeStatuses: ['pending', 'processing', 'completed'],
+    maxRetries: 4,
+  });
 }

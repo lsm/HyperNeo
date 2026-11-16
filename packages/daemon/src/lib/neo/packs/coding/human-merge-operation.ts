@@ -6,7 +6,10 @@ import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
-export const createCodingHumanMergeOperation = (spawn: SpawnFn = spawnProcess) =>
+export const createCodingHumanMergeOperation = (
+  spawn: SpawnFn = spawnProcess,
+  invalidate: (url: string) => void = () => {}
+) =>
   defineOperation({
     name: 'neo.coding.merge.human',
     description: neoToolDescription('neo.coding.merge.human'),
@@ -32,6 +35,7 @@ export const createCodingHumanMergeOperation = (spawn: SpawnFn = spawnProcess) =
         if (code !== 0)
           refused.reason =
             'GitHub label update failed; check the label exists and gh authentication.';
+        if (code === 0) invalidate(url);
         return code === 0 ? { accepted: true } : refused;
       } finally {
         clearTimeout(timer);

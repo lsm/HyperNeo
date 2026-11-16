@@ -1,27 +1,28 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
-import { releaseNeoTodoWorkers } from '../../../../src/lib/neo/todo-release.ts';
+import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import {
   admitSessionArchive,
   NEO_TODO_RELEASE_PRINCIPAL,
 } from '../../../../src/lib/neo/session-archive-operation.ts';
-import { WorktreeManager } from '../../../../src/lib/worktree-manager.ts';
-import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
+import { releaseNeoTodoWorkers } from '../../../../src/lib/neo/todo-release.ts';
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
-import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
+import { WorktreeManager } from '../../../../src/lib/worktree-manager.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
-import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 
 const worker = { adapter: 'hyperneo', id: 'worker-1' };
 const completed = (value: unknown): OperationOutcome =>
@@ -89,7 +90,7 @@ function setup() {
       });
     if (name === 'neo.session.archive') {
       archived.push(input.ref);
-      return completed(archive(caller));
+      return completed(await archive(caller));
     }
     if (name === 'work.status') onStatus();
     if (name === 'work.status')
@@ -232,6 +233,124 @@ describe('neo todo runner refresh releases finished workers', () => {
       h.db.close();
     }
   });
+});
+
+describe('neo todo runner refresh releases removed todos and busy folders', () => {
+  test('archives the worker a removed todo started', async () => {
+    const h = setup();
+    try {
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      h.db.prepare("UPDATE neo_todos SET state = 'removed' WHERE id = ?").run(todo.id);
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps a folder a running process is inside and retries once it exits', async () => {
+    const h = setup();
+    const root = join(scratch, `linked-${crypto.randomUUID()}`);
+    mkdirSync(root);
+    const linked = join(root, 'worker');
+    git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+    h.setFolder(linked);
+    h.setArchive(async () => ({
+      ok: true,
+      value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+    }));
+    const busy = spawn('sleep', ['60'], { cwd: linked, stdio: 'ignore' });
+    try {
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(existsSync(linked)).toBe(true);
+      expect(h.released()).toEqual([]);
+      busy.kill();
+      await new Promise((done) => busy.once('exit', done));
+      await h.refresh();
+      expect(existsSync(linked)).toBe(false);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      busy.kill();
+      h.db.close();
+    }
+  });
+});
+
+describe('neo todo runner refresh retries a folder whose process check failed', () => {
+  test.skipIf(process.platform === 'linux')(
+    'keeps the folder and leaves the worker releasable when lsof fails',
+    async () => {
+      const h = setup();
+      const root = join(scratch, `probe-${crypto.randomUUID()}`);
+      const bin = join(scratch, `bin-${crypto.randomUUID()}`);
+      mkdirSync(root);
+      mkdirSync(bin);
+      writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const linked = join(root, 'worker');
+      git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+      h.setFolder(linked);
+      h.setArchive(async () => ({
+        ok: true,
+        value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+      }));
+      const path = process.env.PATH;
+      try {
+        await h.finishTodo(h.add(started));
+        process.env.PATH = `${bin}:${path}`;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(true);
+        expect(h.released()).toEqual([]);
+        process.env.PATH = path;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(false);
+        expect(h.released()).toHaveLength(1);
+      } finally {
+        process.env.PATH = path;
+        h.db.close();
+      }
+    }
+  );
+});
+
+describe('neo todo runner refresh on Linux', () => {
+  test.skipIf(process.platform !== 'linux')(
+    'finds a process inside the folder without lsof and removes it once the process exits',
+    async () => {
+      const h = setup();
+      const root = join(scratch, `nolsof-${crypto.randomUUID()}`);
+      const bin = join(scratch, `bin-${crypto.randomUUID()}`);
+      mkdirSync(root);
+      mkdirSync(bin);
+      writeFileSync(join(bin, 'lsof'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
+      const linked = join(root, 'worker');
+      git(h.folder(), 'worktree', 'add', '-q', '--detach', linked);
+      h.setFolder(linked);
+      h.setArchive(async () => ({
+        ok: true,
+        value: { archived: true, worktree: await cleanupOwnedWorktree(linked, [root]) },
+      }));
+      const busy = spawn('sleep', ['60'], { cwd: linked, stdio: 'ignore' });
+      const path = process.env.PATH;
+      try {
+        await h.finishTodo(h.add(started));
+        process.env.PATH = `${bin}:${path}`;
+        await h.refresh();
+        expect(existsSync(linked)).toBe(true);
+        expect(h.released()).toEqual([]);
+        busy.kill();
+        await new Promise((done) => busy.once('exit', done));
+        await h.refresh();
+        expect(existsSync(linked)).toBe(false);
+        expect(h.released()).toHaveLength(1);
+      } finally {
+        process.env.PATH = path;
+        busy.kill();
+        h.db.close();
+      }
+    }
+  );
 });
 
 describe('neo todo runner refresh keeps workers with unsaved work', () => {
