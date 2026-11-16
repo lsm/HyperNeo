@@ -162,7 +162,7 @@ test('upgrade recovers held historical answers once without changing their prove
   }
 });
 
-test('the card write refuses a second card on the ask, however the relay got there', async () => {
+test('a worker card for a second todo opens beside the first card on the ask', async () => {
   const f = await fixture();
   try {
     const todo = f.store.addTodo(
@@ -174,10 +174,10 @@ test('the card write refuses a second card on the ask, however the relay got the
     new NeoTodoSessionRepository(f.db).bind(todo.id, f.source, 2);
     f.store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
     expect(await f.write(f.source, { ...f.report, todoId: todo.id })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('card_open'),
+      ok: true,
+      question: { todoId: todo.id, state: 'open' },
     });
-    expect(f.store.listQuestions('ask')).toHaveLength(1);
+    expect(f.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
   } finally {
     f.db.close();
   }

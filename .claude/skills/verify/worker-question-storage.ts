@@ -62,12 +62,12 @@ try {
   const distinct = await rpc('neo.question.ask', {
     askId: todo.askId, todoId: todo.id, kind: 'reply', text: 'A distinct new question',
   });
-  assert.equal(distinct.ok, false, 'a distinct question must be refused, never silently replaced by the old card');
-  assert.match(distinct.reason, /^card_open:/);
+  assert.equal(distinct.ok, true, JSON.stringify(distinct));
+  assert.notEqual(distinct.question.id, first.question.id);
   const snapshot = await rpc('neo.snapshot', {});
   const entry = snapshot.todoAsks.find((e: { ask: { id: string } }) => e.ask.id === todo.askId);
   assert(entry, JSON.stringify(snapshot));
-  assert.equal(entry.questions.filter((q: { todoId: string; state: string }) => q.todoId === todo.id && q.state === 'open').length, 1);
+  assert.equal(entry.questions.filter((q: { todoId: string; state: string }) => q.todoId === todo.id && q.state === 'open').length, 2);
   assert.equal(entry.todos.find((t: { id: string }) => t.id === todo.id).blockedBy, 'needs-human');
   await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
@@ -94,7 +94,7 @@ try {
   assert.equal(hold?.state, 'blocked');
   assert.equal(hold?.blockedBy, 'needs-human');
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ receipts, refused, repeats: repeats.length, hold, restartRetained: true, persistedAnswerWithoutDelivery: true }, null, 2));
-  console.log('PASS: RPC card/source, repeat reuse and distinct-question refusal; restart retains needs-human even after an answer is stored without delivery');
+  console.log('PASS: RPC card/source, repeat reuse and a second open card on the same todo; restart retains needs-human even after an answer is stored without delivery');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/cleanup.json'), JSON.stringify({ stopped: true }));

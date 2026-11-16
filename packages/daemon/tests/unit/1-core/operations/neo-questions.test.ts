@@ -7,6 +7,7 @@ import {
   planNeoQuestionAnswer,
 } from '../../../../src/lib/neo/question-operations.ts';
 import { addNeoTodo, NeoTodoDraftSchema } from '../../../../src/lib/neo/todo-operations.ts';
+import { neoTodoWaitReason } from '../../../../src/lib/neo/todo-start-gate.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import type { ArtifactRefReader } from '../../../../src/lib/artifacts/read-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -142,7 +143,7 @@ describe('neo.question operations', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  test('refuses a second todo question explicitly and accepts an explicit replacement', async () => {
+  test('accepts a second and a third card on one todo and still replaces on request', async () => {
     const h = setup();
     try {
       const first = await h.asked({ kind: 'reply', text: 'Which environment?', todoId: h.fix.id });
@@ -153,29 +154,53 @@ describe('neo.question operations', () => {
         options: ['SQLite', 'Postgres'],
         todoId: h.fix.id,
       };
-      const refused = await h.call('neo.question.ask', distinct);
-      expect(refused).toMatchObject({
-        ok: false,
-        reason: expect.stringMatching(/^card_open:/),
+      const second = await h.call('neo.question.ask', distinct);
+      const third = await h.call('neo.question.ask', { ...distinct, text: 'Which region?' });
+      expect(second).toMatchObject({ ok: true, question: { text: 'Which database?' } });
+      expect(third).toMatchObject({ ok: true, question: { text: 'Which region?' } });
+      const open = () =>
+        h.store
+          .listQuestions('ask')
+          .filter((q) => q.state === 'open')
+          .map((q) => q.text)
+          .sort();
+      expect(open()).toEqual(['Which database?', 'Which environment?', 'Which region?']);
+      const replacement = await h.call('neo.question.ask', {
+        ...distinct,
+        text: 'Which cache?',
+        replaces: first.id,
       });
-      expect(h.store.listQuestions('ask')).toHaveLength(1);
-      expect(h.store.getQuestion(first.id)).toMatchObject({
-        text: 'Which environment?',
-        state: 'open',
-      });
-      const replacement = await h.call('neo.question.ask', { ...distinct, replaces: first.id });
-      expect(replacement).toMatchObject({
-        ok: true,
-        question: { text: distinct.text, options: distinct.options, state: 'open' },
-      });
+      expect(replacement).toMatchObject({ ok: true, question: { text: 'Which cache?' } });
       expect(h.store.getQuestion(first.id)?.state).toBe('retired');
-      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+      expect(open()).toEqual(['Which cache?', 'Which database?', 'Which region?']);
     } finally {
       h.db.close();
     }
   });
 
-  test('concurrent distinct todo questions produce one card and one explicit refusal', async () => {
+  test('a todo with several cards waits until the last one is answered', async () => {
+    const h = setup();
+    try {
+      const cards = [];
+      for (const text of ['Which environment?', 'Which database?', 'Which region?'])
+        cards.push(await h.asked({ kind: 'reply', text, todoId: h.fix.id }));
+      const wait = () =>
+        neoTodoWaitReason(
+          h.store.getTodo(h.fix.id)!,
+          h.store.listTodos('ask'),
+          h.store.listQuestions('ask')
+        );
+      for (const card of cards) {
+        expect(wait()).toMatch(/^question_open:/);
+        await h.call('neo.question.answer', { questionId: card.id, answer: 'Staging' }, human);
+      }
+      expect(wait()).toBeNull();
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('concurrent distinct todo questions both open', async () => {
     const h = setup();
     try {
       const results = await Promise.all(
@@ -183,12 +208,8 @@ describe('neo.question operations', () => {
           h.call('neo.question.ask', { askId: 'ask', kind: 'reply', text, todoId: h.fix.id })
         )
       );
-      expect(results.filter((result) => result.ok)).toHaveLength(1);
-      expect(results.find((result) => !result.ok)).toMatchObject({
-        ok: false,
-        reason: expect.stringMatching(/^card_open:/),
-      });
-      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
+      expect(results.filter((result) => result.ok)).toHaveLength(2);
+      expect(h.store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(2);
     } finally {
       h.db.close();
     }
