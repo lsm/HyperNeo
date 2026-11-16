@@ -1,3 +1,5 @@
+import { MODEL_HOLD_NOTICE_PREFIX, planModelHoldNotices } from './model-hold-notices.ts';
+import type { NeoWorkingSession } from '@hyperneo/shared/types/neo-snapshot';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
@@ -33,6 +35,7 @@ type PlannedNotice = ReturnType<typeof planNeoSessionNotice>;
 export type NeoSessionWatcherDeps = {
   db: Pick<Database, 'getSDKMessageRepo' | 'writeSDKMessage'>;
   defaultSessionId: () => string | undefined;
+  working: () => readonly NeoWorkingSession[];
   announceSessionNoticeGroup: (group: NeoSessionNoticeGroup) => void;
   announceSessionNotice: (notice: NeoSessionNotice) => void;
   tellSessionQuestion: (root: string, notice: NeoSessionNotice) => Promise<void>;
@@ -47,6 +50,8 @@ export type NeoSessionWatcherDeps = {
 
 export class NeoSessionWatcher {
   sessionNotices: NeoSessionNotice[] = [];
+  modelHoldNotices: NeoSessionNotice[] = [];
+  private modelHoldsSeen: Map<string, NeoSessionSeen>;
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   openSessionNotices: NeoSessionNotice[] = [];
   private readonly sessionsSeen: Map<string, NeoSessionSeen>;
@@ -54,8 +59,10 @@ export class NeoSessionWatcher {
   private sessionsCheckedAt = new Map<string, number>();
 
   constructor(private readonly deps: NeoSessionWatcherDeps) {
-    this.sessionsSeen = new Map(deps.seen.list());
-    this.savedSeen = JSON.stringify([...this.sessionsSeen]);
+    const seen = deps.seen.list();
+    this.sessionsSeen = new Map(seen.filter(([key]) => !key.startsWith(MODEL_HOLD_NOTICE_PREFIX)));
+    this.modelHoldsSeen = new Map(seen.filter(([key]) => key.startsWith(MODEL_HOLD_NOTICE_PREFIX)));
+    this.savedSeen = JSON.stringify([...this.sessionsSeen, ...this.modelHoldsSeen]);
   }
 
   readonly watchSessions = (superpipe({})('neo-session-watch') as PipelineAPI)
@@ -67,6 +74,18 @@ export class NeoSessionWatcher {
       },
       'now',
       'result:root'
+    )
+    .pipe(
+      async (root: string, now: number) => {
+        const plan = planModelHoldNotices(root, this.deps.working(), this.modelHoldsSeen, now);
+        const changed = JSON.stringify(plan.active) !== JSON.stringify(this.modelHoldNotices);
+        this.modelHoldsSeen = plan.seen;
+        this.modelHoldNotices = plan.active;
+        await this.saveSeen();
+        for (const notice of plan.added) this.deps.announceSessionNotice(notice);
+        if (changed) this.deps.notifyChanged();
+      },
+      ['root', 'now']
     )
     .pipe(
       async (root: string, now: number) => {
@@ -252,7 +271,7 @@ export class NeoSessionWatcher {
     .endAsync('root') as (now: number) => Promise<unknown>;
 
   private async saveSeen(): Promise<void> {
-    const entries = [...this.sessionsSeen];
+    const entries = [...this.sessionsSeen, ...this.modelHoldsSeen];
     const signature = JSON.stringify(entries);
     if (signature === this.savedSeen) return;
     try {
