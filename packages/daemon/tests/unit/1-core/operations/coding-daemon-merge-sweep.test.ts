@@ -1545,3 +1545,36 @@ describe('shared GitHub budget', () => {
     expect(info).toContainEqual(['Daemon merge confirmed', { url, head, commit: 'c'.repeat(40) }]);
   });
 });
+
+test('a later review page still blocks the merge after its first page is answered by a 304', async () => {
+  let probes = 0;
+  const review = (state: string, anchor: string) => ({
+    state,
+    commit_id: head,
+    user: { login: 'bot', type: 'Bot' },
+    html_url: `${url}#${anchor}`,
+  });
+  const first = [review('APPROVED', 'first')];
+  const paged: SpawnFn = (args, options) => {
+    if (!args.some((arg) => arg.endsWith('/reviews'))) return spawn(args, options);
+    calls.push(args);
+    const text = args.includes('--paginate')
+      ? JSON.stringify([first, [review('CHANGES_REQUESTED', 'later')]])
+      : probes++ === 0
+        ? `HTTP/2.0 200 OK\r\nETag: "pages"\r\nLink: <https://api.github.com/x?page=2>; rel="next"\r\n\r\n${JSON.stringify(first)}`
+        : 'HTTP/2.0 304 Not Modified\r\nETag: "pages"\r\n\r\n';
+    const code = text.startsWith('HTTP/2.0 304') ? 1 : 0;
+    return {
+      stdout: new Response(text).body,
+      stderr: new Response(code ? 'gh: HTTP 304' : '').body,
+      exited: Promise.resolve(code),
+      exitCode: code,
+      kill() {},
+    };
+  };
+  const run = sweep(paged);
+  await run(10);
+  await run(11);
+  expect(probes).toBeGreaterThan(1);
+  expect(merges()).toEqual([]);
+});
