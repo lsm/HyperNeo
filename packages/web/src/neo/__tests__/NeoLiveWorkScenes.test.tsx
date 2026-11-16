@@ -429,6 +429,140 @@ describe('Neo public work scenes', () => {
     ]);
   });
 
+  const orderCard = (id: string, askId: string, createdAt: number, heldAt: number | null = null) =>
+    ({
+      id,
+      askId,
+      text: `Card ${id}`,
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      todos: [],
+      state: 'open',
+      answer: null,
+      answeredBy: null,
+      answeredAt: null,
+      retiredReason: null,
+      replacedBy: null,
+      createdAt,
+      heldAt,
+    }) satisfies NeoQuestionEntry;
+  const waits = (id: string, askId: string, held = false) => ({
+    state: held ? ('held' as const) : ('waiting' as const),
+    askId,
+    questionId: id,
+    text: `Card ${id}`,
+    todos: [],
+  });
+
+  it('keeps the queue in its newest-card order across asks, with one copy of each card', () => {
+    const { container, model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
+      questions: [
+        orderCard('a100', 'ask-a', 100),
+        orderCard('a10', 'ask-a', 10),
+        orderCard('a-held', 'ask-a', 120, 121),
+      ],
+    });
+    const b = testAskEntry('ask-b', 'Ask B', {
+      state: 'waiting',
+      questions: [orderCard('b80', 'ask-b', 80)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [b, running, a],
+          humanQueue: {
+            items: [
+              waits('a100', 'ask-a'),
+              waits('b80', 'ask-b'),
+              waits('a10', 'ask-a'),
+              waits('a-held', 'ask-a', true),
+              { state: 'progress', askId: 'ask-a', todoId: 'a-step', title: 'A step', owner: null },
+              {
+                state: 'progress',
+                askId: 'running',
+                todoId: 'run-step',
+                title: 'Run step',
+                owner: null,
+              },
+            ],
+            counts: {
+              'ask-a': { waiting: 2, held: 1, progress: 1 },
+              'ask-b': { waiting: 1, held: 0, progress: 0 },
+              running: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+      };
+    });
+    const queue = container.querySelector('[data-human-queue]') as HTMLElement;
+    const seen: string[] = [];
+    for (const name of [/^Waiting on you/, /^Held/, /^In progress/]) {
+      fireEvent.click(within(queue).getByRole('button', { name }));
+      seen.push(
+        ...[...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+          (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+        )
+      );
+    }
+    expect(seen).toEqual(['a100', 'b80', 'a10', 'a-held', 'a-step', 'run-step']);
+  });
+
+  it('shows the full document of a queued card once its ask is read', async () => {
+    const { model } = mount(true, true);
+    const preview = `${'x'.repeat(2000)}\n\n[Document preview truncated]`;
+    const full = testAskEntry('ask-doc', 'Ask with a long report', {
+      state: 'waiting',
+      questions: [
+        { ...orderCard('doc', 'ask-doc', 50), document: `${'x'.repeat(2000)}TAIL-OF-REPORT` },
+      ],
+    });
+    vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
+      request: vi.fn(async () => ({ ok: true, entry: full })),
+    } as never);
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            {
+              ...full,
+              questions: [{ ...full.questions[0], document: preview }],
+              summary: {
+                todoCount: 0,
+                questionCount: 1,
+                openQuestionCount: 1,
+                questionRefs: [{ id: 'doc', replacedBy: null }],
+              },
+            },
+          ],
+          humanQueue: {
+            items: [waits('doc', 'ask-doc')],
+            counts: { 'ask-doc': { waiting: 1, held: 0, progress: 0 } },
+          },
+        } as never,
+      };
+    });
+    const queue = document.querySelector('[data-human-queue]') as HTMLElement;
+    await waitFor(() => {
+      fireEvent.click(within(queue).getByRole('button', { name: 'View full report' }));
+      expect(screen.getByRole('dialog').textContent).toContain('TAIL-OF-REPORT');
+    });
+    expect(document.querySelectorAll('[id="neo-ref-question-doc"]')).toHaveLength(1);
+  });
+
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
     expect(screen.queryByText('No work yet.')).toBeNull();
