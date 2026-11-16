@@ -4,7 +4,7 @@ Calls each `device.*` and `device.pair.*` operation on a real isolated daemon. U
 when one of them changes; run it on the base too, the two outputs must match.
 
 ```bash
-TMPDIR=/tmp/claude-501 .claude/skills/verify/device-operations.sh 9337
+.claude/skills/verify/device-operations.sh 9337
 ```
 
 Expect:
