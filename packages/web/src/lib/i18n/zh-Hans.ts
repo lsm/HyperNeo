@@ -320,6 +320,7 @@ export const zhHans: Record<keyof typeof en, string> = {
     '{steps} 自动重试 {retries} 次后仍无法开始：{reason}。重试、标记完成，还是移除？',
   'question.checkOverdue':
     '{steps} 已等了 {hours} 小时，检查还没通过。继续等、标记完成，还是移除？',
+  'question.humanStep': '{steps} 现在该你来做了。做完后标记完成，还是移除？',
   'question.daemonMarkDone': '标记完成',
   'question.daemonRemove': '移除',
   'question.daemonRetry': '重试',

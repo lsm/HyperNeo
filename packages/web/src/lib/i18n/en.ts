@@ -327,6 +327,7 @@ export const en = {
     '{steps} could not start after {retries} automatic retries: {reason}. Retry, mark done, or remove?',
   'question.checkOverdue':
     "{steps} has waited {hours} hours and its check hasn't passed. Keep waiting, mark it done, or remove it?",
+  'question.humanStep': '{steps} is yours to do now. Do it, then mark it done, or remove it?',
   'question.daemonMarkDone': 'Mark done',
   'question.daemonRemove': 'Remove',
   'question.daemonRetry': 'Retry',

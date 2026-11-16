@@ -1,12 +1,9 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  NEO_CHECK_OVERDUE,
-  neoCheckOverdue,
-  neoDaemonCardDraft,
-} from '../../lib/neo/daemon-cards.ts';
+import { NEO_HUMAN_STEP, neoDaemonCardDraft, neoHumanStepDue } from '../../lib/neo/daemon-cards.ts';
 import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
 import { openHumanCard } from '../../lib/neo/human-card.ts';
+import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
 import type { FollowThroughIncident } from '../../lib/work-queue/follow-through.ts';
 import { defineDbOp } from '../db-gateway/db-op.ts';
@@ -17,7 +14,6 @@ import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { SDKMessageRepository } from './sdk-message-repository.ts';
 
 const INTERVAL = 2 * 60 * 60 * 1000;
-const DAY = 24 * 60 * 60 * 1000;
 type ReminderTodo = NeoTodo & { since: number; sessionId: string };
 type Reminder = NonNullable<FollowThroughIncident['stallReminder']>;
 type Context = {
@@ -130,19 +126,25 @@ export const neoStallReminderWrite = defineDbOp<{ now: number }, void>({
       undefined,
       changes
     );
-    for (const todo of store.listCheckable(now - INTERVAL, now - DAY)) {
+    const families = new Map<string, NeoTodo[]>();
+    for (const todo of store.listCheckable(now - INTERVAL, now)) {
       const ask = store.getAsk(todo.askId)!;
       if (todo.state !== 'todo') {
         remindTodo(db, { ...todo, since: todo.updatedAt, sessionId: ask.sessionId }, now);
         continue;
       }
       if (!todo.check || new NeoTodoSessionRepository(db).get(todo.id)) continue;
-      if (neoCheckOverdue(todo, store.todoCards(todo), now))
+      const cards = store.todoCards(todo);
+      if (neoTodoCovered(todo, cards)) continue;
+      const root = ask.parentId ?? ask.id;
+      const family = families.get(root) ?? store.listFamilyTodos(root);
+      families.set(root, family);
+      if (neoHumanStepDue(todo, family, cards, now))
         openHumanCard(
           store,
           crypto.randomUUID(),
           todo.askId,
-          neoDaemonCardDraft(NEO_CHECK_OVERDUE, [todo]),
+          { ...neoDaemonCardDraft(NEO_HUMAN_STEP, [todo]), todoId: todo.id },
           now
         );
     }
