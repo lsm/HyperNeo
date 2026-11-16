@@ -1,6 +1,7 @@
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 import { markWorkUnusable } from '../work-started-sessions.ts';
 import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repository.ts';
@@ -8,7 +9,10 @@ import { NeoTodoSessionRepository, neoWorkerKey } from './neo-todo-session-repos
 export type NeoTodoMove = { todoId: string; fromRef: WorkRef; at: number };
 
 class NeoTodoMoves {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {}
 
   pending(): NeoTodoMove[] {
     return (
@@ -109,6 +113,8 @@ class NeoTodoMoves {
       sent_receipt = NULL, start_interrupted = 0 WHERE todo_id = ?`)
       .run(move.todoId);
     this.release(move);
+    this.changes?.notifyChange('neo_todos');
+    this.changes?.notifyChange('neo_todo_sessions');
     return true;
   }
 }

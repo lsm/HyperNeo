@@ -297,7 +297,8 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
     interrupt: async (sessionId) => {
       const session = await sessionManager.getSessionForControl(sessionId);
       if (!session) return false;
-      await session.cancelRateLimitRetry();
+      if (session.getProcessingState().status === 'rate_limit_cooldown')
+        await session.cancelRateLimitRetry();
       await internalEventBus.publish('agent.interruptRequest', { sessionId });
       return (
         sessionManager.getCachedSession(sessionId) === session &&
