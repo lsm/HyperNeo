@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { workStartConfiguration } from '../../../../src/lib/drivers/start-configuration';
 import type {
   WorkAdapter,
@@ -7,11 +6,12 @@ import type {
   WorkStatus,
   WorkTurnQuestion,
 } from '../../../../src/lib/drivers/types';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry';
-import { invokeOperation } from '../../../../src/lib/operations/invoke';
 
 const place = { machine: 'imac', folder: '/focus/dolmen', name: 'dolmen' };
 const neo: OperationCaller = { source: 'internal', sessionId: 'neo', role: 'neo' };
@@ -35,7 +35,8 @@ function harness(
     requestedProvider?: string;
     unresolvedDefault?: boolean;
   },
-  history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>
+  history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
+  claim?: (ref: WorkRef, todoId?: string) => (() => void) | null
 ) {
   const sent: string[] = [];
   const messages: string[] = [];
@@ -135,6 +136,7 @@ function harness(
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
+      ...(claim ? { claimWorker: claim } : {}),
     })
   );
   const start = async (
@@ -160,6 +162,52 @@ function harness(
   };
   return { start, sent, started, unusable, messages };
 }
+
+describe('work.start against a worker release', () => {
+  test('binds the picked worker before its first message', async () => {
+    const order: string[] = [];
+    let sent: string[] = [];
+    const run = harness(
+      [{ id: 'fence-idle', status: 'done' }],
+      ['fence-idle'],
+      undefined,
+      undefined,
+      (ref) => {
+        order.push(`claim ${ref.id} after ${sent.length} sends`);
+        return () => {};
+      }
+    );
+    sent = run.sent;
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fence-idle');
+    expect(order).toEqual(['claim fence-idle after 0 sends']);
+  });
+
+  test('starts fresh when the release won the worker first', async () => {
+    const run = harness(
+      [{ id: 'released', status: 'done' }],
+      ['released'],
+      undefined,
+      undefined,
+      () => null
+    );
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+    expect(run.started).toEqual(['loader']);
+  });
+
+  test('gives the binding back when the first message is refused', async () => {
+    const undone: string[] = [];
+    const run = harness(
+      [{ id: 'closed', status: 'done', refusal: 'not_open' }],
+      ['closed'],
+      undefined,
+      undefined,
+      (ref) => () => void undone.push(ref.id)
+    );
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(undone).toEqual(['closed']);
+  });
+});
 
 describe('work.start reuses an idle worker', () => {
   test('offers a follow-up to its most recently used same-ask worker first', async () => {

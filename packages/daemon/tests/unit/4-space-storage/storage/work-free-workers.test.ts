@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import {
+  claimStartedWork,
   markWorkUnusable,
   readFreeWorkers,
   readReusableWorkers,
@@ -75,6 +76,54 @@ describe('readFreeWorkers', () => {
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-done' });
 
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+  });
+
+  describe('release fence', () => {
+    const ref = { adapter: 'claude-desktop', id: 'w-done' };
+    const nextTodo = () => {
+      store.addTodo(
+        'next',
+        'ask',
+        { title: 'next', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        3
+      );
+      sessions.create('next', { verb: 'start', adapter: 'claude-desktop' });
+    };
+
+    test('a released worker is never offered again, also after an hour', () => {
+      bind('finished', 'w-done', 'done');
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+      setSystemTime(new Date(Date.now() + 2 * 60 * 60_000));
+      try {
+        expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual([]);
+      } finally {
+        setSystemTime();
+      }
+    });
+
+    test('a start that binds the worker first makes the release refuse', () => {
+      bind('finished', 'w-done', 'done');
+      nextTodo();
+      expect(claimStartedWork(db, ref, 'next')).not.toBeNull();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(false);
+      expect(sessions.readRef('next')).toMatchObject(ref);
+    });
+
+    test('a start that loses to the release does not bind the worker', () => {
+      bind('finished', 'w-done', 'done');
+      nextTodo();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+      expect(claimStartedWork(db, ref, 'next')).toBeNull();
+      expect(sessions.readRef('next')).toBeNull();
+    });
+
+    test('a start whose first message fails gives the binding back', () => {
+      bind('finished', 'w-done', 'done');
+      nextTodo();
+      claimStartedWork(db, ref, 'next')!();
+      expect(sessions.readRef('next')).toBeNull();
+      expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
   });
 
   describe('readReusableWorkers', () => {
