@@ -35,6 +35,7 @@ import {
   scheduleDriverRefresh,
 } from '../neo/driver-refresh.ts';
 import { NEO_PACK_SWEEP, schedulePackSweep, sweepNeoPacks } from '../neo/pack-sweep.ts';
+import { NEO_REQUEST_REPLY } from '../neo/request-todo.ts';
 import {
   runTurnEmbedding,
   scheduleTurnEmbedding,
@@ -555,6 +556,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
   );
   scheduleDriverRefresh(deps.jobQueue);
   deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
+  deps.jobProcessor.register(NEO_REQUEST_REPLY, (job) => neoService.deliverRequestReply(job));
   schedulePackSweep(deps.jobQueue, 0);
   const reorganizeTopics = createNeoProjectsReorganizer(
     neoReorganizeRuntime(neoService, codingProjectIdentity)

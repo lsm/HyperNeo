@@ -149,11 +149,8 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       }
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
-      const replied =
-        args.input.kind === 'edit'
-          ? null
-          : queueNeoRequestReply(db, plan.todo, committed.todo!, args.input.reason);
-      const records = [...(plan.records ?? []), ...(replied ? [replied] : [])];
+      if (args.input.kind !== 'edit')
+        queueNeoRequestReply(db, plan.todo, committed.todo!, args.input.reason);
       return {
         ok: true,
         todo: committed.todo!,
@@ -161,7 +158,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
           committed.startNext ??
           removal?.writes.find(({ patch }) => patch.state !== 'removed')?.todo.id ??
           null,
-        ...(records.length ? { records } : {}),
+        ...(plan.records ? { records: plan.records } : {}),
       };
     },
     ['db', 'store', 'outcome', 'args', 'removal', 'changes'],

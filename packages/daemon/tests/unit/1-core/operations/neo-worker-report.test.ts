@@ -6,8 +6,11 @@ import { createTestDb } from '../../../helpers/database.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import {
   createSendMessageOperation,
+  type RemoteSendForwarder,
   type SessionSent,
 } from '../../../../src/lib/messaging/message-send.ts';
+import { NEO_REQUEST_REPLY, recordNeoRequestTodo } from '../../../../src/lib/neo/request-todo.ts';
+import { neoTodoMutations } from '../../../../src/storage/repositories/neo-todo-mutation-commit.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -893,6 +896,126 @@ test('a retried request whose todo failed to record records it on the retry, wak
     expect(wakes()).toHaveLength(1);
   } finally {
     add.mockRestore();
+    service.dispose();
+    db.close();
+  }
+});
+
+async function replySetup(forward: RemoteSendForwarder) {
+  const db = await createTestDb();
+  const sent: SessionSent[] = [];
+  const forwarded: { target: string; idempotencyKey?: string; origin: string }[] = [];
+  let registry = createOperationRegistry([]);
+  const service = createNeoService(
+    db,
+    { getOperationRegistry: () => registry } as unknown as SessionManager,
+    { event: mock(() => {}) } as unknown as MessageHub,
+    new InternalEventBus<DaemonInternalEventMap>()
+  );
+  registry = createOperationRegistry([
+    createSendMessageOperation(
+      db.getJobQueueRepo(),
+      (id) => (id === 'gone' ? null : 'active'),
+      async (target, input, origin) => {
+        forwarded.push({
+          target: `${target.daemonId}/${target.sessionId}`,
+          idempotencyKey: input.idempotencyKey,
+          origin,
+        });
+        return forward(target, input, origin);
+      },
+      undefined,
+      undefined,
+      (item) => {
+        sent.push(item);
+      },
+      (id) => id === 'neo',
+      (...args) => service.handleWorkerQuestion(...args)
+    ),
+  ]);
+  service.repo.reserveBinding({ sessionId: 'neo', projectId: null, kind: 'neo' });
+  const close = async (sender: string) => {
+    recordNeoRequestTodo(service.todos, {
+      incident: sender,
+      neoSession: 'neo',
+      sender,
+      text: 'Close the merged todo',
+      messageId: 'request-message',
+      now: 1,
+    });
+    const [ask] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(ask.id);
+    const closed = await gatewayFor(db.getDatabase()).run(neoTodoMutations, {
+      input: { kind: 'done', todoId: todo.id, reason: 'Merged' },
+      now: Date.now(),
+    });
+    expect(closed).toMatchObject({ ok: true });
+    const jobs = db.getJobQueueRepo().dequeue(NEO_REQUEST_REPLY, 10);
+    expect(jobs).toHaveLength(1);
+    return service.deliverRequestReply(jobs[0]);
+  };
+  const wakes = (text: string) =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .filter((job) => JSON.stringify(job.payload).includes(text));
+  return { db, service, sent, forwarded, close, wakes };
+}
+
+test('a request from an attached remote session is answered once through the remote forwarder', async () => {
+  const { db, service, sent, forwarded, close, wakes } = await replySetup(async () => ({
+    kind: 'accepted',
+    mailboxId: 'remote-mailbox',
+    messageId: 'remote-message',
+  }));
+  try {
+    expect(await close('daemon:peer::session:worker')).toEqual({ kind: 'accepted' });
+    expect(forwarded).toEqual([
+      expect.objectContaining({ target: 'peer/worker', origin: 'session:neo' }),
+    ]);
+    expect(forwarded[0].idempotencyKey).toMatch(/^neo-request-reply:/);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        fromSession: 'neo',
+        toSession: 'daemon:peer::session:worker',
+        text: 'Neo closed your request "Close the merged todo" as done: Merged',
+      }),
+    ]);
+    expect(wakes('did not reach')).toEqual([]);
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('an unreachable remote requester or a gone local one wakes Neo with the failed answer', async () => {
+  for (const sender of ['daemon:peer::session:worker', 'gone']) {
+    const { db, service, sent, close, wakes } = await replySetup(async () => ({
+      kind: 'rejected',
+      reason: 'unavailable: daemon peer is unreachable',
+    }));
+    try {
+      expect(await close(sender)).toEqual({ kind: 'rejected' });
+      expect(sent).toEqual([]);
+      expect(wakes(`did not reach session ${sender}`)).toHaveLength(1);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  }
+});
+
+test('a local request answer is delivered once and recorded as a sent message', async () => {
+  const { db, service, sent, close } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  try {
+    expect(await close('stranger')).toEqual({ kind: 'accepted' });
+    expect(sent).toHaveLength(1);
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'stranger' })
+    ).toHaveLength(1);
+  } finally {
     service.dispose();
     db.close();
   }

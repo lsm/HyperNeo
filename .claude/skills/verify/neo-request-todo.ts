@@ -6,6 +6,9 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NEO_REQUEST_REPLY } from '../../../packages/daemon/src/lib/neo/request-todo.ts';
+import { NeoConversationReader } from '../../../packages/daemon/src/storage/repositories/neo-conversation-reader.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -161,6 +164,13 @@ try {
     asNeo
   );
   assert.equal((closed as { value?: { ok?: boolean } }).value?.ok, true, JSON.stringify(closed));
+  const deliver = async () => {
+    const jobs = app!.jobQueue.dequeue(NEO_REQUEST_REPLY, 10);
+    const results = [];
+    for (const job of jobs) results.push(await service!.deliverRequestReply(job));
+    return results;
+  };
+  assert.deepEqual(await deliver(), [{ kind: 'accepted' }]);
   const replies = inbox('synthetic-requester');
   assert.equal(replies.length, 1, 'closing the request sends exactly one reply to its sender');
   assert.equal(replies[0]!.origin, `session:${encodeURIComponent(root)}`);
@@ -168,13 +178,23 @@ try {
     replies[0]!.text,
     /Neo closed your request "Close the merged synthetic todo" as done: Closed the merged synthetic todo/
   );
-  (evidence.checks as unknown[]).push({ name: 'Neo closed it', closed, replies });
+  const conversationId = new NeoRepository(db).conversationId()!;
+  const page = await new NeoConversationReader(db).read({ conversationId, limit: 100 });
+  const answers = page.items.filter(
+    (item) =>
+      item.role === 'session' &&
+      item.message.toSession === 'synthetic-requester' &&
+      item.message.fromSession === root
+  );
+  assert.equal(answers.length, 1, "Neo's conversation holds exactly one outbound answer");
+  (evidence.checks as unknown[]).push({ name: 'Neo closed it', closed, replies, answers });
   const again = await invokeOperation(
     registry,
     'neo.todo.remove',
     { todoId: recorded!.id, reason: 'Retire it' },
     asNeo
   );
+  assert.deepEqual(await deliver(), [], 'retiring a closed request queues no second reply');
   assert.equal(inbox('synthetic-requester').length, 1, 'retiring a closed request sends no second reply');
   (evidence.checks as unknown[]).push({ name: 'retired after close', again });
   clock += 11 * 60_000;
@@ -197,12 +217,17 @@ try {
     { todoId: lostTodo!.id, reason: 'Not needed' },
     asNeo
   );
-  const records = (failed as { value?: { ok?: boolean; records?: string[] } }).value;
-  assert.equal(records?.ok, true, JSON.stringify(failed));
-  assert.ok(
-    records?.records?.some((line) => line.startsWith('reply_failed: the requester gone-requester')),
-    JSON.stringify(failed)
-  );
+  assert.equal((failed as { value?: { ok?: boolean } }).value?.ok, true, JSON.stringify(failed));
+  assert.deepEqual(await deliver(), [{ kind: 'rejected' }]);
+  const told = (
+    db
+      .prepare(
+        `SELECT json_extract(payload, '$.message.message.content') AS text
+           FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.to.sessionId') = ?`
+      )
+      .all(root) as { text: string }[]
+  ).filter((row) => String(row.text).includes('did not reach session gone-requester'));
+  assert.equal(told.length, 1, 'Neo is woken with the failed answer');
   (evidence.checks as unknown[]).push({ name: 'reply to an unknown session fails visibly', failed });
   const allAsks = () =>
     (db.prepare('SELECT COUNT(*) AS n FROM neo_asks').get() as { n: number }).n;
@@ -212,7 +237,7 @@ try {
   assert.equal(allAsks(), asksBefore, "a worker's own report records no request todo");
   evidence.passed = true;
   console.log(
-    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} reply_failed=shown closed_repeat=rejected`
+    `PASS request_todos=1 wakes_at_30m=${half.length} wakes_at_1h=${hour.length} replies=${replies.length} answers=${answers.length} reply_failed=woke_neo closed_repeat=rejected`
   );
 } catch (error) {
   evidence.error = String(error);

@@ -1,13 +1,7 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import { renderAddress } from '../mailbox/address.ts';
-import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
-import { createMailboxEntry } from '../mailbox/entry.ts';
-import { wrapSessionContent } from '../messaging/session-envelope.ts';
-import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const requestTodoId = (incident: string) => neoDerivedId(`neo-request-todo:${incident}`);
@@ -58,38 +52,30 @@ export function recordNeoRequestTodo(
   );
 }
 
+export const NEO_REQUEST_REPLY = 'neo.request.reply';
+
+export type NeoRequestReply = { todoId: string; to: string; from: string | null; text: string };
+
 export function queueNeoRequestReply(
   db: Database,
   before: NeoTodo,
   after: NeoTodo,
   reason: string | undefined
-): string | null {
+): void {
   const to = before.named?.requestFrom;
   const terminal = (todo: NeoTodo) => ['done', 'removed'].includes(todo.state);
-  if (typeof to !== 'string' || terminal(before) || !terminal(after)) return null;
-  const session = new SessionRepository(db).getSession(to);
-  if (!session || sessionUnavailable(session.status))
-    return `reply_failed: the requester ${to} was not told (its session is gone). Tell it yourself with message.send.`;
-  const neo = new NeoAskTodoRepository(db).getAsk(before.askId)?.sessionId;
-  const text = `Neo closed your request "${after.title}" as ${after.state}${reason ? `: ${reason}` : '.'}`;
-  const outcome = enqueueMailboxEntry(
-    new JobQueueRepository(db),
-    createMailboxEntry({
-      to: { kind: 'session', sessionId: to },
-      origin: neo ? renderAddress({ kind: 'session', sessionId: neo }) : 'system',
-      messageUuid: neoDerivedId(`neo-request-reply:${before.id}`),
-      message: {
-        type: 'user',
-        parent_tool_use_id: null,
-        inputKind: 'task',
-        message: {
-          content: neo
-            ? (wrapSessionContent(text, { sessionId: neo, name: null }) as string)
-            : text,
-        },
-      },
-    })
-  );
-  if (outcome.kind === 'rejected') throw new Error(outcome.reason);
-  return null;
+  if (typeof to !== 'string' || terminal(before) || !terminal(after)) return;
+  const reply: NeoRequestReply = {
+    todoId: before.id,
+    to,
+    from: new NeoAskTodoRepository(db).getAsk(before.askId)?.sessionId ?? null,
+    text: `Neo closed your request "${after.title}" as ${after.state}${reason ? `: ${reason}` : '.'}`,
+  };
+  new JobQueueRepository(db).enqueueUniquePending({
+    queue: NEO_REQUEST_REPLY,
+    payload: reply,
+    matchPayload: { todoId: before.id },
+    activeStatuses: ['pending', 'processing', 'completed'],
+    maxRetries: 4,
+  });
 }
