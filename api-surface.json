@@ -55304,7 +55304,7 @@
             "type": "string"
           },
           "todoId": {
-            "description": "Todo reference for bookkeeping; missing or stale references are recorded without blocking.",
+            "description": "Todo reference for bookkeeping; missing or stale references are recorded without blocking, but such a start does not reuse a worker a todo has used.",
             "minLength": 1,
             "type": "string"
           }

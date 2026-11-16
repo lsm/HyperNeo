@@ -137,7 +137,7 @@ export const StartWorkInputSchema = z.object({
     .min(1)
     .optional()
     .describe(
-      'Todo reference for bookkeeping; missing or stale references are recorded without blocking.'
+      'Todo reference for bookkeeping; missing or stale references are recorded without blocking, but such a start does not reuse a worker a todo has used.'
     ),
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),

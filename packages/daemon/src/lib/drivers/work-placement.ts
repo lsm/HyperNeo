@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { readdir, readlink } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -114,12 +115,18 @@ export const WORKTREE_IN_USE =
   'A running process is inside the worktree, or the process check failed; kept.';
 
 async function folderInUse(directory: string): Promise<boolean> {
+  const root = realpathSync(directory);
+  const inside = (path: string | null) => !!path && `${path}/`.startsWith(`${root}/`);
+  if (process.platform === 'linux') {
+    const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
+    const cwds = await Promise.all(
+      pids.map((pid) => readlink(`/proc/${pid}/cwd`).catch(() => null))
+    );
+    return cwds.some(inside);
+  }
   const uid = String(process.getuid?.() ?? '');
   const { stdout } = await execFileAsync('lsof', ['-w', '-a', '-d', 'cwd', '-u', uid, '-Fn']);
-  const root = realpathSync(directory);
-  return stdout
-    .split('\n')
-    .some((line) => line.startsWith('n') && `${line.slice(1)}/`.startsWith(`${root}/`));
+  return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
 }
 
 export async function cleanupOwnedWorktree(
