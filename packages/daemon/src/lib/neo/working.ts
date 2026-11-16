@@ -20,12 +20,17 @@ type Row = {
 
 const WORKING = new Set<string>(['queued', 'processing', 'rate_limit_cooldown']);
 
-const listed = (row: Row) =>
-  row.role === 'front' ? row.status === 'rate_limit_cooldown' : WORKING.has(row.status ?? '');
+const listed = (row: Row, includeFrontActivity: boolean) =>
+  row.role === 'front' && !includeFrontActivity
+    ? row.status === 'rate_limit_cooldown'
+    : WORKING.has(row.status ?? '');
 
-export function projectNeoWorking(rows: readonly Row[]): NeoWorkingSession[] {
+export function projectNeoWorking(
+  rows: readonly Row[],
+  includeFrontActivity = false
+): NeoWorkingSession[] {
   return rows
-    .filter(listed)
+    .filter((row) => listed(row, includeFrontActivity))
     .map((row) => {
       const modelHold = row.role
         ? modelHoldOf({ ...row, status: row.status ?? '' }, row.provider ?? '')
@@ -56,7 +61,8 @@ const SESSION_FIELDS = `s.title AS name, ${STATE('status')} AS status, ${STATE('
 
 export function readNeoWorking(
   db: BunDatabase,
-  conversationId: string | null
+  conversationId: string | null,
+  includeFrontActivity = false
 ): NeoWorkingSession[] {
   const columns = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
   if (!columns.some((column) => column.name === 'processing_state')) return [];
@@ -73,6 +79,7 @@ export function readNeoWorking(
          SELECT s.id, NULL, NULL, 'front', ${SESSION_FIELDS}
            FROM sessions s WHERE s.id = ? AND s.status IS NOT 'archived'`
       )
-      .all(conversationId ? frontSessionId(conversationId) : null) as Row[]
+      .all(conversationId ? frontSessionId(conversationId) : null) as Row[],
+    includeFrontActivity
   );
 }
