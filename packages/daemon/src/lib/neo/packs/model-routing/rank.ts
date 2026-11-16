@@ -1,3 +1,4 @@
+import { THINKING_LEVEL_EFFORT, THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ProviderUsageResult } from '@hyperneo/shared/provider';
 import type { NeoLine, NeoLineRanking, NeoLineScope } from '../../pack-contract.ts';
 
@@ -22,11 +23,21 @@ export interface RankInput {
   now: number;
 }
 
+const effortName = (effort: string) => {
+  const name = effort.toLowerCase();
+  const option = THINKING_OPTIONS.find(
+    ({ value, label }) =>
+      value === name || label.toLowerCase() === name || THINKING_LEVEL_EFFORT[value] === name
+  );
+  return option ? option.label.toLowerCase() : name;
+};
+
 export const names = (route: NeoLine, line: NeoLine) =>
   route.provider === line.provider &&
   route.model === line.model &&
   (route.harness === undefined || route.harness === line.harness) &&
-  (route.effort === undefined || route.effort === line.effort);
+  (route.effort === undefined ||
+    (line.effort !== undefined && effortName(route.effort) === effortName(line.effort)));
 
 const matches = (filter: LineFilter, kind: string, scope: NeoLineScope) =>
   (!filter.kinds || filter.kinds.includes(kind)) &&

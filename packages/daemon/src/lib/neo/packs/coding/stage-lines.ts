@@ -1,3 +1,4 @@
+import { THINKING_LEVEL_EFFORT, THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { WorkAdapter } from '../../../drivers/types.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
@@ -67,11 +68,18 @@ export function codingStartAlternatives<T extends Candidate>(
 
 async function effortOffers<T extends Candidate>(lines: CodingLines, source: T) {
   const base = await codingCandidateLine(lines, source);
-  const levels =
-    lines
-      .models()
-      .find((model) => model.id === base.line.model && model.provider === base.line.provider)
-      ?.effortLevels?.filter((effort) => effort !== base.line.effort) ?? [];
+  const known = lines
+    .models()
+    .find((model) => model.id === base.line.model && model.provider === base.line.provider);
+  const at = THINKING_OPTIONS.findIndex(({ label }) => label.toLowerCase() === base.line.effort);
+  const levels = THINKING_OPTIONS.flatMap(({ value, label }, index) => {
+    const id = THINKING_LEVEL_EFFORT[value];
+    return id && (!known?.effortLevels || known.effortLevels.includes(id)) && index !== at
+      ? [{ effort: label.toLowerCase(), distance: at === -1 ? index : Math.abs(index - at) }]
+      : [];
+  })
+    .sort((a, b) => a.distance - b.distance)
+    .map(({ effort }) => effort);
   const variants = await Promise.all(
     levels.map((effort) => codingCandidateLine(lines, { ...base.target, effort }))
   );

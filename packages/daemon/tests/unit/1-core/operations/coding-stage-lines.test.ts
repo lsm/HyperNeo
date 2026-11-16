@@ -99,7 +99,7 @@ describe('rankCodingTargets', () => {
       ).toMatchObject({ value: [glm], skipped: [`${heldText}`] });
   });
 
-  test('an effort spelled think24k or High meets a rule written for high', async () => {
+  test('an effort spelled think24k or High meets a rule written for high; the nearest allowed effort is used', async () => {
     const rules = [{ line: { ...opusLine, effort: 'high' }, never: { kinds: ['coding.write'] } }];
     for (const effort of ['think24k', 'High'])
       expect(
@@ -110,7 +110,7 @@ describe('rankCodingTargets', () => {
           {}
         )
       ).toMatchObject({
-        value: [glm],
+        value: [{ ...hyperneo, effort: 'medium' }, glm],
         skipped: ['anthropic/claude-opus-5-5 via hyperneo: excluded by a rule'],
       });
   });
@@ -221,7 +221,7 @@ describe('rankCodingTargets with an inherited start', () => {
     { kind: 'coding.write', lines: [{ provider: 'glm', model: 'glm-6', effort }] },
   ];
 
-  test('an omitted effort ranks as the inherited effort for rules and routes', async () => {
+  test('an omitted effort ranks as the inherited effort for rules and routes; the nearest allowed effort is used', async () => {
     const rules = [{ line: { ...opusLine, effort: 'high' }, never: { kinds: ['coding.write'] } }];
     const target = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
     expect(
@@ -231,7 +231,12 @@ describe('rankCodingTargets with an inherited start', () => {
         [target, glm],
         {}
       )
-    ).toMatchObject({ value: [{ ...glm, effort: 'high' }] });
+    ).toMatchObject({
+      value: [
+        { ...target, effort: 'medium' },
+        { ...glm, effort: 'high' },
+      ],
+    });
     expect(
       await rankCodingTargets(
         driverCodingLines(catalog, { routes: route('high'), effort: 'high' }),
@@ -340,8 +345,7 @@ describe('rankCodingTargets with real catalog efforts', () => {
       [sol],
       {}
     );
-    expect('value' in result && result.value[0].effort).not.toBe('medium');
-    expect(result).toMatchObject({ value: [{ model: 'gpt-6.1-sol' }] });
+    expect(result).toMatchObject({ value: [{ ...sol, effort: 'low' }] });
   });
 
   test('catalog xhigh is offered in driver vocabulary and a route written as xhigh picks it', async () => {
