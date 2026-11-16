@@ -513,12 +513,6 @@ export async function repairSDKSessionFile(
 
     const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
 
-    result.backupPath = backupSDKSessionFile(sessionFile);
-    if (!result.backupPath) {
-      result.errors.push('Failed to create backup - aborting repair');
-      return result;
-    }
-
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n').filter((line) => line.trim());
 
@@ -600,6 +594,19 @@ export async function repairSDKSessionFile(
       result.repairedCount++;
     }
 
+    if (
+      result.repairedCount === 0 ||
+      result.repairedCount !== validation.orphanedToolResults.length
+    ) {
+      return result;
+    }
+
+    result.backupPath = backupSDKSessionFile(sessionFile);
+    if (!result.backupPath) {
+      result.errors.push('Failed to create backup - aborting repair');
+      return result;
+    }
+
     insertions.sort((a, b) => b.lineIndex - a.lineIndex);
     for (const insertion of insertions) {
       lines.splice(insertion.lineIndex, 0, insertion.message);
@@ -607,8 +614,7 @@ export async function repairSDKSessionFile(
 
     rewriteSessionFile(sessionFile, `${lines.join('\n')}\n`);
 
-    result.success =
-      result.repairedCount > 0 && result.repairedCount === validation.orphanedToolResults.length;
+    result.success = true;
   } catch (error) {
     result.errors.push(`Repair error: ${error}`);
   }
