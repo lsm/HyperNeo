@@ -48,9 +48,7 @@ export function requireNeoAskSettlement(
   const unfinished =
     input.status === 'done'
       ? current.todos.filter(
-          (todo) =>
-            !['done', 'closed_unverified'].includes(todo.state) &&
-            !(todo.state === 'removed' && todo.reason)
+          (todo) => todo.state !== 'done' && !(todo.state === 'removed' && todo.reason)
         )
       : [];
   return unfinished.length
@@ -293,7 +291,7 @@ const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
       .filter((todo) => states.includes(todo.state))
       .map((todo) => todo.title)
       .join(', ');
-  const finished = names(['done', 'closed_unverified']);
+  const finished = names(['done']);
   const dropped = names(['removed', 'failed']);
   const sentence = [
     ...(finished ? [`Finished ${finished}`] : []),
@@ -341,11 +339,7 @@ const turnedSettle = (superpipe({})('neo.ask.turned-settle') as PipelineAPI)
       now: number,
       changes: Changes
     ): string => {
-      const status = current.todos.some((todo) =>
-        ['done', 'closed_unverified'].includes(todo.state)
-      )
-        ? 'done'
-        : 'dropped';
+      const status = current.todos.some((todo) => todo.state === 'done') ? 'done' : 'dropped';
       const ask = store.settleAsk(
         current.ask,
         status,

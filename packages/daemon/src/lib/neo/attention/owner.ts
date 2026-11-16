@@ -28,7 +28,7 @@ export type NeoStepOwner =
 
 const failed = (todo: Step) =>
   todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
-const finished = (todo: Step) => todo.state === 'done' || todo.state === 'closed_unverified';
+const finished = (todo: Step) => todo.state === 'done';
 const latest = (...times: (number | null | undefined)[]) =>
   Math.max(...times.map((time) => time ?? 0));
 

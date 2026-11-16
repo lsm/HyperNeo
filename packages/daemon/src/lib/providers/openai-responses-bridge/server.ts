@@ -45,7 +45,7 @@ export type OpenAIResponsesBridgeAuth = {
   source: 'api_key' | 'chatgpt_oauth';
   accountId?: string;
   isFedrampAccount?: boolean;
-  refreshAuthTokens?: () => Promise<{
+  refreshAuthTokens?: (rejectedAccessToken: string) => Promise<{
     accessToken: string;
     accountId: string;
     isFedrampAccount?: boolean;
@@ -595,10 +595,11 @@ function buildOpenAIHeaders(
 }
 
 async function refreshOpenAIResponsesAuth(
-  auth: OpenAIResponsesBridgeAuth
+  auth: OpenAIResponsesBridgeAuth,
+  rejectedAccessToken: string
 ): Promise<ResolvedResponsesAuth | null> {
   if (auth.source !== 'chatgpt_oauth' || !auth.refreshAuthTokens) return null;
-  const refreshed = await auth.refreshAuthTokens();
+  const refreshed = await auth.refreshAuthTokens(rejectedAccessToken);
   if (!refreshed) return null;
   return {
     apiKey: refreshed.accessToken,
@@ -1518,6 +1519,7 @@ export async function createOpenAIResponsesBridgeServer(
       }
       let openAIResponse: Response;
       try {
+        const sentAccessToken = resolvedAuth?.apiKey ?? config.auth.apiKey;
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
           headers: buildOpenAIHeaders(config.auth, resolvedAuth),
@@ -1525,7 +1527,7 @@ export async function createOpenAIResponsesBridgeServer(
           signal: upstreamAbort.signal,
         });
         if (openAIResponse.status === 401) {
-          const refreshed = await refreshOpenAIResponsesAuth(config.auth);
+          const refreshed = await refreshOpenAIResponsesAuth(config.auth, sentAccessToken);
           if (refreshed) {
             resolvedAuth = refreshed;
             openAIResponse = await fetchImpl(upstreamUrl, {

@@ -82,7 +82,7 @@ export function planNeoQuestionPrune(
       (todo) =>
         question.todos.includes(todo.id) &&
         todo.startedAt === null &&
-        !['done', 'closed_unverified', 'removed'].includes(todo.state)
+        !['done', 'removed'].includes(todo.state)
     )
   )
     return { value: { retire: 'nothing left to decide' } };

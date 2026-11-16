@@ -12,7 +12,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 The same helper with `baseline` measures the previous 50-card contract before
 the fix. Compare observed.json in separate evidence directories. One project has
 three open asks and 32 settled asks, the other 63 open asks. Both also have old
-closed-unverified work and an open question on a settled ask. Every attention
+failed work and an open question on a settled ask. Every attention
 item stays visible alongside ten most recently updated finished/dropped cards.
 Older history is ordered by updatedAt and id descending, pages 20 then 2 without
 overlap, stays project scoped, and exposes summaries with on-demand full bodies.

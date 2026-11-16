@@ -213,7 +213,7 @@ test('the start planner uses recorded enablement without adapter callbacks', () 
   expect(plan.missing).toEqual([]);
 });
 
-test.each(['removed', 'done', 'closed_unverified', 'dropped'] as const)(
+test.each(['removed', 'done', 'dropped'] as const)(
   'a blank-home placeholder is retired without tracker calls when its owner is %s',
   async (state) => {
     tracker.home = () => null;

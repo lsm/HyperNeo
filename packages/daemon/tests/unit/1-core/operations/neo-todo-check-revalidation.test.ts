@@ -106,7 +106,7 @@ describe('a todo check revalidates the one todo it checked', () => {
     expect(performance.now() - started).toBeLessThan(250);
   });
 
-  test.each(['todo', 'doing', 'blocked', 'failed', 'closed_unverified'] as const)(
+  test.each(['todo', 'doing', 'blocked', 'failed'] as const)(
     'a passing custom check completes a %s todo on refresh',
     async (state) => {
       const { store, runner, add } = setup();
@@ -117,16 +117,13 @@ describe('a todo check revalidates the one todo it checked', () => {
     }
   );
 
-  test.each(['failed', 'closed_unverified'] as const)(
-    'an unmet custom check preserves the %s state',
-    async (state) => {
-      const { store, runner, add } = setup({ done: false, evidence: null });
-      const todo = add();
-      store.updateTodo(todo, { state }, 2);
-      await runner.refresh(() => {});
-      expect(store.getTodo(todo.id)?.state).toBe(state);
-    }
-  );
+  test.each(['failed'] as const)('an unmet custom check preserves the %s state', async (state) => {
+    const { store, runner, add } = setup({ done: false, evidence: null });
+    const todo = add();
+    store.updateTodo(todo, { state }, 2);
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)?.state).toBe(state);
+  });
 
   test('an unchanged todo takes the result of its check', async () => {
     const { store, runner, add } = setup();
@@ -135,7 +132,7 @@ describe('a todo check revalidates the one todo it checked', () => {
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', evidence: '#1 merged' });
   });
 
-  test.each(['failed', 'closed_unverified'] as const)(
+  test.each(['failed'] as const)(
     'non-passing judgements preserve the complete %s todo without a failure notice',
     async (state) => {
       for (const judgement of [
@@ -156,18 +153,15 @@ describe('a todo check revalidates the one todo it checked', () => {
     }
   );
 
-  test.each(['failed', 'closed_unverified'] as const)(
-    'a passing judgement still completes a %s todo',
-    async (state) => {
-      const { store, runner, add } = setup(merged, { state: 'done', evidence: 'Merged' });
-      const todo = add();
-      store.updateTodo(todo, { state }, 2);
-      await runner.refresh((_message, error) => {
-        throw error;
-      });
-      expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', evidence: 'Merged' });
-    }
-  );
+  test.each(['failed'] as const)('a passing judgement still completes a %s todo', async (state) => {
+    const { store, runner, add } = setup(merged, { state: 'done', evidence: 'Merged' });
+    const todo = add();
+    store.updateTodo(todo, { state }, 2);
+    await runner.refresh((_message, error) => {
+      throw error;
+    });
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', evidence: 'Merged' });
+  });
 
   test('a todo removed while its check runs keeps its removal', async () => {
     const { store, runner, told, add, whileChecking } = setup();

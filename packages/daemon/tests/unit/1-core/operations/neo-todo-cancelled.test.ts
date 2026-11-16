@@ -204,7 +204,6 @@ describe('cancelled prerequisites', () => {
     'middle',
     'replacement',
     'cycle-replacement',
-    'legacy-close',
     'decline',
     'held',
     'failed',
@@ -236,20 +235,17 @@ describe('cancelled prerequisites', () => {
         );
       if (mode === 'held')
         await invoke('neo.todo.hold', { todoId: dependent.id, reason: 'Human said wait.' });
-      if (mode === 'legacy-close')
-        store.updateTodo(cancelled, { state: 'closed_unverified' }, Date.now());
-      else
-        expect(
-          await invoke('neo.todo.remove', {
-            todoId: cancelled.id,
-            reason: 'Cancelled by the human.',
-            ...(mode.startsWith('replacement')
-              ? { replacedBy: replacement.id }
-              : mode === 'cycle-replacement'
-                ? { replacedBy: b.id }
-                : {}),
-          })
-        ).toMatchObject({ ok: true });
+      expect(
+        await invoke('neo.todo.remove', {
+          todoId: cancelled.id,
+          reason: 'Cancelled by the human.',
+          ...(mode.startsWith('replacement')
+            ? { replacedBy: replacement.id }
+            : mode === 'cycle-replacement'
+              ? { replacedBy: b.id }
+              : {}),
+        })
+      ).toMatchObject({ ok: true });
       if (mode === 'failed-after-cancel')
         store.updateTodo(
           store.getTodo(dependent.id)!,
@@ -276,14 +272,7 @@ describe('cancelled prerequisites', () => {
       await runner.refresh(() => {});
       expect(sent).toHaveLength(before);
       const notes = told.filter((item) => item.todo === dependent.id);
-      if (mode === 'legacy-close') {
-        expect(store.getTodo(dependent.id)?.state).toBe('todo');
-        expect(notes).toHaveLength(0);
-        await runner.refresh(() => {});
-        expect(store.getTodo(dependent.id)?.state).toBe('todo');
-        expect(sent).toHaveLength(before);
-        return;
-      } else if (mode === 'replacement') {
+      if (mode === 'replacement') {
         expect(notes).toHaveLength(0);
         expect(asked(store, dependent)).toBeUndefined();
         expect(store.getTodo(dependent.id)).toMatchObject({

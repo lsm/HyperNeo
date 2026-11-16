@@ -48,9 +48,7 @@ const cases = [
   { id: 'open-human', kind: 'pr_merged', state: 'blocked', blocker: 'needs-human', done: false },
   { id: 'removed', kind: 'pr_merged', state: 'removed', done: false },
   { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'failed', done: false },
-  { id: 'closed-unverified', kind: 'pr_merged', state: 'closed_unverified', done: false },
   { id: 'failed-preserved', kind: 'pr_merged', state: 'failed', done: false },
-  { id: 'merged-unverified', kind: 'pr_merged', state: 'closed_unverified', done: true },
   { id: 'merged-failed', kind: 'pr_merged', state: 'failed', done: true },
 ];
 const evidence: unknown[] = [];

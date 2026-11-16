@@ -350,7 +350,7 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
-  state: z.enum(['todo', 'doing', 'blocked', 'done', 'closed_unverified', 'failed', 'removed']),
+  state: z.enum(['todo', 'doing', 'blocked', 'done', 'failed', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
@@ -474,8 +474,7 @@ export function requireNeoTodoCardsAnswered<T extends TodoPlan>(
   questions: readonly NeoQuestion[]
 ): Gate<T> {
   const card =
-    (['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
-      plan.patch.blockedBy === 'check') &&
+    (plan.patch.state === 'done' || plan.patch.blockedBy === 'check') &&
     questions.find((question) => question.state === 'open' && question.todoId === plan.todo.id);
   return card
     ? fail(`card_unanswered: card ${card.id} is still waiting for the human.`)
@@ -606,10 +605,7 @@ export function createNeoTodoOperations(
       if ('reason' in rebased) return rebased.reason;
       plan = rebased.value;
     }
-    if (
-      ['done', 'closed_unverified'].includes(plan.patch.state ?? '') ||
-      plan.patch.blockedBy === 'check'
-    ) {
+    if (plan.patch.state === 'done' || plan.patch.blockedBy === 'check') {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
       if (!sameNeoTodoCheck(checked, input?.addUrls || input?.check ? plan.todo : latest.value))
