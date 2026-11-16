@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import { createCleanupHandler } from '../../../../src/lib/job-handlers/cleanup.handler.ts';
+import type { Job } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
@@ -295,4 +297,34 @@ test('a watcher failure never suppresses the stalled-ask note', async () => {
   );
   await service.refreshDriverWork();
   expect(digests()).toEqual([idle('live')]);
+});
+
+test('an idle ask is not delivered a third time once its queue rows are cleaned up', async () => {
+  ask('empty');
+  const delivered = () =>
+    (
+      db
+        .getDatabase()
+        .prepare(
+          "SELECT sdk_message AS body FROM sdk_messages WHERE session_id = ? AND message_type = 'user'"
+        )
+        .all(root) as { body: string }[]
+    ).filter((row) => row.body.includes('Ask: empty (empty)')).length;
+  const refreshAndFlush = async () => {
+    await service.refreshDriverWork();
+    clock += 16 * 60_000;
+    await service.refreshDriverWork();
+  };
+  await refreshAndFlush();
+  expect(delivered()).toBe(1);
+  clock += 22 * hour;
+  await refreshAndFlush();
+  expect(delivered()).toBe(2);
+  clock += 8 * 24 * hour;
+  const cleaned = await createCleanupHandler(db.getJobQueueRepo())({} as Job);
+  expect(cleaned.deletedJobs).toBeGreaterThanOrEqual(2);
+  expect(digests()).toEqual([]);
+  await refreshAndFlush();
+  expect(digests()).toEqual([]);
+  expect(delivered()).toBe(2);
 });
