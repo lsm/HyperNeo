@@ -40,7 +40,7 @@ separate choice, and that is where a code and an approval belong.
 `hyperneo devices reset-human` is open), the daemon makes a one-time setup token when it
 starts. Minting and redeeming both check that same window, so after a reset and a restart
 the daemon prints a new setup link. It writes the token to `<data-dir>/setup-token` as an owner-only file, checked the way `daemon/src/lib/pairing/local-credential.ts` checks the local credential (no group or other permission bits and the owner uid on POSIX, file ACLs through `checkWindowsCredential` on Windows),
-and prints `Open http://localhost:<port>/setup#<token>` on the terminal that started it.
+and prints `Open <url>/setup#<token>` on the terminal that started it, where `<url>` is the dialable address `runtime.json` already advertises (`dialableHost` in `daemon/src/lib/runtime-descriptor.ts`: the bound host, with a wildcard bind shown as `127.0.0.1`).
 The daemon log records only that a setup link exists. Opening the link grants the browser
 the first human device, the same grant as a first-device pairing today. The token stops
 working when the window closes: the next human pairing closes it and consumes an open
