@@ -3,6 +3,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingReviewComments } from '../../../../src/lib/neo/packs/coding/review-comment.ts';
+import type { CodingStageFact } from '../../../../src/lib/neo/packs/coding/stage-facts.ts';
 
 const url = 'https://github.com/synthetic/review/pull/3';
 const actor = {
@@ -11,7 +12,7 @@ const actor = {
   harness: 'codex-desktop',
   model: 'gpt-6.1-sol',
 } as const;
-const fact = {
+const fact: CodingStageFact = {
   url,
   head: 'head-a',
   stage: 'review',
@@ -20,7 +21,7 @@ const fact = {
   verdict: 'pass',
   acceptanceContract: 'artifact:contract',
   evidence: ['artifact:proof'],
-} as const;
+};
 
 function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
   const db = new Database(':memory:');
