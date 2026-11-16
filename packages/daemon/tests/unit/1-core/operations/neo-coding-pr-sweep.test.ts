@@ -77,7 +77,7 @@ describe('PR sweep ladder', () => {
     );
     expect(woken).toHaveLength(1);
     expect(woken[0].text).toBe(
-      'PR sweep: lsm/hyperneo#7 "Fix login" has been approved and green since 1970-01-01T00:00:00.000Z on head abc1234, and its owner claude-desktop:worker-1 has made no progress. Reassign it to a free session. If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.'
+      'PR sweep: lsm/hyperneo#7 "Fix login" has been approved and green since 1970-01-01T00:00:00.000Z on head abc1234, and its owner claude-desktop:worker-1 could not be reached or has made no progress. Reassign it to a free session. If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.'
     );
     db.close();
   });
@@ -106,6 +106,35 @@ describe('PR sweep ladder', () => {
       );
     }
     expect(notes.wakes()).toEqual([expect.stringContaining('has made no progress')]);
+    db.close();
+  });
+
+  test('an unreachable owner whose escalation mark was lost is not told again on later rungs', async () => {
+    const { insert, db } = setup();
+    runMigrations(db, () => {});
+    createTables(db);
+    const notes = neoAttentionNotes(
+      db,
+      new NeoAskTodoRepository(db),
+      () => {},
+      CODING_ATTENTION_KINDS
+    );
+    insert(7, 'dirty');
+    for (const minutes of [20, 40, 60]) {
+      db.prepare('UPDATE pack_coding_pr_ledger SET read_at = ?, nudges = 0').run(minutes * MIN);
+      await sweepCodingPrs(
+        new CodingPrSweepRepository(db),
+        {
+          host: 'github.com',
+          tell: async () => false,
+          attend: async (event) => 'told' in (await notes.attend(event)),
+        },
+        minutes * MIN
+      );
+    }
+    expect(notes.wakes()).toEqual([
+      expect.stringContaining('could not be reached or has made no progress'),
+    ]);
     db.close();
   });
 

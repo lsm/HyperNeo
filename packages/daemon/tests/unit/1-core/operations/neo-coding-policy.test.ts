@@ -28,12 +28,17 @@ function fixture() {
   const ledger = new CodingPrLedgerRepository(db);
   const messages: string[] = [];
   const deps = {
+    host: 'github.com',
     tell: async (_ref: unknown, _key: string, text: string) => {
       messages.push(text);
       return true;
     },
     wake: async (_key: string, text: string) => {
       messages.push(text);
+      return true;
+    },
+    attend: async (event: { facts: Record<string, unknown> }) => {
+      messages.push(String(event.facts.text));
       return true;
     },
   };
