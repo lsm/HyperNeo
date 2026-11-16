@@ -1,6 +1,7 @@
 import {
   NEO_ATTENTION_KINDS,
   type NeoAttentionEvent,
+  type NeoAttentionKind,
 } from '../../../src/lib/neo/attention/decide.ts';
 import { createNeoAttention, neoAttentionDelivery } from '../../../src/lib/neo/attention/tell.ts';
 import { neoTodoCovered } from '../../../src/lib/neo/todo-state.ts';
@@ -10,7 +11,8 @@ import type { Database } from '../../../src/storage/sqlite-compat.ts';
 export function neoAttentionNotes(
   db: Database,
   store: NeoAskTodoRepository,
-  sink: (text: string) => void = () => {}
+  sink: (text: string) => void = () => {},
+  packKinds: readonly NeoAttentionKind[] = []
 ) {
   const dropped: string[] = [];
   const texts = (queue: 'mailbox' | 'neo_notes') =>
@@ -35,7 +37,7 @@ export function neoAttentionNotes(
       return sent;
     };
   const tell = createNeoAttention({
-    kinds: () => NEO_ATTENTION_KINDS,
+    kinds: () => [...NEO_ATTENTION_KINDS, ...packKinds],
     read: ({ subject, facts }) => {
       const todo = subject.type === 'todo' ? store.getTodo(subject.id) : null;
       return {

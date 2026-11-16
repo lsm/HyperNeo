@@ -53,6 +53,7 @@ function setup(legacy = false) {
         },
       };
     },
+    attend: async () => true,
     prSweepDeps: {
       delivery: {
         recipient: () => 'neo',

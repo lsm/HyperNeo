@@ -6,6 +6,7 @@ import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
 import { createCodingRetryMergeOperation } from './retry-merge-operation.ts';
 import { createCodingDaemonMergeSweep } from './daemon-merge-sweep.ts';
+import { CODING_ATTENTION_KINDS, type CodingAttend } from './attention.ts';
 import { checkCodingPrApproved } from './pr-approved.ts';
 import { withCodingMergeContext } from './merge-context.ts';
 import { codingWatchedRepos, initializeCodingWatches } from './watched-repos.ts';
@@ -60,6 +61,7 @@ export function createCodingPack(deps: {
   prSweep: CodingPrSweepRepository;
   prEvents: CodingPrEventRepository;
   prSweepDeps: Omit<CodingSweepDeps, 'host'>;
+  attend: CodingAttend;
   projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
 }): NeoPack & {
@@ -90,12 +92,14 @@ export function createCodingPack(deps: {
     human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
     wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
   };
-  const mergeSweep = createCodingDaemonMergeSweep(
-    deps.database,
-    deps.prLedger,
-    deps.prEvents,
-    prSweepDeps
-  );
+  const mergeSweep = createCodingDaemonMergeSweep(deps.database, deps.prLedger, deps.prEvents, {
+    ...prSweepDeps,
+    attend: async (event) =>
+      deps.attend({
+        ...event,
+        facts: { text: await notificationContext(String(event.facts.text)) },
+      }),
+  });
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
@@ -257,6 +261,7 @@ export function createCodingPack(deps: {
     },
     readFacts: todos.readFacts,
     judge: todos.judge,
+    attention: { kinds: CODING_ATTENTION_KINDS },
     sweep: async (now) => {
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,

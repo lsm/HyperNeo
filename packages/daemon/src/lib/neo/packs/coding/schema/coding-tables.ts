@@ -18,14 +18,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_failures (
     url TEXT NOT NULL, head TEXT NOT NULL, actor TEXT NOT NULL,
-    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0, notified_at INTEGER,
+    started_at INTEGER NOT NULL, error TEXT NOT NULL, confirmed_open INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (url, head, started_at)
   );
-  CREATE TABLE IF NOT EXISTS pack_coding_daemon_merge_notices (
-    url TEXT NOT NULL, head TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL,
-    PRIMARY KEY (url, head, kind),
-    FOREIGN KEY (url, head) REFERENCES pack_coding_daemon_merges(url, head) ON DELETE CASCADE
-  );
+  DROP TABLE IF EXISTS pack_coding_daemon_merge_notices;
   CREATE TABLE IF NOT EXISTS pack_coding_delivery_facts (
     todo_id TEXT NOT NULL REFERENCES neo_todos(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
@@ -197,10 +193,13 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     db.exec(
       'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
     );
-  const unowned = db.prepare('PRAGMA table_info(pack_coding_pr_unowned_state)').all() as {
-    name: string;
-  }[];
-  if (!unowned.some((column) => column.name === 'pending_rows'))
+  const has = (table: string, column: string) =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
+      ({ name }) => name === column
+    );
+  if (has('pack_coding_daemon_merge_failures', 'notified_at'))
+    db.exec('ALTER TABLE pack_coding_daemon_merge_failures DROP COLUMN notified_at');
+  if (!has('pack_coding_pr_unowned_state', 'pending_rows'))
     db.exec('ALTER TABLE pack_coding_pr_unowned_state ADD COLUMN pending_rows TEXT');
   for (const table of ['pack_coding_pr_event_state', 'pack_coding_pr_unowned_state'])
     db.prepare(`INSERT OR IGNORE INTO ${table} (id, activated_at) VALUES (1, ?)`).run(activatedAt);

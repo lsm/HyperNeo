@@ -1484,6 +1484,10 @@ export class NeoService {
     return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
   }
 
+  attend(event: Parameters<typeof this.attention>[0]) {
+    return this.attention(event, Date.now());
+  }
+
   async wakeNeo(key: string, text: string): Promise<boolean> {
     const root = this.defaultSessionId();
     if (!root) return false;

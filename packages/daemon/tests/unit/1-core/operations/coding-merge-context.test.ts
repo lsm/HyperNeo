@@ -83,6 +83,7 @@ function fixture(saved = true) {
         },
       },
     }),
+    attend: async () => true,
     prSweepDeps: {
       delivery: {
         recipient: () => 'neo',

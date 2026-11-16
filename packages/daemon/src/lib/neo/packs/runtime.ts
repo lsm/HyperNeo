@@ -119,6 +119,8 @@ export function createNeoService(...args: NeoServiceArgs) {
             },
           },
         },
+        attend: async (event) =>
+          !!configured.defaultSessionId() && 'told' in (await configured.attend(event)),
         projectRepos: (projectId) => configured.repo.allRepositories(projectId),
       });
       coding.operations = [

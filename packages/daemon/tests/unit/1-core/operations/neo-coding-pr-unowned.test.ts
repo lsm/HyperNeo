@@ -89,6 +89,7 @@ function setup(delivery?: CodingSweepDeps['delivery']) {
           },
         },
       }),
+      attend: async () => true,
       prSweepDeps: {
         delivery: delivery ?? {
           recipient: () => 'neo',
