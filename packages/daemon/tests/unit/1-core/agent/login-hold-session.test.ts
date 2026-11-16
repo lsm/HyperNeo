@@ -29,6 +29,7 @@ interface Harness {
     content: string
   ): Promise<Awaited<ReturnType<AgentSession['driveDeliveryTurn']>>>;
   setOutcome(outcome: RefreshNowOutcome): void;
+  persisted(): Promise<string | undefined>;
 }
 
 let availability: Array<{ mockRestore(): void }> = [];
@@ -151,6 +152,7 @@ async function harness(
     deliver,
     deliverWhileQueued,
     setOutcome,
+    persisted: async () => (await db.getSession(session.id))?.processingState,
   };
 }
 
@@ -277,6 +279,70 @@ describe('login hold', () => {
 
     expect(h.agent.isLoginHeld()).toBe(false);
     expect(h.resume).toHaveBeenCalledTimes(1);
+    await h.agent.cleanup();
+  });
+
+  it('a restart keeps when a saved login hold started', async () => {
+    const since = Date.now() - 45 * 60_000;
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since,
+      }),
+      needsLoginAt: Date.now(),
+    });
+
+    expect(h.agent.getProcessingState()).toMatchObject({ reason: 'login', since });
+    await h.agent.cleanup();
+  });
+
+  it('a login hold after a skipped restore starts its own clock', async () => {
+    const saved = Date.now() - 45 * 60_000;
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since: saved,
+      }),
+      needsLoginAt: null,
+    });
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+    expect(h.agent.isLoginHeld()).toBe(false);
+
+    const before = Date.now();
+    h.setNeedsLogin('anthropic', before);
+    await h.agent.driveDeliveryTurn('human-login', 'do the thing', null, false, () => true);
+
+    const state = h.agent.getProcessingState() as { reason?: string; since?: number };
+    expect(state.reason).toBe('login');
+    expect(state.since).toBeGreaterThanOrEqual(before);
+    await h.agent.cleanup();
+  });
+
+  it('a skipped restore of a login hold with no held prompt leaves it held no longer', async () => {
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since: Date.now() - 45 * 60_000,
+      }),
+      needsLoginAt: null,
+    });
+    await new Promise((done) => setTimeout(done, 0));
+    await new Promise((done) => setTimeout(done, 0));
+
+    expect(JSON.parse((await h.persisted()) ?? '{}').status).not.toBe('rate_limit_cooldown');
     await h.agent.cleanup();
   });
 

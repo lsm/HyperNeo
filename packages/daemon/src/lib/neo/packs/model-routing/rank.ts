@@ -22,7 +22,7 @@ export interface RankInput {
   now: number;
 }
 
-const names = (route: NeoLine, line: NeoLine) =>
+export const names = (route: NeoLine, line: NeoLine) =>
   route.provider === line.provider &&
   route.model === line.model &&
   (route.harness === undefined || route.harness === line.harness) &&
@@ -67,12 +67,20 @@ function skipReason(line: NeoLine, stopAt: number | undefined, input: RankInput)
   return null;
 }
 
+export function routeFor(
+  all: readonly Route[],
+  kind: string,
+  scope: NeoLineScope
+): Route | undefined {
+  const routes = all.filter((route) => route.kind === kind);
+  return (
+    routes.find((entry) => entry.repos && scope.repo && entry.repos.includes(scope.repo)) ??
+    routes.find((entry) => !entry.repos)
+  );
+}
+
 export function rankLines(input: RankInput): NeoLineRanking {
-  const routes = input.prefs.routes.filter((route) => route.kind === input.kind);
-  const route =
-    routes.find(
-      (entry) => entry.repos && input.scope.repo && entry.repos.includes(input.scope.repo)
-    ) ?? routes.find((entry) => !entry.repos);
+  const route = routeFor(input.prefs.routes, input.kind, input.scope);
   const position = (line: NeoLine) => {
     const index = route?.lines.findIndex((entry) => names(entry, line)) ?? -1;
     return index === -1 ? Number.POSITIVE_INFINITY : index;
