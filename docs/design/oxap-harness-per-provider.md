@@ -305,8 +305,13 @@ The OXAP Codex entry fixes `approval_policy: on-request` and
 `sandbox: workspace-write`. Several session settings would ask for something
 else, and none of them is enforced on the OXAP path today:
 
-- Create admission carries `permissionMode`, `tools`, `allowedTools` and
-  `disallowedTools` (`create-session-config.ts`).
+- Create admission carries `permissionMode`, `tools`, `sdkToolsPreset`,
+  `allowedTools`, `disallowedTools`, `maxTurns` and `maxBudgetUsd`
+  (`create-session-config.ts`). The SDK path passes `sdkToolsPreset` as
+  `options.tools`.
+- Session create merges the global `sandbox` default with the session's own
+  (`session-lifecycle.ts`), and the SDK path forwards it with its
+  `filesystem.denyRead`/`denyWrite` rules.
 - `codexSessionRefusal` checks only instructions, tool guards, worker
   operations, Space and Neo.
 - The OXAP branch of `QueryRunner` opens the hub without them.
@@ -319,7 +324,10 @@ showing "plan".
 PR 2 extends the admission decision to refuse what the harness cannot enforce:
 
 - any `permissionMode` other than `default`;
-- any `tools`, `allowedTools` or `disallowedTools`.
+- any `tools`, `sdkToolsPreset`, `allowedTools` or `disallowedTools`;
+- an effective `sandbox`, meaning the session's value merged with the global
+  default exactly as session create merges it, that sets any rule;
+- any `maxTurns` or `maxBudgetUsd`.
 
 The same decision runs in three places: `session.create`, `session.update`,
 and the live permission change. For an OXAP chat, `setPermissionMode` refuses
@@ -344,7 +352,9 @@ pipeline edges.
   `admitUpdateSessionConfig` calls `decideSwitch` whenever the update sets
   `provider` or `model`. A same-provider update still passes. Tests send raw
   `session.update` calls covering three cases: SDK → OXAP, OXAP → SDK, and
-  one OXAP provider to another on the same harness.
+  one OXAP provider to another on the same harness. This gate ships in PR 2,
+  the same PR that derives the harness from the provider, so no build lets a
+  chat store provider B while its cached hub slot still runs provider A.
 - `decideOxapOpen(session, providerRecord)` gates each open. It returns the
   adapter name, or the refusal for a provider whose harness changed.
 - `isOxapHarness`, `buildHubConfig`, each row's entry builder and each row's
@@ -374,9 +384,9 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
 | 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex`, and the verify skill's OXAP wire script sends `oxap-codex` until PR 2 switches it to the provider | daemon | ~100 |
-| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce (create, update, live permission change), open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~150 |
+| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce (create, update, live permission change), `decideSwitch` on both doors, open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~190 |
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start with one entry per provider, the adapter name switched to `config.provider` in the same PR, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
-| 4 | `model_id` on submit when advertised, and the switch gate on both doors | daemon | ~55 |
+| 4 | `model_id` on submit when advertised | daemon | ~20 |
 | 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
 | OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction | OXAP repo | upstream |
 | 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME`. Session-level auth dispatcher installed before open | daemon | ~110 |
@@ -401,7 +411,8 @@ Ready today, enough for PRs 1–4:
 Limits users will see, from code that already exists:
 
 - OXAP chats refuse system prompts, agents, tool guards, Space and Neo, and
-  (from PR 2) permission modes other than `default` and tool restrictions.
+  (from PR 2) permission modes other than `default`, tool restrictions,
+  sandbox rules, and turn or budget limits.
 - A run fails if the harness asks for a permission or asks the user a question
   (`unsupportedInteraction` in `oap-query.ts`). With Codex's `on-request` and
   `workspace-write`, ordinary edits inside the workspace do not ask.
