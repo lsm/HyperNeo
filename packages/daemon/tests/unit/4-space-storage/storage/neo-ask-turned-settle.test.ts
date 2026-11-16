@@ -10,7 +10,7 @@ import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
 import { choiceCard } from '../../../../src/lib/neo/human-card.ts';
-import { neoFinishedAskUuids } from '../../../../src/lib/neo/stalled-asks.ts';
+import { neoFinishedAskUuids, wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { neoAskTodosVersion } from '../../../../src/storage/repositories/neo-ask-settlement.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -259,7 +259,17 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         JSON.stringify(hold ? { alternatives } : { alternatives, hold: false }),
         'Choose one of these settings?'
       );
-      consumedWake('ask');
+      const told: string[] = [];
+      await wakeStalledAsks(
+        store,
+        async (event) => {
+          told.push(event.kind);
+        },
+        100
+      );
+      expect(told).toEqual(hold ? [] : ['ask.finished']);
+      sdk('user', wakeUuid('ask'), 10);
+      sdk('result', 'wake-result', 11);
       expect(await sweep()).toEqual(hold ? [] : ['ask']);
       expect(store.getAsk('ask')?.status).toBe(hold ? 'open' : 'done');
     });
