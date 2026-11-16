@@ -304,6 +304,18 @@ describe('read checkout placement', () => {
       value: { place: { folder: view() } },
     });
   });
+  test('a ready local read checkout does not admit a remote or other-machine place', async () => {
+    execFileSync('git', ['init', '-q', view()]);
+    execFileSync('git', ['-C', view(), 'read-tree', '--empty']);
+    for (const place of [
+      { machine: 'local', daemon: 'remote', folder: view(), name: 'Folder' },
+      { machine: 'elsewhere', folder: view(), name: 'Folder' },
+    ])
+      expect(await start(undefined, { place, createFolder: false })).toMatchObject({
+        ok: false,
+        reason: 'invalid_place',
+      });
+  });
   test('a symlinked or unready read checkout path is not admitted', async () => {
     const elsewhere = join(root, 'not-a-repository');
     mkdirSync(join(elsewhere, '.git'), { recursive: true });
