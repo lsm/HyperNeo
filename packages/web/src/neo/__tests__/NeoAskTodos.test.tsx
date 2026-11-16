@@ -496,6 +496,31 @@ describe('NeoAskTodos', () => {
     expect(onOpen.mock.calls[0][0]).toBe('/session/source');
   });
 
+  it('does not add a session opener for a card shown in the promoted list', () => {
+    locale.value = 'en';
+    const source = {
+      adapter: 'hyperneo',
+      id: 'source',
+      name: 'Session source',
+      label: 'HyperNeo · Session source',
+      provider: 'Anthropic',
+      link: '/session/source',
+    };
+    const value = entry({
+      state: 'waiting',
+      questions: [question('q', { state: 'open', sourceSession: source })],
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={{ ...value, ask: { ...value.ask, focusedSession: source } }}
+        hideOpenCards
+        onAnswer={vi.fn()}
+        onOpen={vi.fn()}
+      />
+    );
+    expect(app.queryAllByRole('button', { name: /^Open / })).toHaveLength(0);
+  });
+
   it.each(['codex://threads/worker', 'https://claude.ai/code/synthetic-bridge', '/session/worker'])(
     'opens a question source through the existing opener: %s',
     async (link) => {
@@ -1296,6 +1321,49 @@ describe('neoQuestionAnswerLabel', () => {
   });
 });
 
+describe('NeoAskTodos open cards', () => {
+  it('shows the newest unanswered card first and held cards last', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'waiting',
+          questions: [
+            question('held-old', { state: 'open', createdAt: 10, heldAt: 11 }),
+            question('open-old', { state: 'open', createdAt: 20 }),
+            question('open-new', { state: 'open', createdAt: 30 }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[id^="neo-ref-question-"]')].map((node) => node.id)
+    ).toEqual([
+      'neo-ref-question-open-new',
+      'neo-ref-question-open-old',
+      'neo-ref-question-held-old',
+    ]);
+  });
+
+  it('breaks equal card times by card id', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          state: 'waiting',
+          questions: [
+            question('tie-b', { state: 'open', createdAt: 5 }),
+            question('tie-a', { state: 'open', createdAt: 5 }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[id^="neo-ref-question-"]')].map((node) => node.id)
+    ).toEqual(['neo-ref-question-tie-a', 'neo-ref-question-tie-b']);
+  });
+});
+
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
     expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
@@ -1313,6 +1381,42 @@ describe('neoAskEntryGroup', () => {
       waiting,
       blocked,
       expect.objectContaining({ state: 'doing' }),
+    ]);
+  });
+
+  it('puts the newest unanswered card first, whatever its ask was created', () => {
+    const waitingOn = (id: string, askedAt: number, cardAt: number, heldAt: number | null = null) =>
+      entry({
+        ask: { ...entry({}).ask, id, createdAt: askedAt },
+        state: 'waiting',
+        questions: [
+          question(`${id}-card`, { askId: id, state: 'open', createdAt: cardAt, heldAt }),
+        ],
+      });
+    const stale = waitingOn('new-ask-stale-card', 50, 60);
+    const fresh = waitingOn('old-ask-fresh-card', 10, 90);
+    const held = waitingOn('held-newest', 80, 95, 96);
+    expect(neoAskEntriesInOrder([held, stale, fresh]).map((item) => item.ask.id)).toEqual([
+      'old-ask-fresh-card',
+      'new-ask-stale-card',
+      'held-newest',
+    ]);
+  });
+
+  it('orders asks holding only held cards by their newest held card', () => {
+    const heldOn = (id: string, askedAt: number, cardAt: number) =>
+      entry({
+        ask: { ...entry({}).ask, id, createdAt: askedAt },
+        state: 'waiting',
+        questions: [
+          question(`${id}-card`, { askId: id, state: 'open', createdAt: cardAt, heldAt: cardAt }),
+        ],
+      });
+    const older = heldOn('older-ask-newer-held-card', 10, 90);
+    const newer = heldOn('newer-ask-older-held-card', 20, 60);
+    expect(neoAskEntriesInOrder([newer, older]).map((item) => item.ask.id)).toEqual([
+      'older-ask-newer-held-card',
+      'newer-ask-older-held-card',
     ]);
   });
 });

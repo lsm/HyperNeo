@@ -16,8 +16,8 @@ URL with mode streaming, records audio through the public stream RPC, and observ
 batch transcription. Its ASR receives the configured version path and query
 verbatim, then a full transcription URL including a trailing slash and query.
 A direct voice.transcribe request also succeeds with the full stored URL.
-The two recorded-stream batch fallbacks carry `X-Speech-Priority: interactive`;
-the direct voice.transcribe request carries no priority header.
+The two recorded-stream batch fallbacks and the direct voice.transcribe request
+all carry `X-Speech-Priority: interactive`.
 
 Open `/settings?tab=voice`. Save distinct Batch endpoint and Live endpoint URLs,
 reload, and confirm both values. Clear Live endpoint, reload, and confirm it is

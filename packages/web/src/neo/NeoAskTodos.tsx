@@ -498,7 +498,7 @@ function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   );
 }
 
-function QuestionBox({
+export function QuestionBox({
   question,
   disabled,
   onAnswer,
@@ -644,8 +644,12 @@ export function NeoAskTodos({
   onTopic,
   onControl,
   onDesktopControl,
+  hideOpenCards,
+  onDetails,
 }: {
   entry: NeoAskEntry;
+  hideOpenCards?: boolean;
+  onDetails?: (entry: NeoAskEntry) => void;
   onControl?: (todo: NeoTodoEntry, control: NeoTodoControl) => Promise<void>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
   focusedItem?: { questionId?: string; todoId?: string };
@@ -732,6 +736,7 @@ export function NeoAskTodos({
         if (pendingDetail.current !== ticket) return;
         pendingDetail.current = null;
         setDetails(value);
+        onDetails?.(value);
         setReadRevision(Math.max(ticket.revision, value.ask.updatedAt));
       },
       (cause) => {
@@ -749,7 +754,14 @@ export function NeoAskTodos({
     onLoadDetails,
     readRevision,
   ]);
-  const asked = entry.questions.filter((question) => question.state === 'open');
+  const asked = entry.questions
+    .filter((question) => question.state === 'open' && !hideOpenCards)
+    .sort(
+      (a, b) =>
+        Number(!!a.heldAt) - Number(!!b.heldAt) ||
+        b.createdAt - a.createdAt ||
+        a.id.localeCompare(b.id)
+    );
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
   const knownIds = new Set(
@@ -804,6 +816,7 @@ export function NeoAskTodos({
       if (
         !target ||
         (!cardRef.current?.contains(target) &&
+          !target.closest('[data-neo-cards]') &&
           target.closest('[role="dialog"]')?.getAttribute('data-testid') !==
             `neo-ask-all-${received.ask.id}`)
       )
@@ -831,7 +844,9 @@ export function NeoAskTodos({
   const focusedFallback =
     focused?.link &&
     onOpen &&
-    !asked.some((question) => question.sourceSession?.link === focused.link) &&
+    !entry.questions.some(
+      (question) => question.state === 'open' && question.sourceSession?.link === focused.link
+    ) &&
     !listed.some((todo) => todo.link === focused.link)
       ? focused
       : null;
