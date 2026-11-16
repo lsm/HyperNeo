@@ -7,7 +7,7 @@ import {
 import { vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { voicePeerReasonBytes } from '../../../../src/lib/voice/diagnostics';
-import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
+import { deepgram, joinFinals, streamProtocol } from '../../../../src/lib/voice/stream-protocols';
 import {
   pcm16Wav,
   VoiceStream,
@@ -686,5 +686,121 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(await VoiceStream.start('s2', deps({ enabled: false }))).toEqual({
       error: 'Voice input is disabled',
     });
+  });
+});
+
+describe('VoiceStream against a fake OpenAI Realtime server', () => {
+  let server: WebSocketServer;
+  let port: number;
+  let appended: number;
+  let opening: unknown[];
+  let closed: boolean;
+  let onCommit: (socket: WebSocket) => void;
+  let batches: string[];
+  const relays = new Set<AsrRelay>();
+
+  beforeEach(async () => {
+    appended = 0;
+    opening = [];
+    closed = false;
+    batches = [];
+    onCommit = (socket) =>
+      socket.send(
+        JSON.stringify({
+          type: 'conversation.item.input_audio_transcription.completed',
+          transcript: 'hello there',
+        })
+      );
+    server = new WebSocketServer({ port: 0 });
+    await new Promise((resolve) => server.once('listening', resolve));
+    port = (server.address() as { port: number }).port;
+    server.on('connection', (socket) => {
+      socket.on('close', () => {
+        closed = true;
+      });
+      socket.on('message', (data: Buffer) => {
+        const message = JSON.parse(data.toString()) as { type: string; audio?: string };
+        if (message.type === 'input_audio_buffer.append') {
+          appended += Buffer.from(message.audio ?? '', 'base64').length;
+          socket.send(
+            JSON.stringify({
+              type: 'conversation.item.input_audio_transcription.delta',
+              delta: 'hello',
+            })
+          );
+        } else if (message.type === 'input_audio_buffer.commit') onCommit(socket);
+        else opening.push(message);
+      });
+    });
+  });
+
+  afterEach(() => {
+    for (const relay of relays) relay.close();
+    relays.clear();
+    return new Promise((resolve) => server.close(resolve));
+  });
+
+  const start = async () => {
+    const started = await VoiceStream.start('rt', {
+      voice: (): VoiceSettings => ({
+        enabled: true,
+        endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
+        model: 'm',
+        streamEndpoint: `ws://127.0.0.1:${port}/v1/realtime`,
+        streamProtocol: 'openai-realtime',
+        allowPrivateNetwork: true,
+      }),
+      transcribeWav: async (wav: string): Promise<VoiceTranscribeOutcome> => {
+        batches.push(wav);
+        return { action: 'transcribed', text: 'batch text' };
+      },
+      push: () => {},
+      createRelay: (open: Parameters<typeof createInThreadAsrRelay>[0]) => {
+        const relay = createInThreadAsrRelay(open);
+        relays.add(relay);
+        return relay;
+      },
+    });
+    if ('error' in started) throw new Error(started.error);
+    return started;
+  };
+  const socketClosed = async () => {
+    for (let i = 0; i < 200 && !closed; i++) await new Promise((done) => setTimeout(done, 5));
+    return closed;
+  };
+
+  test('completed settles the stop while the socket stays open, then the relay closes it', async () => {
+    const { via, stream } = await start();
+    expect(via).toBe('streaming');
+    stream.write(new Uint8Array(3200));
+    const began = Date.now();
+    expect(await stream.stop()).toEqual({ text: 'hello there', via: 'streaming' });
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(await socketClosed()).toBe(true);
+    expect(appended).toBe(4800);
+    expect(opening).toMatchObject([{ type: 'session.update' }]);
+    expect(batches).toEqual([]);
+  }, 4_000);
+
+  test('an error event falls back to batch without waiting and closes the socket', async () => {
+    onCommit = (socket) => socket.send(JSON.stringify({ type: 'error', error: { message: 'x' } }));
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    const began = Date.now();
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(await socketClosed()).toBe(true);
+  }, 4_000);
+
+  test('a server that never completes falls back to batch and the socket is closed', async () => {
+    onCommit = () => {};
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+    expect(await socketClosed()).toBe(true);
+  }, 9_000);
+
+  test('the Realtime adapter authorizes with a Bearer key', () => {
+    expect(streamProtocol('openai-realtime')?.authorization('sk-live')).toBe('Bearer sk-live');
   });
 });
