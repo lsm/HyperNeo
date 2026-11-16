@@ -69,7 +69,8 @@ bun -e '
 const lines = (await Bun.file(process.argv[1]).text()).split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const i = lines.findIndex((l) => l.type === "assistant");
 const ok = i >= 0 && lines[i].message.content[0].signature === "sig-synthetic" &&
-  lines[i + 1]?.message?.content?.[0]?.tool_use_id === "toolu_blob" && lines[i + 1].parentUuid === lines[i].uuid;
+  lines[i + 1]?.message?.content?.[0]?.tool_use_id === "toolu_blob" && lines[i + 1].parentUuid === lines[i].uuid &&
+  lines[i].parentUuid === "u0";
 console.log(JSON.stringify({ restoredAssistantLine: i, ok }));
 process.exit(ok ? 0 : 1);' "$PROJECT/sdk-blob.jsonl" >"$RUN/evidence/blob-transcript.json" || fail 'blob transcript not repaired'
 ls "$PROJECT/backups" | sort >"$RUN/evidence/backups.txt"

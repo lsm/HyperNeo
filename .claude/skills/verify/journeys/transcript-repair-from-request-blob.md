@@ -21,7 +21,7 @@ message to the unrepairable session so the resume gate posts its card.
 
 End state: the helper prints `PASS` and exits 0. The first transcript has the
 restored assistant line (thinking signature intact) directly before its
-`tool_result`. Its backups are the newest old one plus the new one; the other
+`tool_result`, and that line's parent is the surviving earlier turn `u0`. Its backups are the newest old one plus the new one; the other
 session's backup is untouched. The second resume fails with `could not be
 repaired: Could not find tool_use message for toolu_lost ...`, and its card in
 `message.sdkMessages` carries that `repairError`. Evidence is in

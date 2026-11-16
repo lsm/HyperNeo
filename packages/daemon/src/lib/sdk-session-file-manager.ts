@@ -486,6 +486,23 @@ function findRequestBlobToolUse(lines: string[], toolUseId: string): SDKFileMess
   return null;
 }
 
+function survivingParentUuid(
+  lines: string[],
+  lineIndex: number,
+  parentUuid: string | undefined
+): string | undefined {
+  if (parentUuid && lines.some((line) => line.includes(`"uuid":"${parentUuid}"`))) {
+    return parentUuid;
+  }
+  for (let i = lineIndex - 1; i >= 0; i--) {
+    try {
+      const uuid = (JSON.parse(lines[i]) as SDKFileMessage).uuid;
+      if (uuid) return uuid;
+    } catch {}
+  }
+  return undefined;
+}
+
 export async function repairSDKSessionFile(
   workspacePath: string,
   sdkSessionId: string,
@@ -563,7 +580,7 @@ export async function repairSDKSessionFile(
       const orphanedLine = JSON.parse(lines[orphan.lineIndex]) as SDKFileMessage;
 
       const repairedMsg: SDKFileMessage = {
-        parentUuid: orphanedLine.parentUuid,
+        parentUuid: survivingParentUuid(lines, orphan.lineIndex, orphanedLine.parentUuid),
         isSidechain: false,
         userType: 'external',
         cwd: orphanedLine.cwd || workspacePath,
