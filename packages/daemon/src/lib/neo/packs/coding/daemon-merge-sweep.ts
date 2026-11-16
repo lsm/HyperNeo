@@ -210,8 +210,6 @@ export function createCodingDaemonMergeSweep(
       if (health && health.reason === 'complete' && health.cycleAt === now)
         await retryLimit(url, head);
     }
-    // Below 20% of the shared REST budget only PRs ready to merge are read, so the
-    // budget left goes to merges and review comments; below 5% Neo is told once.
     const budget = readGithubBudget();
     if (budget.level === 'critical')
       await delivery

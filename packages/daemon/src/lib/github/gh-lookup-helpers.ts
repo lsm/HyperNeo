@@ -161,8 +161,6 @@ export async function fetchRateLimitResetEpoch(
   return pickRateLimitResetEpoch(parsed, resource);
 }
 
-// The daemon and every agent share one REST budget; the last core quota a response
-// reported is the current estimate until its reset.
 let coreBudget: { remaining: number; limit: number; resetAt: number } | null = null;
 export function recordGithubBudget(headers: Headers): void {
   const [remaining, limit, reset] = ['remaining', 'limit', 'reset'].map((name) => {
@@ -182,8 +180,7 @@ export function readGithubBudget(now = Date.now()): {
   return { level, resetAt: coreBudget.resetAt };
 }
 
-// A matching If-None-Match gets a 304, which does not count against the core limit.
-const conditional = new Map<string, { etag: string; data: unknown }>();
+const conditional = new Map<string, { etag: string; link: string | null; data: unknown }>();
 const isRestGet = (args: string[]) =>
   args[1] === 'api' &&
   !args.includes('graphql') &&
@@ -202,8 +199,6 @@ export async function runGhJson(
     stripGHRepo?: boolean;
     maxBufferBytes?: number;
     onResponse?: (quota: GhResponseQuota) => void;
-    // A `--paginate --slurp` read first asks for one conditional page of 100 and
-    // falls back to the full paginated read only when GitHub links a next page.
     firstPage?: boolean;
     onLink?: (link: string | null) => void;
   }
@@ -309,7 +304,9 @@ export async function runGhJson(
       requestId: response.headers.get('x-github-request-id'),
     });
     recordGithubBudget(response.headers);
-    options?.onLink?.(response.headers.get('link'));
+    options?.onLink?.(
+      cached && response.status === 304 ? cached.link : response.headers.get('link')
+    );
   }
   if (cached && response?.status === 304) return { ok: true, data: cached.data };
 
@@ -374,7 +371,7 @@ export async function runGhJson(
   const etag = response?.headers.get('etag');
   if (key && etag) {
     conditional.delete(key);
-    conditional.set(key, { etag, data: parsed });
+    conditional.set(key, { etag, link: response!.headers.get('link'), data: parsed });
     if (conditional.size > 500) conditional.delete(conditional.keys().next().value!);
   }
   return { ok: true, data: parsed };

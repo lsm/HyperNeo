@@ -1,5 +1,3 @@
-// Live, read-only proof that an unchanged PR costs no core REST calls on the second
-// merge-facts read. Usage: bun .claude/skills/verify/github-conditional-reads.ts <public PR URL> <evidence dir>
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +13,6 @@ assert.equal(process.env.NODE_ENV, 'test');
 
 type Seen = { args: string; status: number | null; resource: string | null };
 let seen: Seen[] = [];
-// Only read commands reach the real CLI; each REST answer's status line is recorded.
 const readOnly: SpawnFn = (args, options) => {
   const read =
     (args[1] === 'pr' && ['view', 'checks'].includes(args[2])) ||

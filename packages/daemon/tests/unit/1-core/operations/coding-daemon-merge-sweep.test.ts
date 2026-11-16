@@ -125,7 +125,6 @@ const spawn: SpawnFn = (args) => {
     (fail && args.some((a) => a.includes(fail))) ||
     (hideOutcome && state === 'MERGED' && args[2] !== 'merge') ||
     (mergeFailed && args[2] === 'merge');
-  // A one-page REST read is sent with --include, so it answers like gh: headers, then the page.
   const page = args.includes('per_page=100');
   const body = JSON.stringify((page ? (data as unknown[])[0] : data) ?? {});
   return {
