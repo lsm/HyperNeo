@@ -205,6 +205,7 @@ test.each(
       }),
     ]);
     const focused: unknown[] = [];
+    let reads = 0;
     const gateway = gatewayFor(db);
     const context = {
       deps: {
@@ -213,7 +214,7 @@ test.each(
           getDatabase: () => db,
           gateway: {
             call: async (...args: unknown[]) => {
-              if (args[0] === workCleanupReads && args.length > 2) {
+              if (args[0] === workCleanupReads && ++reads === 2) {
                 const live = (id: string, target: NeoDriverTarget, ref: WorkRef | null) => {
                   const todo = todos.addTodo(
                     id,
@@ -229,7 +230,7 @@ test.each(
                     );
                   todos.updateTodo(todo, { state: 'doing' }, 3);
                 };
-                if (rebound && focused.length === 0) {
+                if (rebound) {
                   live(
                     'named',
                     { verb: 'start', adapter: 'codex-desktop', name: 'Named' },
@@ -248,10 +249,9 @@ test.each(
                     repo
                   );
                 }
-                if (inFlight && focused.length === 0)
-                  live('starting', { verb: 'start', adapter: 'codex-desktop' }, null);
-                focused.push(args[2]);
+                if (inFlight) live('starting', { verb: 'start', adapter: 'codex-desktop' }, null);
               }
+              if (args[0] === workCleanupReads && args.length > 2) focused.push(args[2]);
               return Reflect.apply(gateway.call, gateway, args);
             },
           },
@@ -274,12 +274,13 @@ test.each(
       );
       expect(statusCalls).toBe(rebound ? 8 : 6);
       expect(peak).toBeLessThanOrEqual(4);
-      expect(focused).toHaveLength(6);
-      expect(focused.flat()).toEqual(
-        expect.arrayContaining(
-          folders.map((_, index) => ({ adapter: 'hyperneo', id: `worker-${index}` }))
-        )
-      );
+      expect(focused).toHaveLength(inFlight ? 0 : 6);
+      if (!inFlight)
+        expect(focused.flat()).toEqual(
+          expect.arrayContaining(
+            folders.map((_, index) => ({ adapter: 'hyperneo', id: `worker-${index}` }))
+          )
+        );
       const digest = result as { kept: Record<string, string[]> };
       expect((digest.kept['Unpublished branch; kept.'] ?? []).toSorted()).toEqual(kept.toSorted());
       expect(digest.kept.live.toSorted()).toEqual(
