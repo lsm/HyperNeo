@@ -142,6 +142,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let logs: StructuredLogEvent[];
   let unsubscribe: () => void;
   let connections: URL[];
+  let authorizations: (string | undefined)[];
   const relays = new Set<AsrRelay>();
 
   beforeEach(async () => {
@@ -153,6 +154,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     pushed = [];
     batches = [];
     connections = [];
+    authorizations = [];
     onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
     onCloseStream = (socket) => {
       socket.send(results(`heard ${received}`, true));
@@ -165,6 +167,7 @@ describe('VoiceStream against a stub Deepgram server', () => {
     server.on('connection', (socket, request) => {
       const url = new URL(request.url!, 'http://stub');
       connections.push(url);
+      authorizations.push(request.headers.authorization);
       expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
         if (!isBinary) {
@@ -210,6 +213,34 @@ describe('VoiceStream against a stub Deepgram server', () => {
     if ('error' in started) throw new Error(started.error);
     return started;
   };
+
+  test('streams to the live part when settings hold one', async () => {
+    const { via, stream } = await start({
+      streamEndpoint: undefined,
+      live: { provider: 'deepgram', endpoint: `ws://127.0.0.1:${port}/v1/listen` },
+    });
+    expect(via).toBe('streaming');
+    expect(connections[0].pathname).toBe('/v1/listen');
+    stream.close();
+  });
+
+  test.each([
+    ['a stored key', { hasApiKey: true, apiKeyEndpoint: 'https://api.example.com/v1/audio' }],
+    ['an inline key', { apiKey: 'inline-key' }],
+  ] as const)('%s for the batch host is not sent to a live host elsewhere', async (_, key) => {
+    const { via, stream } = await VoiceStream.start('s1', {
+      ...deps({ endpoint: 'https://api.example.com/v1/audio', ...key }),
+      credentialManager: {
+        getCredentials: async () => ({ type: 'api_key' as const, apiKey: 'stored-key' }),
+      },
+    }).then((started) => {
+      if ('error' in started) throw new Error(started.error);
+      return started;
+    });
+    expect(via).toBe('streaming');
+    expect(authorizations).toEqual([undefined]);
+    stream.close();
+  });
 
   test.each([undefined, 'zh', 'en'] as const)(
     'sends language %s on the ASR connection request',

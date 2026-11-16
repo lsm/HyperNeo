@@ -8,6 +8,7 @@ import {
   voiceStreamsBusy,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
+import { registerSettingsHandlers } from '../../../../src/lib/rpc-handlers/settings-handlers';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { asrRelayDefaults, createInThreadAsrRelay } from '../../../../src/lib/voice/asr-relay.ts';
@@ -430,6 +431,77 @@ describe('voice RPC handlers', () => {
       Host: 'api.openai.com',
     });
   });
+
+  it.each([
+    ['blank', ''],
+    ['on another host', 'https://stale.example.com/v1/audio/transcriptions'],
+  ])(
+    'a key saved with a recorded part reaches it when the legacy endpoint is %s',
+    async (_, legacyEndpoint) => {
+      let current = {} as GlobalSettings;
+      const settingsManager = {
+        getGlobalSettings: () => current,
+        updateGlobalSettingsAsync: async (updates: Partial<GlobalSettings>) => {
+          const before = current;
+          current = { ...current, ...updates };
+          return { settings: current, before, after: current };
+        },
+        rollbackGlobalSettingsAsync: async () => {},
+      } as unknown as SettingsManager;
+      let stored: string | undefined;
+      const credentialManager = {
+        storeApiKey: async (_id: string, key: string) => {
+          stored = key;
+        },
+        removeCredentials: async () => {},
+        getCredentials: async () => (stored ? { type: 'api_key' as const, apiKey: stored } : null),
+        hasEnvironmentCredentials: () => false,
+      } as unknown as ProviderCredentialManager;
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManager,
+        { publishAsync: async () => {} } as never,
+        {} as never,
+        credentialManager
+      );
+      registerVoiceHandlers(hubData.hub, settingsManager, credentialManager);
+      await hubData.handlers.get('settings.global.update')?.({
+        updates: {
+          voice: {
+            enabled: true,
+            endpoint: legacyEndpoint,
+            model: '',
+            recorded: {
+              provider: 'openai',
+              endpoint: 'https://api.example.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+            },
+            apiKey: 'sk-recorded',
+          },
+        },
+      });
+
+      const sent: { url?: string; init?: RequestInit } = {};
+      globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+        sent.url = url.toString();
+        sent.init = init;
+        return new Response(JSON.stringify({ text: 'hello' }), { status: 200 });
+      }) as unknown as typeof fetch;
+
+      await expect(
+        hubData.handlers.get('voice.transcribe')?.({
+          audioBase64: wavBase64(),
+          mimeType: 'audio/wav',
+        })
+      ).resolves.toMatchObject({ text: 'hello' });
+      expect(sent.url).toContain('/v1/audio/transcriptions');
+      expect((sent.init?.headers as Record<string, string>).Host).toBe('api.example.com');
+      expect((sent.init?.headers as Record<string, string>).Authorization).toBe(
+        'Bearer sk-recorded'
+      );
+    }
+  );
 
   it('does not send stored credentials to a different endpoint', async () => {
     const credentialManager = createCredentialManager('stored-key');

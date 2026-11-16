@@ -12,6 +12,7 @@ import { EXA_CREDENTIAL_PROVIDER_ID } from '../agent/exa-web-tools.ts';
 import { assertNoToolSelectionDefaults } from '../tools/session-tool-choice.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import { refuseSecondLineRanker } from '../neo/pack-selection.ts';
+import { voiceParts } from '../voice/voice-parts.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 export { EXA_CREDENTIAL_PROVIDER_ID };
@@ -307,11 +308,12 @@ async function prepareGlobalSettingsUpdate(
 
   if (newApiKey) {
     if (!credentialManager) throw new Error('Credential store is not available');
-    if (!voice.endpoint?.trim()) {
+    const recordedEndpoint = voiceParts(voice).recorded?.endpoint;
+    if (!recordedEndpoint) {
       throw new Error('Configure the voice transcription endpoint before saving an API key');
     }
     try {
-      const keyEndpoint = new URL(voice.endpoint);
+      const keyEndpoint = new URL(recordedEndpoint);
       if (keyEndpoint.protocol !== 'https:') {
         throw new Error('_protocol');
       }
@@ -323,13 +325,13 @@ async function prepareGlobalSettingsUpdate(
       );
     }
     voice.hasApiKey = true;
-    voice.apiKeyEndpoint = normalizeEndpoint(voice.endpoint);
+    voice.apiKeyEndpoint = normalizeEndpoint(recordedEndpoint);
     mutation.storeKey = newApiKey;
   } else if (clearRequested && persistedVoice?.hasApiKey === true) {
     mutation.remove = true;
   } else if (persistedVoice?.apiKey?.trim()) {
     voice.hasApiKey = true;
-    voice.apiKeyEndpoint = normalizeEndpoint(persistedVoice.endpoint ?? '');
+    voice.apiKeyEndpoint = normalizeEndpoint(voiceParts(persistedVoice).recorded?.endpoint ?? '');
     mutation.storeKey = persistedVoice.apiKey.trim();
   } else if (persistedVoice) {
     voice.hasApiKey = persistedVoice.hasApiKey;
