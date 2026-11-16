@@ -420,6 +420,62 @@ describe('schedule target lifecycle and external delivery', () => {
       factsDigest: null,
     });
   });
+  test('a one-shot reminder retries a send that provably did not go out, and then is done', async () => {
+    const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
+    const row = scheduler.create({
+      target: { adapter: 'codex-desktop', id: 'recipient' },
+      sourceKind: 'reminder',
+      sourceId: 'venue',
+      note: 'Call the venue',
+      nudgeEvery: 1,
+      cadence: { kind: 'once', at: Date.now() + 60_000 },
+      createdBySession: null,
+    });
+    scheduler.registerSource({
+      kind: 'reminder',
+      facts: async () => ({ digest: 'venue', summary: 'Call the venue' }),
+      message: (_id, change) => change.summary,
+    });
+    const accepted: string[] = [];
+    let attempts = 0;
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic send that first fails before submission',
+        inputSchema: z.object({ message: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async (input) => {
+          if (++attempts === 1)
+            return {
+              ok: false,
+              reason: 'not_delivered',
+              detail: 'loaded thread list unavailable',
+              notSent: true,
+            };
+          accepted.push(input.message);
+          return { ok: true, value: { delivered: true } };
+        },
+      }),
+    ]);
+    const job = db.getJobQueueRepo().getJob(row.pendingJobId!)!;
+    const fire = () =>
+      createSessionScheduleFire({
+        scheduler,
+        status: async () => 'done',
+        deliver: createScheduleDelivery(db, () => registry).deliver,
+      })(job);
+
+    await expect(fire()).rejects.toThrow('loaded thread list unavailable');
+    expect(await fire()).toEqual({ outcome: 'fired' });
+
+    expect(attempts).toBe(2);
+    expect(accepted).toHaveLength(1);
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'done',
+      lastOutcome: 'fired',
+      pendingJobId: null,
+    });
+  });
   test('a one-shot reminder whose external send is acknowledged late is sent once and then done', async () => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
     const row = scheduler.create({
