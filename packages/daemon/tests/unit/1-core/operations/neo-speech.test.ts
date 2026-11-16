@@ -553,7 +553,7 @@ describe('spoken replies separate from publications', () => {
       wav.set(new TextEncoder().encode('RIFF'), 0);
       wav.set(new TextEncoder().encode('WAVE'), 8);
       const server = fakeServer(
-        () => new Response(wav, { headers: { 'content-type': 'audio/wav' } })
+        () => new Response(wav, { headers: { 'content-type': 'audio/l16;rate=24000' } })
       );
       const speaker = withPart(
         {
@@ -573,6 +573,80 @@ describe('spoken replies separate from publications', () => {
         )
           await new Promise((done) => setTimeout(done, 1));
         expect(server.seen[0].url).toContain('model=aura-2-thalia-en');
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    const deepgramChunks = (chunks: Uint8Array[], type = 'audio/l16;rate=24000') =>
+      fakeServer(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+            { headers: { 'content-type': type } }
+          )
+      );
+    const settled = async () => {
+      for (
+        let i = 0;
+        i < 200 && !messages.some((item) => ['end', 'failed'].includes(item.message.data.type));
+        i++
+      )
+        await new Promise((done) => setTimeout(done, 1));
+    };
+    const deepgramPart = {
+      provider: 'deepgram' as const,
+      endpoint: 'https://api.deepgram.com',
+      key: 'dg',
+    };
+
+    test('a WAV header split across chunks never reaches clients', async () => {
+      const rest = new Uint8Array(46);
+      rest.set(new TextEncoder().encode('FF'), 0);
+      rest.set(new TextEncoder().encode('WAVE'), 6);
+      const server = deepgramChunks([new TextEncoder().encode('RI'), rest]);
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
+        expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
+        expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('raw PCM split across tiny chunks still reaches clients whole', async () => {
+      const server = deepgramChunks([new Uint8Array([1]), new Uint8Array([0, 2, 0])]);
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
+        const audio = Buffer.concat(
+          messages
+            .filter((item) => item.message.data.type === 'audio')
+            .map((item) => Buffer.from(item.message.data.pcm, 'base64'))
+        );
+        expect([...audio]).toEqual([1, 0, 2, 0]);
+        expect(messages.at(-1)?.message.data).toMatchObject({ type: 'end' });
+      } finally {
+        await speaker.dispose();
+      }
+    });
+
+    test('a Deepgram reply that is not raw PCM fails without audio', async () => {
+      const server = deepgramChunks([new TextEncoder().encode('{}')], 'application/json');
+      const speaker = withPart(deepgramPart, server.request);
+      try {
+        await speakOnce(speaker, 'aura-2-thalia-en');
+        await settled();
         expect(messages.some((item) => item.message.data.type === 'audio')).toBe(false);
         expect(messages.some((item) => item.message.data.type === 'failed')).toBe(true);
       } finally {
