@@ -3,6 +3,12 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { NEO_ATTENTION_KINDS } from '../../../../src/lib/neo/attention/decide.ts';
 import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
 import {
+  NEO_PAUSE,
+  NEO_RETRIES_EXHAUSTED,
+  neoDaemonCardDraft,
+} from '../../../../src/lib/neo/daemon-cards.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
+import {
   createNeoAttention,
   neoAttentionDelivery,
 } from '../../../../src/lib/neo/attention/tell.ts';
@@ -280,6 +286,62 @@ describe('the Neo attention sweep', () => {
       if (wakes().length > before) sent.push(minutes / 60);
     }
     expect(sent).toEqual([24, 25, 28, 48]);
+  });
+
+  test.each([
+    ['still Neo’s after the card closes', 'failed', 'answer', [0, 1, 1, 2]],
+    ['resumed by its worker', 'running', 'answer', [0, 0, 0, 0]],
+    ['still covered by another open card', 'failed', 'covered', [0, 0, 0, 0]],
+    ['under a card the human holds', 'failed', 'held', [0, 0, 0, 0]],
+  ] as const)('a daemon card open at deploy: a todo %s', async (_name, worker, close, expected) => {
+    const todo =
+      worker === 'running'
+        ? started(add('todo-1'), 'running')
+        : failed(started(add('todo-1'), 'done'));
+    const card = openHumanCard(
+      store,
+      'old-card',
+      'ask-1',
+      {
+        ...neoDaemonCardDraft(worker === 'running' ? NEO_PAUSE : NEO_RETRIES_EXHAUSTED, [todo]),
+        todoId: todo.id,
+      },
+      T0
+    );
+    const told: number[] = [];
+    const at = async (hours: number) => {
+      await sweep(T0 + hours * HOUR);
+      await sweep(T0 + hours * HOUR);
+      told.push(wakes().length);
+    };
+    await at(5);
+    if (close === 'covered')
+      store.askQuestion(
+        'neo-card',
+        'ask-1',
+        {
+          text: 'Which host?',
+          kind: 'choice',
+          options: ['Staging', 'Production'],
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          todos: [todo.id],
+        },
+        T0 + 5 * HOUR
+      );
+    if (close === 'held') store.holdQuestion(card.id, true, crypto.randomUUID(), T0 + 5 * HOUR);
+    else
+      store.answerQuestion(
+        store.getQuestion(card.id)!,
+        [worker === 'running' ? 'Resume' : 'Retry'],
+        'button',
+        T0 + 5 * HOUR
+      );
+    await at(5);
+    await at(6);
+    await at(24);
+    expect(told).toEqual(expected);
   });
 
   test('a second failure starts its own ladder', async () => {
