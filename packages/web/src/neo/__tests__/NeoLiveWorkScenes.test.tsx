@@ -429,6 +429,57 @@ describe('Neo public work scenes', () => {
     ]);
   });
 
+  it('lists unanswered cards across asks newest first, before held cards and work', () => {
+    const { container, model } = mount(true, true);
+    const card = (id: string, askId: string, createdAt: number, heldAt: number | null = null) =>
+      ({
+        id,
+        askId,
+        text: `Card ${id}`,
+        kind: 'reply',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todos: [],
+        state: 'open',
+        answer: null,
+        answeredBy: null,
+        answeredAt: null,
+        retiredReason: null,
+        replacedBy: null,
+        createdAt,
+        heldAt,
+      }) satisfies NeoQuestionEntry;
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
+      questions: [
+        card('a100', 'ask-a', 100),
+        card('a10', 'ask-a', 10),
+        card('a-held', 'ask-a', 120, 121),
+      ],
+    });
+    const b = testAskEntry('ask-b', 'Ask B', {
+      state: 'waiting',
+      questions: [card('b80', 'ask-b', 80)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [b, running, a] },
+      };
+    });
+    const order = [...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+      (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+    );
+    expect(order).toEqual(['a100', 'b80', 'a10', 'a-held', 'a-step', 'run-step']);
+  });
+
   it('keeps the empty legacy scene list collapsed without a public Work placeholder', () => {
     const { container } = mount(false, true);
     expect(screen.queryByText('No work yet.')).toBeNull();

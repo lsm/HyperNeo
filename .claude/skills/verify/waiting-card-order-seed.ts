@@ -48,4 +48,7 @@ try {
     const askedAt = id === 'waiting-old' ? base + 7000 : now;
     if (id.startsWith('waiting-')) store.askQuestion(`${id}-question`, id, { kind: 'choice', text: `Choose for ${title}`, options: ['Continue', 'Revise'] }, askedAt);
   }
+  store.askQuestion('waiting-old-early', 'waiting-old', { kind: 'choice', text: 'Earlier card on the older decision', options: ['Continue', 'Revise'] }, base + 1000);
+  store.askQuestion('waiting-a-held', 'waiting-a', { kind: 'choice', text: 'Held card on decision A', options: ['Continue', 'Revise'] }, base + 9000);
+  db.prepare("UPDATE neo_questions SET held_at = ? WHERE id = 'waiting-a-held'").run(base + 9001);
 } finally { db.close(); }

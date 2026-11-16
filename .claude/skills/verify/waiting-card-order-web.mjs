@@ -10,6 +10,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
 const expected = ['waiting-old', 'waiting-a', 'waiting-b', 'blocked', 'queued', 'running', 'done'];
+const expectedCards = ['waiting-old-question', 'waiting-a-question', 'waiting-b-question', 'waiting-old-early', 'waiting-a-held'];
 const observations = [];
 const pair = async (page) => {
   const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.create', JSON.stringify({ kind: 'human', name: 'Synthetic order browser' })], {
@@ -36,8 +37,10 @@ try {
         });
       };
       const order = () => page.locator('[data-ask]:visible').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-ask')));
+      const cardOrder = () => page.locator('[id^="neo-ref-question-"]:visible').evaluateAll(nodes => nodes.map(node => node.id.replace('neo-ref-question-', '')));
       await openWork();
       const initial = await order();
+      const cards = await cardOrder();
       assert.equal(await page.locator('[data-ask="waiting-a"]:visible').getByText('Waiting on you', { exact: true }).count(), 1);
       for (const scheme of ['light', 'dark']) {
         await page.emulateMedia({ colorScheme: scheme });
@@ -51,14 +54,15 @@ try {
       await openWork();
       const reloaded = await order();
       const fits = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
-      observations.push({ width, initial, reloaded, fits });
+      observations.push({ width, initial, reloaded, cards, fits });
       writeFileSync(`${out}/waiting-order.json`, JSON.stringify(observations, null, 2));
       assert(fits, 'no horizontal overflow');
       if (phase === 'after') {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
         assert.deepEqual(initial, expected);
+        assert.deepEqual(cards, expectedCards, 'unanswered cards newest first across asks, held cards after');
       }
-      else assert(initial.indexOf('waiting-old') > initial.indexOf('waiting-a'), 'reproduce the newest card buried under older cards');
+      else assert.notDeepEqual(cards, expectedCards, 'reproduce cards grouped by ask instead of by card time');
     } finally { await context.close(); }
   }
 } finally { await browser.close(); }

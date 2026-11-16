@@ -22,15 +22,18 @@ Keep the launch process alive. Run `before` before the production fix, and `afte
 after rebuilding web. The seed creates seven synthetic cards: three waiting on a
 human (including one with a blocked todo), blocked work, running work, queued work,
 and finished work. The oldest waiting ask holds the newest card; the two newer asks
-hold older cards with equal timestamps.
+hold older cards with equal timestamps. The oldest ask also holds its earliest
+card, and ask A holds a newer card that is on hold, so card times interleave
+across asks.
 
 The browser helper opens the mobile work sheet, records card IDs in rendered
 order, screenshots each viewport in light and dark, and uses the seed's guarded update mode to
 change only an older fixture card's outcome/activity time. It reloads the actual
 snapshot and records the resulting order. No model runs or production DB writes.
-Before proves the newest card sits under older cards because its ask is older.
-After requires all waiting cards first, newest unanswered card first, ID ascending
-for equal times,
+Before proves the cards render grouped by ask instead of by card time.
+After requires every unanswered card across asks newest first (ID ascending for
+equal times), then held cards, then the asks: waiting asks by their newest
+unanswered card,
 and the previous order for everything else. The unrelated outcome update and
 reload must leave the order unchanged. Neither viewport may overflow horizontally.
 
