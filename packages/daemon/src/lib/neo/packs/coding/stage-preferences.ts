@@ -28,12 +28,13 @@ const Plan = z.object({
 type Plan = z.infer<typeof Plan>;
 type Target = z.infer<typeof CodingStageTarget>;
 type Preference = Partial<Record<'harness' | 'model' | 'effort', string>>;
-type Result = { ok: true; target: Target; fallback: string[] } | { ok: false; reason: string };
+type Choice = { target: Target; fallback: string[] };
+type Result = { ok: true; choices: Choice[] } | { ok: false; reason: string };
 
 export const CODING_STAGE_PREFERENCES: Record<string, NeoPackPreferenceDeclaration> =
   Object.fromEntries(
     (['write', 'review', 'verify'] as const).flatMap((stage) =>
-      (['harness', 'model', 'effort'] as const).map((field) => [
+      (['harness'] as const).map((field) => [
         `${stage}.${field}`,
         {
           label: {
@@ -112,24 +113,25 @@ export const planCodingStageTarget = (superpipe({})('coding.stage-target') as Pi
     (
       selection: { target: Target; policy: { preferred: boolean } }[],
       preference: Preference
-    ): Result => {
-      const target = [...selection].sort(
-        (a, b) =>
-          score(b.target, preference) - score(a.target, preference) ||
-          Number(b.policy.preferred) - Number(a.policy.preferred)
-      )[0].target;
-      return {
-        ok: true,
-        target,
-        fallback: (['harness', 'model', 'effort'] as const).flatMap((field) =>
-          preference[field] && fieldValue(target, field) !== preference[field]
-            ? [
-                `Preferred ${field} ${JSON.stringify(preference[field])} is unavailable for this selection; using ${JSON.stringify(fieldValue(target, field) ?? 'default')}.`,
-              ]
-            : []
-        ),
-      };
-    },
+    ): Result => ({
+      ok: true,
+      choices: [...selection]
+        .sort(
+          (a, b) =>
+            score(b.target, preference) - score(a.target, preference) ||
+            Number(b.policy.preferred) - Number(a.policy.preferred)
+        )
+        .map(({ target }) => ({
+          target,
+          fallback: (['harness', 'model', 'effort'] as const).flatMap((field) =>
+            preference[field] && fieldValue(target, field) !== preference[field]
+              ? [
+                  `Preferred ${field} ${JSON.stringify(preference[field])} is unavailable for this selection; using ${JSON.stringify(fieldValue(target, field) ?? 'default')}.`,
+                ]
+              : []
+          ),
+        })),
+    }),
     ['selection', 'preference'],
     'selection'
   )

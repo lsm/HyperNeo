@@ -24,6 +24,7 @@ import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import { CodingStageTarget } from './stage-preferences.ts';
+import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
@@ -56,6 +57,7 @@ type Deps = {
   todos: CodingTodoPrRepository;
   review: typeof runCodingReview;
   invoke: (name: string, input: unknown, caller: OperationCaller) => Promise<OperationOutcome>;
+  lines?: CodingLines;
 };
 type Failure = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Failure };
@@ -124,13 +126,29 @@ export function createCodingAssignmentOperation(deps: Deps) {
         },
       };
     if (!input.candidates.length) return refuse('Configure an available independent actor.');
-    const select = (candidates: Input['candidates']) =>
-      assignments.planTargetCurrent({
+    const select = async (candidates: Input['candidates']) => {
+      const plan = await assignments.planTargetCurrent({
         repo: repoName(input),
         stage: input.stage,
         candidates,
         body: pr.body,
       });
+      if (!plan.ok || !deps.lines)
+        return plan.ok ? { ok: true as const, ...plan.choices[0] } : plan;
+      const ranked = await rankCodingTargets(
+        deps.lines,
+        `coding.${input.stage}`,
+        plan.choices.map((choice) => choice.target),
+        { repo: repoName(input) }
+      );
+      if ('reason' in ranked) return { ok: false as const, reason: ranked.reason };
+      const choice = plan.choices.find((entry) => entry.target === ranked.value[0])!;
+      return {
+        ok: true as const,
+        target: choice.target,
+        fallback: [...choice.fallback, ...ranked.skipped.map((line) => `Skipped ${line}.`)],
+      };
+    };
     const plan = await select(input.candidates);
     if (!plan.ok) return refuse(plan.reason);
     const stage = input.stage === 'verify' ? 'Verify' : 'Review';

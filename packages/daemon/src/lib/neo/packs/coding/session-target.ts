@@ -11,6 +11,7 @@ import {
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
 import { planCodingSessionDispatch } from './session-strategy.ts';
+import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
 type Pooled = { ref: WorkRef; name: string; held: boolean };
@@ -56,7 +57,7 @@ const prUrl = (todo: NeoTodo) => {
 };
 
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
-  .input(['db', 'todo', 'target', 'status'])
+  .input(['db', 'todo', 'target', 'status', 'lines'])
   .pipe(
     (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
       gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
@@ -112,6 +113,28 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     'plan'
   )
   .pipe(
+    async (
+      lines: CodingLines | undefined,
+      facts: Facts,
+      plan: Plan,
+      todo: NeoTodo,
+      target: NeoTodoTarget
+    ) => {
+      if (!lines || target.verb !== 'start' || (plan.verb !== 'start' && plan.verb !== 'keep'))
+        return { value: true };
+      const kind = todo.named?.workKind;
+      const ranked = await rankCodingTargets(
+        lines,
+        typeof kind === 'string' ? kind : 'coding.write',
+        [target],
+        facts ? { repo: facts.repo } : {}
+      );
+      return 'reason' in ranked ? { reason: { reason: ranked.reason } } : { value: true };
+    },
+    ['lines', 'facts', 'plan', 'todo', 'target'],
+    'result:decision'
+  )
+  .pipe(
     async (db: Database, facts: Facts, plan: Plan, todo: NeoTodo, target: NeoTodoTarget) => {
       const binds =
         (plan.verb === 'send' && plan.bind) ||
@@ -148,5 +171,6 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   db: Database,
   todo: NeoTodo,
   target: NeoTodoTarget,
-  status: Status
+  status: Status,
+  lines?: CodingLines
 ) => Promise<NeoWorkerTargetDecision>;
