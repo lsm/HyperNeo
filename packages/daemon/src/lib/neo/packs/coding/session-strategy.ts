@@ -65,7 +65,7 @@ export function planCodingSessionDispatch(input: {
         : { verb: 'wait' };
   if (input.strategy !== 'long_lived') return { verb: 'start' };
   const idle = pool.filter((candidate) => candidate.state === 'available');
-  const reuse = idle.find((candidate) => ofType(candidate.name, workType)) ?? idle[0];
+  const reuse = idle.find((candidate) => ofType(candidate.name, workType));
   if (reuse) return { verb: 'send', ref: reuse.ref, bind: true };
   if (pool.some((candidate) => candidate.state === 'unknown')) return { verb: 'wait' };
   return { verb: 'start', name: workTypeName(workType, pool) };

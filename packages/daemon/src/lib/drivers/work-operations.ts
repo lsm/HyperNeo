@@ -131,6 +131,8 @@ const reuseHolds = new Set<string>();
 const REMOTE_SEND_TIMEOUT_MS = 180_000;
 const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
+export const WORK_START_EXCLUDE_REFS_MAX = 30;
+
 export const StartWorkInputSchema = z.object({
   todoId: z
     .string()
@@ -153,7 +155,7 @@ export const StartWorkInputSchema = z.object({
       'For a Codex start, set a generic sessionTitle, never the task title. When omitted, the driver assigns the next free generic project name.'
     ),
   message: z.string().trim().min(1).max(100_000),
-  excludeRefs: z.array(WorkRefSchema).max(30).optional(),
+  excludeRefs: z.array(WorkRefSchema).max(WORK_START_EXCLUDE_REFS_MAX).optional(),
   createFolder: z.boolean().optional(),
   provenance: z.boolean().optional(),
   preparation: workStartPreparation.schema.optional(),
