@@ -8,6 +8,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
+import type { NeoStepFacts } from './attention/owner.ts';
 
 export interface NeoPackBrief {
   id: string;
@@ -137,7 +138,10 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   sweep?(now: number): Promise<void>;
   attention?: {
     kinds: readonly NeoAttentionKind[];
-    scan?(now: number): Promise<readonly NeoAttentionEvent[]>;
+    scan?(
+      now: number,
+      waiting: readonly { todo: NeoTodo; facts: Pick<NeoStepFacts, 'worker'> }[]
+    ): Promise<readonly NeoAttentionEvent[]>;
   };
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;
   snapshotRows?(

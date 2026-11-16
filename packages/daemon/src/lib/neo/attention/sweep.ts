@@ -99,7 +99,7 @@ export function createNeoAttentionSweep(deps: {
   sessions: NeoTodoSessionRepository;
   packs(): readonly NeoPack[];
   limits(): Limits;
-  scan(now: number): Promise<readonly NeoAttentionEvent[]>;
+  scan(now: number, waiting: readonly NeoStepRow[]): Promise<readonly NeoAttentionEvent[]>;
   tell(event: NeoAttentionEvent, now: number): Promise<unknown>;
   failed(event: NeoAttentionEvent, error: unknown): void;
 }) {
@@ -107,7 +107,15 @@ export function createNeoAttentionSweep(deps: {
     .input(['now'])
     .pipe(() => deps.sessions.read('neoStepFacts'), 'now', 'facts')
     .pipe((facts: Facts) => readNeoSteps(facts, deps), 'facts', 'steps')
-    .pipe(deps.scan, 'now', 'scanned')
+    .pipe(
+      (now: number, steps: NeoStepRow[]) =>
+        deps.scan(
+          now,
+          steps.filter((row) => owner(row).owner === 'pack')
+        ),
+      ['now', 'steps'],
+      'scanned'
+    )
     .pipe(
       (steps: NeoStepRow[], facts: Facts, scanned: readonly NeoAttentionEvent[]) => [
         ...planNeoSweepEvents(steps, facts),

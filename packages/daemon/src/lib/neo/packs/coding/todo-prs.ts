@@ -13,6 +13,7 @@ import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-sna
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { codingPrKey } from './pr-key.ts';
+import { codingCanonicalRepo } from './watched-repos.ts';
 import { CodingTurnPrRepository, readCodingTurnFacts } from './turn-prs.ts';
 import { codingNamedPrKeys } from './turn-owner.ts';
 import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pack-contract.ts';
@@ -165,6 +166,39 @@ export class CodingTodoPrRepository {
 
   readWaiting(todoIds: readonly string[]): Promise<Set<string>> {
     return gatewayFor(this.db).call(codingTodoPrReads, 'waiting', todoIds);
+  }
+
+  openLedger(
+    todoIds: readonly string[]
+  ): { todoId: string; url: string; state: CodingPrState | null; since: number | null }[] {
+    const ledger = this.db.prepare(
+      'SELECT state, state_since AS since, closed_at AS closedAt FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?'
+    );
+    return (
+      this.db
+        .prepare(
+          `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
+            WHERE todo_id IN (SELECT value FROM json_each(?))`
+        )
+        .all(JSON.stringify(todoIds)) as { todoId: string; prs: string }[]
+    ).flatMap(({ todoId, prs }) =>
+      (JSON.parse(prs) as NeoWorkPr[]).flatMap((pr) => {
+        const parsed = parsePrUrl(pr.url);
+        const row = parsed
+          ? (ledger.get(
+              codingCanonicalRepo(this.db, `${parsed.owner}/${parsed.repo}`),
+              Number(parsed.number)
+            ) as { state: CodingPrState; since: number; closedAt: number | null } | undefined)
+          : undefined;
+        return pr.state === 'OPEN' && !row?.closedAt
+          ? [{ todoId, url: pr.url, state: row?.state ?? null, since: row?.since ?? null }]
+          : [];
+      })
+    );
+  }
+
+  readOpenLedger(todoIds: readonly string[]) {
+    return gatewayFor(this.db).call(codingTodoPrReads, 'openLedger', todoIds);
   }
 
   record(todoId: string, prs: readonly NeoWorkPr[], now: number): void {
@@ -568,5 +602,5 @@ export const codingTodoPrReads = defineRepositoryOp(
   'coding.todoPrReads',
   'read',
   CodingTodoPrRepository,
-  ['waiting', 'holder', 'linkedIssues']
+  ['waiting', 'holder', 'linkedIssues', 'openLedger']
 );

@@ -362,12 +362,12 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      scan: async (now) => [
+      scan: async (now, waiting) => [
         ...driverHealthEvents(this.db.getGlobalSettings?.().driverHealth ?? {}),
         ...(
           await Promise.all(
             this.packs().map((pack) =>
-              (pack.attention?.scan?.(now) ?? Promise.resolve([])).catch((error) => {
+              (pack.attention?.scan?.(now, waiting) ?? Promise.resolve([])).catch((error) => {
                 this.log.warn(`Attention scan ${pack.id} failed`, error);
                 return [];
               })
