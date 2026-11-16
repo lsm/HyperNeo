@@ -1253,9 +1253,15 @@ export class NeoService {
         message: { type: 'user', message: { content: reply.text }, parent_tool_use_id: null },
       },
       { source: 'internal', sessionId: reply.from ?? undefined, role: 'neo' }
-    );
-    if (sent.kind === 'failed') throw new Error(sent.message);
-    const result = sent.value as { kind: string; reason?: string };
+    ).catch((error: unknown) => ({ kind: 'failed' as const, message: String(error) }));
+    if (sent.kind === 'failed' && job.retryCount < job.maxRetries) throw new Error(sent.message);
+    const result =
+      sent.kind === 'failed'
+        ? {
+            kind: 'failed',
+            reason: `${sent.message} (gave up after ${job.retryCount + 1} attempts)`,
+          }
+        : (sent.value as { kind: string; reason?: string });
     if (result.kind !== 'accepted')
       await this.attention(
         {

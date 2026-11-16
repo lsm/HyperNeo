@@ -915,7 +915,10 @@ async function replySetup(forward: RemoteSendForwarder) {
   registry = createOperationRegistry([
     createSendMessageOperation(
       db.getJobQueueRepo(),
-      (id) => (id === 'gone' ? null : 'active'),
+      (id) => {
+        if (id === 'broken') throw new Error('synthetic session read failure');
+        return id === 'gone' ? null : 'active';
+      },
       async (target, input, origin) => {
         forwarded.push({
           target: `${target.daemonId}/${target.sessionId}`,
@@ -934,7 +937,7 @@ async function replySetup(forward: RemoteSendForwarder) {
     ),
   ]);
   service.repo.reserveBinding({ sessionId: 'neo', projectId: null, kind: 'neo' });
-  const close = async (sender: string) => {
+  const closeOnly = async (sender: string) => {
     recordNeoRequestTodo(service.todos, {
       incident: sender,
       neoSession: 'neo',
@@ -950,6 +953,9 @@ async function replySetup(forward: RemoteSendForwarder) {
       now: Date.now(),
     });
     expect(closed).toMatchObject({ ok: true });
+  };
+  const close = async (sender: string) => {
+    await closeOnly(sender);
     const jobs = db.getJobQueueRepo().dequeue(NEO_REQUEST_REPLY, 10);
     expect(jobs).toHaveLength(1);
     return service.deliverRequestReply(jobs[0]);
@@ -959,7 +965,7 @@ async function replySetup(forward: RemoteSendForwarder) {
       .getJobQueueRepo()
       .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
       .filter((job) => JSON.stringify(job.payload).includes(text));
-  return { db, service, sent, forwarded, close, wakes };
+  return { db, service, sent, forwarded, close, closeOnly, wakes };
 }
 
 test('a request from an attached remote session is answered once through the remote forwarder', async () => {
@@ -1016,6 +1022,42 @@ test('a local request answer is delivered once and recorded as a sent message', 
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'stranger' })
     ).toHaveLength(1);
   } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
+test('a reply that keeps failing to send wakes Neo on its last attempt instead of dying silently', async () => {
+  const { db, service, sent, closeOnly, wakes } = await replySetup(async () => {
+    throw new Error('no remote');
+  });
+  const start = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  try {
+    await closeOnly('broken');
+    const queue = db.getJobQueueRepo();
+    const outcomes: string[] = [];
+    let id = '';
+    for (let attempt = 0; attempt < 10; attempt++) {
+      clock.mockReturnValue(start + (attempt + 1) * 3_600_000);
+      const [job] = queue.dequeue(NEO_REQUEST_REPLY, 1);
+      if (!job) break;
+      id = job.id;
+      try {
+        const result = await service.deliverRequestReply(job);
+        queue.complete(job.id, result);
+        outcomes.push(String(result.kind));
+      } catch (error) {
+        queue.fail(job.id, String(error));
+        outcomes.push('retry');
+      }
+    }
+    expect(outcomes).toEqual(['retry', 'retry', 'retry', 'retry', 'failed']);
+    expect(sent).toEqual([]);
+    expect(wakes('did not reach session broken')).toHaveLength(1);
+    expect(queue.getJob(id)?.status).toBe('completed');
+  } finally {
+    clock.mockRestore();
     service.dispose();
     db.close();
   }
