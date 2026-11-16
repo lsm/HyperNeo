@@ -242,7 +242,7 @@ describe('the attention sweep with model-routing on', () => {
       sessions: new NeoTodoSessionRepository(db),
       packs: () => [pack],
       limits: () => ({ running: 6, perGroup: 3 }),
-      scan: (now) => pack.attention!.scan!(now),
+      scan: (now, waiting) => pack.attention!.scan!(now, waiting),
       tell: createNeoAttention({
         kinds: () => [...NEO_ATTENTION_KINDS, ...pack.attention!.kinds],
         read,

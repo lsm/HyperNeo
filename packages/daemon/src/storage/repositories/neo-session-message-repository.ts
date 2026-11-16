@@ -2,15 +2,13 @@ import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-messa
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { frontSessionId } from '../../lib/neo/front-mode.ts';
 
 const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationId, sequence,
   from_session AS fromSession, from_name AS fromName, to_session AS toSession, to_name AS toName,
   text, created_at AS createdAt, kind FROM neo_session_messages`;
 
-export const SENT_BY_NEO = "from_session GLOB 'neo:*'";
 export const WORKER_BATCH_SENDER = 'system:worker-batch';
-export const VISIBLE_IN_NEO = `(${SENT_BY_NEO} OR from_session = '${WORKER_BATCH_SENDER}')`;
+export const VISIBLE_IN_NEO = `from_session = '${WORKER_BATCH_SENDER}'`;
 
 export type NeoSessionMessageDraft = Omit<NeoSessionMessage, 'sequence'>;
 
@@ -66,15 +64,6 @@ export class NeoSessionMessageRepository {
         messageId
       ) as NeoSessionMessage | null) ?? null
     );
-  }
-
-  latest(conversationId: string, limit: number): NeoSessionMessage[] {
-    return (
-      this.select(
-        `WHERE conversation_id = ? AND ${SENT_BY_NEO} AND to_session <> ?
-           ORDER BY created_at DESC, sequence DESC LIMIT ?`
-      ).all(conversationId, frontSessionId(conversationId), limit) as NeoSessionMessage[]
-    ).reverse();
   }
 }
 

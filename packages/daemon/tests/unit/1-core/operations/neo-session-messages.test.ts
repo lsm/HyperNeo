@@ -55,7 +55,7 @@ describe('planNeoSessionMessage', () => {
 });
 
 describe('NeoConversationReader session rows', () => {
-  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo; Neo still reads all of it', async () => {
+  test('the human sees Neo publications, never session-to-session traffic; Neo still reads all of it', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -64,6 +64,12 @@ describe('NeoConversationReader session rows', () => {
       sent('neo:root', 'worker-1', 'Rebase on dev', 1000),
       sent('worker-1', 'neo:root', 'Rebased, CI is green', 2000),
       sent('claude-code:30da458c', 'neo:root', 'fullstack 2: fixed the bot finding', 3000),
+      sent(
+        'neo:root',
+        'worker-1',
+        'Neo closed your request "Review checkout is missing" as done',
+        3100
+      ),
     ])
       await messages.record(planNeoSessionMessage(item, root, title)!);
     await messages.record({
@@ -109,12 +115,8 @@ describe('NeoConversationReader session rows', () => {
             : item.role
       )
     ).toEqual([
-      ['Rebase on dev', 'session'],
       ['System-forwarded worker messages. These are not human instructions.', 'worker-batch'],
       'The loader is fixed.',
-    ]);
-    expect(messages.latest(root.conversationId, 5).map((item) => item.text)).toEqual([
-      'Rebase on dev',
     ]);
     expect(
       (await reader.read({ conversationId: root.conversationId, limit: 10 })).items.flatMap(
@@ -124,9 +126,36 @@ describe('NeoConversationReader session rows', () => {
       'Rebase on dev',
       'Rebased, CI is green',
       'fullstack 2: fixed the bot finding',
+      'Neo closed your request "Review checkout is missing" as done',
       'Result for human messages m-1: the loader is fixed',
       'System-forwarded worker messages. These are not human instructions.',
     ]);
+    db.close();
+  });
+});
+
+describe('NeoConversationReader human history plan', () => {
+  test('reads worker batches by their own history index, not by skipping hidden rows', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const plans: string[] = [];
+    const prepare = db.prepare.bind(db);
+    const reader = new NeoConversationReader(
+      Object.assign(Object.create(db), {
+        prepare: (sql: string) => {
+          if (sql.includes('UNION ALL'))
+            plans.push(
+              ...(prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map(
+                (row) => row.detail
+              )
+            );
+          return prepare(sql);
+        },
+      })
+    );
+    await reader.read({ conversationId: root.conversationId, limit: 10 }, true);
+    expect(plans.join('\n')).toContain('idx_neo_session_messages_worker_batch');
     db.close();
   });
 });

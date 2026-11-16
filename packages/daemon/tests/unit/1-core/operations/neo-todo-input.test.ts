@@ -89,6 +89,20 @@ test('add derives completion text and rejects unsupported check packs and kinds'
   expect(store.listTodos('ask')).toHaveLength(1);
 });
 
+test('add rejects a todo that claims to be a worker request', async () => {
+  const { call, store } = fixture();
+  await expect(
+    call('neo.todo.add', {
+      after: [],
+      askId: 'ask',
+      title: 'Hidden',
+      check,
+      named: { requestFrom: 'session-w' },
+    })
+  ).rejects.toThrow('Leave requestFrom out of named');
+  expect(store.listTodos('ask')).toHaveLength(0);
+});
+
 test('legacy rows remain readable and a check edit replaces their old completion wording', async () => {
   const { call, store, ops } = fixture();
   const legacy = store.addTodo(

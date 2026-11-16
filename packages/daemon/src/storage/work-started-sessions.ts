@@ -18,14 +18,17 @@ export function recordStartedWork(
   at = Date.now(),
   unusable = false,
   released = false,
-  claim?: { todoId: string | null }
+  claim?: { todoId: string | null },
+  role: 'worker' | null = null
 ): void {
   db.prepare(
-    `INSERT INTO work_started_sessions (adapter, id, started_at, unusable_at, released_at, claimed_by)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (adapter, id) DO UPDATE SET
+    `INSERT INTO work_started_sessions
+       (adapter, id, started_at, unusable_at, released_at, claimed_by, role)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8) ON CONFLICT (adapter, id) DO UPDATE SET
        unusable_at = COALESCE(excluded.unusable_at, unusable_at),
        released_at = COALESCE(released_at, excluded.released_at),
-       claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END`
+       claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END,
+       role = COALESCE(excluded.role, role)`
   ).run(
     ref.adapter,
     ref.id,
@@ -33,8 +36,13 @@ export function recordStartedWork(
     unusable ? at : null,
     released ? at : null,
     claim?.todoId ?? null,
-    Number(!!claim)
+    Number(!!claim),
+    role
   );
+}
+
+export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
+  recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
 }
 
 export function forgetWorkGone(db: BunDatabase, root: string): void {
@@ -85,9 +93,9 @@ export function readStartedWork(
          (SELECT claimed_by FROM work_started_sessions own
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
-         SELECT adapter, id FROM work_started_sessions
+         SELECT adapter, id FROM work_started_sessions WHERE ?1 IS NULL OR role = 'worker'
          UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
-         WHERE ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
+         WHERE ?1 IS NULL AND ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
        ) worker
        WHERE ?1 IS NULL OR (worker.adapter = ?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked

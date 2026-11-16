@@ -196,9 +196,6 @@ describe('worker batches before human intake', () => {
       })()
     ).toThrow('rollback');
     expect(ledger.list(conversationId)).toEqual([]);
-    expect(new NeoSessionMessageRepository(db.getDatabase()).latest(conversationId, 10)).toEqual(
-      []
-    );
     expect(db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, requestId)).toEqual([]);
     accept('Human after rollback');
     const [job] = db.getJobQueueRepo().dequeueSessionFifo('message_delivery', 1);

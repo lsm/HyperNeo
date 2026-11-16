@@ -341,8 +341,8 @@ test('RPC sharing does not mix the MCP view or bypass caller admission', async (
   ]);
   expect(read(rpc).projects[0].context).toBe('RPC context');
   expect(read(mcp).projects[0].context).toBe('');
-  expect(read(rpc).sessionMessages).toEqual([]);
-  expect(read(mcp).sessionMessages).toBeUndefined();
+  expect('sessionMessages' in read(rpc)).toBe(false);
+  expect('sessionMessages' in read(mcp)).toBe(false);
   expect(refused).toMatchObject({ kind: 'completed', value: { ok: false } });
 });
 

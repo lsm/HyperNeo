@@ -188,7 +188,6 @@ beforeEach(async () => {
       asks.value,
       publications.value,
       rootSnapshot.sessionNoticeGroups,
-      rootSnapshot.sessionMessages,
       rootSnapshot.wakes
     );
     return {

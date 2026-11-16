@@ -6,6 +6,17 @@
 
 set -e
 
+# Docs-only commits skip code checks, by the same rule as the CI path filter.
+# Older checkouts without the rule file run the full checks.
+inert_docs="$(git rev-parse --show-toplevel)/scripts/lib/inert-docs.sh"
+if [ -f "$inert_docs" ]; then
+    . "$inert_docs"
+    if git diff --cached --name-only --no-renames -z | all_inert_docs; then
+        echo "📝 Only docs staged; skipping code checks."
+        exit 0
+    fi
+fi
+
 echo "🔍 Running pre-commit checks..."
 
 # Run lint

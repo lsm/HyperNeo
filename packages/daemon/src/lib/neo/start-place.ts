@@ -55,7 +55,8 @@ function userNamedPath(
 
 export type NeoStartPlacePolicy = (
   todo: NeoTodo | null,
-  ask: NeoAsk | null
+  ask: NeoAsk | null,
+  folder?: string
 ) => 'explicit' | 'shared-home';
 
 export function neoStartPlace(deps: {
@@ -72,7 +73,8 @@ export function neoStartPlace(deps: {
     const ask =
       candidate?.sessionId === caller.sessionId && candidate?.status === 'open' ? candidate : null;
     const repo = new NeoRepository(deps.db);
-    const explicit = deps.policy(todo, ask) === 'explicit';
+    const here = input.place && !input.place.daemon && input.place.machine === deps.machine;
+    const explicit = deps.policy(todo, ask, here ? input.place?.folder : undefined) === 'explicit';
     if (explicit && input.place) return { value: { ...input, place: input.place } };
     const home = neoUserFolder(deps.workspaceRoot);
     const place =

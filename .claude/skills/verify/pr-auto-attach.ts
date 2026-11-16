@@ -80,6 +80,7 @@ try {
     host: 'github.com',
     tell: async (target: unknown, _key: string, text: string) => { deliveries.push({ target, text }); return true; },
     wake: async () => { wakes++; return true; },
+    attend: async () => { wakes++; return true; },
   };
   const transition = { repo: 'synthetic/owner', number: 1, title: 'Change', branch: 'work', head, state: 'merged', from: 'waiting_review', closedAt: at + 2000 };
   db.prepare("UPDATE pack_coding_pr_ledger SET state='merged',closed_at=?,terminal_event_json=? WHERE number=1").run(at + 2000, JSON.stringify(transition));

@@ -10,7 +10,7 @@ import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-ga
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 for (const readOnly of [false, true]) {
-  test(`unowned PR wake commits its reservation on the writer with ${readOnly ? 'read-only' : 'guarded'} main`, async () => {
+  test(`unowned PR wake reads through the gateway with ${readOnly ? 'read-only' : 'guarded'} main`, async () => {
     const main = new Database(':memory:'),
       writer = new Database(':memory:');
     for (const db of [main, writer]) {
@@ -37,43 +37,26 @@ for (const readOnly of [false, true]) {
           return prepare(sql);
         }) as typeof main.prepare);
     if (readOnly) main.exec('PRAGMA query_only=ON');
-    const attempts: string[] = [];
-    let accept = false;
+    const raised: unknown[] = [];
     try {
-      const repo = new CodingPrEventRepository(main);
-      const wake = async (key: string, text: string) => {
-        expect(text).toContain('synthetic/unowned#1');
-        expect(writer.prepare('SELECT count(*) AS n FROM pack_coding_pr_unowned').get()).toEqual({
-          n: 1,
-        });
-        expect(
-          writer.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()
-        ).toEqual({ key });
-        attempts.push(key);
-        return accept;
-      };
-      await wakeCodingUnownedPrs(repo, wake, 10, {
-        recipient: () => 'neo',
-        status: async () => 'absent',
-        send: (_recipient, key, text) => wake(key, text),
-      });
-      expect(attempts).toHaveLength(1);
-      accept = true;
-      await wakeCodingUnownedPrs(repo, wake, 10, {
-        recipient: () => 'neo',
-        status: async () => 'absent',
-        send: (_recipient, key, text) => wake(key, text),
-      });
-      expect(attempts).toEqual([attempts[0], attempts[0]]);
-      await wakeCodingUnownedPrs(repo, wake, 10, {
-        recipient: () => 'neo',
-        status: async () => 'absent',
-        send: (_recipient, key, text) => wake(key, text),
-      });
-      expect(attempts).toHaveLength(2);
-      expect(
-        writer.prepare('SELECT pending_key AS key FROM pack_coding_pr_unowned_state').get()
-      ).toEqual({ key: null });
+      await wakeCodingUnownedPrs(
+        new CodingPrEventRepository(main),
+        async (event) => {
+          raised.push(event);
+          return true;
+        },
+        10
+      );
+      expect(raised).toEqual([
+        {
+          kind: 'coding.pr_unowned',
+          subject: { type: 'pr', id: 'synthetic/unowned#1' },
+          since: 1,
+          facts: {
+            text: 'New pull request observed without a known worker owner: synthetic/unowned#1 "New human PR". Check the current ledger before assigning an owner.',
+          },
+        },
+      ]);
     } finally {
       fault?.mockRestore();
       await gateway.close();

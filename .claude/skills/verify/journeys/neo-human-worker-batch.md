@@ -24,9 +24,8 @@ For the oversized batch, persisted text and
 neo.conversation.read must each contain a bounded disclosure referencing the
 same complete handoff file delivered to the model. Read that reference in full;
 the served row must never duplicate the unbounded worker body. Retrying delivery
-must preserve the reference and yield only one batch record. neo.snapshot's
-session-message feed excludes worker batches before its row limit, so Neo's own
-messages still fill the feed.
+must preserve the reference and yield only one batch record. neo.snapshot
+carries no session-message feed, so the batch is not in it.
 
 Use --hold-ui to keep the owned web listener alive for at most two minutes.
 For headless-only verification, run neo-human-batch-headless.mjs with the run

@@ -429,7 +429,7 @@ describe('Neo public work scenes', () => {
     ]);
   });
 
-  const orderCard = (id: string, askId: string, createdAt: number, heldAt: number | null = null) =>
+  const card = (id: string, askId: string, createdAt: number, heldAt: number | null = null) =>
     ({
       id,
       askId,
@@ -449,6 +449,108 @@ describe('Neo public work scenes', () => {
       createdAt,
       heldAt,
     }) satisfies NeoQuestionEntry;
+  const renderedOrder = (container: Element) =>
+    [...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+      (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+    );
+
+  it('lists held cards across asks after unanswered ones and before work', () => {
+    const { container, model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
+      questions: [card('a100', 'ask-a', 100), card('a-held20', 'ask-a', 20, 21)],
+    });
+    const b = testAskEntry('ask-b', 'Ask B', {
+      state: 'waiting',
+      todos: [testTodo('b-step', { askId: 'ask-b', state: 'blocked' })],
+      questions: [card('b80', 'ask-b', 80), card('b-held90', 'ask-b', 90, 91)],
+    });
+    act(() => {
+      model.value = { ...model.value, snapshot: { ...model.value.snapshot, todoAsks: [a, b] } };
+    });
+    expect(renderedOrder(container)).toEqual([
+      'a100',
+      'b80',
+      'b-held90',
+      'a-held20',
+      'a-step',
+      'b-step',
+    ]);
+  });
+
+  it('shows the full document of a promoted card once its ask is read', async () => {
+    const { model } = mount(true, true);
+    const preview = `${'x'.repeat(2000)}\n\n[Document preview truncated]`;
+    const full = testAskEntry('ask-doc', 'Ask with a long report', {
+      state: 'waiting',
+      questions: [{ ...card('doc', 'ask-doc', 50), document: `${'x'.repeat(2000)}TAIL-OF-REPORT` }],
+    });
+    const hub = vi
+      .spyOn(connectionManager, 'getHub')
+      .mockResolvedValue({ request: vi.fn(async () => ({ ok: true, entry: full })) } as never);
+    try {
+      act(() => {
+        model.value = {
+          ...model.value,
+          snapshot: {
+            ...model.value.snapshot,
+            todoAsks: [
+              {
+                ...full,
+                questions: [{ ...full.questions[0], document: preview }],
+                summary: {
+                  todoCount: 0,
+                  questionCount: 1,
+                  openQuestionCount: 1,
+                  questionRefs: [{ id: 'doc', replacedBy: null }],
+                },
+              },
+            ],
+          },
+        };
+      });
+      const promoted = document.querySelector<HTMLElement>('[data-neo-cards]')!;
+      await waitFor(() => {
+        fireEvent.click(within(promoted).getByRole('button', { name: 'View full report' }));
+        expect(screen.getByRole('dialog').textContent).toContain('TAIL-OF-REPORT');
+      });
+    } finally {
+      hub.mockRestore();
+    }
+  });
+
+  it('lists unanswered cards across asks newest first, before held cards and work', () => {
+    const { container, model } = mount(true, true);
+    const a = testAskEntry('ask-a', 'Ask A', {
+      state: 'waiting',
+      todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
+      questions: [
+        card('a100', 'ask-a', 100),
+        card('a10', 'ask-a', 10),
+        card('a-held', 'ask-a', 120, 121),
+      ],
+    });
+    const b = testAskEntry('ask-b', 'Ask B', {
+      state: 'waiting',
+      questions: [card('b80', 'ask-b', 80)],
+    });
+    const running = testAskEntry('running', 'Running', {
+      state: 'doing',
+      todos: [testTodo('run-step', { askId: 'running', state: 'doing' })],
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: { ...model.value.snapshot, todoAsks: [b, running, a] },
+      };
+    });
+    const order = [...container.querySelectorAll('[id^="neo-ref-question-"], [data-ask-todo]')].map(
+      (node) => node.getAttribute('data-ask-todo') ?? node.id.replace('neo-ref-question-', '')
+    );
+    expect(order).toEqual(['a100', 'b80', 'a10', 'a-held', 'a-step', 'run-step']);
+  });
+
   const waits = (id: string, askId: string, held = false) => ({
     state: held ? ('held' as const) : ('waiting' as const),
     askId,
@@ -463,14 +565,14 @@ describe('Neo public work scenes', () => {
       state: 'waiting',
       todos: [testTodo('a-step', { askId: 'ask-a', state: 'blocked' })],
       questions: [
-        orderCard('a100', 'ask-a', 100),
-        orderCard('a10', 'ask-a', 10),
-        orderCard('a-held', 'ask-a', 120, 121),
+        card('a100', 'ask-a', 100),
+        card('a10', 'ask-a', 10),
+        card('a-held', 'ask-a', 120, 121),
       ],
     });
     const b = testAskEntry('ask-b', 'Ask B', {
       state: 'waiting',
-      questions: [orderCard('b80', 'ask-b', 80)],
+      questions: [card('b80', 'ask-b', 80)],
     });
     const running = testAskEntry('running', 'Running', {
       state: 'doing',
@@ -524,9 +626,7 @@ describe('Neo public work scenes', () => {
     const preview = `${'x'.repeat(2000)}\n\n[Document preview truncated]`;
     const full = testAskEntry('ask-doc', 'Ask with a long report', {
       state: 'waiting',
-      questions: [
-        { ...orderCard('doc', 'ask-doc', 50), document: `${'x'.repeat(2000)}TAIL-OF-REPORT` },
-      ],
+      questions: [{ ...card('doc', 'ask-doc', 50), document: `${'x'.repeat(2000)}TAIL-OF-REPORT` }],
     });
     vi.spyOn(connectionManager, 'getHub').mockResolvedValue({
       request: vi.fn(async () => ({ ok: true, entry: full })),

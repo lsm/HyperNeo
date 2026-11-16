@@ -24,6 +24,7 @@ async function using(run: (db: Database, pack: Pack) => Promise<void>) {
       prLedger: new CodingPrLedgerRepository(db),
       prEvents: new CodingPrEventRepository(db),
       prSweep: new CodingPrSweepRepository(db),
+      attend: async () => true,
       prSweepDeps: { tell: async () => true, wake },
       projectRepos: () => [repo],
       readLedgerRepo: async () =>
