@@ -30,10 +30,16 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    not data) fixes the URL and the scope set. A client secret
    (Slack needs one) goes to the vault, never into this column. Static
    `headers` stay for the servers that use them and are ignored on OAuth rows.
-2. **Store grants in the existing vault.** `ConnectionVault` gains an MCP address
-   of `daemon id / mcp / server id`. The bundle holds the tokens, the registered
-   client info, and the resource it is bound to. Widen `connectionStatus.provider`
-   from `'google'` to `'google' | 'mcp'`; an MCP grant has no email.
+2. **Store grants in the existing vault.** `ConnectionVault` gains a second
+   address method for MCP grants, beside the Google one. That method does not
+   parse `connectionStatus`, which requires a Google account ID and email.
+   Service: `hyperneo.connection.<daemon id>.mcp.<server row id>`, both parts
+   URI-encoded. Account slot: `["<server row id>","main"]`. The registry row ID
+   is the account ID: one grant per server per instance. MCP has no standard
+   user-identity call, so we key no remote identity, and reconnect replaces that
+   server's grant. The bundle holds the tokens, the registered client info, and
+   the resource it is bound to. `connectionStatus` and the Google table stay
+   unchanged.
 3. **Sign in with the SDK, not our own OAuth code.** A vault-backed
    `OAuthClientProvider` gives the SDK `auth()` the stored tokens and client info,
    and saves what it returns. Redirects use the same loopback listener as the
@@ -160,7 +166,7 @@ and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
 
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
-| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault, survives a restart, and is absent from DB rows and registry reads. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
+| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
 | 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. |
 | 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
