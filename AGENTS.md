@@ -52,7 +52,8 @@ Never run `bun test` from the repo root. Pre-commit checks lint, format, types a
 ## Change decomposition and Git
 
 - Measure touched code and callers before slicing; never estimate from a brief.
-- Before settling a design or plan, run `bun run system-map impact <files>` (or `--diff` on a branch) and account for every file it lists outside the plan; `bun run system-map where <name>` shows who defines, calls, reads or writes an operation, RPC method, event or table.
+- Before settling a design or plan, and before changing code that has no written plan, run `bun run system-map impact <files>` (or `--diff` on a branch) and account for every file it lists outside the plan; `bun run system-map where <name>` shows who defines, calls, reads or writes an operation, RPC method, event or table.
+- When a pull request where you ran `system-map` is done, add one comment to the feedback log, issue #10836, in the format given there: the command, what it showed that the plan lacked, and anything it missed or got wrong.
 - When re-slicing, use a three-dot diff against freshly fetched `origin/dev`.
 - Keep PRs near 300 production lines; tests ride their slice. The limit only splits work, never bundles unrelated work.
 - One PR per rung: Pin (preserve behavior in tests) → Extract (verbatim moves, tests unchanged) → Build (tested, reachable for knip, not called) → Wire (one call site; flags only for staged behavior) → Delete (removal only).
