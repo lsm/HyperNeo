@@ -63,6 +63,7 @@ function setup() {
   let capacity = 6;
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const notices: string[] = [];
+  const changed: { state: string | undefined; ref: WorkRef | null }[] = [];
   const boot = () =>
     createNeoTodoRunner({
       store,
@@ -70,7 +71,9 @@ function setup() {
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       limits: () => ({ running: capacity, perGroup: 3 }),
       packs: () => [],
-      changed: () => {},
+      changed: () => {
+        changed.push({ state: store.getTodo('todo')?.state, ref: sessions.readRef('todo') });
+      },
       tell: async (_ask, _todo, text) => {
         notices.push(text);
       },
@@ -129,6 +132,7 @@ function setup() {
     target,
     calls,
     notices,
+    changed,
     boot,
     pending,
     seed,
@@ -199,6 +203,36 @@ describe('neo.todo.retarget', () => {
     expect(h.store.getTodo('todo')?.state).toBe('todo');
     expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
   });
+
+  test.each(['request', 'recovery'])(
+    'the %s announces reopen when the normal start is refused without a write',
+    async (mode) => {
+      const h = setup();
+      h.capacity(0);
+      const prerequisite = h.store.addTodo(
+        'prerequisite',
+        'ask',
+        {
+          title: 'Prerequisite',
+          doneWhen: 'Done',
+          instruction: null,
+          check: null,
+          named: null,
+        },
+        1
+      );
+      h.store.updateTodo(h.store.getTodo('todo')!, { dependsOn: [prerequisite.id] }, 2);
+      const runner = h.boot();
+      if (mode === 'recovery') {
+        h.seed();
+        await runner.recoverMoves();
+      } else await runner.retarget('todo', old);
+      expect(h.store.getTodo('todo')?.state).toBe('todo');
+      expect(h.sessions.readRef('todo')).toBeNull();
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
+      expect(h.changed).toEqual([{ state: 'todo', ref: null }]);
+    }
+  );
 
   test.each([
     'unsupported',

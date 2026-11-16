@@ -7,6 +7,9 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { createNeoOperations, createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import type { NeoSnapshot } from '../../../packages/shared/src/types/neo-snapshot.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -47,6 +50,7 @@ for (const phase of ['request', 'recovery']) {
       }
       db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Neo',?,'2026-11-16','2026-11-16','active','{}','{}')").run(root, join(run, 'workspace'));
       service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+      service.repo.conversationId();
       todos.openAsk({ id: 'ask', sessionId: root, projectId: null, originMessageId: null, title: 'Core move', request: 'Continue in the stored place', createdAt: 1 });
       const target = { verb: 'start' as const, adapter: 'hyperneo', model: 'stored-model', place: { machine: 'synthetic', name: 'workspace', folder: join(run, 'workspace') } };
       for (const id of ['requested', 'interrupted']) {
@@ -130,6 +134,32 @@ for (const phase of ['request', 'recovery']) {
         assert.equal(todos.getTodo(mode)?.state, 'removed');
         evidence.push({ phase, ordinaryRemoval: mode, result: removed.content });
       }
+      const waitingWorker = await app.sessionManager.createSession({ title: 'Waiting replacement', workspacePath: join(run, 'workspace'), config: { queryMode: 'manual' } });
+      const prerequisite = todos.addTodo('board-prerequisite', 'ask', { title: 'Prerequisite', doneWhen: 'Done', instruction: null, check: null, named: null, approvedAt: 1 }, 1);
+      const waiting = todos.addTodo('board-waiting', 'ask', { title: 'Waiting work', doneWhen: 'Done', instruction: 'Continue after prerequisite', check: null, named: null, approvedAt: 1, dependsOn: [prerequisite.id] }, 1);
+      todoSessions.create(waiting.id, todoSessions.get('requested')!);
+      todoSessions.recordRef(waiting.id, { adapter: 'hyperneo', id: waitingWorker }, 1);
+      todos.updateTodo(waiting, { state: 'doing', startedAt: 1 }, 1);
+      const hub = new MessageHub({ defaultSessionId: 'global' });
+      const transport = new WebSocketClientTransport({ createSocket: createLocalSocket, url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+      hub.registerTransport(transport);
+      const refreshes: Promise<NeoSnapshot>[] = [];
+      let off = () => {};
+      try {
+        await transport.initialize();
+        await hub.request('operation.invoke', { name: 'neo.todo.read', input: { todoId: waiting.id } });
+        off = hub.onEvent('neo.changed', () => { refreshes.push(hub.request<NeoSnapshot>('operation.invoke', { name: 'neo.snapshot', input: {} })); });
+        const moved = await handler({ name: 'neo.todo.retarget', input: { todoId: waiting.id, fromRef: { adapter: 'hyperneo', id: waitingWorker } } });
+        assert.equal(JSON.parse(moved.content[0]!.text).ok, true, JSON.stringify(moved));
+        await hub.request('operation.invoke', { name: 'neo.todo.read', input: { todoId: waiting.id } });
+        assert(refreshes.length > 0, 'the board must receive neo.changed even when start is refused without a write');
+        const snapshots = await Promise.all(refreshes);
+        const boardTodo = snapshots.at(-1)!.todoAsks?.flatMap((entry) => entry.todos).find((todo) => todo.id === waiting.id);
+        assert.equal(boardTodo?.state, 'todo');
+        assert.equal(boardTodo?.worker, null);
+        assert.equal(starts, 2);
+        evidence.push({ phase, boardChangedEvents: refreshes.length, boardTodo });
+      } finally { off(); await Promise.allSettled(refreshes); await transport.close(); hub.cleanup(); }
     }
   } finally {
     await service?.dispose();
@@ -137,4 +167,4 @@ for (const phase of ['request', 'recovery']) {
     writeFileSync(join(run, 'evidence/retarget.json'), JSON.stringify(evidence, null, 2));
   }
 }
-console.log(`PASS starts=${starts}, removals=2, queuedDeliveries=2, reopenedNotified=true, peerUntouched=true: ordinary stops preserve queued input and retarget publishes the reopened todo.`);
+console.log(`PASS starts=${starts}, removals=2, queuedDeliveries=2, boardChanged=true, peerUntouched=true: a WebSocket board refreshes on neo.changed despite a refused restart.`);
