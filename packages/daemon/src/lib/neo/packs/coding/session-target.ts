@@ -19,7 +19,6 @@ type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   strategySaved: boolean;
-  strategyQuestions: { id: string; state: string }[];
   owner: { todoId: string; session: Pooled | null } | null;
   pool: Pooled[];
 } | null;
@@ -52,6 +51,30 @@ const prUrl = (todo: NeoTodo) => {
     : undefined;
 };
 
+const strategyAsks = new Map<string, Promise<unknown>>();
+
+function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
+  const key = repo.toLowerCase();
+  const asked = (strategyAsks.get(key) ?? Promise.resolve()).then(async () => {
+    const read = () =>
+      gatewayFor(db).call(codingSessionAssignmentReads, 'strategyQuestions', repo) as Promise<
+        { id: string; state: string }[]
+      >;
+    const plan = planCodingStrategyQuestion({ repo, saved: false, questions: await read() });
+    if (!plan?.ask) return plan;
+    const outcome = await askSetting(plan.ask);
+    const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
+    if (reply?.ok) return plan;
+    const winner = (await read()).find((question) => question.state === 'open');
+    return winner ? { reuse: winner.id } : { refused: outcome };
+  });
+  strategyAsks.set(
+    key,
+    asked.catch(() => null)
+  );
+  return asked;
+}
+
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
   .input(['db', 'todo', 'target', 'status', 'askSetting'])
   .pipe(
@@ -66,18 +89,9 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     'facts'
   )
   .pipe(
-    async (facts: Facts, askSetting: AskSetting) => {
-      const plan =
-        facts &&
-        planCodingStrategyQuestion({
-          repo: facts.repo,
-          saved: facts.strategySaved,
-          questions: facts.strategyQuestions,
-        });
-      if (plan?.ask) await askSetting(plan.ask);
-      return plan;
-    },
-    ['facts', 'askSetting'],
+    (db: Database, facts: Facts, askSetting: AskSetting) =>
+      facts && !facts.strategySaved ? askStrategyOnce(db, facts.repo, askSetting) : null,
+    ['db', 'facts', 'askSetting'],
     'strategyQuestion'
   )
   .pipe(

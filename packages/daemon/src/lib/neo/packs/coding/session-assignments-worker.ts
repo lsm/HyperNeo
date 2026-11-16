@@ -92,13 +92,6 @@ class CodingSessionAssignments {
       repo,
       strategy,
       strategySaved: saved !== null,
-      strategyQuestions: this.db
-        .prepare(
-          `SELECT q.id, q.state FROM neo_pack_preference_proposals p
-           JOIN neo_questions q ON q.id = p.question_id
-           WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
-        )
-        .all(codingSessionStrategyRequest(repo)) as { id: string; state: string }[],
       owner: owner && {
         todoId: owner.todoId,
         session:
@@ -106,6 +99,16 @@ class CodingSessionAssignments {
       },
       pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
     };
+  }
+
+  strategyQuestions(repo: string) {
+    return this.db
+      .prepare(
+        `SELECT q.id, q.state FROM neo_pack_preference_proposals p
+         JOIN neo_questions q ON q.id = p.question_id
+         WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
+      )
+      .all(codingSessionStrategyRequest(repo)) as { id: string; state: string }[];
   }
 
   private feature(repo: string, featureKey: string): Owner | null {
@@ -150,7 +153,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts']
+  ['owner', 'dispatchFacts', 'strategyQuestions']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',
