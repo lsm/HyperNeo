@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
-import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 
-const port = process.env.VERIFY_PORT;
-assert(port && port !== '8399');
-assert(process.env.HYPERNEO_DATA_DIR, 'set HYPERNEO_DATA_DIR to the isolated run');
+const port = process.env.VERIFY_PORT ?? '';
+assert(/^[1-9]\d{0,4}$/.test(port) && Number(port) <= 65535 && port !== '8399', 'bad VERIFY_PORT');
+assert.equal(process.env.NODE_ENV, 'test', 'run with NODE_ENV=test');
+assert(process.env.RUN && existsSync(process.env.RUN), 'set RUN to the owned verify run');
+const run = realpathSync(process.env.RUN);
+assert(existsSync(join(run, 'daemon.pid')), 'RUN has no daemon launched by launch.sh');
+assert.equal(
+  realpathSync(process.env.HYPERNEO_DATA_DIR ?? run),
+  join(run, 'data'),
+  'HYPERNEO_DATA_DIR must be the data directory of RUN'
+);
 assert(!process.env.HYPERNEO_SPEECH_URL, 'run without the environment speech base');
+const { readLocalCredential } = await import(
+  '../../../packages/daemon/src/lib/pairing/local-credential.ts'
+);
 let answers = true;
 const requests: string[] = [];
 const tts = Bun.serve({
