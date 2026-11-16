@@ -122,4 +122,4 @@ for (const phase of ['request', 'recovery']) {
     writeFileSync(join(run, 'evidence/retarget.json'), JSON.stringify(evidence, null, 2));
   }
 }
-console.log(`PASS starts=${starts}, removals=2, peerStops=0: MCP retarget recovers held work; sent peer work stays untouched; ordinary adopted and unsupported workers remain removable.`);
+console.log(`PASS starts=${starts}, removals=2, peerUntouched=true: MCP retarget recovers held work; sent peer work stays untouched; ordinary adopted and unsupported workers remain removable.`);

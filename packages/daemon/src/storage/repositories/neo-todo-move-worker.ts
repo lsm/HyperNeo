@@ -76,8 +76,8 @@ class NeoTodoMoves {
     if (neoWorkerKey(sessions.readRef(todoId)) !== neoWorkerKey(fromRef)) return { todo };
     if (todo?.state !== 'doing' || store.getAsk(todo.askId)?.status !== 'open')
       return { reason: 'move_not_doing: only ongoing work can move.' };
-    if (sessions.get(todoId)?.verb === 'adopt')
-      return { reason: 'move_adopted: adopted work cannot move.' };
+    if (sessions.get(todoId)?.verb !== 'start')
+      return { reason: 'move_not_started: only started work can move.' };
     const refs = this.db
       .prepare(`SELECT s.todo_id AS id, COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref
       FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id

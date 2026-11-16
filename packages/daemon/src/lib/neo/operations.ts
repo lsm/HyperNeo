@@ -745,7 +745,7 @@ export function createNeoOperations(
     defineOperation({
       name: 'neo.todo.retarget',
       description:
-        'Stop a todo worker, confirmed, and restart the todo through its stored target. The old fromRef makes a repeated request harmless. Shared or adopted workers are refused.',
+        'Stop a todo worker, confirmed, and restart the todo through its stored start target. The old fromRef makes a repeated request harmless. Shared workers and send or adopted targets are refused.',
       inputSchema: z.object({ todoId: z.string().min(1), fromRef: WorkRefSchema }),
       resultSchema: z.object({
         ok: z.boolean(),
