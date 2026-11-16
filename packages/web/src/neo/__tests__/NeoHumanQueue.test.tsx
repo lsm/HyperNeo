@@ -564,6 +564,38 @@ describe('NeoHumanQueue', () => {
     expect(onDesktopControl).toHaveBeenCalledWith('t4', true);
   });
 
+  it('offers the desktop switch before the full read and enables it once loaded', async () => {
+    const garage = testTodo('t4', { title: 'Call the garage', state: 'doing' });
+    const summarised = {
+      ...entry('car', 'Service the car'),
+      todos: [garage],
+      summary: {},
+    } as unknown as NeoAskEntry;
+    let load = (_: NeoAskEntry) => {};
+    const view = render(
+      <NeoHumanQueue
+        queue={{ items: [queue.items[3]], counts: { car: { waiting: 0, held: 0, progress: 1 } } }}
+        entries={[summarised]}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        onLoadDetails={() => new Promise((resolve) => (load = resolve))}
+        onDesktopControl={vi.fn()}
+      />
+    );
+    fireEvent.click(view.getByRole('button', { name: 'In progress 1' }));
+    fireEvent.click(view.getByRole('button', { name: 'Show details: Call the garage' }));
+    const box = view.getByRole('checkbox', {
+      name: 'Let the agent use this computer',
+    }) as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    load({
+      ...entry('car', 'Service the car'),
+      todos: [{ ...garage, named: { desktopControl: true } }],
+    } as NeoAskEntry);
+    await waitFor(() => expect(box.disabled).toBe(false));
+    expect(box.checked).toBe(true);
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue
