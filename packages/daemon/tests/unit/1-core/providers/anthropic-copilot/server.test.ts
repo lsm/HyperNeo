@@ -128,6 +128,21 @@ function makeMockClient(
             },
           },
         },
+        {
+          id: 'gpt-6.1-terra',
+          name: 'GPT-6.1 Terra',
+          capabilities: {
+            supports: { vision: true, reasoningEffort: true },
+            limits: {
+              max_context_window_tokens: 200000,
+              vision: {
+                supported_media_types: ['image/png'],
+                max_prompt_images: 1,
+                max_prompt_image_size: 100,
+              },
+            },
+          },
+        },
       ];
     },
   };
@@ -441,6 +456,46 @@ describe('startEmbeddedServer', () => {
     expect(session.capturedAttachments).toEqual([
       { type: 'blob', data: 'QUJD', mimeType: 'image/png' },
     ]);
+  });
+
+  it('keeps the newest images within the model limit and marks older ones in the prompt', async () => {
+    const r = await postMessages(serverUrl, {
+      model: 'gpt-6.1-terra',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'first shot' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUFB' } },
+          ],
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'seen' }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'second shot' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QkJC' } },
+          ],
+        },
+        { role: 'assistant', content: [{ type: 'text', text: 'seen again' }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'summarize the conversation' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'Q0ND' } },
+          ],
+        },
+      ],
+    });
+
+    expect(r.status).toBe(200);
+    expect(session.capturedAttachments).toEqual([
+      { type: 'blob', data: 'Q0ND', mimeType: 'image/png' },
+    ]);
+    const placeholder = '[earlier image omitted: model accepts at most 1 images per request]';
+    expect(session.capturedPrompt?.split(placeholder).length).toBe(3);
+    expect(session.capturedPrompt).toContain('summarize the conversation');
   });
 
   it('forwards images when the model is not in the capabilities catalog', async () => {
@@ -1214,6 +1269,111 @@ describe('startEmbeddedServer', () => {
       expect(r2.status).toBe(200);
       expect(toolOutcome).toEqual({
         textResultForLlm: 'screenshot captured',
+        binaryResultsForLlm: [{ type: 'image', data: 'QUJD', mimeType: 'image/png' }],
+        resultType: 'success',
+      });
+    } finally {
+      await ts.stop();
+    }
+  });
+
+  it('keeps only the newest tool_result images within the model limit on continuation', async () => {
+    let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+    let toolOutcome: Record<string, unknown> | undefined;
+    const toolSession = new MockCopilotSession();
+    const toolClient = makeMockClient(() => toolSession);
+
+    spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
+      toolSession.capturedConfig = cfg;
+      const tools = (cfg as Record<string, unknown>)?.['tools'] as
+        | Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+        | undefined;
+      if (tools?.[0]) toolHandler = tools[0].handler;
+      return toolSession as unknown as CopilotSession;
+    });
+
+    toolSession.send = async function (opts) {
+      this.capturedPrompt = opts.prompt;
+      Promise.resolve().then(() => {
+        if (toolHandler) {
+          toolHandler(
+            { command: 'screenshot' },
+            {
+              sessionId: 's1',
+              toolCallId: 'tc_image',
+              toolName: 'screenshot',
+              arguments: { command: 'screenshot' },
+            }
+          )
+            .then((result) => {
+              toolOutcome = result as Record<string, unknown>;
+              toolSession.emit('assistant.message', {
+                content: 'It says HELLO-VISION',
+                phase: 'final_answer',
+              });
+              toolSession.emit('session.idle', {});
+            })
+            .catch(() => {});
+        }
+      });
+      return 'send-result';
+    };
+
+    const ts = await startEmbeddedServer(toolClient, '/tmp');
+    try {
+      const r1 = await postMessages(ts.url, {
+        model: 'gpt-6.1-terra',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'take screenshot' }],
+        tools: [
+          { name: 'screenshot', description: 'Take screenshot', input_schema: { type: 'object' } },
+        ],
+      });
+      expect(r1.status).toBe(200);
+
+      const r2 = await postMessages(ts.url, {
+        model: 'gpt-6.1-terra',
+        max_tokens: 100,
+        messages: [
+          { role: 'user', content: 'take screenshot' },
+          {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tc_image',
+                name: 'screenshot',
+                input: { command: 'screenshot' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tc_image',
+                content: [
+                  { type: 'text', text: 'screenshot captured' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'QUFB' },
+                  },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(r2.status).toBe(200);
+      expect(toolOutcome).toEqual({
+        textResultForLlm:
+          'screenshot captured\n[earlier image omitted: model accepts at most 1 images per request]',
         binaryResultsForLlm: [{ type: 'image', data: 'QUJD', mimeType: 'image/png' }],
         resultType: 'success',
       });
