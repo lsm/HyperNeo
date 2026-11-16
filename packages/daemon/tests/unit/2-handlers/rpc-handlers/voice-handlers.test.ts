@@ -297,7 +297,7 @@ describe('voice RPC handlers', () => {
       'https://ai0:8090/v1/audio/transcriptions',
       expect.objectContaining({ method: 'POST' })
     );
-    expect(init?.headers).toEqual({ Host: 'ai0:8090' });
+    expect(init?.headers).toEqual({ 'X-Speech-Priority': 'interactive', Host: 'ai0:8090' });
     expect(init?.tls).toEqual({ rejectUnauthorized: false, serverName: 'ai0' });
     expect(init?.body).toBeInstanceOf(FormData);
   });
@@ -328,6 +328,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(init?.headers).toEqual({
+      'X-Speech-Priority': 'interactive',
       Authorization: 'Bearer sk-test',
       Host: 'api.openai.com',
     });
@@ -389,6 +390,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(init?.headers).toEqual({
+      'X-Speech-Priority': 'interactive',
       Authorization: 'Bearer stored-key',
       Host: 'api.openai.com',
     });
@@ -423,6 +425,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(init?.headers).toEqual({
+      'X-Speech-Priority': 'interactive',
       Authorization: 'Bearer stored-key',
       Host: 'api.openai.com',
     });
@@ -457,7 +460,7 @@ describe('voice RPC handlers', () => {
     });
 
     expect(credentialManager.getCredentials).not.toHaveBeenCalled();
-    expect(init?.headers).toEqual({ Host: 'example.com' });
+    expect(init?.headers).toEqual({ 'X-Speech-Priority': 'interactive', Host: 'example.com' });
   });
 
   it('rejects private network endpoints unless explicitly allowed', async () => {
