@@ -60,6 +60,7 @@ function setup() {
   let beforeStart = async () => {};
   let liveAfterStop = false;
   let unreadable = false;
+  let capacity = 6;
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const notices: string[] = [];
   const boot = () =>
@@ -67,7 +68,7 @@ function setup() {
       store,
       sessions,
       write: gatewayFor(db).run.bind(gatewayFor(db)),
-      limits: () => ({ running: 6, perGroup: 3 }),
+      limits: () => ({ running: capacity, perGroup: 3 }),
       packs: () => [],
       changed: () => {},
       tell: async (_ask, _todo, text) => {
@@ -131,6 +132,9 @@ function setup() {
     boot,
     pending,
     seed,
+    capacity: (value: number) => {
+      capacity = value;
+    },
     stop: (run: () => Promise<void>) => {
       beforeStop = run;
     },
@@ -169,6 +173,31 @@ describe('neo.todo.retarget', () => {
     expect(h.pending()).toBeNull();
     await runner.retarget('todo', old);
     expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+  });
+
+  test('reopening publishes the cleared worker before a capacity-held restart', async () => {
+    const h = setup();
+    h.seed();
+    h.capacity(0);
+    const visible: { state: string | undefined; ref: WorkRef | null }[] = [];
+    const tables: string[] = [];
+    gatewayFor(h.db).onChanges = (events) => {
+      tables.push(...events.map((event) => event.table));
+      if (events.some((event) => event.table === 'neo_todos'))
+        visible.push({ state: h.store.getTodo('todo')?.state, ref: h.sessions.readRef('todo') });
+    };
+    expect(
+      await gatewayFor(h.db).call(neoTodoMoveWrites, 'reopen', {
+        todoId: 'todo',
+        fromRef: old,
+        at: 1,
+      })
+    ).toBe(true);
+    expect(visible).toEqual([{ state: 'todo', ref: null }]);
+    expect(tables).toContain('neo_todo_sessions');
+    await h.boot().fill();
+    expect(h.store.getTodo('todo')?.state).toBe('todo');
+    expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(0);
   });
 
   test.each([

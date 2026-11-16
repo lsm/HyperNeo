@@ -58,8 +58,23 @@ for (const phase of ['request', 'recovery']) {
       db.prepare("UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = 'interrupted'").run();
       const live = await app.sessionManager.getSessionForControl(oldId);
       assert(live);
+      await live.stateManager.setProcessing('ordinary-input');
+      const queued = ['ordinary-first', 'ordinary-later'].map((messageUuid) => app.jobQueue.enqueue({ queue: 'message_delivery', payload: { sessionId: oldId, messageUuid }, runAt: Date.now() + 7_200_000 }));
+      const queuedRows = () => db.prepare("SELECT id,status,payload,run_at FROM job_queue WHERE id IN (?,?) ORDER BY id").all(queued[0]!.id, queued[1]!.id);
+      const beforeQueued = queuedRows();
+      const ordinaryStop = await handler({ name: 'work.stop', input: { ref: { adapter: 'hyperneo', id: oldId } } });
+      assert.deepEqual(JSON.parse(ordinaryStop.content[0]!.text), { ok: true, value: { stopped: true } });
+      evidence.push({ phase, ordinaryStop: ordinaryStop.content, beforeQueued, afterQueued: queuedRows() });
+      assert.deepEqual(queuedRows(), beforeQueued, 'an ordinary stop must leave queued delivery jobs untouched');
+      db.prepare('DELETE FROM job_queue WHERE id IN (?,?)').run(queued[0]!.id, queued[1]!.id);
       await live.stateManager.setRateLimitCooldown({ reason: 'limit', since: 1, retryAt: Date.now() + 7_200_000, retryCount: 0, maxRetries: 0, heldPrompt: { uuid: 'held-input', content: 'Must never resume' } });
+      let reopenedNotified = false;
+      const onTodoChange = () => { if (todos.getTodo('requested')?.state === 'todo' && todoSessions.readRef('requested') === null) reopenedNotified = true; };
+      app.reactiveDb.on('change:neo_todos', onTodoChange);
       const result = await handler({ name: 'neo.todo.retarget', input: { todoId: 'requested', fromRef: { adapter: 'hyperneo', id: oldId } } });
+      app.reactiveDb.off('change:neo_todos', onTodoChange);
+      assert.equal(reopenedNotified, true, 'the board must receive the reopened todo before its next start');
+      evidence.push({ phase, reopenedNotified });
       evidence.push({ phase, result: result.content });
       assert.equal(result.isError ?? false, false, JSON.stringify(result));
       assert.equal(JSON.parse(result.content[0]!.text).ok, true, JSON.stringify(result));
@@ -122,4 +137,4 @@ for (const phase of ['request', 'recovery']) {
     writeFileSync(join(run, 'evidence/retarget.json'), JSON.stringify(evidence, null, 2));
   }
 }
-console.log(`PASS starts=${starts}, removals=2, peerUntouched=true: MCP retarget recovers held work; sent peer work stays untouched; ordinary adopted and unsupported workers remain removable.`);
+console.log(`PASS starts=${starts}, removals=2, queuedDeliveries=2, reopenedNotified=true, peerUntouched=true: ordinary stops preserve queued input and retarget publishes the reopened todo.`);

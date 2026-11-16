@@ -5,6 +5,8 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { existsSync } from 'node:fs';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
+import { cancelRateLimitDelivery } from '../../../../src/storage/repositories/rate-limit-cancel-write';
+import { stopHyperneoWork } from '../../../../src/lib/drivers/hyperneo-adapter';
 import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -121,6 +123,57 @@ describe('hyperneoSessionControl withdraw', () => {
 });
 
 describe('hyperneoSessionControl interrupt', () => {
+  test.each(['processing', 'queued'])(
+    'stopping ordinary %s work preserves queued deliveries',
+    async (initial) => {
+      const fixture = createMailboxTestDb();
+      try {
+        for (const id of ['first', 'later']) {
+          fixture.db
+            .prepare(`INSERT INTO sdk_messages
+              (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+              VALUES (?, 'owned', 'user', '{}', '2026-11-16', 'enqueued', ?)`)
+            .run(id, id);
+          fixture.jobQueue.enqueue({
+            queue: 'message_delivery',
+            payload: { sessionId: 'owned', messageUuid: id },
+            runAt: Date.now() + 7_200_000,
+          });
+        }
+        const before = { jobs: fixture.rows(), messages: fixture.sdkRows() };
+        let status = initial;
+        const runtime = {
+          getProcessingState: () => ({ status }),
+          cancelRateLimitRetry: async () => {
+            await gatewayFor(fixture.db).call(cancelRateLimitDelivery, 'cancel', 'owned');
+          },
+        };
+        const controls = hyperneoSessionControl({
+          deps: {
+            sessionManager: {
+              getSessionForControl: async () => runtime,
+              getCachedSession: () => runtime,
+            },
+            internalEventBus: {
+              publish: async () => {
+                status = 'interrupted';
+              },
+            },
+          },
+        } as never);
+        expect(
+          await stopHyperneoWork(
+            { id: 'owned', status: 'active', processing: initial } as never,
+            { sessions: controls } as never
+          )
+        ).toEqual({ ok: true, value: { stopped: true } });
+        expect({ jobs: fixture.rows(), messages: fixture.sdkRows() }).toEqual(before);
+      } finally {
+        fixture.close();
+      }
+    }
+  );
+
   test.each(['idle', 'interrupted', 'processing', 'missing', 'replaced'])(
     'checks the same live runtime after interrupt acknowledgement (%s)',
     async (after) => {
@@ -158,7 +211,10 @@ describe('hyperneoSessionControl interrupt', () => {
     const controls = hyperneoSessionControl({
       deps: {
         sessionManager: {
-          getSessionForControl: async () => ({ cancelRateLimitRetry: async () => {} }),
+          getSessionForControl: async () => ({
+            getProcessingState: () => ({ status: 'processing' }),
+            cancelRateLimitRetry: async () => {},
+          }),
         },
         internalEventBus: { publish: () => handling },
       },
@@ -192,12 +248,14 @@ describe('hyperneoSessionControl interrupt', () => {
   test('restores a cold held runtime and clears its prompt before interruption', async () => {
     const events: string[] = [];
     let heldPrompt: string | undefined = 'Do not replay';
+    let status = 'rate_limit_cooldown';
     const runtime = {
       cancelRateLimitRetry: async () => {
         heldPrompt = undefined;
+        status = 'interrupted';
         events.push('clear hold');
       },
-      getProcessingState: () => ({ status: 'interrupted' }),
+      getProcessingState: () => ({ status }),
     };
     let current: typeof runtime | undefined;
     const controls = hyperneoSessionControl({
@@ -228,6 +286,7 @@ describe('hyperneoSessionControl interrupt', () => {
       deps: {
         sessionManager: {
           getSessionForControl: async () => ({
+            getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
             cancelRateLimitRetry: async () => {
               throw new Error('hold cancellation failed');
             },
