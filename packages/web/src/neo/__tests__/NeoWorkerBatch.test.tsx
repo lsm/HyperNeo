@@ -84,7 +84,9 @@ it.each(['small', 'large'])(
       { ...state, items: asks },
       { ...state, items: [] }
     );
-    expect(conversation.entries.map((entry) => entry.kind)).toEqual(['ask']);
+    expect(
+      conversation.entries.map((entry) => (entry.kind === 'ask' ? entry.ask.requestId : entry.kind))
+    ).toEqual(asks.map((ask) => ask.requestId));
     const first = render(<NeoPublicConversation conversation={conversation} />);
     expect(first.container.textContent).not.toContain('System-forwarded worker messages');
     expect(first.container.textContent).not.toContain('worker note 00');
