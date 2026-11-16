@@ -51,7 +51,7 @@ function setup(ledgerHead = 'head-a', closedAt: number | null = null) {
     return {};
   };
   const sweep = (post = createCodingReviewComments(github)) =>
-    readCodingOpenReviews(db, ledger).then(post);
+    post(() => readCodingOpenReviews(db, ledger));
   return { db, ledger, comments, outage, github, sweep };
 }
 
@@ -105,6 +105,34 @@ describe('createCodingReviewComments', () => {
       ledger.recordStage(fact);
       await sweep(createCodingReviewComments(github));
       expect(comments).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+  test('overlapping sweeps post one comment', async () => {
+    const { db, ledger, comments, sweep, github } = setup();
+    try {
+      ledger.recordStage(fact);
+      const post = createCodingReviewComments(github);
+      await Promise.all([sweep(post), sweep(post), sweep(createCodingReviewComments(github))]);
+      expect(comments).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+  test('a verdict that returns at one head is posted again as the newest comment', async () => {
+    const { db, ledger, comments, sweep, github } = setup();
+    try {
+      const post = createCodingReviewComments(github);
+      for (const verdict of ['pass', 'inconclusive', 'pass', 'pass'] as const) {
+        expect(ledger.recordStage({ ...fact, verdict })).toBe(true);
+        await sweep(post);
+      }
+      expect(comments.map((item) => item.body.split('\n')[0])).toEqual([
+        '**HyperNeo recorded review: PASS**',
+        '**HyperNeo recorded review: INCONCLUSIVE**',
+        '**HyperNeo recorded review: PASS**',
+      ]);
     } finally {
       db.close();
     }
