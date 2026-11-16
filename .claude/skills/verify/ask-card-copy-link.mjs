@@ -28,10 +28,10 @@ try {
       await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1'
         ? route.continue() : route.abort());
       await page.goto(`http://127.0.0.1:${port}/neo?key=synthetic#card`);
-      const card = await revealAsk(page, fixture.askId);
       if (width < 800) {
         await page.getByRole('button', { name: language === 'en' ? 'Your work' : '你的事', exact: false }).click();
       }
+      const card = await revealAsk(page, fixture.askId);
       await card.waitFor({ state: 'visible' });
       const label = language === 'en' ? 'Copy link' : '复制链接';
       await card.getByRole('button', { name: language === 'en' ? 'Ask actions' : '更多操作' }).click();

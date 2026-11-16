@@ -47,6 +47,8 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   await first().click();
   await page.reload();
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
+  await revealAsk(page, 'collapse-card');
+  await revealAsk(page, 'other-card');
   await card.waitFor();
   assert.equal(await card.locator('[data-todo-details]').count(), 1);
   assert.equal(await other.locator('[data-todo-details]').count(), 0);

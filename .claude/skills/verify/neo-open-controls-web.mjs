@@ -19,7 +19,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   };
   const observed=[];
   for(const source of fixture.sessions) {
-    const card=page.locator(`[data-ask="open-${source.id}"]:visible`);
+    const card=await revealAsk(page, `open-${source.id}`);
     const question=card.locator('[data-question-source] button');
     const todo=card.locator('[data-ask-todo] button[aria-label^="Open "]');
     await question.locator('svg').waitFor();
