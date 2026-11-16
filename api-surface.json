@@ -31958,11 +31958,47 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "modelHold": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "network",
+                            "login",
+                            "limit",
+                            "overloaded"
+                          ],
+                          "type": "string"
+                        },
+                        "resetAt": {
+                          "type": "number"
+                        },
+                        "since": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "reason",
+                        "since"
+                      ],
+                      "type": "object"
+                    },
                     "projectId": {
                       "type": [
                         "string",
                         "null"
                       ]
+                    },
+                    "role": {
+                      "enum": [
+                        "neo",
+                        "front"
+                      ],
+                      "type": "string"
                     },
                     "sessionId": {
                       "type": "string"
@@ -40161,11 +40197,47 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "modelHold": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            "network",
+                            "login",
+                            "limit",
+                            "overloaded"
+                          ],
+                          "type": "string"
+                        },
+                        "resetAt": {
+                          "type": "number"
+                        },
+                        "since": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "reason",
+                        "since"
+                      ],
+                      "type": "object"
+                    },
                     "projectId": {
                       "type": [
                         "string",
                         "null"
                       ]
+                    },
+                    "role": {
+                      "enum": [
+                        "neo",
+                        "front"
+                      ],
+                      "type": "string"
                     },
                     "sessionId": {
                       "type": "string"

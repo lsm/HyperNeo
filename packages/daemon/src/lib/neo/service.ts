@@ -382,7 +382,7 @@ export class NeoService {
     };
     this.noteWorking = () => {
       try {
-        const working = readNeoWorking(this.db.getDatabase());
+        const working = readNeoWorking(this.db.getDatabase(), this.repo.readConversationId());
         const key = neoWorkingKey(working);
         if (key === this.workingKey) return;
         this.workingKey = key;
@@ -454,7 +454,10 @@ export class NeoService {
         if (bound?.kind === 'neo') {
           this.noteWorking();
           if (status) this.notifyChanged();
+          return;
         }
+        const conversation = status || session?.status ? this.repo.readConversationId() : null;
+        if (conversation && sessionId === frontSessionId(conversation)) this.noteWorking();
       },
       { subscriberName: 'neo-work-return' }
     );
