@@ -84,7 +84,7 @@ test('assignment is revalidated after source lookup and the card/hold commit tog
   }
 });
 
-test('worker reports reuse the existing card and preserve a durable hold through routine updates', async () => {
+test('worker reports reuse the card only for the same report and keep a durable hold', async () => {
   const { db, store, ref, write } = setup();
   try {
     const first = await write(ref, report);
@@ -97,10 +97,15 @@ test('worker reports reuse the existing card and preserve a durable hold through
       document: report.report,
       sourceSession: { id: ref.id },
     });
-    expect(await write(ref, { ...report, report: 'Repeat' })).toMatchObject({
+    expect(await write(ref, report)).toMatchObject({
       ok: true,
       question: { id: first.question.id },
     });
+    expect(await write(ref, { ...report, report: 'Repeat' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(store.getQuestion(first.question.id)?.document).toBe(report.report);
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
     store.updateTodo(store.getTodo('todo')!, { state: 'doing', report: 'Routine activity' }, 4);
     await store.recompute(store.getTodo('todo')!, {}, 5, { state: 'no_opinion' }, async () => {});
