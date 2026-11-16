@@ -50,9 +50,19 @@ async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: 
   if (!existsSync(directory)) return { value: { ...clean, directory: null } };
   const git = simpleGit(directory);
   if (!(await git.checkIsRepo())) return { value: clean };
+  const branch = (await git.raw(['symbolic-ref', '-q', '--short', 'HEAD']).catch(() => '')).trim();
   const [state, unpushed] = await Promise.all([
     git.status(['--ignore-submodules=none']),
-    git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']),
+    git.raw([
+      'rev-list',
+      '--count',
+      'HEAD',
+      '--not',
+      '--remotes',
+      '--tags',
+      ...(branch ? [`--exclude=${branch}`] : []),
+      '--branches',
+    ]),
   ]);
   return { value: { ...clean, dirty: !state.isClean(), unpushed: Number(unpushed.trim()) } };
 }
@@ -68,7 +78,17 @@ export function readNeoTodoArchive(
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .input(['row', 'invoke', 'sessions'])
-  .pipe(planNeoTodoRelease, 'row', 'result:release')
+  .pipe(
+    async (row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
+      if (!row.releasedBy) return { value: row };
+      const released = { released: { sameWorkerAs: row.releasedBy } };
+      await sessions.write('recordReleased', row.todoId, released.released);
+      return { reason: released };
+    },
+    ['row', 'sessions'],
+    'result:release'
+  )
+  .pipe(planNeoTodoRelease, 'release', 'result:release')
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(

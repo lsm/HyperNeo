@@ -641,6 +641,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     target: NeoDriverTarget;
     ref: WorkRef;
     shared: boolean;
+    releasedBy: string | null;
   }[] {
     const match = (column: string, key: string) =>
       `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
@@ -649,20 +650,32 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
-              ) AS shared
+              ) AS shared,
+              (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
+                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released'
+                WHERE o.todo_id <> s.todo_id
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+                LIMIT 1) AS releasedBy
              FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
             WHERE t.state = 'done' AND t.finished_at > ? AND s.ref IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM pack_facts f
                 WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
         )
-        .all(since) as { todoId: string; target: string; ref: string; shared: number }[]
+        .all(since) as {
+        todoId: string;
+        target: string;
+        ref: string;
+        shared: number;
+        releasedBy: string | null;
+      }[]
     ).map((row) => ({
       todoId: row.todoId,
       target: JSON.parse(row.target) as NeoDriverTarget,
       ref: JSON.parse(row.ref) as WorkRef,
       shared: row.shared === 1,
+      releasedBy: row.releasedBy,
     }));
   }
 
