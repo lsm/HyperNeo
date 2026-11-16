@@ -26,6 +26,7 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos } from './NeoAskTodos.tsx';
+import { NeoHumanQueue } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -427,6 +428,7 @@ export function NeoLive() {
     sheet: sceneSheet,
   });
   const attentionCount = view?.needsYou ?? 0;
+  const humanQueue = workQuery.trim() ? undefined : view?.humanQueue;
   const neoUnhandled = view?.neoUnhandled ?? 0;
   const ready = !!neo.sessionId && neo.store.activeSessionId.value === neo.sessionId;
   const replyInComposer = (quote: NeoQuote) => {
@@ -1053,17 +1055,28 @@ export function NeoLive() {
               {t('live.noWork')}
             </p>
           )}
+          {humanQueue && (
+            <NeoHumanQueue
+              queue={humanQueue}
+              entries={workEntries}
+              disabled={!connected || !!neo.busyWork}
+              onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+              onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+            />
+          )}
           {!workQuery.trim() && (
             <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
           )}
           {(workQuery.trim()
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
-            : sceneGroups.map((group) => ({
-                ...group,
-                entries: topic
-                  ? group.entries.filter((entry) => entry.ask.topic === topic)
-                  : group.entries,
-              }))
+            : sceneGroups
+                .filter((group) => !(humanQueue && group.key === 'attention'))
+                .map((group) => ({
+                  ...group,
+                  entries: topic
+                    ? group.entries.filter((entry) => entry.ask.topic === topic)
+                    : group.entries,
+                }))
           ).map((group) =>
             group.entries.length === 0 ? null : (
               <section

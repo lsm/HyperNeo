@@ -8,6 +8,7 @@ import type {
 import type { NeoQuestionAnswer, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation } from '../lib/operations.ts';
+import type { OperationName } from '@hyperneo/shared/types/operation-names';
 import { type NeoTodoControl, neoTodoControlCall } from './todo-controls.ts';
 import { SessionStore } from '../lib/session-store.ts';
 import { createNeoIntakeClient, type NeoPendingAsk } from './neo-intake.ts';
@@ -189,15 +190,21 @@ export function useNeo() {
   }
 
   async function answerQuestion(questionId: string, answer: NeoQuestionAnswer) {
+    await questionCall(questionId, 'neo.question.answer', { questionId, answer });
+  }
+
+  async function holdQuestion(questionId: string, held: boolean) {
+    const requestId = crypto.randomUUID();
+    await questionCall(questionId, 'neo.question.hold', { questionId, held, requestId });
+  }
+
+  async function questionCall(questionId: string, operation: OperationName, input: object) {
     if (busyWork) return;
     setBusyWork(questionId);
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, 'neo.question.answer', {
-        questionId,
-        answer,
-      });
+      const result = await invokeOperation<NeoResult<{ ok: true }>>(hub, operation, input);
       if (!result.ok) throw new Error(result.reason);
       await refresh();
     } catch (cause) {
@@ -240,6 +247,7 @@ export function useNeo() {
     setDesktopControl,
     muteSession,
     answerQuestion,
+    holdQuestion,
     send: intake.send,
     pendingAsks: pendingAsks.filter((ask) => ask.sessionId === sessionId),
     retrySend: intake.retry,

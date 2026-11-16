@@ -78,7 +78,7 @@ function show(onHold = vi.fn(), onAnswer = vi.fn()) {
 }
 
 describe('NeoHumanQueue', () => {
-  it('shows what waits on the human by default, grouped by ask, with counts', () => {
+  it('shows what waits on the human by default, grouped by ask, with counts', async () => {
     const { view, states } = show();
     expect(
       states.getByRole('button', { name: 'Waiting on you 2' }).getAttribute('aria-pressed')
@@ -86,7 +86,7 @@ describe('NeoHumanQueue', () => {
     expect(states.getByRole('button', { name: 'Held 1' })).toBeTruthy();
     expect(states.getByRole('button', { name: 'In progress 2' })).toBeTruthy();
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    expect(trip.getByText('Question q1')).toBeTruthy();
+    expect(await trip.findByText('Question q1')).toBeTruthy();
     expect(trip.getByText('Book hotel')).toBeTruthy();
     expect(trip.queryByText('Question q2')).toBeNull();
     expect(view.getByRole('region', { name: 'File taxes' })).toBeTruthy();
@@ -102,11 +102,11 @@ describe('NeoHumanQueue', () => {
     expect(onHold).toHaveBeenCalledWith('q1', true);
   });
 
-  it('lists held cards with a take-back button and says when a card is about the whole ask', () => {
+  it('lists held cards with a take-back button and says when a card is about the whole ask', async () => {
     const { view, states, onHold } = show();
     fireEvent.click(states.getByRole('button', { name: 'Held 1' }));
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
-    expect(trip.getByText('Question q2')).toBeTruthy();
+    expect(await trip.findByText('Question q2')).toBeTruthy();
     expect(trip.getByText('The whole ask')).toBeTruthy();
     fireEvent.click(trip.getByRole('button', { name: 'Take back' }));
     expect(onHold).toHaveBeenCalledWith('q2', false);

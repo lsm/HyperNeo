@@ -498,18 +498,20 @@ function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   );
 }
 
-function QuestionBox({
+export function QuestionBox({
   question,
   disabled,
   onAnswer,
   onReply,
   onOpen,
+  hold,
 }: {
   question: NeoQuestionEntry;
   disabled?: boolean;
   onAnswer: (answer: NeoQuestionAnswer) => void;
   onReply?: () => void;
   onOpen?: (link: string, title: string) => void;
+  hold?: { held: boolean; toggle: () => void };
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (value: string, on: boolean) =>
@@ -594,6 +596,11 @@ function QuestionBox({
         </div>
       )}
       <div class="mt-2 flex flex-wrap items-center justify-end gap-2">
+        {hold && (
+          <button type="button" class={neoPlainClass} disabled={disabled} onClick={hold.toggle}>
+            {t(hold.held ? 'queue.takeBack' : 'queue.hold')}
+          </button>
+        )}
         {reply}
         {question.kind === 'yesno' && (
           <>
