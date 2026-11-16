@@ -31,7 +31,7 @@ calls=(
   "inactivity.config.set|{$S,\"agentId\":\"missing\",\"enabled\":false}"
   "event.external.subscription.list|{}"
   "event.external.get|{\"eventId\":\"missing\"}"
-  "event.external.agent.subscription.list|{$S,\"agentId\":\"missing\"}"
+  "event.external.agent.subscription.list|{$S,\"agent_id\":\"missing\"}"
   "event.external.subscribe|{$S,\"topicPattern\":\"github/none/*\"}"
   "goal.task.trigger|{$S,\"goalId\":\"missing\"}"
   "neo.peer.list|{}"
