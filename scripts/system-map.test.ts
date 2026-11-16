@@ -75,6 +75,27 @@ test('where lists the readers and writers of a table without migrations', () => 
   ]);
 });
 
+test('where links virtual and temporary tables', () => {
+  const map = buildSystemMap(
+    new Map([
+      [
+        MIGRATION,
+        'export const up = `CREATE VIRTUAL TABLE IF NOT EXISTS todo_fts USING fts5(body); CREATE TEMP TABLE todo_scratch (id TEXT)`;',
+      ],
+      [
+        REPOSITORY,
+        'export const index = `INSERT INTO todo_fts (body) VALUES (?)`;\nexport const scratch = `SELECT id FROM todo_scratch`;',
+      ],
+    ])
+  );
+  expect(where(map, 'todo_fts')).toEqual([
+    { kind: 'table', name: 'todo_fts', role: 'writes', path: REPOSITORY },
+  ]);
+  expect(where(map, 'todo_scratch')).toEqual([
+    { kind: 'table', name: 'todo_scratch', role: 'reads', path: REPOSITORY },
+  ]);
+});
+
 test('where separates the definition of an operation from its callers', () => {
   expect(formatWhere(where(fixture(), 'todo.remove'))).toBe(
     [`op todo.remove  defines  ${OPERATIONS}`, `op todo.remove  uses  ${CONTROLS}`].join('\n')
