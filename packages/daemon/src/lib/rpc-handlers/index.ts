@@ -1,3 +1,4 @@
+import type { NeoAttentionEvent } from '../neo/attention/decide.ts';
 import { createNeoFrontHandler } from '../neo/front-job.ts';
 import { readCodingTodoWorker } from '../neo/packs/coding/worker-read.ts';
 import { codingProjectIdentity } from '../neo/packs/coding/project-cleanup.ts';
@@ -220,7 +221,7 @@ export interface RPCHandlerSetupResult<SpaceServices> {
   handlePeerMessage: (req: Request) => Promise<Response>;
   frontInference: ReturnType<typeof createNeoFrontHandler>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
-  wakePollingConcern: (key: string, text: string) => Promise<boolean>;
+  attendPollingConcern: (event: NeoAttentionEvent) => Promise<unknown>;
 }
 
 export async function setupRPCHandlers<SpaceServices = never>(
@@ -626,7 +627,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     },
     space: space?.services,
     sessionScheduler,
-    wakePollingConcern: (key: string, text: string) => neoService.wakeNeo(key, text),
+    attendPollingConcern: (event: NeoAttentionEvent) => neoService.attend(event),
     handlePeerMessage: createPeerMessageRoute(neoService),
     frontInference: createNeoFrontHandler(neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),

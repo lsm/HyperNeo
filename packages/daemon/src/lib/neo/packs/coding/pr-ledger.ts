@@ -457,9 +457,6 @@ export class CodingPrLedgerRepository {
         .sort(
           (a, b) => (last.get(this.canonicalRepo(a)) ?? 0) - (last.get(this.canonicalRepo(b)) ?? 0)
         ),
-      pending: this.list()
-        .filter((row) => row.state === 'approved_pending')
-        .map(({ repo, number, head, readAt }) => ({ repo, number, head, readAt })),
     };
   }
 
@@ -484,8 +481,7 @@ export class CodingPrLedgerRepository {
     raw: unknown,
     now: number,
     observedAt: number,
-    seen: readonly string[],
-    pending: ReturnType<CodingPrLedgerRepository['pollSnapshot']>['pending']
+    seen: readonly string[]
   ) {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
@@ -501,11 +497,7 @@ export class CodingPrLedgerRepository {
     );
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
-    const canonical = this.canonicalRepo(repo);
-    const health = this.recordHealth(repo, {
-      ...cycle,
-      pending: pending.filter((row) => row.repo === canonical),
-    });
+    const health = this.recordHealth(repo, cycle);
     if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
     const transitions =
       planned && !seen.includes(planned.repo)
@@ -542,10 +534,6 @@ export class CodingPrLedgerRepository {
 
   recordHealth(repo: string, cycle: RepoHealthCycle) {
     return this.health.record(repo, cycle);
-  }
-
-  acceptHealthNotice(repo: string, key: string, at: number) {
-    this.health.accept(repo, key, at);
   }
 
   readStageFacts(url: string) {
@@ -954,21 +942,13 @@ export async function reconcileCodingPrLedger(
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
-  const { order, pending } = await ledger.pollSnapshotCurrent(repos);
+  const { order } = await ledger.pollSnapshotCurrent(repos);
   for (const repo of order) {
     const context = await ledger.pollContextCurrent(repo);
     if (!context.watched) continue;
     const observedAt = Date.now();
     const raw = await read(repo, context.health?.quota);
-    const observation = await ledger.write(
-      'observePoll',
-      repo,
-      raw,
-      now,
-      observedAt,
-      [...seen],
-      pending
-    );
+    const observation = await ledger.write('observePoll', repo, raw, now, observedAt, [...seen]);
     if (observation.warning)
       log.warn('PR ledger coverage missed three eligible cycles', {
         repo,
@@ -986,7 +966,6 @@ type CodingLedgerWrite =
   | 'holdForHuman'
   | 'daemonMerge'
   | 'acceptTerminalEvent'
-  | 'acceptHealthNotice'
   | 'recordHealth'
   | 'readHealth'
   | 'recordStage'
@@ -1005,7 +984,6 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'holdForHuman',
     'daemonMerge',
     'acceptTerminalEvent',
-    'acceptHealthNotice',
     'recordHealth',
     'readHealth',
     'recordStage',

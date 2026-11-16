@@ -71,7 +71,7 @@ async function using(
         complete = done;
         await pack.sweep!(at);
       },
-      digests: notes.digests,
+      digests: () => notes.digests().map((text) => text.split('\n\n')[0]),
       wakes: notes.wakes,
     });
   } finally {
@@ -122,7 +122,7 @@ describe('GitHub health reaches Neo through the attention entry', () => {
       await sweep(T0 + 15 * MIN);
       await sweep(T0 + 20 * MIN);
       const pending = `GitHub readiness observation stalled for ${repo}#1 (approved_pending, head approve) since ${new Date(T0).toISOString()}. Current CI is unverified; check polling before acting.`;
-      expect(digests()).toEqual([pending]);
+      expect(digests().filter((text) => text.startsWith('GitHub readiness'))).toEqual([pending]);
       await sweep(T0 + 25 * MIN, true);
       await sweep(T0 + 25 * MIN + DAY);
       expect(digests().filter((text) => text === pending)).toHaveLength(1);
