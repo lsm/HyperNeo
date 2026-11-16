@@ -195,7 +195,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     defineOperation({
       name: 'schedule.session.create',
       description:
-        'Create a reminder schedule. Cadence every (everyMs, at least one minute), cron (cron, timezone) or once (at, a future epoch-ms time). every and cron are fact-driven: they set check times, not forced turns; after the first delivery, unchanged reminders stay quiet and back off, because due time is not a new fact. once always fires: it delivers at its time even if nothing changed, waits while the target is busy, then the schedule is done. nudgeEvery is legacy compatibility only. The target is a work ref from work.find. Neo or the user only.',
+        'Create a reminder schedule. Cadence every (everyMs, at least one minute), cron (cron, timezone) or once (at, a future epoch-ms time). every and cron are fact-driven: they set check times, not forced turns; after the first delivery, unchanged reminders stay quiet and back off, because due time is not a new fact. once always fires: it delivers at its time even if nothing changed, waits while the target is busy, then the schedule is done. An uncertain external send is never resent: it is checked by its receipt, or without one the schedule ends with delivery unconfirmed. nudgeEvery is legacy compatibility only. The target is a work ref from work.find. Neo or the user only.',
       inputSchema: Create,
       resultSchema: ScheduleResult,
       policy: policy('mutate'),

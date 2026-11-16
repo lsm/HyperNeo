@@ -200,8 +200,12 @@ export class SessionScheduler {
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
       if (outcome === 'fired' || outcome === 'skipped_unchanged') commit?.();
       const once = schedule.cadence.kind === 'once';
+      const settled =
+        outcome === 'fired' ||
+        (outcome === 'skipped_delivery_unconfirmed' &&
+          !(messageId && this.repo.deliveryReceipt(schedule.id, messageId)));
       const next =
-        outcome === 'source_gone' || outcome === 'target_gone' || (once && outcome === 'fired')
+        outcome === 'source_gone' || outcome === 'target_gone' || (once && settled)
           ? null
           : once
             ? now + MIN_EVERY_MS
