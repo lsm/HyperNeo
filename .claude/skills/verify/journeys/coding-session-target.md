@@ -35,5 +35,7 @@ Last, it checks reservations that never got a session:
 
 Then it archives both sessions over RPC (`session.archive`):
 
-- with only archived sessions in the repository, dispatch starts a new session;
-- after a fresh live session joins, dispatch sends to it, not to an archived one.
+- with only archived sessions in the repository, dispatch starts a new session
+  and that todo becomes the feature's owner;
+- when the owner's own session is then archived and a live idle session
+  exists, dispatch sends to the live one and its todo takes the feature over.

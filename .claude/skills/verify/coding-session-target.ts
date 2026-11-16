@@ -117,14 +117,21 @@ try {
   const archivedStatus = await status(back);
   evidence.push({ surface: 'work.status', label: 'an archived session reports stopped', status: archivedStatus });
   assert.equal((archivedStatus.value as { value?: { status?: string } }).value?.status, 'stopped', JSON.stringify(archivedStatus));
-  for (const id of ['after-archive', 'after-fresh'])
-    store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
-  const onlyArchived = await decide('only archived sessions: a new session starts', todo('after-archive'), { verb: 'start', adapter: 'hyperneo', name: 'backend' });
+  store.openAsk({ id: 'after-archive', projectId: null, sessionId: 'neo', originMessageId: null, title: 'after-archive', request: 'Synthetic', createdAt: 1 });
+  const restarted = todo('after-archive');
+  const onlyArchived = await decide('only archived sessions: a new session starts', restarted, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
   assert.equal('value' in onlyArchived && onlyArchived.value.verb, 'start', JSON.stringify(onlyArchived));
+  assert.deepEqual(reserved('after-archive'), [{ todoId: restarted.id }], 'the fresh start owns the feature');
+  const next = await session('next');
+  db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(restarted.id, JSON.stringify({ verb: 'send', ref: next }), JSON.stringify(next));
+  db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(restarted.id);
+  await rpc('session.archive', { sessionId: next.id, confirmed: true });
   const fresh = await session('fresh');
   worked('earlier', fresh, 'dev');
-  assert.deepEqual(await decide('archived and live idle: the live one is reused', todo('after-fresh'), { verb: 'start', adapter: 'hyperneo', name: 'dev' }), { value: { verb: 'send', ref: fresh } });
-  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target; a sessionless failed owner and a refused claim's unbound reservation stop holding their feature, while a started todo keeps its reservation; archived sessions are never reused: with only archived ones a new session starts, and a live idle one is chosen over them. Evidence: ${run}/evidence/session-target.json`);
+  const moved = todo('after-archive');
+  assert.deepEqual(await decide('archived owner and live idle: the live one is reused', moved, { verb: 'start', adapter: 'hyperneo', name: 'dev' }), { value: { verb: 'send', ref: fresh } });
+  assert.deepEqual(reserved('after-archive'), [{ todoId: moved.id }], 'the live session takes the feature over');
+  console.log(`PASS: on a live daemon the coding pack reuses an idle work-type session, sends a feature's later slice to it, and waits when the feature's session status is unknown; todo start sent the ready slice to the backend session and recorded that send, and held the unreachable feature's slice as a todo with its start target; a sessionless failed owner and a refused claim's unbound reservation stop holding their feature, while a started todo keeps its reservation; archived sessions are never reused: with only archived ones a new session starts and owns the feature, and when the owner's session is archived a live idle one is chosen and takes the feature over. Evidence: ${run}/evidence/session-target.json`);
 } finally {
   writeFileSync(join(run, 'evidence/session-target.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app.cleanup();
