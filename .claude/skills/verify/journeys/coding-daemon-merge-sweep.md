@@ -136,8 +136,10 @@ unreadable third command and requires the original CLI error in Neo's limit noti
 
 Add `limit-gone` to exhaust retries while Neo delivery is unavailable, close the
 PR and switch its policy to owner, then restore delivery while the repository
-read fails. The ledger still shows the old open row, and the stopped report must
-not be sent on that stale row. After a complete read closes the row it is still
+read fails: first with the clock set back, so the ledger keeps its older
+complete health, then with the clock forward, so the health is failed. The
+ledger still shows the old open row both times, and the stopped report must not
+be sent on that stale row. After a complete read closes the row it is still
 not told: the report retires with its subject. Add `external-owned` to fail one
 attempt and then apply an external merge. The normal ledger MERGED event must
 notify the linked owner once; only approved-green manual merge instructions

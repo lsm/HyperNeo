@@ -28,13 +28,6 @@ import {
 import { codingMergeGithubSchemas } from './merge-operation.ts';
 
 const log = new Logger('CodingDaemonMerge');
-type Health = Awaited<ReturnType<CodingPrLedgerRepository['pollContextCurrent']>>['health'];
-const currentRead = (health: Health) =>
-  !health ||
-  (health.reason === 'complete' &&
-    (health.quota?.remaining == null ||
-      health.quota.remaining >=
-        (health.quota.resource === 'graphql' ? CODING_LEDGER_MIN_RATE : 1)));
 const prUrl = (row: { repo: string; number: number }) =>
   `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`.toLowerCase();
 
@@ -207,7 +200,8 @@ export function createCodingDaemonMergeSweep(
     const open = (await ledger.read('list')).filter((row) => row.closedAt === null);
     for (const { url, head } of await record({ kind: 'limits' })) {
       const row = open.find((row) => prUrl(row) === url && row.head === head);
-      if (row && currentRead((await ledger.pollContextCurrent(row.repo)).health))
+      const health = row?.readAt === now && (await ledger.pollContextCurrent(row.repo)).health;
+      if (health && health.reason === 'complete' && health.cycleAt === now)
         await retryLimit(url, head);
     }
     const rows = open.filter((row) =>
@@ -243,7 +237,12 @@ export function createCodingDaemonMergeSweep(
             handedOff.some(
               (prior) => prior.repo === repo && prior.number === number && prior.head === head
             ),
-          readable: currentRead(health),
+          readable:
+            !health ||
+            (health.reason === 'complete' &&
+              (health.quota?.remaining == null ||
+                health.quota.remaining >=
+                  (health.quota.resource === 'graphql' ? CODING_LEDGER_MIN_RATE : 1))),
         };
       })
     );
