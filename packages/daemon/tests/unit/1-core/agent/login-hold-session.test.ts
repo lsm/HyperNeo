@@ -280,6 +280,24 @@ describe('login hold', () => {
     await h.agent.cleanup();
   });
 
+  it('a restart keeps when a saved login hold started', async () => {
+    const since = Date.now() - 45 * 60_000;
+    const h = await harness({
+      processingState: JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: Date.now() + 60_000,
+        reason: 'login',
+        since,
+      }),
+      needsLoginAt: Date.now(),
+    });
+
+    expect(h.agent.getProcessingState()).toMatchObject({ reason: 'login', since });
+    await h.agent.cleanup();
+  });
+
   it('a restart restores a saved login hold and a credential write resumes it', async () => {
     const h = await harness({
       processingState: JSON.stringify({

@@ -1421,6 +1421,31 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
     });
 
+    it('a restored network pause keeps when its hold started', async () => {
+      const since = Date.now() - 45 * 60_000;
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 30_000,
+              retryCount: 0,
+              maxRetries: 0,
+              reason: 'network',
+              since,
+            }),
+          }) as never
+      );
+      (
+        agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
+      ).armPersistedRateLimitCooldown.call(agentSession);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(agentSession.stateManager.getState()).toMatchObject({ reason: 'network', since });
+      await agentSession.stateManager.setIdle();
+    });
+
     it('a restored network pause whose hold fails releases the queue', async () => {
       mockDb.getSession = mock(
         () =>
