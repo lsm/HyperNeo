@@ -28,8 +28,10 @@ export function onLineHeld(input: {
   rules: readonly HoldRule[];
   ranking: NeoLineRanking;
   now: number;
+  told?: number | null;
 }): LineHeldDecision {
-  const { hold, rules, ranking, now } = input;
+  const { hold, rules, ranking, now, told } = input;
+  if (told === hold.since) return { action: 'wait' };
   if (ranking.exhausted) return { action: 'tellNeo', exhausted: true };
   const forReason = rules.filter((rule) => rule.reason === hold.reason);
   const rule =
@@ -50,11 +52,16 @@ const lineName = (line: NeoLine) =>
 export function lineHeldText(
   todo: { id: string; title: string },
   hold: HeldLine,
-  others: readonly NeoLine[]
+  ranking: NeoLineRanking
 ): string {
-  return `Todo "${todo.title}" (${todo.id}) is held on ${lineName(hold.line)} (${hold.reason}) since ${new Date(hold.since).toISOString()}. ${
-    others.length
-      ? `Other lines on its route: ${others.map(lineName).join('; ')}. Check their usage with settings.provider.usage, then decide whether it waits or moves.`
-      : 'No other line is listed for it. Decide whether it waits or moves.'
-  }`;
+  const usable = ranking.ranked.map((entry) => lineName(entry.line));
+  const unusable = ranking.skipped.map((entry) => `${lineName(entry.line)} (${entry.reason})`);
+  return [
+    `Todo "${todo.title}" (${todo.id}) is held on ${lineName(hold.line)} (${hold.reason}) since ${new Date(hold.since).toISOString()}.`,
+    usable.length
+      ? `Usable lines, best first: ${usable.join('; ')}.`
+      : 'No other line is usable for it.',
+    ...(unusable.length ? [`Not usable: ${unusable.join('; ')}.`] : []),
+    'Decide whether it waits or moves.',
+  ].join(' ');
 }

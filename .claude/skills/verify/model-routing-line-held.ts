@@ -134,7 +134,7 @@ try {
   check('wakes after two sweeps with model-routing on', told);
   assert.equal(told.length, 1, 'the long hold is told once; the short hold is not told');
   assert(told[0]!.startsWith('Todo "long-hold work" (long-hold) is held on anthropic claude-opus-4-1 via hyperneo (limit) since '));
-  assert(told[0]!.includes('No other line is listed for it.'), 'no route is set on a fresh daemon');
+  assert(told[0]!.includes('No other line is usable for it.'), 'no route is set on a fresh daemon');
   evidence.passed = true;
 } catch (error) {
   evidence.error = String(error);
