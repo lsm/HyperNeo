@@ -75,8 +75,8 @@ try {
         allowPrivateNetwork: true,
       },
     },
-  })) as { voice?: { hasApiKey?: boolean; apiKeyEndpoint?: string } };
-  assert.equal(saved.voice?.hasApiKey, true);
+  })) as { settings: { voice?: { hasApiKey?: boolean; apiKeyEndpoint?: string } } };
+  assert.equal(saved.settings.voice?.hasApiKey, true);
   const started = (await call('voice.stream.start', {
     encoding: 'pcm16',
     sampleRate: 16000,
@@ -91,7 +91,7 @@ try {
   assert.deepEqual(authorizations, [null]);
   console.log(
     JSON.stringify(
-      { keyHost: saved.voice?.apiKeyEndpoint, started, stopped, authorizations },
+      { keyHost: saved.settings.voice?.apiKeyEndpoint, started, stopped, authorizations },
       null,
       2
     )
