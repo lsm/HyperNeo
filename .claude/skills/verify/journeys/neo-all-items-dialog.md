@@ -25,11 +25,14 @@ loaded pages. The settled-preview helper also checks nested Read all and literal
 versions dialogs, links, final text, bounded previews and unchanged open answers.
 
 Import verifyAllReadError and verifyAllSession from neo-all-read-error-web.mjs
-and run each in separate contexts at both widths, with phase after. A refused
-full-card read keeps the ask in the inbox queue as its queued items with the load
-error and Retry, and no Open the ask button, since the full view needs a good
-read. The summarised card is then reached through work search: it must show one
-error in the dialog and restore the card error after closing. Opening the last completed todo's session must dismiss All,
+and run each in separate contexts at both widths, with phase after. Every read of
+the two fixture asks is refused. The unfinished ask stays in the inbox queue as its
+queued items with the load error and Retry, and no Open the ask button, since the
+full view needs a good read; Retry must read again, and once a read succeeds Retry
+clears the error and Open the ask appears. The fixture's finished history
+ask has no card or unfinished step, so it stays a summary card outside the queue:
+it reads nothing until All opens, then shows one error in the dialog and restores
+the card error after closing. Opening the last completed todo's session must dismiss All,
 show its session pane, and allow Back. Preserve separate before evidence for
 the duplicate error and dialog remaining over the session. Completed-todo
 artifact and worker navigation tests must open All first.

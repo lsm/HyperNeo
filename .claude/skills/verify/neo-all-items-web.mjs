@@ -12,9 +12,10 @@ export async function verifyAllItems(page, fixture, { touch = false, evidence })
   await page.goto(fixture.url);
   if(touch) await use(page.getByRole('button', {name:/^Your work/}));
   const card = await revealAsk(page, 'all-items');
+  const full = await card.evaluate(node=>!!node.closest('[data-human-queue]'));
   const footer = card.getByRole('button', {name:'All · 30',exact:true});
   await footer.waitFor();
-  assert.equal(await card.locator('[data-ask-todo]').count(),2);
+  assert.equal(await card.locator('[data-ask-todo]').count(),full?1:2);
   assert.equal(await card.getByRole('button',{name:/done — show more|more — Details/}).count(),0);
   const dimensions = await footer.evaluate(element => ({button:element.getBoundingClientRect().width,parent:element.parentElement.getBoundingClientRect().width,height:element.getBoundingClientRect().height}));
   assert(dimensions.height >=44 && Math.abs(dimensions.button-dimensions.parent)<1);
@@ -24,12 +25,13 @@ export async function verifyAllItems(page, fixture, { touch = false, evidence })
   await use(footer);
   const dialog = page.getByRole('dialog',{name:'Synthetic All items',exact:true});
   await dialog.locator('[data-todo-state="done"]').nth(19).waitFor();
-  assert.equal(await dialog.locator('[data-todo-state="done"]').count(),20);
+  assert.equal(await dialog.locator('[data-todo-state="done"]').count(),full?25:20);
   assert.equal(await dialog.getByRole('region',{name:'In progress'}).getByText('Unfinished All step',{exact:true}).count(),1);
   assert.equal(await dialog.getByText('Done · 25',{exact:true}).count(),1);
   await settle();
   await page.screenshot({path:`${evidence}/${touch?'mobile':'desktop'}-first-page.png`,scale:'css'});
-  await use(dialog.getByRole('button',{name:'5 done — show more',exact:true}));
+  if(full) assert.equal(await dialog.getByRole('button',{name:/done — show more/}).count(),0);
+  else await use(dialog.getByRole('button',{name:'5 done — show more',exact:true}));
   await dialog.locator('[data-todo-state="done"]').nth(24).waitFor();
   assert.equal(await dialog.locator('[data-todo-state="done"]').count(),25);
   assert.equal(await dialog.getByRole('list',{name:'Removed',exact:true}).getByText('Removed All step',{exact:true}).count(),1);
@@ -53,7 +55,7 @@ export async function verifyAllItems(page, fixture, { touch = false, evidence })
   await page.waitForFunction(()=>document.querySelector('[data-ask-details-toggle]')===document.activeElement);
   const preview=await verifySettledPreview(page,fixture,{touch,evidence});
   const offsets=requests.filter(r=>r.data?.name==='neo.ask.doneTodos').map(r=>r.data.input.offset);
-  assert.equal(offsets.slice(0,2).join(','),'0,20');
+  assert.equal(offsets.slice(0,2).join(','),full?'':'0,20');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  return {touch,dimensions,doneRows:25,pageOffsets:offsets,focusReturned:true,duplicateIds:false,preview};
+  return {touch,fullCardFromQueue:full,dimensions,doneRows:25,pageOffsets:offsets,focusReturned:true,duplicateIds:false,preview};
 }
