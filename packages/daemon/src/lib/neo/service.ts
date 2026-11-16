@@ -116,7 +116,7 @@ import { NEO_ATTENTION_KINDS } from './attention/decide.ts';
 import { createNeoAttentionSweep } from './attention/sweep.ts';
 import { createNeoAttention, neoAttentionDelivery } from './attention/tell.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
-import { isNeoTodoStalledCard, neoTodoCovered } from './todo-state.ts';
+import { neoTodoCovered } from './todo-state.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { changeSessionToolChoice } from '../tools/change-session-tool-choice.ts';
 import { createNeoPublisher } from './publication-operation.ts';
@@ -714,14 +714,6 @@ export class NeoService {
       return {
         ok: false,
         reason: 'no_worker_question: this todo has no worker question to relay.',
-      };
-    const open = this.todos
-      .listQuestions(todo.askId)
-      .find((q) => q.state === 'open' && q.todoId === todo.id && !isNeoTodoStalledCard(q.text));
-    if (open)
-      return {
-        ok: false,
-        reason: `card_open: card ${open.id} is already open on this todo; wait for its answer.`,
       };
     const setting = this.db.getGlobalSettings().language;
     const card = requireHumanCard({ text: input.title, kind: 'choice' }, setting);
