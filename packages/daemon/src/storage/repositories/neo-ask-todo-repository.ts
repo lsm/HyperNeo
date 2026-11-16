@@ -164,7 +164,7 @@ export type NeoQuestionDraft = Pick<
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, created_at AS createdAt FROM neo_questions`;
+  retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -180,6 +180,7 @@ type QuestionRow = Omit<
   | 'retireWhen'
 > & {
   kind: NeoQuestion['kind'] | 'start';
+  holdRequests: string | null;
   answerProvenanceJson: string | null;
   retireWhenJson: string | null;
   artifactsJson: string | null;
@@ -206,6 +207,7 @@ const toQuestion = ({
   cause,
   actionsAppliedAt,
   heldAt,
+  holdRequests: _holdRequests,
   ...row
 }: QuestionRow): NeoQuestion => ({
   ...(cause ? { cause } : {}),
@@ -988,19 +990,19 @@ export class NeoAskTodoRepository {
   }
 
   getQuestion(id: string): NeoQuestion | null {
-    const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
+    const row = this.questionRow(id);
     return row ? toQuestion(row) : null;
+  }
+
+  private questionRow(id: string): QuestionRow | null {
+    return this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
   }
 
   holdQuestion(id: string, held: boolean, requestId: string, now: number): NeoQuestion | null {
     const changed = this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          "SELECT held_at AS heldAt, hold_requests AS requests FROM neo_questions WHERE id = ? AND state = 'open'"
-        )
-        .get(id) as { heldAt: number | null; requests: string | null } | null;
-      if (!row) return null;
-      const requests = JSON.parse(row.requests ?? '[]') as string[];
+      const row = this.questionRow(id);
+      if (row?.state !== 'open') return null;
+      const requests = JSON.parse(row.holdRequests ?? '[]') as string[];
       if (requests.includes(requestId)) return false;
       const heldAt = held ? (row.heldAt ?? now) : null;
       this.changeQuestion(id, {
