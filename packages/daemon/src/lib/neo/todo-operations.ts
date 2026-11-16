@@ -329,7 +329,9 @@ type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
 
 const Hold = z.object({
   todoId: Text,
-  reason: Text.nullable().describe('Why it must wait; null releases it.'),
+  reason: Text.nullable().describe(
+    'The card’s whole text: your question to the human; null releases it.'
+  ),
 });
 
 const Remove = z.object({
@@ -340,7 +342,7 @@ const Remove = z.object({
     .enum(['continue', 'remove'])
     .optional()
     .describe(
-      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.'
+      'What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; they then wait, and deciding is your next step.'
     ),
 });
 

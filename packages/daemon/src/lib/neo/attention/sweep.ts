@@ -66,7 +66,7 @@ export function planNeoSweepEvents(
   return [
     ...steps.flatMap((row) => {
       const next = owner(row);
-      return next.owner === 'neo' && row.todo.approvedAt !== null
+      return next.owner === 'neo' && (row.todo.approvedAt !== null || row.todo.startedAt !== null)
         ? [
             {
               kind: 'todo.neo_step',

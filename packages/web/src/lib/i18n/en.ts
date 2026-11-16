@@ -139,6 +139,8 @@ export const en = {
   'todo.markDone': 'Mark done',
   'todo.hold': 'Hold',
   'todo.pause': 'Pause',
+  'todo.holdQuestion': 'You put this on hold. Start it, or remove it?',
+  'todo.pauseQuestion': 'You paused this. Resume it, or remove it?',
   'todo.cancel': 'Cancel this step',
   'todo.priorityItem': 'Priority: {priority}',
   'todo.priority.urgent': 'Urgent',

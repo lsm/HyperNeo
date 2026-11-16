@@ -211,7 +211,7 @@ describe('Writer-backed todo operation activation', () => {
       {
         state: 'open',
         cause: 'hold',
-        text: '"peer" is on hold: Human said wait. Start it, or remove it?',
+        text: 'Human said wait.',
       },
     ]);
     expect(order).toEqual([]);

@@ -1,14 +1,14 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   NEO_CHECK_OVERDUE,
+  NEO_HUMAN_STEP,
   neoDaemonCardCodes,
   neoDaemonCardDraft,
   neoStartRetryDue,
   planNeoDaemonCardActions,
   planNeoDaemonCardPrune,
   planNeoHoldCard,
-  planNeoRetriesCard,
 } from '../../../../src/lib/neo/daemon-cards.ts';
 import { createNeoQuestionAnswerDelivery } from '../../../../src/lib/neo/question-answer-delivery.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -50,32 +50,6 @@ const card = (patch: Partial<NeoQuestion>) => ({
 describe('neoStartRetryDue', () => {
   test('the daemon retries a failed start twice, then stops', () => {
     expect([0, 1, 2, 3].map(neoStartRetryDue)).toEqual([true, true, false, false]);
-  });
-});
-
-describe('planNeoRetriesCard', () => {
-  test('a second todo failing the same way joins the open card', () => {
-    const first = row('first');
-    const second = row('second');
-    const open = card({ cause: 'retries_exhausted', todos: ['first'] });
-    const plan = planNeoRetriesCard(second, [first, second], [open]);
-    expect(plan?.replaces).toBe(open);
-    expect(plan?.draft).toMatchObject({
-      todos: ['first', 'second'],
-      options: ['Retry', 'Mark done', 'Remove'],
-      text: '"first", "second" could not start after 2 automatic retries: host unreachable. Retry, mark done, or remove?',
-    });
-  });
-
-  test('a different failure gets its own card, and a covered todo gets none', () => {
-    const first = row('first');
-    const other = row('other', { blockedReason: 'login expired' });
-    const open = card({ cause: 'retries_exhausted', todos: ['first'] });
-    expect(planNeoRetriesCard(other, [first, other], [open])).toMatchObject({
-      replaces: null,
-      draft: { todos: ['other'] },
-    });
-    expect(planNeoRetriesCard(first, [first], [open])).toBeNull();
   });
 });
 
@@ -174,25 +148,33 @@ describe('planNeoDaemonCardActions', () => {
 });
 
 describe('planNeoHoldCard', () => {
-  test('an unstarted todo gets a hold card, a running one a pause card, each saying why', () => {
+  test('an unstarted todo gets a hold card, a running one a pause card, each in Neo’s words', () => {
     expect(
-      planNeoHoldCard(held({ state: 'todo', blockedBy: null }), [], 'Wait for the human.')
+      planNeoHoldCard(
+        held({ state: 'todo', blockedBy: null }),
+        [],
+        'Ship the release now, or wait for the launch review?'
+      )
     ).toEqual({
       value: expect.objectContaining({
         cause: 'hold',
         todos: ['a'],
         todoId: 'a',
         options: ['Start', 'Remove'],
-        text: '"a" is on hold: Wait for the human. Start it, or remove it?',
+        text: 'Ship the release now, or wait for the launch review?',
       }),
     });
     expect(
-      planNeoHoldCard(held({ state: 'doing', blockedBy: null, startedAt: 1 }), [], 'Stop.')
+      planNeoHoldCard(
+        held({ state: 'doing', blockedBy: null, startedAt: 1 }),
+        [],
+        'Keep migrating the database tonight?'
+      )
     ).toEqual({
       value: expect.objectContaining({
         cause: 'pause',
         options: ['Resume', 'Remove'],
-        text: '"a" is paused: Stop. Resume it, or remove it?',
+        text: 'Keep migrating the database tonight?',
       }),
     });
   });
@@ -257,17 +239,11 @@ describe('neoDaemonCardCodes', () => {
     });
   });
 
-  test('a hold card keeps its reason when the client localizes it', () => {
+  test('a hold card in Neo’s words keeps its text and localizes only its options', () => {
     const waiting = held({ state: 'todo', blockedReason: null });
-    const draft = planNeoHoldCard(waiting, [], 'Wait for the launch.');
+    const draft = planNeoHoldCard(waiting, [], 'Wait for the launch?');
     if (!('value' in draft)) throw new Error(draft.reason);
     expect(neoDaemonCardCodes({ ...draft.value, todos: ['a'], cause: 'hold' }, [waiting])).toEqual({
-      textCodes: [
-        {
-          code: 'question.held',
-          params: { steps: '"a"', reason: 'Wait for the launch', retries: '2', hours: '24' },
-        },
-      ],
       optionCodes: [
         { code: 'question.daemonStart', params: {} },
         { code: 'question.daemonRemove', params: {} },
@@ -335,24 +311,19 @@ describe('daemon cards in the store', () => {
     );
   const cardsFor = (id: string) => open().filter((q) => q.todos.includes(id));
 
-  test('a check-only todo that used to wait 24 hours gets its human-step card at once', async () => {
-    await sweep(1);
-    await sweep(2);
-    expect(open().map((q) => [q.text, q.options, q.todos])).toEqual([
-      [
-        '"Merged" is yours to do now. Do it, then mark it done, or remove it?',
-        ['Mark done', 'Remove'],
-        ['check'],
-      ],
-    ]);
-  });
+  const seed = (at = DAY) =>
+    openHumanCard(
+      store,
+      crypto.randomUUID(),
+      'ask',
+      { ...neoDaemonCardDraft(NEO_HUMAN_STEP, [store.getTodo('check')!]), todoId: 'check' },
+      at
+    );
 
-  test('a check-only todo whose prerequisites are done gets its card at once', async () => {
-    after('build', [], 'Build it');
-    after('sign', ['build']);
-    store.updateTodo(store.getTodo('build')!, { state: 'done' }, 1);
-    await sweep(2);
-    expect(cardsFor('sign')).toHaveLength(1);
+  test('the sweep opens no card for a check-only todo, however long it waits', async () => {
+    await sweep(1);
+    await sweep(DAY * 2);
+    expect(store.listQuestions('ask')).toEqual([]);
   });
 
   test('a check-only todo whose prerequisites are unfinished gets no card', async () => {
@@ -388,69 +359,26 @@ describe('daemon cards in the store', () => {
   });
 
   test('the human-step card retires once worker work is attached to its todo', async () => {
-    await sweep(1);
-    const [stepCard] = open();
+    const stepCard = seed(1);
     store.updateTodo(store.getTodo('check')!, { instruction: 'Merge it' }, 2);
     expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
   });
 
   test('the human-step card retires once its todo waits on an unfinished step', async () => {
     after('build', [], 'Build it');
-    await sweep(1);
-    const [stepCard] = open();
+    const stepCard = seed(1);
     store.updateTodo(store.getTodo('check')!, { dependsOn: ['build'] }, 2);
     expect(store.listQuestions('ask').find((q) => q.id === stepCard.id)?.state).toBe('retired');
   });
 
-  test('the sweep reads a family once however many human steps it holds', async () => {
-    after('second', []);
-    after('third', []);
-    const reads = spyOn(NeoAskTodoRepository.prototype, 'listTodosForAsks');
-    try {
-      await sweep(1);
-      expect(open()).toHaveLength(3);
-      expect(reads).toHaveBeenCalledTimes(1);
-      await sweep(2);
-      expect(reads).toHaveBeenCalledTimes(1);
-    } finally {
-      reads.mockRestore();
-    }
-  });
-
-  test('a free reply to a human-step card holds off the next card for 24 hours', async () => {
-    await sweep(1);
-    store.answerQuestion(open()[0], ['I will do it tomorrow'], 'chat', 10);
-    await sweep(11);
-    expect(open()).toEqual([]);
-    await sweep(DAY + 10);
-    expect(open()).toHaveLength(1);
-  });
-
-  test('an old Keep waiting answer still holds off the next card for 24 hours', async () => {
-    const legacy = openHumanCard(
-      store,
-      'legacy',
-      'ask',
-      neoDaemonCardDraft(NEO_CHECK_OVERDUE, [store.getTodo('check')!]),
-      0
-    );
-    store.answerQuestion(legacy, ['Keep waiting'], 'button', 10);
-    await sweep(11);
-    expect(open()).toEqual([]);
-    await sweep(DAY + 10);
-    expect(open()).toHaveLength(1);
-  });
-
   test('the overdue card retires when its check passes on its own', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.updateTodo(store.getTodo('check')!, { state: 'done' }, DAY + 1);
     expect(store.listQuestions('ask').find((q) => q.id === overdue.id)?.state).toBe('retired');
   });
 
   test('a refused card action runs once and tells Neo once, not on every refresh', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
     const calls: string[] = [];
     const told: { key: string; note: unknown }[] = [];
@@ -480,8 +408,7 @@ describe('daemon cards in the store', () => {
   });
 
   test('an answer saved before a restart is carried out by the next sweep, once', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Mark done'], 'button', DAY + 1);
     const calls: string[] = [];
     const deliver = createNeoQuestionAnswerDelivery(
@@ -502,8 +429,7 @@ describe('daemon cards in the store', () => {
   });
 
   test('a saved answer is carried out after a restart even if its todo changed since', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
     store.updateTodo(store.getTodo('check')!, { title: 'Merged soon' }, DAY + 5);
     const calls: string[] = [];
@@ -524,8 +450,7 @@ describe('daemon cards in the store', () => {
   });
 
   test('a refusal because another run already settled the todo is not reported to Neo', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Mark done'], 'button', DAY + 1);
     const told: string[] = [];
     await createNeoQuestionAnswerDelivery(
@@ -545,8 +470,7 @@ describe('daemon cards in the store', () => {
   });
 
   test('the answer and a refresh that overlap carry out a card once', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Remove'], 'button', DAY + 1);
     let release!: () => void;
     const held = new Promise<void>((done) => {
@@ -577,8 +501,7 @@ describe('daemon cards in the store', () => {
   });
 
   test('the daemon carries out the human answer on its card', async () => {
-    await sweep(DAY);
-    const [overdue] = open();
+    const overdue = seed();
     store.answerQuestion(overdue, ['Mark done'], 'button', DAY + 1);
     const calls: { name: string; input: Record<string, unknown> }[] = [];
     const deliver = createNeoQuestionAnswerDelivery(
