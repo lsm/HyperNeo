@@ -7,7 +7,10 @@ import type { Database } from '../sqlite-compat.ts';
 class WorkCleanupRepository {
   constructor(private db: Database) {}
 
-  owners(refs?: readonly WorkRef[]): {
+  owners(
+    refs?: readonly WorkRef[],
+    folder?: string
+  ): {
     ref: WorkRef;
     owner: WorkOwner;
     path: string | null;
@@ -36,10 +39,15 @@ class WorkCleanupRepository {
         AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = json_extract(s.ref, '$.adapter') AND removed.id = json_extract(s.ref, '$.id'))
         AND json_extract(s.target, '$.verb') = 'start'
         AND COALESCE(json_extract(s.target, '$.name'), '') = ''
-        AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
+        AND (?1 IS NULL OR live = 1 AND ?2 IS NOT NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
           WHERE json_extract(requested.value, '$.adapter') = json_extract(s.ref, '$.adapter')
             AND json_extract(requested.value, '$.id') = json_extract(s.ref, '$.id')))`)
-      .all(selected) as { ref: string; state: NeoTodo['state']; todoId: string; live: number }[];
+      .all(selected, folder ?? null) as {
+      ref: string;
+      state: NeoTodo['state'];
+      todoId: string;
+      live: number;
+    }[];
     const owned = bindings.map(({ ref, state, todoId, live }) => ({
       todoId,
       ref: JSON.parse(ref) as WorkRef,
@@ -54,10 +62,10 @@ class WorkCleanupRepository {
       .prepare(`${removed} SELECT id, status, worktree_path AS path,
       main_repo_path AS repo FROM sessions WHERE worktree_path IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM removed WHERE removed.adapter = 'hyperneo' AND removed.id = sessions.id)
-        AND (?1 IS NULL OR EXISTS (SELECT 1 FROM json_each(?1) requested
+        AND (?1 IS NULL OR worktree_path = ?2 OR EXISTS (SELECT 1 FROM json_each(?1) requested
           WHERE json_extract(requested.value, '$.adapter') = 'hyperneo'
             AND json_extract(requested.value, '$.id') = sessions.id))`)
-      .all(selected) as {
+      .all(selected, folder ?? null) as {
       id: string;
       status: string;
       path: string;

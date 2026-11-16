@@ -38,10 +38,16 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
   const { db, jobQueue, jobProcessor, sessionManager, config } = context.deps;
   const invoke = (name: string, input: Record<string, unknown>) =>
     invokeOperation(sessionManager.getOperationRegistry(), name, input, caller);
-  const snapshot = async () => {
-    const owners = await db.gateway.call(workCleanupReads, 'owners');
-    const rows: ((typeof owners)[number] & { readable: boolean })[] = [];
-    const statuses = new Map<string, ReturnType<typeof invoke>>();
+  const readOwners = (refs?: WorkRef[], folder?: string) =>
+    refs
+      ? db.gateway.call(workCleanupReads, 'owners', refs, folder)
+      : db.gateway.call(workCleanupReads, 'owners');
+  type Owners = Awaited<ReturnType<typeof readOwners>>;
+  const resolveOwners = async (
+    owners: Owners,
+    statuses: Map<string, ReturnType<typeof invoke>>
+  ) => {
+    const rows: (Owners[number] & { readable: boolean })[] = [];
     for (let offset = 0; offset < owners.length; offset += 4) {
       rows.push(
         ...(await Promise.all(
@@ -75,13 +81,14 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     const list = (root: string) => children(root, errors);
     const refs = new Map<string, WorkRef>();
     const todos = new Map<string, string[]>();
-    let initial: Awaited<ReturnType<typeof snapshot>> = [];
+    const statuses = new Map<string, ReturnType<typeof invoke>>();
+    let initial: Awaited<ReturnType<typeof resolveOwners>> = [];
     const read = new Set<string>();
     const data = getDataDir();
     const before = await statfs(data);
     const digest = await sweepWorkCleanup({
       list: async () => {
-        const owned = await snapshot();
+        const owned = await resolveOwners(await readOwners(), statuses);
         initial = owned;
         const repos = [...new Set(owned.flatMap((row) => (row.repo ? [row.repo] : [])))];
         const shared = [
@@ -115,23 +122,14 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         const matched = initial.filter((row) => row.path === folder);
         const owners = read.has(folder)
           ? (
-              await db.gateway.call(
-                workCleanupReads,
-                'owners',
-                matched.map(({ ref }) => ref)
+              await resolveOwners(
+                await readOwners(
+                  matched.map(({ ref }) => ref),
+                  folder
+                ),
+                statuses
               )
-            )
-              .map((row) => {
-                const known = matched.find(
-                  ({ ref }) => ref.adapter === row.ref.adapter && ref.id === row.ref.id
-                );
-                return {
-                  ...row,
-                  path: row.path ?? known?.path,
-                  readable: known?.readable === true,
-                };
-              })
-              .filter((row) => row.path === folder)
+            ).filter((row) => row.path === folder || !row.readable)
           : matched;
         read.add(folder);
         const live = owners.find(({ owner }) =>
