@@ -596,6 +596,34 @@ describe('NeoHumanQueue', () => {
     expect(box.checked).toBe(true);
   });
 
+  it('opens the full ask from its group header and goes back to the queue', () => {
+    const view = render(
+      <NeoHumanQueue
+        queue={queue}
+        entries={entries}
+        onHold={vi.fn()}
+        onAnswer={vi.fn()}
+        renderAsk={(entry) => <p>Full ask {entry.ask.title}</p>}
+      />
+    );
+    const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
+    const open = trip.getByRole('button', { name: 'Open the ask' });
+    expect(open.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(open);
+    expect(open.getAttribute('aria-expanded')).toBe('true');
+    expect(trip.getByText('Full ask Plan the trip')).toBeTruthy();
+    expect(trip.queryByText('Book hotel')).toBeNull();
+    expect(view.queryByText('Full ask File taxes')).toBeNull();
+    fireEvent.click(open);
+    expect(trip.queryByText('Full ask Plan the trip')).toBeNull();
+    expect(trip.getByText('Book hotel')).toBeTruthy();
+  });
+
+  it('has no header button when the full ask cannot be shown', () => {
+    const { view } = show();
+    expect(view.queryByRole('button', { name: 'Open the ask' })).toBeNull();
+  });
+
   it('shows nothing when nothing waits', () => {
     const view = render(
       <NeoHumanQueue

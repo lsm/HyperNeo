@@ -1072,6 +1072,44 @@ describe('card reply notice navigation', () => {
     await waitFor(() => expect(screen.queryByText('Couldn’t refresh the queue.')).toBeNull());
   });
 
+  it('reaches the ask actions and todo controls from a queue group', () => {
+    const { model } = mount();
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [
+            testAskEntry('trip', 'Fictional trip', {
+              state: 'doing',
+              todos: [testTodo('hotel', { title: 'Fictional hotel', state: 'doing' })],
+            }),
+          ],
+          humanQueue: {
+            items: [
+              {
+                state: 'progress',
+                askId: 'trip',
+                todoId: 'hotel',
+                title: 'Fictional hotel',
+                owner: 'worker',
+              },
+            ],
+            counts: { trip: { waiting: 0, held: 0, progress: 1 } },
+          },
+        } as never,
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'In progress 1' }));
+    const queue = screen.getByRole('region', { name: 'Fictional trip' });
+    expect(within(queue).queryByRole('button', { name: 'Ask actions' })).toBeNull();
+    fireEvent.click(within(queue).getByRole('button', { name: 'Open the ask' }));
+    expect(within(queue).getByRole('button', { name: 'Ask actions' })).toBeTruthy();
+    expect(
+      within(queue).getByRole('button', { name: 'Step actions: Fictional hotel' })
+    ).toBeTruthy();
+  });
+
   it('applies the chosen topic to the queue', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
