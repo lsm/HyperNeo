@@ -596,6 +596,57 @@ describe('SDK Session File Manager', () => {
       expect(repaired[3].parentUuid).toBe(inserted.uuid);
     });
 
+    test('restores a parallel tool_use message once for all of its results', async () => {
+      const lines = [
+        JSON.stringify({
+          type: 'api-request-blob',
+          sessionId: testSdkSessionId,
+          hash: 'h1',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'par_a', name: 'Bash', input: {} },
+              { type: 'tool_use', id: 'par_b', name: 'Bash', input: {} },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r1',
+          parentUuid: 'lost-assistant',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'par_a' }] },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'r2',
+          parentUuid: 'r1',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'par_b' }] },
+        }),
+      ];
+      writeFileSync(testSessionFile, lines.join('\n') + '\n', 'utf-8');
+
+      const result = await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      expect(result).toMatchObject({ success: true, repairedCount: 2 });
+      const repaired = readFileSync(testSessionFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(repaired.map((line) => line.type)).toEqual([
+        'api-request-blob',
+        'assistant',
+        'user',
+        'user',
+      ]);
+      expect(repaired[2].parentUuid).toBe(repaired[1].uuid);
+      expect(repaired[3].parentUuid).toBe('r1');
+    });
+
     test('keeps only the newest two backups of the repaired session', async () => {
       writeFileSync(
         testSessionFile,

@@ -2811,6 +2811,14 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       'could not be repaired: Could not find tool_use message for t9'
     );
     await expect(choice).rejects.not.toThrow('not found');
+    expect(db.updateHyperNeoActionMessageByUuid).toHaveBeenLastCalledWith(
+      'resume-session',
+      'uuid-bad',
+      expect.objectContaining({
+        resolved: false,
+        repairError: 'Could not find tool_use message for t9',
+      })
+    );
   });
 
   it('restarts as-is when leave_as_is repair finds the restored transcript', async () => {
