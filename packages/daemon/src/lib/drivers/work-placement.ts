@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { readdir, readlink, stat } from 'node:fs/promises';
+import { readdir, readFile, readlink } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -116,20 +116,22 @@ export const WORKTREE_IN_USE =
 
 type ProcReader = {
   readdir(path: string): Promise<string[]>;
-  stat(path: string): Promise<{ uid: number }>;
+  readFile(path: string, encoding: 'utf8'): Promise<string>;
   readlink(path: string): Promise<string>;
 };
 
 export async function procFolderInUse(
   root: string,
-  proc: ProcReader = { readdir, stat, readlink }
+  proc: ProcReader = { readdir, readFile, readlink }
 ): Promise<boolean> {
   const uid = process.getuid?.();
   const pids = (await proc.readdir('/proc')).filter((name) => /^\d+$/.test(name));
   const busy = await Promise.all(
     pids.map(async (pid) => {
       try {
-        if ((await proc.stat(`/proc/${pid}`)).uid !== uid) return false;
+        const ids = /^Uid:\s+(.*)$/m.exec(await proc.readFile(`/proc/${pid}/status`, 'utf8'));
+        if (!ids) return true;
+        if (!ids[1].split(/\s+/).includes(String(uid))) return false;
         return `${await proc.readlink(`/proc/${pid}/cwd`)}/`.startsWith(`${root}/`);
       } catch (error) {
         return !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '');
