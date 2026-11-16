@@ -269,12 +269,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): Promise<void> {
     this.resetDiscoveryState();
-    const previous = this.cachedCredentials;
     if (credentials.type === 'api_key') {
       this.cachedCredentials = { type: 'api_key', access: credentials.apiKey };
       this.cachedBridgeAuth = { source: 'api_key', apiKey: credentials.apiKey };
       this.cachedApiKey = credentials.apiKey;
-      return this.persistSuppliedCredentials(this.cachedCredentials, previous);
+      return this.persistSuppliedCredentials(this.cachedCredentials);
     }
 
     const raw = credentials.raw ?? {};
@@ -292,16 +291,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedCredentials = stored;
     this.cachedBridgeAuth = this.toBridgeAuth(stored) ?? null;
     this.cachedApiKey = stored.access ?? '';
-    return this.persistSuppliedCredentials(stored, previous);
+    return this.persistSuppliedCredentials(stored);
   }
 
-  private persistSuppliedCredentials(
-    credentials: StoredCredentials,
-    previous: StoredCredentials | null
-  ): Promise<void> {
+  private persistSuppliedCredentials(credentials: StoredCredentials): Promise<void> {
     return this.saveCredentials(credentials).catch((error) => {
       if (this.cachedCredentials === credentials) {
-        this.cachedCredentials = previous;
+        this.cachedCredentials = null;
         this.cachedBridgeAuth = undefined;
         this.cachedApiKey = undefined;
       }
