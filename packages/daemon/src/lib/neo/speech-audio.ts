@@ -7,6 +7,24 @@ import type { ClientEventData } from '../operations/client-event-schemas.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 type SpeechRetry = { retryInMs: number } | { giveUp: string };
 const SPEECH_DEADLINE_MS = 180_000;
+const OPENAI_VOICES = [
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+];
+
+export type SpeechPart = { endpoint: string; model?: string; key?: string };
+type SpeechBackend = { base?: string; part?: SpeechPart };
 
 const retryAfterMs = (header: string | null, now: number): number | null => {
   if (header === null) return null;
@@ -48,6 +66,9 @@ export const planSpeechRetry = (superpipe({})('neo.speech.retry') as PipelineAPI
   now: number
 ) => SpeechRetry;
 
+const authorization = (part?: SpeechPart): Record<string, string> =>
+  part?.key ? { Authorization: `Bearer ${part.key}` } : {};
+
 export class NeoSpeechAudio {
   private readonly jobs = new Map<string, AbortController>();
   private serial: Promise<unknown> = Promise.resolve();
@@ -56,12 +77,18 @@ export class NeoSpeechAudio {
     private readonly send: (client: string, data: ClientEventData<'neo.speech'>) => boolean,
     private readonly failed: (target: Target) => Promise<unknown>,
     private readonly base = process.env.HYPERNEO_SPEECH_URL,
-    private readonly request: typeof fetch = fetch
+    private readonly request: typeof fetch = fetch,
+    private readonly speechPart: () => Promise<SpeechPart | undefined> = async () => undefined
   ) {}
 
-  private url(path: string): URL {
-    if (!this.base) throw new Error('speech_backend_not_configured');
-    const address = this.base.replace(/\/$/, '') + path;
+  private async backend(): Promise<SpeechBackend> {
+    const part = await this.speechPart();
+    return part ? { base: part.endpoint, part } : { base: this.base };
+  }
+
+  private url({ base, part }: SpeechBackend, path: string): URL {
+    if (!base) throw new Error('speech_backend_not_configured');
+    const address = base.replace(/\/$/, '') + path;
     const url = URL.canParse(address) ? new URL(address) : null;
     if (
       !url ||
@@ -71,7 +98,9 @@ export class NeoSpeechAudio {
       url.hash ||
       !(
         url.protocol === 'https:' ||
-        (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+        (url.protocol === 'http:' &&
+          !part?.key &&
+          ['localhost', '127.0.0.1'].includes(url.hostname))
       )
     )
       throw new Error('invalid_speech_backend');
@@ -81,10 +110,13 @@ export class NeoSpeechAudio {
   async catalog(): Promise<{ ok: true; catalog: unknown } | { ok: false; reason: string }> {
     const signal = AbortSignal.timeout(10_000);
     try {
-      const response = await this.request(this.url('/v1/audio/voices'), {
+      const backend = await this.backend();
+      const response = await this.request(this.url(backend, '/v1/audio/voices'), {
         signal,
         redirect: 'error',
+        headers: authorization(backend.part),
       }).catch((error) => {
+        if (backend.part) return null;
         if (
           error instanceof TypeError ||
           (error instanceof DOMException && ['TimeoutError', 'AbortError'].includes(error.name))
@@ -92,7 +124,9 @@ export class NeoSpeechAudio {
           throw new Error('speech_backend_unavailable');
         throw error;
       });
-      if (!response.ok) throw new Error('speech_backend_unavailable');
+      if (backend.part && !response?.ok)
+        return { ok: true, catalog: { data: OPENAI_VOICES.map((id) => ({ id })) } };
+      if (!response?.ok) throw new Error('speech_backend_unavailable');
       return { ok: true, catalog: await response.json() };
     } catch (error) {
       if (signal.aborted) return { ok: false, reason: 'speech_backend_unavailable' };
@@ -121,18 +155,23 @@ export class NeoSpeechAudio {
       .then(async () => {
         controller.signal.throwIfAborted();
         voiceDiagnostic('voice.tts.request_started', { ...timing, atMs: Date.now() });
+        const backend = await this.backend();
         const synthesize = () =>
-          this.request(this.url('/v1/audio/speech'), {
+          this.request(this.url(backend, '/v1/audio/speech'), {
             method: 'POST',
             signal: controller.signal,
             redirect: 'error',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              input: target.text,
-              voice,
-              language: 'auto',
-              response_format: 'pcm',
-            }),
+            headers: { 'Content-Type': 'application/json', ...authorization(backend.part) },
+            body: JSON.stringify(
+              backend.part
+                ? {
+                    ...(backend.part.model ? { model: backend.part.model } : {}),
+                    input: target.text,
+                    voice,
+                    response_format: 'pcm',
+                  }
+                : { input: target.text, voice, language: 'auto', response_format: 'pcm' }
+            ),
           });
         let response = await synthesize();
         for (let attempt = 0; !response.ok; attempt++) {

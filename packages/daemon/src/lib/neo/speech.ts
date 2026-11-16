@@ -8,7 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { Logger } from '../logger.ts';
 import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
-import { NeoSpeechAudio } from './speech-audio.ts';
+import { NeoSpeechAudio, type SpeechPart } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { isSDKResultSuccess, type SDKMessage } from '@hyperneo/shared/sdk';
@@ -151,7 +151,8 @@ export class NeoSpeech {
     private readonly modeNote?: (sessionId: string) => string | undefined,
     private readonly canSay: (sessionId: string) => boolean = isNeo,
     private readonly speechSession: (sessionId: string) => string = (id) => id,
-    private readonly handOffMode?: (sessionId: string) => boolean
+    private readonly handOffMode?: (sessionId: string) => boolean,
+    speechPart?: () => Promise<SpeechPart | undefined>
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -163,7 +164,8 @@ export class NeoSpeech {
           { source: 'rpc', principal: 'local', clientId: target.clientId }
         ),
       audioBase,
-      audioRequest
+      audioRequest,
+      speechPart
     );
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {

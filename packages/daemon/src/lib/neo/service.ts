@@ -139,6 +139,8 @@ import { NeoSessionWatcher } from './session-watcher.ts';
 import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
+import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { resolveSpeechPart } from '../voice/voice-parts.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
   'model-switch',
@@ -316,7 +318,12 @@ export class NeoService {
         const conversation = this.repo.readConversationId();
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
       },
-      () => this.db.getGlobalSettings().neo?.front?.enabled === true
+      () => this.db.getGlobalSettings().neo?.front?.enabled === true,
+      () =>
+        resolveSpeechPart(
+          this.db.getGlobalSettings().voice,
+          ProviderCredentialManager.create(this.db.getDatabase())
+        )
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
