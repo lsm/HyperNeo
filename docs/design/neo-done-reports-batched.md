@@ -9,8 +9,8 @@ a prefix are under `packages/daemon/src/`.
 Neo is woken by every message another session sends it with a report kind. Most of them are
 `done` reports: a reviewer's verdict, then its correction, then its final verdict; a builder's
 milestone; a coordinator's notice. They often come several minutes apart from the same sender
-about the same subject. Each one starts a Neo turn of its own, so Neo handles a correction
-before the message it corrects, and a request that arrives in between competes with a stream
+about the same subject. Each one starts a Neo turn of its own, so Neo acts on a report
+before its later correction arrives, and a request that arrives in between competes with a stream
 of reports. This is the main source of turns now that the daemon's own notices go through the
 attention entry.
 
