@@ -37,7 +37,10 @@ import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
-import { codingSessionAssignmentWrites } from './session-assignments-worker.ts';
+import {
+  codingSessionAssignmentReads,
+  codingSessionAssignmentWrites,
+} from './session-assignments-worker.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
@@ -228,6 +231,9 @@ export function createCodingPack(deps: {
       sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
+    workerStartExclusions: async () => ({
+      value: await gatewayFor(deps.database()).call(codingSessionAssignmentReads, 'actorRefs'),
+    }),
     workerTarget: (todo, target, status) =>
       decideCodingSessionTarget(deps.database(), todo, target, status),
     workerTargetRefused: (todo) =>

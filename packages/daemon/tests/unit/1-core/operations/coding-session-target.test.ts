@@ -134,6 +134,28 @@ describe('coding session target decision', () => {
     });
   });
 
+  test('a session assigned as a review actor is never reused for other work', async () => {
+    const { db, todo, worked, decide } = setup();
+    const review = todo('other');
+    worked(review, 'actor', undefined, 'done');
+    db.prepare(
+      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
+    ).run(
+      review.id,
+      'assignment:github.com/synthetic/repo/pull/9:head:review',
+      JSON.stringify({
+        url: 'github.com/synthetic/repo/pull/9',
+        head: 'head',
+        acceptanceContract: 'contract',
+        newDispatch: true,
+        write: ref('author'),
+        actor: { kind: 'agent', id: 'actor', model: 'm', harness: 'claude-desktop' },
+        ref: ref('actor'),
+      })
+    );
+    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
+  });
+
   test('a session held by unfinished work is busy even when its turn is idle', async () => {
     const { todo, worked, decide } = setup();
     worked(todo('other'), 'dev', 'dev', 'doing');

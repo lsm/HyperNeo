@@ -87,6 +87,17 @@ class CodingSessionAssignments {
     return own && { todoId: own.todoId, ref: own.ref };
   }
 
+  actorRefs(): WorkRef[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT json_extract(value_json, '$.ref') AS ref FROM pack_facts
+           WHERE pack = 'coding' AND key LIKE 'assignment:%'`
+        )
+        .all() as { ref: string | null }[]
+    ).flatMap((row) => (row.ref ? [JSON.parse(row.ref) as WorkRef] : []));
+  }
+
   dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
     const repo = (
       this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(input.todoId) as {
@@ -112,6 +123,7 @@ class CodingSessionAssignments {
       pool.set(workKey(ref), known);
     }
     const holders = input.prUrl ? this.prHolders(input.prUrl) : [];
+    const actors = new Set(this.actorRefs().map(workKey));
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,
@@ -124,7 +136,9 @@ class CodingSessionAssignments {
       owner: pooled(this.ownerAmong(holders, { ...input, repo, strategy })),
       feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
       successors: [...holders].sort((a, b) => b.assignedAt - a.assignedAt).map(pooled),
-      pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
+      pool: [...pool.values()].filter(
+        (session) => session.ref.adapter === input.adapter && !actors.has(workKey(session.ref))
+      ),
     };
   }
 
@@ -173,7 +187,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts']
+  ['owner', 'dispatchFacts', 'actorRefs']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',
