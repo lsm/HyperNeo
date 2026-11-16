@@ -32,7 +32,11 @@ Nothing new is built where the Google connection already has it:
 
 The first slice makes these seams take a provider instead of assuming Google.
 `status.ts` hard-codes `provider: z.literal('google')`, and the accounts
-listing and refresh loop read every row as Google.
+listing and refresh loop read every row as Google. Token access checks only a
+connection's health, not its provider, so a Google operation given a Microsoft
+connection ID would try a Google refresh and mark that connection Reconnect
+needed. Each provider's token access must refuse another provider's
+connection (`unknown_connection`) before reading the vault or refreshing.
 
 ## Sign-in
 
@@ -105,7 +109,8 @@ which the existing 4xx rule turns into **Reconnect needed**.
 
 Each call names a connection, checks the caller is an eligible agent session,
 checks the connection is Microsoft and healthy, and checks the granted scope,
-exactly as the Google operations do. Bodies are untrusted content. Graph 429
+the same order the Google operations use plus the provider check from slice 1.
+Bodies are untrusted content. Graph 429
 returns `rate_limited`; the agent retries later, the daemon does not loop.
 There is no send, move, delete or raw Graph proxy operation.
 
@@ -178,7 +183,10 @@ The fake must prove:
   and time-zoned events round-trip;
 - drafts create and update, and the fake records zero send, move or delete
   requests;
-- Google and Microsoft connections on one daemon never use each other's tokens.
+- Google and Microsoft connections on one daemon never use each other's tokens:
+  a Google operation given a Microsoft connection ID (and the reverse) returns
+  `unknown_connection`, sends no token or refresh request, and leaves that
+  connection healthy.
 
 Each slice adds unit tests next to the Google ones and extends the verify
 skill with a Microsoft script beside the Google ones.
@@ -187,7 +195,7 @@ skill with a Microsoft script beside the Google ones.
 
 | Slice | Change | Proof |
 | --- | --- | --- |
-| 1. Provider-neutral base | Widen `provider` to `google` or `microsoft`; Google accounts listing and refresh loop skip Microsoft rows. No Microsoft code yet. | Existing Google tests unchanged; a Microsoft row is ignored by Google reads and refresh. |
+| 1. Provider-neutral base | Widen `provider` to `google` or `microsoft`; Google accounts listing and refresh loop skip Microsoft rows; Google token access refuses a non-Google connection. No Microsoft code yet. | Existing Google tests unchanged; a Microsoft row is ignored by Google reads and refresh, and `gmail.search` with its ID returns `unknown_connection` with no request and the row stays healthy. |
 | 2. Microsoft sign-in | Login, code exchange, ID-token checks, connect/login/disconnect operations. | Fake Graph sign-in, refusal cases, account mismatch, disconnect erases the bundle. |
 | 3. Microsoft refresh | Microsoft refresh request behind the existing token access. | Rotation, restart, `invalid_grant`, single flight on a fake clock. |
 | 4. Settings button | Connect Microsoft in the Connections panel. | Isolated browser connects through the fake, with screenshots. |
