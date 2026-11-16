@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { NEO_GOAL_CYCLE } from '@hyperneo/prompts';
+import { GOAL_SESSION_CYCLE, NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
@@ -55,17 +55,24 @@ function setup(
     mandateChange
   );
   scheduler.registerSource(schedules);
+  const sessions = ['neo:root', 'neo:other'];
+  const started: { parentSessionId: string; title: string }[] = [];
   const ops = createSessionGoalOperations({
     goals,
     schedules,
-    sessionExists: (sessionId) => ['neo:root', 'neo:other'].includes(sessionId),
+    sessionExists: (sessionId) => sessions.includes(sessionId),
+    startSession: async (parentSessionId, title) => {
+      started.push({ parentSessionId, title });
+      sessions.push(`goal-session-${started.length}`);
+      return `goal-session-${started.length}`;
+    },
     audit: (_caller, toolName) => audited.push(toolName),
   });
   const call = (name: string, input: unknown, caller: OperationCaller = neo) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules };
+  return { db, call, audited, scheduler, goals, schedules, started };
 }
 
 describe('session goal detail reads', () => {
@@ -746,6 +753,71 @@ describe('session-owned goals', () => {
       )
     ).toMatchObject({ accepted: true });
     db.close();
+  });
+});
+
+describe('a goal in its own session', () => {
+  test('creating with ownSession starts a session that owns the goal, its wakes and its journal', async () => {
+    const { db, call, scheduler, schedules, started } = setup();
+    try {
+      const created = await call('goal.session.create', {
+        title: 'Market the guide',
+        doneTest: 'Ten readers a week',
+        ownSession: true,
+      });
+      expect(started).toEqual([{ parentSessionId: 'neo:root', title: 'Goal: Market the guide' }]);
+      expect(created.goal.ownerSessionId).toBe('goal-session-1');
+      expect(scheduler.repo.getBySource('goal', created.goal.id)?.target).toEqual({
+        adapter: 'hyperneo',
+        id: 'goal-session-1',
+      });
+      const message = schedules.message(created.goal.id, { summary: 'changed', nudge: false })!;
+      expect(message.startsWith(GOAL_SESSION_CYCLE)).toBe(true);
+      expect(message).not.toContain(NEO_GOAL_CYCLE);
+      expect(message).not.toContain('new asks');
+
+      const own: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      };
+      const goalId = created.goal.id;
+      expect(
+        await call(
+          'goal.journal.append',
+          { goalId, runId: 'run-1', done: 'Posted', effect: 'Two readers', worked: 'Posts' },
+          own
+        )
+      ).toMatchObject({ accepted: true, entry: { sessionId: 'goal-session-1' } });
+      expect(await call('goal.session.update', { goalId, progress: 20 }, own)).toMatchObject({
+        accepted: true,
+        goal: { progress: 20 },
+      });
+      expect(await call('goal.session.list', { ownerSessionId: 'neo:root' }, own)).toMatchObject({
+        reason: expect.stringContaining('owner_denied'),
+      });
+      expect(
+        (await call('goal.session.update', { goalId, status: 'completed' }, own)).goal.status
+      ).toBe('completed');
+      expect(scheduler.repo.getBySource('goal', goalId)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('Neo-owned goals keep the root Neo cycle', async () => {
+    const { db, call, schedules, started } = setup();
+    try {
+      const created = await call('goal.session.create', { title: 'Ship', doneTest: 'Released' });
+      expect(started).toEqual([]);
+      expect(
+        schedules
+          .message(created.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });
 
