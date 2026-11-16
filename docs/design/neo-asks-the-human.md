@@ -37,50 +37,70 @@ mechanisms answer the same question differently, and both run.
 
 Whose call a step is:
 
-1. **The human already approved it** (said so, answered a card, or set a preference that
-   covers it): it runs. Nobody asks again.
-2. **The human did not**: Neo decides. Neo has the conversation, the human's preferences
-   and the history, so it can tell whether earlier words cover this step.
-3. **Neo cannot tell**: Neo asks the human with a card it writes itself.
+1. **The human already authorized it** (said so, answered a card, or set a preference
+   that covers it): it runs. Nobody asks again.
+2. **Otherwise Neo decides whether existing authority covers it.** Neo has the
+   conversation, the human's preferences and the history, so it can tell whether earlier
+   words already cover this step.
+3. **When the step needs new authority from the human**, or Neo cannot tell, Neo asks with
+   a card it writes itself.
 
 The daemon never decides that a step is the human's. It only makes sure nothing stops
 silently: when a step is nobody's to move, it wakes Neo, not the human.
 
 ## The mechanism
 
-**Cards come from Neo only.** The daemon stops opening cards. These go:
+**Human cards come from Neo only.** These writers stop opening cards:
 
-| Daemon card today | Becomes |
-|---|---|
-| worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
-| start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
-| human step (`human_step`) and its 24 h predecessor (`check_overdue`) | the check row below |
-| prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
-| Neo's hold or pause (`hold`, `pause`) | the hold row below |
+| Writer today | Card | Becomes |
+|---|---|---|
+| `neo-daemon-card-write.ts` | worker blocker left unanswered (`worker_blocker`) | `todo.neo_step`, reason `unanswered` (exists) |
+| `neo-daemon-card-write.ts` | start failed after the automatic retries (`retries_exhausted`) | `todo.neo_step`, reason `failed` (exists) |
+| `neo-stall-reminder-write.ts` | human step (`human_step`, which replaced `check_overdue`) | the check rows below |
+| `neo-todo-mutation-commit.ts` | prerequisite removed (`removed_prerequisite`) | `todo.neo_step`, reason `prerequisite_gone` (exists) |
 
-The automatic retries themselves stay (`NEO_AUTOMATIC_RETRIES`): the daemon still retries
-a failed start twice before it is Neo's.
+The automatic retries stay (`NEO_AUTOMATIC_RETRIES`): the daemon still retries a failed
+start twice before the step is Neo's.
 
-**Two owner rows change in `nextStepOwner`.** Both use facts the daemon already has.
+**A worker's question already goes through Neo, and stays as it is.** The daemon stages
+the worker's question on its todo and tells Neo. Its card opens only when Neo calls
+`neo.question.ask` with `kind: 'relay'` (role `neo`), with Neo's own title and options;
+that reaches `relayWorkerQuestion` and then `createNeoWorkerQuestionWriter`
+(`question-operations.ts`, `service.ts`). No other caller reaches that writer, so it is
+Neo's decision already, and the answer still reaches the worker by the card's source
+session.
+
+**Neo's hold stays a card, written by Neo.** `neo.todo.hold` is Neo asking the human to
+decide whether a step goes ahead, so it keeps its card and its stop of a running worker.
+What changes is the text: Neo passes the question in its own words instead of a reason
+pasted into the daemon template ("X is on hold: … Start it, or remove it?"). The options
+stay Start (Resume) and Remove, since the daemon applies them. Nothing new is stored: the
+open card is the hold, as today, and it survives a restart because it is a card.
+
+**Two owner rows are added to `nextStepOwner`,** both from facts the daemon has:
 
 | Facts | Owner today | Owner after |
 |---|---|---|
-| The todo has a check, no instruction, and the check deadline has not passed | `neo` (`no_worker`) | `daemon`: it polls the check |
-| The same, after the deadline (24 h, `NEO_CHECK_DEADLINE_MS`) | `neo` | `neo`, reason `check_overdue` |
-| Neo holds the todo (`neo.todo.hold`) | `nobody` (and a card) | `nobody` until the hold's time, then `neo`, reason `hold_ended` |
+| A check, no instruction, and its deadline (24 h from the later of creation and the last prerequisite finishing, `NEO_CHECK_DEADLINE_MS`) has not passed | `neo` (`no_worker`) | `daemon`: it polls the check |
+| The same, after the deadline | `neo` (`no_worker`) | `neo`, reason `check_overdue`, `since` = the deadline |
 
-`neo.todo.hold` takes an optional `until` (default 24 h) and opens no card. When Neo holds
-a step because it needs the human, it writes its own card about it, and that card covers
-the todo as any card does.
+`decideNeoAttention` renders the new reason as "its check has not passed for 24 hours.
+Ask whoever it waits on, keep it waiting with a note, mark it done, or remove it."
 
-A human's own hold on a card (`neo.question.hold`, `neo-inbox.md`) is unchanged: the human
-did it, so nothing wakes anyone about it.
+**When the first wake is due.** A `todo.neo_step` wakes Neo at the first ladder rung, 1 h
+after its `since`, then 4 h and 24 h, then every 24 h while Neo still owns it. `since` is
+the reason's own time: the failure, the prerequisite's end, the card's close (for an
+answered or retired card), or the check deadline.
 
-**Neo's card is written for the human.** Its text names the decision, why it is the
-human's, and what each answer does. Its options are the decision itself ("Merge", "Not
-yet"), not todo operations. It is written in the language the human uses with Neo, which
-is an ordinary preference and is never forced on Neo's other conversations. Worker
-questions that need the human reach them the same way: Neo relays them in a card.
+**Human holds win.** A card the human held (`heldAt`, `neo-inbox.md`) is the human's
+decision to wait. It still covers its todos, so they belong to the human and nothing wakes
+Neo about them.
+
+**Neo's cards are written for the human.** The text names the decision, why it needs the
+human, and what each answer does. The options are the decision ("Merge", "Not yet"), not
+todo operations. They are written in the language the human uses with Neo. That is an
+ordinary preference that follows the conversation; it is never forced on Neo's other
+conversations or on workers.
 
 **When Neo itself cannot run.** The rule needs Neo. If Neo's own session cannot take a
 turn (a resume error, a stalled session), the daemon tells the human directly, as the
@@ -90,33 +110,57 @@ about Neo, never about a todo.
 ## What stays
 
 - A card covering a todo still means that todo waits on the human (`neo-todo-minimal.md`).
-- `todo.neo_step` and its ladder (1 h, 4 h, 24 h, then every 24 h) stay as built.
+- `todo.neo_step` and its ladder stay as built.
 - Packs keep their own `waiting` answer: the coding pack's merge sweep merges a ready PR by
   itself, and its stalled merges reach Neo through the attention entry.
 
+## Existing open cards
+
+Slice 2 deploys with daemon cards still open. Each keeps working as it is:
+
+- An open daemon card is left open. Its answer is applied as today
+  (`neoDaemonCardChoice`), so a human who was about to answer loses nothing, and its todos
+  stay the human's while it is open.
+- A held one stays held, with no wake.
+- When one closes (answered, retired by its prune, or by its check), its todos go to
+  `nextStepOwner`, with the close time as `since`.
+
+The answer path for daemon causes is deleted in a later cleanup, once no such card is
+open.
+
 ## Change plan
 
-Each slice is one PR from `dev`, about 100 to 200 production lines, failing tests first.
+Each slice is one PR from `dev` (the repository's default and target branch), about 100
+to 200 production lines, failing tests first.
 
-1. **Owner rows.** Add the check and hold rows to `nextStepOwner`, with `until` on
-   `neo.todo.hold`. Tests: a check-only todo before and after its deadline, a held todo
-   before and after `until`.
-2. **Stop the daemon cards.** Delete the card writers (`neo-daemon-card-write.ts`, the
-   human-step part of `neo-stall-reminder-write.ts`, the removed-prerequisite card in
-   `neo-todo-mutation-commit.ts`, the card in `planNeoHoldCard`) and their status codes.
-   Open daemon cards are retired with reason `neo decides`, which leaves their todos to
-   `nextStepOwner`, so each one reaches Neo once. Test: each former trigger produces one
-   `todo.neo_step` wake and no card.
+1. **Owner rows.** The two check rows and the `check_overdue` render.
+2. **Stop the cards.** Stop the four cards in the table above and the daemon template
+   from `neo.todo.hold`, which takes Neo's question text. Keep the answer path for open
+   daemon cards.
 3. **Neo's guidance.** One prompt paragraph: the rule above, how to write a card for the
-   human, and that `todo.neo_step` wakes are Neo's to resolve.
+   human, and that `todo.neo_step` wakes are Neo's to
+   resolve.
+
+Acceptance, as tests on the pure functions and one integration case per row:
+
+| Case | Expected |
+|---|---|
+| A worker sends a question envelope | staged, Neo told, no card until Neo relays it (unchanged) |
+| Each former daemon-card trigger (blocker, retries, removed prerequisite) | no card; owner `neo` with the matching reason |
+| Check-only todo before / after its deadline | `daemon` / `neo` `check_overdue`, first wake 1 h after the deadline |
+| Neo holds a todo | one card with Neo's text; a running worker stops; after a restart the card still holds it |
+| An open daemon card at deploy | stays open, its answer still applies; its todos wake Neo only after it closes |
+| A human-held card | no wake while held |
+| Repeated sweeps with nothing changed | one wake per rung, never two for the same rung |
 
 Deleting the `blocked` state that `neo-todo-minimal.md` already removes is not in this
 design. It is still used in about 140 lines and needs its own plan.
 
 ## Risks
 
-- **Neo misjudges approval.** Rule 2 lets Neo run a step the human did not approve. Neo
-  asks when unsure, and the human can still hold or stop any card or todo.
+- **Neo misjudges authority.** Rule 2 lets Neo run a step it believes earlier words
+  cover. Neo asks when a step needs new authority or it cannot tell, and the human can
+  still hold or stop any card or todo.
 - **More Neo turns.** Each former daemon card becomes a Neo wake. The ladder bounds the
   repeats, and in the week above most of those situations resolved on their own before
   the first rung.
