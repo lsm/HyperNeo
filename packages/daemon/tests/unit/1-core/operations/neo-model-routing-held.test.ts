@@ -272,6 +272,15 @@ describe('the attention sweep with model-routing on', () => {
     expect(wakes()).toEqual([]);
   });
 
+  test('a sign-in hold past its retry time still waits on the human and is told once', async () => {
+    heldTodo(31, 'active', NOW - 26 * MINUTE, 'login');
+    await sweep(NOW);
+    await sweep(NOW + 5 * MINUTE);
+    expect(wakes()).toEqual([
+      'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (login) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
+    ]);
+  });
+
   test('two todos held on the same line are ranked once per sweep', async () => {
     heldTodo(31, 'active', NOW + 10 * MINUTE, 'limit', 1);
     heldTodo(31, 'active', NOW + 10 * MINUTE, 'limit', 2);
