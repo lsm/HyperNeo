@@ -277,6 +277,34 @@ describe('rankCodingTargets with a model id two providers share', () => {
   });
 });
 
+describe('codingStartAlternatives with a shared id whose providers have their own names', () => {
+  test('the second provider is offered by its name, and wins when the first is held', async () => {
+    const shared = [
+      catalogModel('m-1', 'x', 'M X'),
+      catalogModel('m-1', 'y', 'M Y'),
+      catalogModel('n-1', 'z'),
+    ];
+    const target = { adapter: 'hyperneo', place, model: 'n-1' };
+    expect(codingStartAlternatives(target, shared).map((entry) => entry.model)).toEqual([
+      'n-1',
+      'm-1',
+      'M Y',
+    ]);
+    const holds = [
+      { provider: 'x', model: 'm-1', retryAt: 5_000 },
+      { provider: 'z', model: 'n-1', retryAt: 5_000 },
+    ];
+    expect(
+      await rankCodingTargets(
+        driverCodingLines(shared, { holds }),
+        'coding.write',
+        codingStartAlternatives(target, shared),
+        {}
+      )
+    ).toMatchObject({ value: [{ ...target, model: 'M Y' }] });
+  });
+});
+
 describe('codingCandidateLine for a bare start whose default is the second provider of a shared id', () => {
   test('the start is pinned to a selector that still resolves to that provider', async () => {
     const shared = [catalogModel('m-1', 'x', 'M X'), catalogModel('m-1', 'y', 'M Y')];

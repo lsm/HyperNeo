@@ -117,6 +117,22 @@ describe('rankLines', () => {
     });
   });
 
+  test('a usage window whose reset has passed is not current evidence', () => {
+    const reset = {
+      result: {
+        supported: true as const,
+        provider: 'x',
+        windows: [
+          { label: 'week', used: 100, limit: 100, resetAt: new Date(NOW - 1).toISOString() },
+        ],
+      },
+      readAt: NOW - 60_000,
+    };
+    expect(rankLines(input({ candidates: [A], usage: { anthropic: reset } })).ranked).toEqual([
+      { line: A, reason: 'usage unknown' },
+    ]);
+  });
+
   test('is exhausted only when every candidate is skipped', () => {
     const ranking = rankLines(input({ availability: {} }));
     expect(ranking.ranked).toEqual([]);
@@ -304,6 +320,77 @@ describe('createModelRoutingPack', () => {
       skipped: [{ line: A, reason: 'usage exhausted' }],
     });
     expect(reads).toBe(1);
+  });
+
+  test('a cached reading is read again once its window resets', async () => {
+    let clock = NOW;
+    const readings = [100, 0];
+    const resetting = {
+      ...provider(true, null),
+      getUsage: async () => ({
+        supported: true,
+        provider: 'x',
+        windows: [
+          {
+            label: 'week',
+            used: readings.shift() ?? 0,
+            limit: 100,
+            resetAt: new Date(NOW + 60_000).toISOString(),
+          },
+        ],
+      }),
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => resetting,
+      now: () => clock,
+    });
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    clock = NOW + 61_000;
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      ranked: [{ line: A }],
+      skipped: [],
+    });
+    expect(readings).toEqual([]);
+  });
+
+  test('a usage read that never settles is given up, and a late old read cannot overwrite a newer one', async () => {
+    let clock = NOW;
+    let settleFirst: (value: ProviderUsageResult) => void = () => {};
+    const window = (used: number) => ({
+      supported: true as const,
+      provider: 'x',
+      windows: [{ label: 'week', used, limit: 100, resetAt: null }],
+    });
+    const calls = [
+      () => new Promise<ProviderUsageResult>((resolve) => (settleFirst = resolve)),
+      async () => window(100),
+    ];
+    const hung = {
+      ...provider(true, null),
+      getUsage: () => (calls.shift() ?? (async () => window(100)))(),
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => hung,
+      now: () => clock,
+      readDeadlineMs: 10,
+    });
+    expect((await pack.rankLines!('coding.write', [A], {})).ranked).toEqual([
+      { line: A, reason: 'usage unknown' },
+    ]);
+    clock = NOW + USAGE_STALE_MS + 1;
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    settleFirst(window(0));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    expect(calls).toEqual([]);
   });
 
   test('ignores holds left on archived and ended sessions', async () => {

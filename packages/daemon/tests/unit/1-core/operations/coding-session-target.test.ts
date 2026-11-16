@@ -114,13 +114,21 @@ describe('coding session target decision', () => {
     expect(await decide(todo(), glm, routed(kinds, false))).toEqual({ value: glm });
     expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({
       value: opus,
-      note: `Started on another model line: glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
+      note: `Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
     });
     expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
     expect(await decide(todo('third'), start('desktop'), routed(kinds, true))).toEqual({
       value: start('desktop'),
     });
     expect(kinds).toHaveLength(2);
+  });
+
+  test('a start that keeps its own line says nothing about other refused lines', async () => {
+    const { todo, decide } = setup();
+    const opusHold = [{ provider: 'anthropic', model: 'claude-opus-5-5', retryAt: 4e12 }];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { holds: opusHold }))).toEqual({
+      value: glm,
+    });
   });
 
   test('a route moves a start to its preferred usable line, and nothing usable waits with the reasons', async () => {
@@ -130,6 +138,7 @@ describe('coding session target decision', () => {
     ];
     expect(await decide(todo(), glm, driverCodingLines(catalog, { routes }))).toEqual({
       value: opus,
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: the route ranks it lower.',
     });
     expect(await decide(todo('other'), glm, driverCodingLines(catalog, { ready: [] }))).toEqual({
       reason:
@@ -153,12 +162,12 @@ describe('coding session target decision', () => {
     const only = driverCodingLines(catalog, { rules: [{ line, only: { projects: ['p1'] } }] });
     expect(await decide(todo(), glm, never)).toEqual({
       value: opus,
-      note: 'Started on another model line: glm/glm-6 via hyperneo: excluded by a rule.',
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: excluded by a rule.',
     });
     expect(kinds).toEqual([`coding.write ${repo} p1`]);
     expect(await decide(todo('other'), glm, only)).toEqual({
       value: opus,
-      note: 'Started on another model line: glm/glm-6 via hyperneo: excluded by a rule.',
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: excluded by a rule.',
     });
     db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'third'").run();
     expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });

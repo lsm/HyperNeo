@@ -200,6 +200,16 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.told).toContainEqual({ id, note: why, key: 'todo.line_moved' });
   });
 
+  test('a moved start that fails to start tells Neo nothing about the move', async () => {
+    const w = (current = world());
+    w.failing.start = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.told.filter((entry) => entry.key === 'todo.line_moved')).toEqual([]);
+  });
+
   test('a wait decision dispatches nothing, keeps the todo and its target, and tells Neo once', async () => {
     const w = (current = world());
     const wait = 'session_unknown: the session for this work is starting or unreachable; wait.';
