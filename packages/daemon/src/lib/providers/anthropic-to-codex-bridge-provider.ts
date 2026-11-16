@@ -617,8 +617,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     if (rejectedAccessToken && credentials.access && credentials.access !== rejectedAccessToken) {
       return credentials;
     }
-    const codexRefresh = (await this.readCodexAuth())?.tokens?.refresh_token;
-    if (!credentials.refresh || credentials.refresh === codexRefresh) {
+    if (!credentials.refresh || credentials.expires === undefined) {
+      if (credentials.refresh) {
+        const accessOnly: StoredCredentials = { ...credentials, refresh: undefined };
+        await this.saveCredentials(accessOnly);
+        this.cachedCredentials = accessOnly;
+      }
       await this.importFromCodexAuth();
       const reread = await this.loadCredentials();
       return reread?.access && reread.access !== credentials.access ? reread : 'definitive';

@@ -2189,6 +2189,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         type: 'oauth',
         access: 'stale-access-token',
         refresh: 'revoked-refresh-token',
+        expires: Date.now() - 60_000,
       });
 
       fetchSpy.mockResolvedValueOnce(
