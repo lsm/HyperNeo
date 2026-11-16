@@ -21,6 +21,7 @@ import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
+import { recordGithubBudget } from '../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 
 let warnings: unknown[][], restoreWarnings: () => void;
@@ -1474,3 +1475,68 @@ test.each([null, 'Synthetic lost reply'])(
     });
   }
 );
+
+describe('shared GitHub budget', () => {
+  const budget = (remaining: number) =>
+    recordGithubBudget(
+      new Headers({
+        'X-RateLimit-Resource': 'core',
+        'X-RateLimit-Limit': '5000',
+        'X-RateLimit-Remaining': String(remaining),
+        'X-RateLimit-Reset': '4102444800',
+      })
+    );
+  afterEach(() => budget(5000));
+  const row = (number: number, state: string) => ({
+    repo: 'synthetic/merge',
+    number,
+    title: 'Fixture',
+    branch: `fixture-${number}`,
+    head,
+    state,
+    closedAt: null,
+  });
+  const twoRows = () =>
+    ledger.write('replace', 'synthetic/merge', [row(1, 'approved_green'), row(2, 'waiting_ci')], 1);
+  const readsOf2 = () =>
+    calls.filter((args) =>
+      args.some((arg) => arg.endsWith('/pull/2') || arg.includes('/pulls/2/') || arg === 'number=2')
+    );
+
+  test('below 20% the sweep reads only PRs ready to merge, and still merges them', async () => {
+    await twoRows();
+    budget(900);
+    await sweep()(10);
+    expect(readsOf2()).toEqual([]);
+    expect(merges()).toHaveLength(1);
+  });
+
+  test('at a healthy budget the sweep still reads waiting PRs', async () => {
+    await twoRows();
+    await sweep()(10);
+    expect(readsOf2().length).toBeGreaterThan(0);
+  });
+
+  test('below 5% Neo is woken once with the reset time', async () => {
+    budget(100);
+    const { run, wakes } = entry();
+    await run(10);
+    await run(11);
+    const told = wakes().filter((text) => text.includes('GitHub REST budget'));
+    expect(told).toEqual([expect.stringContaining('2100-01-01T00:00:00.000Z')]);
+  });
+
+  test('a confirmed daemon merge is logged', async () => {
+    const info: unknown[][] = [];
+    const spy = spyOn(Logger.prototype, 'info').mockImplementation((...args: unknown[]) => {
+      info.push(args);
+    });
+    try {
+      await sweep()(10);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(merges()).toHaveLength(1);
+    expect(info).toContainEqual(['Daemon merge confirmed', { url, head, commit: 'c'.repeat(40) }]);
+  });
+});
