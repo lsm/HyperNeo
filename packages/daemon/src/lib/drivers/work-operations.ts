@@ -693,7 +693,12 @@ export async function reuseIdleWorker(
         })
       : input.message;
     const todoId = ownedTodoId(input, caller, deps);
-    const claim = deps.claimWorker ? await deps.claimWorker(work.ref, todoId) : { previous: null };
+    const claim = deps.claimWorker
+      ? await deps.claimWorker(work.ref, todoId).catch((error: unknown) => {
+          reuseHolds.delete(key);
+          throw error;
+        })
+      : { previous: null };
     if (!claim) {
       reuseHolds.delete(key);
       continue;

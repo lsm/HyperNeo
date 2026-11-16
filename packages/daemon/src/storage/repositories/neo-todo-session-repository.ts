@@ -705,7 +705,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     if (!readFreeWorkers(this.db, ref.adapter).has(ref.id)) return null;
     const previous = this.readRef(todoId);
     this.recordRef(todoId, { adapter: ref.adapter, id: ref.id });
-    return { previous };
+    const bound = this.readRef(todoId);
+    return bound?.adapter === ref.adapter && bound.id === ref.id ? { previous } : null;
   }
 
   unclaimWorker(todoId: string, ref: WorkRef, previous: WorkRef | null): void {
