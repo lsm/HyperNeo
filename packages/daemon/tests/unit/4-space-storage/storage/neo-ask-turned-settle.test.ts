@@ -173,7 +173,9 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
         }[]
       ).map((row) => JSON.parse(row.payload));
     add('request', 'done');
-    db.prepare(`UPDATE neo_todos SET named = '{"requestFrom":"stranger"}' WHERE id = 'request'`).run();
+    db.prepare(
+      `UPDATE neo_todos SET named = '{"requestFrom":"stranger"}' WHERE id = 'request'`
+    ).run();
     add('label', 'done', { reason: 'Labelled' });
     add('review', 'removed', { reason: 'Already reviewed' });
     consumedWake('ask');

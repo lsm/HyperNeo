@@ -1183,7 +1183,11 @@ test('seven answers to one sender within a minute all arrive; the rate-limited o
     const [later] = queue.dequeue(NEO_REQUEST_REPLY, 1);
     expect(await service.deliverRequestReply(later)).toEqual({ kind: 'accepted' });
     expect(sent.map((item) => item.text)).toEqual(
-      Array.from({ length: 7 }, (_, i) => `Neo closed your request "Request ${i}" as done: Merged\nNo todo was added for it.`)
+      Array.from(
+        { length: 7 },
+        (_, i) =>
+          `Neo closed your request "Request ${i}" as done: Merged\nNo todo was added for it.`
+      )
     );
     expect(wakes('did not reach')).toEqual([]);
   } finally {
