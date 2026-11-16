@@ -21,7 +21,7 @@ export function isReadyNeoReadCheckout(folder: string, dataDir = getDataDir()): 
       [join(base, owner), join(base, owner, repo), folder, join(folder, '.git')].every((path) =>
         lstatSync(path).isDirectory()
       ) &&
-      lstatSync(join(folder, '.git', 'index')).isFile()
+      ['HEAD', 'index'].every((name) => lstatSync(join(folder, '.git', name)).isFile())
     );
   } catch {
     return false;
