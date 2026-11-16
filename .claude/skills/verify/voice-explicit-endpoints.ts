@@ -88,7 +88,7 @@ try {
     mimeType: 'audio/wav',
   });
   assert.equal((direct as { text: string }).text, 'Explicit batch URL received');
-  assert.deepEqual(priorities, ['interactive', 'interactive', null]);
+  assert.deepEqual(priorities, ['interactive', 'interactive', 'interactive']);
   console.log(JSON.stringify({ results, direct, requests, priorities }, null, 2));
 } finally {
   socket.close();
