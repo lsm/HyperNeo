@@ -446,6 +446,7 @@ export class AgentSession
   private loginUnsubscribes: Array<() => void> = [];
   private authRejected = false;
   private loginRetriedInTurn = false;
+  private restoredHold: { reason: RateLimitHoldReason; since: number } | null = null;
   private loginRetryPromptUuid: string | null = null;
   private loginAttemptEpoch: number | null = null;
   private interruptedAt = 0;
@@ -808,6 +809,7 @@ export class AgentSession
           maxRetries: 0,
           retryAt,
           reason: 'network',
+          ...this.takeRestoredSince('network'),
           ...(prompt ? { messageId: prompt.uuid, heldPrompt: prompt } : {}),
         }),
       notice: async (text) => {
@@ -1103,6 +1105,13 @@ export class AgentSession
     else await this.queryRunner.start();
   }
 
+  private takeRestoredSince(reason: RateLimitHoldReason): { since?: number } {
+    const restored = this.restoredHold;
+    if (restored?.reason !== reason) return {};
+    this.restoredHold = null;
+    return { since: restored.since };
+  }
+
   private armPersistedRateLimitCooldown(): void {
     const persistedState = this.db.getSession(this.session.id)?.processingState;
     if (!persistedState) return;
@@ -1118,6 +1127,11 @@ export class AgentSession
         since?: unknown;
         heldPrompt?: { uuid?: unknown; content?: unknown };
       };
+      this.restoredHold =
+        (parsed.reason === 'login' || parsed.reason === 'network') &&
+        typeof parsed.since === 'number'
+          ? { reason: parsed.reason, since: parsed.since }
+          : null;
       if (
         parsed.status === 'rate_limit_cooldown' &&
         parsed.reason === 'login' &&
@@ -1128,10 +1142,14 @@ export class AgentSession
           .hold(this.providerId(), prompt)
           .then((held) => {
             if (!held && prompt) void this.resumeLoginPrompt(prompt);
+            else if (!held) void this.stateManager.setIdle().catch(() => {});
           })
           .catch((error: unknown) =>
             this.logger.warn(`Restoring a login hold failed: ${String(error)}`)
-          );
+          )
+          .finally(() => {
+            this.restoredHold = null;
+          });
         return;
       }
       if (parsed.status === 'rate_limit_cooldown' && parsed.reason === 'network') {
@@ -1144,6 +1162,9 @@ export class AgentSession
           .catch(() => {
             this.networkPause.stop();
             void this.stateManager.setIdle().catch(() => {});
+          })
+          .finally(() => {
+            this.restoredHold = null;
           });
         return;
       }
@@ -3044,6 +3065,7 @@ export class AgentSession
             maxRetries: 0,
             retryAt: Date.now() + delayMs,
             reason: 'login',
+            ...this.takeRestoredSince('login'),
             ...(prompt ? { messageId: prompt.uuid, heldPrompt: prompt } : {}),
           }),
         resume: async (prompt) => {

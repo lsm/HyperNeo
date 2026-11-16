@@ -15,7 +15,7 @@ import {
   renderNeoAttention,
 } from './decide.ts';
 
-type Deliver = (uuid: string, text: string) => Promise<unknown>;
+type Deliver = (uuid: string, text: string) => Promise<boolean>;
 
 export type NeoAttentionOutcome =
   | { told: 'wake' | 'digest'; step: number; uuid: string; text: string }
@@ -28,7 +28,7 @@ export const neoAttentionDelivery = (
 ): { wake: Deliver; digest: Deliver } => ({
   wake: async (uuid, text) => {
     const sessionId = session();
-    if (!sessionId) return;
+    if (!sessionId) return false;
     const outcome = await mailSessionEvent(new JobQueueRepository(db), {
       sessionId,
       messageUuid: uuid,
@@ -36,27 +36,27 @@ export const neoAttentionDelivery = (
       mode: busy(sessionId) ? 'defer' : 'immediate',
     });
     if (outcome.kind === 'rejected') throw new Error(`Neo wake was not queued: ${outcome.reason}`);
+    return true;
   },
   digest: async (uuid, text) => {
     const sessionId = session();
-    return (
-      sessionId &&
-      gatewayFor(db).call(
-        neoWakeQueueWrite,
-        'hold',
-        createMailboxEntry({
-          to: { kind: 'session', sessionId },
-          origin: renderAddress({ kind: 'session', sessionId }),
-          messageUuid: uuid,
-          message: {
-            type: 'user',
-            parent_tool_use_id: null,
-            message: { content: text },
-            inputKind: 'system',
-          },
-        })
-      )
+    if (!sessionId) return false;
+    await gatewayFor(db).call(
+      neoWakeQueueWrite,
+      'hold',
+      createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        origin: renderAddress({ kind: 'session', sessionId }),
+        messageUuid: uuid,
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: text },
+          inputKind: 'system',
+        },
+      })
     );
+    return true;
   },
 });
 
@@ -90,11 +90,15 @@ export function createNeoAttention(deps: {
       'message'
     )
     .pipe(
-      async (message: Extract<NeoAttentionOutcome, { told: string }>) => {
-        await deps[message.told](message.uuid, message.text);
+      async (event: NeoAttentionEvent, message: Extract<NeoAttentionOutcome, { told: string }>) => {
+        if (await deps[message.told](message.uuid, message.text))
+          deps
+            .kinds()
+            .find((kind) => kind.id === event.kind)
+            ?.sent?.(event);
         return message;
       },
-      'message',
+      ['event', 'message'],
       'outcome'
     )
     .endAsync('outcome') as (event: NeoAttentionEvent, now: number) => Promise<NeoAttentionOutcome>;
