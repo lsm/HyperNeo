@@ -1,4 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { vi } from 'vitest';
 import * as sandbox from '../../../../src/lib/drivers/worker-sandbox';
 import { tmpdir } from 'node:os';
@@ -174,7 +183,9 @@ import {
   type SessionLifecycleConfig,
 } from '../../../../src/lib/session/session-lifecycle';
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
-import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
+import { WorktreeManager } from '../../../../src/lib/worktree-manager';
+import { getWorktreeBaseDir } from '../../../../src/lib/worktree-path-utils';
+import { createPushedWorkerRepo } from '../../../helpers/native-worker-worktree';
 import type { Database } from '../../../../src/storage/database';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
@@ -1525,6 +1536,43 @@ describe('SessionLifecycle', () => {
         messageIds: ['db-deferred-no-job'],
         status: 'failed',
       });
+    });
+  });
+
+  describe('worktree removal follows who archives or deletes', () => {
+    beforeEach(() => {
+      process.env.HYPERNEO_DATA_DIR = realpathSync(workerDataDir);
+    });
+
+    function sessionWithUnsavedWorktree(id: string) {
+      const run = realpathSync(mkdtempSync(join(workerDataDir, 'session-repo-')));
+      const { repo, git } = createPushedWorkerRepo(run);
+      const folder = join(getWorktreeBaseDir(repo), id);
+      git('worktree', 'add', '--quiet', '-b', `session/${id}`, folder, 'HEAD');
+      writeFileSync(join(folder, 'unsaved.txt'), 'local work');
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id,
+        workspacePath: folder,
+        metadata: {},
+        worktree: { worktreePath: folder, branch: `session/${id}`, mainRepoPath: repo },
+      });
+      (mockWorktreeManager.removeWorktree as ReturnType<typeof mock>).mockImplementation(
+        (worktree: Parameters<WorktreeManager['removeWorktree']>[0], deleteBranch?: boolean) =>
+          new WorktreeManager().removeWorktree(worktree, deleteBranch)
+      );
+      return folder;
+    }
+
+    it('a daemon-archived session with uncommitted changes keeps its worktree', async () => {
+      const folder = sessionWithUnsavedWorktree('daemon-archive');
+      await lifecycle.archiveResources('daemon-archive', 'work_archive');
+      expect(readFileSync(join(folder, 'unsaved.txt'), 'utf8')).toBe('local work');
+    });
+
+    it("a human's own delete still removes the worktree", async () => {
+      const folder = sessionWithUnsavedWorktree('human-delete');
+      await lifecycle.deleteResources('human-delete', 'ui_session_delete');
+      expect(existsSync(folder)).toBe(false);
     });
   });
 
