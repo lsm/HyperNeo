@@ -420,6 +420,69 @@ describe('schedule target lifecycle and external delivery', () => {
       factsDigest: null,
     });
   });
+  test('a one-shot reminder whose external send is acknowledged late is sent once and then done', async () => {
+    const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
+    const row = scheduler.create({
+      target: { adapter: 'claude-desktop', id: 'recipient' },
+      sourceKind: 'reminder',
+      sourceId: 'venue',
+      note: 'Call the venue',
+      nudgeEvery: 1,
+      cadence: { kind: 'once', at: Date.now() + 60_000 },
+      createdBySession: null,
+    });
+    scheduler.registerSource({
+      kind: 'reminder',
+      facts: async () => ({ digest: 'venue', summary: 'Call the venue' }),
+      message: (_id, change) => change.summary,
+    });
+    const receipt = { executionId: 'execution', inputId: 'input' };
+    const sent: string[] = [];
+    const checked: unknown[] = [];
+    let evidence: Record<string, unknown> = { receipt, state: 'pending' };
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.send',
+        description: 'Synthetic send whose acknowledgment is delayed',
+        inputSchema: z.object({ message: z.string() }),
+        resultSchema: z.unknown(),
+        execute: async (input) => {
+          sent.push(input.message);
+          return { ok: true, value: { delivered: false, unconfirmed: true, receipt } };
+        },
+      }),
+      defineOperation({
+        name: 'work.status',
+        description: 'Synthetic receipt evidence',
+        inputSchema: z.object({ receipt: z.unknown().optional() }),
+        resultSchema: z.unknown(),
+        execute: async (input) => {
+          checked.push(input.receipt);
+          return { ok: true, value: { status: 'done', inputEvidence: evidence } };
+        },
+      }),
+    ]);
+    const fire = () =>
+      createSessionScheduleFire({
+        scheduler,
+        status: async () => 'done',
+        deliver: createScheduleDelivery(db, () => registry).deliver,
+      })(db.getJobQueueRepo().getJob(scheduler.repo.get(row.id)!.pendingJobId!)!);
+
+    expect(await fire()).toEqual({ outcome: 'skipped_delivery_unconfirmed' });
+    expect(await fire()).toEqual({ outcome: 'skipped_delivery_unconfirmed' });
+    expect(scheduler.repo.get(row.id)?.status).toBe('active');
+    evidence = { receipt, state: 'pending', transcriptState: 'accepted' };
+    expect(await fire()).toEqual({ outcome: 'fired' });
+
+    expect(sent).toHaveLength(1);
+    expect(checked).toEqual([receipt, receipt]);
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'done',
+      lastOutcome: 'fired',
+      pendingJobId: null,
+    });
+  });
   test.each(['codex-desktop', 'claude-desktop', 'claude-code'])(
     'a durably queued %s wake advances its source baseline once',
     async (adapter) => {
