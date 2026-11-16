@@ -1,4 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import { admitSessionArchive } from '../../../../src/lib/neo/session-archive-operation.ts';
@@ -16,6 +20,24 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const worker = { adapter: 'hyperneo', id: 'worker-1' };
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
+const scratch = mkdtempSync(join(tmpdir(), 'todo-release-'));
+afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], {
+    cwd,
+    stdio: 'ignore',
+  });
+function pushedCheckout() {
+  const root = mkdtempSync(join(scratch, 'repo-'));
+  git(root, 'init', '-q', '--bare', 'origin.git');
+  git(root, 'clone', '-q', 'origin.git', 'work');
+  const work = join(root, 'work');
+  writeFileSync(join(work, 'a.txt'), 'a');
+  git(work, 'add', 'a.txt');
+  git(work, 'commit', '-q', '--no-gpg-sign', '-m', 'a');
+  git(work, 'push', '-q', 'origin', 'HEAD');
+  return work;
+}
 
 function setup() {
   const db = new Database(':memory:');
@@ -39,6 +61,7 @@ function setup() {
   });
   const archived: unknown[] = [];
   let archive: () => unknown = () => ({ ok: true, value: { archived: true } });
+  const folder = pushedCheckout();
   const runner = createNeoTodoRunner({
     limits: () => ({ running: 99, perGroup: 99 }),
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -63,6 +86,11 @@ function setup() {
         archived.push(input.ref);
         return completed(archive());
       }
+      if (name === 'work.status')
+        return completed({
+          ok: true,
+          value: { ref: worker, execution: { directory: folder, machine: 'laptop' } },
+        });
       return completed(null);
     }),
     packs: () => [],
@@ -107,6 +135,7 @@ function setup() {
       archive = next;
     },
     queueOn: (todoId: string) => sessions.queueOn(todoId, worker, 'Next step.'),
+    folder: () => folder,
   };
 }
 
@@ -177,6 +206,40 @@ describe('neo todo runner refresh releases finished workers', () => {
       await h.refresh();
       await h.refresh();
       expect(h.archived).toEqual([worker, worker, worker]);
+    } finally {
+      h.db.close();
+    }
+  });
+});
+
+describe('neo todo runner refresh keeps workers with unsaved work', () => {
+  test('keeps a worker with uncommitted changes until they are pushed', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      rmSync(join(h.folder(), 'draft.txt'));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('keeps a worker with unpushed commits', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'b.txt'), 'b');
+      git(h.folder(), 'add', 'b.txt');
+      git(h.folder(), 'commit', '-q', '--no-gpg-sign', '-m', 'b');
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      git(h.folder(), 'push', '-q', 'origin', 'HEAD');
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
     } finally {
       h.db.close();
     }
