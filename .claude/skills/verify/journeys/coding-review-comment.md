@@ -18,7 +18,9 @@ The helper watches `synthetic/review-comment` and seeds one open ledger row.
 Real WebSocket RPC `neo.coding.result` records an assigned Review pass on that
 PR and must not call GitHub. Two coding pack sweeps follow, then a fail at
 the same head and two more sweeps. The sweep spawns `gh` itself. Exactly two
-comments must exist: one per stored verdict, none from the repeat sweeps. The
+comments must exist: one per verdict a sweep saw stored, none from the repeat
+sweeps. The sweep posts the stored fact, the same row the gate reads, so a
+verdict replaced before any sweep saw it is never posted. The
 synthetic stage facts do not survive the sweep, so the helper
 re-observes the head before the second result. Each starts with `**HyperNeo recorded review: <VERDICT>**` and
 names the reviewer model and harness, the verdict and the head. The reviewer

@@ -184,4 +184,22 @@ describe('createCodingReviewComments', () => {
       db.close();
     }
   });
+  test('a verdict replaced before any sweep posts only the stored verdict', async () => {
+    const { db, ledger, comments, outage, sweep, github } = setup();
+    try {
+      const post = createCodingReviewComments(github);
+      ledger.recordStage(fact);
+      outage.on = true;
+      await sweep(post);
+      ledger.recordStage({ ...fact, verdict: 'fail' });
+      outage.on = false;
+      await sweep(post);
+      await sweep(post);
+      expect(comments.map((item) => item.body.split('\n')[0])).toEqual([
+        '**HyperNeo recorded review: FAIL**',
+      ]);
+    } finally {
+      db.close();
+    }
+  });
 });
