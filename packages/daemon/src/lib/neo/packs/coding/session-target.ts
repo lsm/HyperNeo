@@ -18,6 +18,7 @@ type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   owner: { todoId: string; session: Pooled | null } | null;
+  feature: { todoId: string; session: Pooled | null } | null;
   pool: Pooled[];
 } | null;
 type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
@@ -34,7 +35,7 @@ async function sessionState(session: Pooled, status: Status) {
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
   const state: 'available' | 'busy' | 'unknown' | 'archived' = !live?.success
     ? 'unknown'
-    : live.data.status === 'stopped'
+    : live.data.archived
       ? 'archived'
       : live.data.busy || LIVE_BUSY.has(live.data.status)
         ? 'busy'
@@ -69,9 +70,18 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   .pipe(
     async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {
       if (!facts) return { verb: 'keep' };
-      const { owner } = facts;
+      let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-      const ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
+      let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
+      if (
+        ownerState?.state === 'archived' &&
+        facts.feature &&
+        facts.feature.todoId !== owner?.todoId
+      ) {
+        owner = facts.feature;
+        if (!owner.session && owner.todoId !== todo.id) return { verb: 'held' };
+        ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
+      }
       const archived = ownerState?.state === 'archived';
       const assigned = archived ? undefined : ownerState;
       const pool = assigned

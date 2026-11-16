@@ -305,6 +305,7 @@ function toClaudeWork(
       ? { machine, folder, name: basename(folder) || folder }
       : { machine, name: 'Chats' },
     status: claudeDesktopWorkStatus(record, live),
+    ...(record.isArchived ? { archived: true } : {}),
     lastActivityAt: record.lastActivityAt,
     ...(record.desktopRegistered
       ? {

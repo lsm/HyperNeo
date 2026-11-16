@@ -102,15 +102,17 @@ class CodingSessionAssignments {
       known.held ||= row.id !== input.todoId && ['doing', 'blocked', 'failed'].includes(row.state);
       pool.set(workKey(ref), known);
     }
-    const owner = this.owner({ ...input, repo, strategy });
-    return {
-      repo,
-      strategy,
-      owner: owner && {
+    const pooled = (owner: Owner | null) =>
+      owner && {
         todoId: owner.todoId,
         session:
           owner.ref && (pool.get(workKey(owner.ref)) ?? { ref: owner.ref, name: '', held: false }),
-      },
+      };
+    return {
+      repo,
+      strategy,
+      owner: pooled(this.owner({ ...input, repo, strategy })),
+      feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
       pool: [...pool.values()].filter((session) => session.ref.adapter === input.adapter),
     };
   }

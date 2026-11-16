@@ -54082,6 +54082,10 @@
                   "items": {
                     "additionalProperties": false,
                     "properties": {
+                      "archived": {
+                        "description": "The work was archived or ended and takes no new messages; a stopped turn alone is not archived.",
+                        "type": "boolean"
+                      },
                       "busy": {
                         "const": true,
                         "type": "boolean"
@@ -55935,6 +55939,10 @@
               "value": {
                 "additionalProperties": false,
                 "properties": {
+                  "archived": {
+                    "description": "The work was archived or ended and takes no new messages; a stopped turn alone is not archived.",
+                    "type": "boolean"
+                  },
                   "busy": {
                     "const": true,
                     "type": "boolean"
@@ -56371,6 +56379,10 @@
               "value": {
                 "additionalProperties": false,
                 "properties": {
+                  "archived": {
+                    "description": "The work was archived or ended and takes no new messages; a stopped turn alone is not archived.",
+                    "type": "boolean"
+                  },
                   "branches": {
                     "items": {
                       "type": "string"
