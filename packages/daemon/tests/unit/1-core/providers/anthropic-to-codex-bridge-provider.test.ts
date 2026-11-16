@@ -1965,6 +1965,21 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2i: a manual refresh of an imported login Codex has not rotated reports it current', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-access-token', refresh_token: 'codex-refresh-token' },
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe('codex-access-token');
+      expect(await p.refreshToken()).toBe('refreshed');
+      expect(await p.getApiKey()).toBe('codex-access-token');
+      expect(fetchSpy).not.toHaveBeenCalled();
+      p.stopAllBridgeServers();
+    });
+
     it('Test 2g: a legacy imported login handed back by the credential store is not refreshed', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
