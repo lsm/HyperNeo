@@ -6,17 +6,10 @@ todo added in #10756 and #10766. Paths without a prefix are under
 
 ## Why
 
-When another session sends Neo a request, parts of it get lost. In one audit, a
-coordinator session sent Neo 16 requests in 80 minutes. Neo carried out about 10 in
-full and missed 5 items: a label change on two pull requests (asked for twice), two
-reviews, a follow-up plan, and a step it described as done before it was. Three of the
-five were later items in messages that asked for several things; one was a single
-request that Neo answered with other work.
-
-The live data shows the same thing. Of 183 request todos recorded since the request
-todo shipped, 174 sit alone on their ask: the work Neo started for them was filed
-somewhere else, or never filed at all. 102 of the 157 closed as done were closed
-within two minutes of arriving.
+When another session sends Neo a request, parts of it can get lost. For example, a
+session asks Neo to label a pull request, review another and plan a follow-up. Neo
+replies, starts the first item and closes the request, and the other two are never
+tracked anywhere.
 
 A stronger model would miss less often, but nothing in the system stops a miss or
 shows it. Three facts in the code allow it:
@@ -85,7 +78,11 @@ database. None of them changes. The settle reply is added where the ask is settl
    `todo-operations.ts` and `question-operations.ts`. About 40 production lines.
 2. **The two replies.** The close reply lists the ask's todos (`request-todo.ts`); the
    settle reply on the same queue with its own key (`storage/repositories/neo-ask-settlement.ts`,
-   `service.ts` `deliverRequestReply`). About 80 production lines.
+   `service.ts` `deliverRequestReply`). About 80 production lines. Checkpoints: cover both
+   settle paths in `neo-ask-settlement.ts`, the explicit settle and the automatic turned
+   settle. Keep the settle reply distinct from the close reply through enqueue dedup
+   (`queueNeoRequestReply` matches on `todoId`), the send's idempotency key and the
+   deferred re-enqueue in `deliverRequestReply`.
 
 Acceptance, as tests on the pure functions and one integration case per row:
 
