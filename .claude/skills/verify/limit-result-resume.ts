@@ -113,7 +113,7 @@ try {
     (await hub.request<{ session: { processingState?: string; metadata?: { queryFailureEpisode?: unknown } } }>('session.get', { sessionId })).session;
   const state = async () => {
     const raw = (await session()).processingState;
-    return raw ? (JSON.parse(raw) as { status: string; reason?: string; retryAt?: number }) : { status: 'idle' };
+    return raw ? (JSON.parse(raw) as { status: string; reason?: string; since?: number; retryAt?: number }) : { status: 'idle' };
   };
 
   const sentAt = Date.now();
@@ -127,6 +127,8 @@ try {
   const ahead = Number(held.retryAt) - heldAt;
   evidence.retryInSeconds = Math.round(ahead / 1000);
   assert(ahead > 0 && ahead <= 15 * 60_000, `retryAt ${ahead}ms ahead`);
+  assert.equal(held.reason, 'limit');
+  assert(Number(held.since) >= sentAt && Number(held.since) <= heldAt, `since ${held.since}`);
   assert.notEqual((evidence.episodeAtHold as { failed?: boolean } | null)?.failed, true);
   assert.equal((evidence.errors as unknown[]).length, 0);
 

@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   open,
+  realpath,
   rename,
   rm,
   rmdir,
@@ -12,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { WorkerSandboxMode } from '@hyperneo/shared';
 import { parse, stringify } from 'smol-toml';
 import { getDataDir } from '../data-dir.ts';
@@ -56,7 +57,31 @@ export function workerSandboxPaths(root: string) {
 
 export async function releaseWorkerSandbox(root: string | null | undefined) {
   if (!root) return;
-  const runtime = workerWorkLocations(root).scratch;
+  await removeWorkerRuntime(workerWorkLocations(root).scratch);
+}
+
+export async function releaseWorkerWorkFolders(root: string) {
+  if (!isAbsolute(root) || existsSync(root)) return;
+  const { builds, scratch, ghConfig } = workerWorkLocations(root);
+  const failed = (await Promise.allSettled([builds, scratch, ghConfig].map(removeWorkFolder)))
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failed.length) throw new AggregateError(failed, 'Worker work folders were retained.');
+}
+
+async function removeWorkFolder(folder: string) {
+  const category = dirname(folder);
+  const canonical = await realpath(category).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (canonical === null) return;
+  if (canonical !== join(await realpath(getDataDir()), 'work', basename(category)))
+    throw new Error(`${category} resolves outside its work folder; kept.`);
+  await removeWorkerRuntime(folder);
+}
+
+async function removeWorkerRuntime(runtime: string) {
   try {
     const entry = await lstat(runtime);
     if (!entry.isDirectory()) {

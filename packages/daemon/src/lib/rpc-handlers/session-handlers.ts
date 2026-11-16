@@ -1190,6 +1190,7 @@ export function setupSessionHandlers(
       timestamp: Date.now(),
     };
 
+    let repairError: string | undefined;
     let identityRollback:
       | {
           session: Session;
@@ -1223,11 +1224,18 @@ export function setupSessionHandlers(
           sdkSessionId: currentData.sdkSessionId,
           sdkOriginPath: currentData.sdkOriginPath,
         };
-      } else if (!(await current.validateSdkTranscript())) {
-        throw new Error(
-          `SDK transcript for session ${targetSessionId} was not found or could not be ` +
-            'repaired — the session cannot resume as-is.'
-        );
+      } else {
+        const transcript = await current.validateSdkTranscript();
+        if (!transcript.valid) {
+          repairError = transcript.repairError;
+          const problem = transcript.repairError
+            ? `could not be repaired: ${transcript.repairError}`
+            : 'was not found';
+          throw new Error(
+            `SDK transcript for session ${targetSessionId} ${problem} — the session cannot ` +
+              'resume as-is.'
+          );
+        }
       }
       await current.restart({
         skipTranscriptGuard: true,
@@ -1257,6 +1265,7 @@ export function setupSessionHandlers(
       const failedMessage: HyperNeoActionMessage = {
         ...resolvedMessage,
         resolved: false,
+        ...(repairError ? { repairError } : {}),
         error: errorText,
       };
       await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);

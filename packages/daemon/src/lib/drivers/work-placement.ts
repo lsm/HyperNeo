@@ -2,8 +2,18 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import type { Result, WorkArchived } from './types.ts';
+import { releaseWorkerWorkFolders } from './worker-sandbox.ts';
+
+const log = new Logger('work-placement');
+
+export async function releaseRemovedWorkerFolders(directory: string) {
+  await releaseWorkerWorkFolders(directory).catch((error) =>
+    log.warn(`Kept work folders of ${directory}:`, error)
+  );
+}
 
 export interface GitCheckout {
   repo: string;
@@ -114,7 +124,10 @@ export async function cleanupOwnedWorktree(
     })
   )
     return undefined;
-  if (!existsSync(directory)) return { directory, removed: true };
+  if (!existsSync(directory)) {
+    await releaseRemovedWorkerFolders(directory);
+    return { directory, removed: true };
+  }
   try {
     const git = simpleGit(directory);
     const common = (await git.revparse(['--path-format=absolute', '--git-common-dir'])).trim();
@@ -133,6 +146,7 @@ export async function cleanupOwnedWorktree(
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
     await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
+    await releaseRemovedWorkerFolders(directory);
     return { directory, removed: true };
   } catch (error) {
     return {

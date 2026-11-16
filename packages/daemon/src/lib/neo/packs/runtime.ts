@@ -31,6 +31,8 @@ import { createCodingConnectorPrReader } from './coding/connector-pr-reader.ts';
 import { createCodingPrStateReader } from './coding/pr-state-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 import { createDelegationPack } from './delegation/pack.ts';
+import { createModelRoutingPack } from './model-routing/pack.ts';
+import { getProviderRegistry } from '../../providers/registry.ts';
 import { createCoreTodoPack } from '../core-todo-checks.ts';
 import type { DaemonExtension } from '../../extensions/contract.ts';
 
@@ -150,6 +152,10 @@ export function createNeoService(...args: NeoServiceArgs) {
           coding,
           lifeAdmin,
           delegation,
+          createModelRoutingPack({
+            database: () => db.getDatabase(),
+            provider: (id) => getProviderRegistry().get(id),
+          }),
           createCoreTodoPack(db.getDatabase(), async (repo, sha, build) => {
             const fact = await new CodingPrLedgerRepository(db.getDatabase()).ancestryFacts.refresh(
               {

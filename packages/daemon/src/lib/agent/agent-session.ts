@@ -20,6 +20,7 @@ import type {
   ProcessingWaiting,
   Provider,
   QuestionDraftResponse,
+  RateLimitHoldReason,
   RewindMode,
   RewindPreview,
   RewindResult,
@@ -37,6 +38,7 @@ import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyper
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import type { Database } from '../../storage/database.ts';
+import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -1113,6 +1115,7 @@ export class AgentSession
         maxRetries?: unknown;
         exhaustedCycles?: unknown;
         reason?: unknown;
+        since?: unknown;
         heldPrompt?: { uuid?: unknown; content?: unknown };
       };
       if (
@@ -1156,13 +1159,20 @@ export class AgentSession
           parsed.exhaustedCycles >= 0
             ? parsed.exhaustedCycles
             : 0;
+        const hold: { reason?: RateLimitHoldReason; since?: number } = {
+          ...(parsed.reason === 'limit' || parsed.reason === 'overloaded'
+            ? { reason: parsed.reason }
+            : {}),
+          ...(typeof parsed.since === 'number' ? { since: parsed.since } : {}),
+        };
         this.rateLimitWatchdog.armPersistedCooldown(
           parsed.retryAt,
           messageId,
           () => {
             void this.stateManager.setIdle().catch(() => {});
           },
-          exhaustedCycles
+          exhaustedCycles,
+          hold
         );
         void this.stateManager
           .setRateLimitCooldown({
@@ -1171,6 +1181,7 @@ export class AgentSession
             exhaustedCycles,
             retryAt: parsed.retryAt,
             ...(messageId !== undefined ? { messageId } : {}),
+            ...hold,
           })
           .catch(() => {});
       }
@@ -2190,7 +2201,7 @@ export class AgentSession
     return await this.lifecycleManager.restart(options);
   }
 
-  async validateSdkTranscript(): Promise<boolean> {
+  async validateSdkTranscript(): Promise<SDKTranscriptCheck> {
     return await this.lifecycleManager.validateSdkTranscript();
   }
 

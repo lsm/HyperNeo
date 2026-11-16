@@ -129,7 +129,7 @@ describe('validateSDKSessionFile', () => {
       const first = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
       const second = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
       expect(second).toBe(first);
-      expect(await first).toBe(true);
+      expect(await first).toEqual({ valid: true });
       expect(validateAndRepairSDKSession(workspace, 's1', 'kai', db)).not.toBe(first);
     });
   });
