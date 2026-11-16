@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { randomUUID } from 'node:crypto';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifyAllReadError(page, fixture, { phase, evidence, touch = false }) {
   await page.routeWebSocket(`ws://127.0.0.1:${fixture.port}/ws`, ws => {
@@ -15,7 +16,7 @@ export async function verifyAllReadError(page, fixture, { phase, evidence, touch
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
   if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
-  const card = page.locator('[data-ask="all-items"]:visible');
+  const card = await revealAsk(page, 'all-items');
   await card.getByText('Synthetic All read unavailable', { exact: true }).waitFor();
   await use(card.getByRole('button', { name: 'All · 30', exact: true }));
   const dialog = page.getByRole('dialog', { name: 'Synthetic All items', exact: true });
@@ -34,7 +35,7 @@ export async function verifyAllSession(page, fixture, { phase, evidence, touch =
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
   if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
-  const card = page.locator('[data-ask="all-items"]:visible');
+  const card = await revealAsk(page, 'all-items');
   await use(card.getByRole('button', { name: 'All · 30', exact: true }));
   const dialog = page.getByRole('dialog', { name: 'Synthetic All items', exact: true });
   await dialog.locator('[data-todo-state="done"]').nth(19).waitFor();

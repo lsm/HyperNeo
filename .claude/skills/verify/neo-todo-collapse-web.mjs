@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifyTodoCollapse(page, { port, run, width }) {
   assert.notEqual(String(port), '8399');
@@ -10,8 +11,8 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   const record = (step) => { observed.steps.push(step); writeFileSync(`${run}/evidence/todo-collapse-${width}.json`, JSON.stringify(observed, null, 2)); };
   await page.goto(`http://127.0.0.1:${port}/neo`);
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = page.locator('[data-ask="collapse-card"]:visible');
-  const other = page.locator('[data-ask="other-card"]:visible');
+  const card = await revealAsk(page, 'collapse-card');
+  const other = await revealAsk(page, 'other-card');
   await card.waitFor();
   await card.screenshot({ path: `${run}/evidence/todo-collapsed-${width}.png` });
   record({ name: 'initial', details: await card.locator('[data-todo-details]').count(), all: await card.getByRole('button', { name: /^All · / }).count() });

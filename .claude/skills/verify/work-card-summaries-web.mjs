@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert.notEqual(port, '8399');
@@ -39,7 +40,7 @@ try {
     });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = page.locator('[data-ask="a-api"]:visible');
+    const card = await revealAsk(page, 'a-api');
     await card.getByText('Draft the iOS API client').waitFor();
     await card.getByText('Todos · 22 · Waiting on you · 1', { exact: true }).waitFor();
     await card.getByRole('button', { name: '21 done — show more', exact: true }).waitFor();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert(port && run);
@@ -50,7 +51,7 @@ async function open(context, width) {
   const page = await context.newPage();
   await page.goto(`${base}/neo`);
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = page.locator('[data-ask="controls"]:visible');
+  const card = await revealAsk(page, 'controls');
   await card.waitFor().catch(async (error) => {
     await page.screenshot({ path: `${out}/open-failed-${width}.png` });
     throw error;

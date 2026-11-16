@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 const run = process.argv[2], fixture = JSON.parse(readFileSync(`${run}/fixture.json`, 'utf8'));
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
@@ -46,7 +47,7 @@ try {
       await measure('drawer');
       await page.locator('[data-testid="neo-drawer-backdrop"]').click({ position: { x: width - 5, y: 200 }, force: true });
       if (width < 1120) await page.getByRole('button', { name: /^Your work/ }).click();
-      const card = page.locator('[data-ask="overflow-work"]');
+      const card = await revealAsk(page, 'overflow-work');
       await card.waitFor({ state: 'visible' });
       await card.locator('table').waitFor();
       await measure('work');

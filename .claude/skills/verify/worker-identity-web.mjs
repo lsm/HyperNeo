@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
+import { revealAsk } from './queue-ask.mjs';
 const [port, run, mode = 'verify'] = process.argv.slice(2);
 assert(Number(port) > 0 && Number(port) !== 8399);
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -12,7 +13,7 @@ try {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = page.locator('[data-ask="worker-card"]:visible');
+    const card = await revealAsk(page, 'worker-card');
     await card.waitFor();
     await page.evaluate(async () => {
       await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => {})));

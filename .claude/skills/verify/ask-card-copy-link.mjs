@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert.notEqual(port, '8399');
@@ -27,7 +28,7 @@ try {
       await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1'
         ? route.continue() : route.abort());
       await page.goto(`http://127.0.0.1:${port}/neo?key=synthetic#card`);
-      const card = page.locator(`[data-ask="${fixture.askId}"]`);
+      const card = await revealAsk(page, fixture.askId);
       if (width < 800) {
         await page.getByRole('button', { name: language === 'en' ? 'Your work' : '你的事', exact: false }).click();
       }

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifySettledPreview(page, fixture, { touch = false, evidence }) {
   const use = control => touch ? control.tap() : control.click();
   await page.goto(fixture.url);
   if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
-  const card = page.locator(`[data-ask="${fixture.askId ?? 'settled-preview'}"]:visible`);
+  const card = await revealAsk(page, fixture.askId ?? 'settled-preview');
   await card.waitFor();
   const settle = async () => page.evaluate(async () => {
     await Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished));

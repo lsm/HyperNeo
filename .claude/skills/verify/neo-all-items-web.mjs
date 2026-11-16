@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { verifySettledPreview } from './neo-settled-question-preview-web.mjs';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifyAllItems(page, fixture, { touch = false, evidence }) {
   const use = control => touch ? control.tap() : control.click();
@@ -10,7 +11,7 @@ export async function verifyAllItems(page, fixture, { touch = false, evidence })
   }));
   await page.goto(fixture.url);
   if(touch) await use(page.getByRole('button', {name:/^Your work/}));
-  const card = page.locator('[data-ask="all-items"]:visible');
+  const card = await revealAsk(page, 'all-items');
   const footer = card.getByRole('button', {name:'All · 30',exact:true});
   await footer.waitFor();
   assert.equal(await card.locator('[data-ask-todo]').count(),2);
