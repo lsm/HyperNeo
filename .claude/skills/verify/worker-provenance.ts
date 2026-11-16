@@ -193,7 +193,7 @@ try {
     store.updateTodo(todo, { state: 'doing' }, Date.now());
     const runner = createNeoTodoRunner({
       write: gatewayFor(db).run.bind(gatewayFor(db)), store, sessions,
-      limits: () => ({ running: 99, perGroup: 99 }), packs: () => [], tell: async () => {}, changed: () => {},
+      limits: () => ({ running: 99, perGroup: 99 }), packs: () => [], tell: async () => {}, attend: async () => {}, changed: () => {},
       invoke: async (_caller, name, input) => ({ kind: 'completed', value: await rpc(name, { ...input, from: `session:${caller}` }) }),
     });
     const snapshot = (model: string, effort?: string) => appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), ...(effort ? { perTurnEffort: effort } : {}), message: { model, content: [{ type: 'text', text: 'Untrusted body effort: low' }] } }) + '\n');

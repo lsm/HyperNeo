@@ -96,7 +96,7 @@ describe('Neo as one session', () => {
     expect(owners('neo_asks', 'session_id')).toEqual({ mine: root, open: root, settled: holder });
   });
 
-  test('root works a moved ask and the todo note reaches root', async () => {
+  test('root works a moved ask and its failed todo reaches root as one Neo step', async () => {
     openAsk('open', holder);
     runMigration393(db.getDatabase());
     const invoke = (name: string, input: unknown, as: OperationCaller) =>
@@ -113,9 +113,14 @@ describe('Neo as one session', () => {
     service.todoSessions.create(id, { verb: 'start' } as never);
     await service.todoRunner.refresh(() => {});
     expect(service.todos.getTodo(id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
-    expect(told.filter((note) => note.messageId.startsWith(`neo-todo:${id}:`))).toEqual([
-      { sessionId: root, messageId: expect.stringContaining(id) },
-    ]);
+    expect(told).toEqual([]);
+    await service['sweepAttention'](Date.now());
+    expect(
+      db
+        .getJobQueueRepo()
+        .listActiveByPayload('mailbox', { 'to.sessionId': root })
+        .map((job) => JSON.stringify(job.payload.message))
+    ).toEqual([expect.stringContaining(`(${id}) needs your next step: it failed`)]);
   });
 
   test('opening Neo always returns root and never creates a holder session', async () => {

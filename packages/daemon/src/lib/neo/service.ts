@@ -146,6 +146,7 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
+  private readonly attention: ReturnType<typeof createNeoAttention>;
   private readonly sweepAttention: (now: number) => Promise<void>;
   readonly runDbOp: RunDbOp;
   get sessionNotices(): NeoSessionNotice[] {
@@ -345,6 +346,7 @@ export class NeoService {
           kind
         );
       },
+      attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
       readSource: (ref) => this.readQuestionSource(ref),
@@ -353,7 +355,7 @@ export class NeoService {
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
-      tell: createNeoAttention({
+      tell: (this.attention = createNeoAttention({
         kinds: () => [
           ...NEO_ATTENTION_KINDS,
           ...this.installedPacks().flatMap((pack) => pack.attention?.kinds ?? []),
@@ -372,7 +374,7 @@ export class NeoService {
         ),
         dropped: (event, reason) =>
           this.log.info(`Attention ${event.kind} ${event.subject.id} dropped: ${reason}`),
-      }),
+      })),
       failed: (event, error) =>
         this.log.warn(`Attention ${event.kind} ${event.subject.id} pending`, error),
     });

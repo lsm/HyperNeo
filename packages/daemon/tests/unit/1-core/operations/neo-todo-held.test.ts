@@ -43,6 +43,7 @@ function world() {
     },
     packs: () => [],
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
   });
   store.openAsk({

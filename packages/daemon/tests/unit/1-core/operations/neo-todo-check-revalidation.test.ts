@@ -59,6 +59,9 @@ function setup(result: NeoTodoCheckResult = merged, judgement?: NeoTodoJudgement
     tell: async (_ask, _todo, note) => {
       told.push(note);
     },
+    attend: async (event) => {
+      told.push(String(event.facts.text));
+    },
     changed: () => {},
   });
   const add = (url = 'https://github.com/o/r/pull/1') => {

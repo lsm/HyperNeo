@@ -95,6 +95,11 @@ describe('the attention decision', () => {
       event('todo.blocked'),
       { value: { action: 'digest', step: 0 } },
     ],
+    [
+      'a health incident is a digest item',
+      event('driver.health'),
+      { value: { action: 'digest', step: 0 } },
+    ],
     ['a finished ask wakes', event('ask.finished'), { value: { action: 'wake', step: 0 } }],
     [
       'a missing follow-up wakes',

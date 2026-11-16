@@ -34,6 +34,7 @@ function setup() {
     sessions,
     packs: () => packs,
     tell: async () => {},
+    attend: async () => {},
     changed: () => {},
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: {} } }),
   });

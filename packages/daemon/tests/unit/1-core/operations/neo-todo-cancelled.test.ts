@@ -39,6 +39,9 @@ function setup() {
     tell: async (_ask, todo, note, key) => {
       told.push({ todo: todo.id, note, key });
     },
+    attend: async (event) => {
+      told.push({ todo: event.subject.id, note: String(event.facts.text) });
+    },
     changed: () => {},
     invoke: async (_caller, name, input) => {
       if (name === 'work.send') {

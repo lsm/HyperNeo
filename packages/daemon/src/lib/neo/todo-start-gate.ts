@@ -54,31 +54,6 @@ export const neoTodoCancellationPending = (todo: NeoTodo, family: readonly NeoTo
     (todo.state === 'blocked' && (todo.blockedBy === 'question' || todo.blockedBy === 'check'))) &&
   neoTodoCancelledDependencies(family, todo.id).length > 0;
 
-const familyTodo = (family: readonly NeoTodo[], id: string | null) =>
-  family.find((todo) => todo.id === id);
-
-const replacedName = (family: readonly NeoTodo[], todo: NeoTodo) => {
-  const replacement = familyTodo(family, todo.replacedBy);
-  return replacement ? `"${todo.title}" (replaced by "${replacement.title}")` : null;
-};
-
-export function neoCancelledPrerequisiteNote(todo: NeoTodo, family: readonly NeoTodo[]): string {
-  const names = neoTodoCancelledDependencies(family, todo.id).map(
-    (gone) =>
-      replacedName(family, gone) ??
-      (gone.reason ? `"${gone.title}" (${gone.reason})` : `"${gone.title}"`)
-  );
-  return [
-    `Prerequisite ${names.join(', ')} of todo "${todo.title}" (${todo.id}) was cancelled, so it will not start by itself.`,
-    'neo.todo.remove stops it, and neo.question.ask is only for when you cannot tell what the human wants.',
-  ].join(' ');
-}
-
-export const neoCancelledPrerequisiteKey = (todo: NeoTodo, family: readonly NeoTodo[]) =>
-  `neo-todo-prereq:${todo.id}:${neoTodoCancelledDependencies(family, todo.id)
-    .map(({ id }) => id)
-    .join(',')}`;
-
 export type NeoQuestionPrune =
   | { retire: string }
   | {

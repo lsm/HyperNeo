@@ -79,7 +79,7 @@ describe('Neo daemon notes', () => {
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
 
-  test('stalled-ask nudges and todo-done notices are persisted as synthetic inputs', async () => {
+  test('a stalled-ask nudge is persisted as a synthetic input and a finished todo adds no note', async () => {
     const now = Date.now();
     const ask = service.todos.openAsk({
       id: 'stalled-synthetic',
@@ -125,14 +125,63 @@ describe('Neo daemon notes', () => {
           inputKind: 'system',
           isSynthetic: true,
         }),
-        expect.objectContaining({
-          uuid: expect.stringMatching(/^neo-todo:/),
-          inputKind: 'system',
-          isSynthetic: true,
-          message: expect.objectContaining({ content: expect.stringContaining('is done') }),
-        }),
       ])
     );
+    expect(service.todos.getTodo('synthetic-done')?.state).toBe('done');
+    expect(JSON.stringify([rows, db.getJobQueueRepo().listJobs({})])).not.toContain('is done');
+  });
+
+  test('the last todo finishing is told once by the ask, with no done note', async () => {
+    const now = Date.now();
+    const ask = service.todos.openAsk({
+      id: 'finished-synthetic',
+      sessionId: rootId,
+      projectId: null,
+      originMessageId: null,
+      title: 'Finished work',
+      request: 'Complete the work',
+      createdAt: now,
+    });
+    vi.spyOn(service, 'installedPacks').mockReturnValue([
+      {
+        id: 'synthetic-proof',
+        describe: 'Synthetic completion fixture',
+        instructions: () => null,
+        todos: {
+          schema: () => {},
+          check: async () => ({ done: true, evidence: 'Observed' }),
+          statusLine: () => null,
+        },
+      },
+    ]);
+    service.todos.addTodo(
+      'synthetic-last',
+      ask.id,
+      {
+        title: 'Synthetic task',
+        doneWhen: 'Observed',
+        instruction: null,
+        named: null,
+        check: { pack: 'synthetic-proof', kind: 'observed', params: {} },
+      },
+      now
+    );
+    const told = () =>
+      db
+        .getSDKMessages(rootId)
+        .messages.map((row) => String((row as { message: { content: unknown } }).message.content));
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), now);
+    expect(told()).toEqual([]);
+    await service.todoRunner.refresh((message, error) => {
+      throw new Error(message, { cause: error });
+    });
+    expect(service.todos.getTodo('synthetic-last')?.state).toBe('done');
+    const finished = Date.now();
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished);
+    await wakeStalledAsks(service.todos, service.deliverForward.bind(service), finished + 60_000);
+    expect(told()).toEqual([
+      'Ask: Finished work (finished-synthetic)\nAll todos are finished: write the outcome with neo.ask.settle, or add the next todo.',
+    ]);
   });
 
   test('wakeNeo keeps structured PR events immediate', async () => {
