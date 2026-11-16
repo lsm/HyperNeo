@@ -201,8 +201,6 @@ export function createNeoWorkerQuestionWriter(
             rejection = `card_open: card ${others[0].id} is already open on this todo; wait for its answer.`;
             return null;
           }
-          for (const stalled of open.filter((q) => isNeoTodoStalledCard(q.text)))
-            store.retireQuestion(stalled, 'its worker asked its own question', null, Date.now());
           const allowed = existing
             ? null
             : requireHumanCard({ text: input.title, kind: 'choice' as const }, language());
@@ -210,6 +208,8 @@ export function createNeoWorkerQuestionWriter(
             rejection = allowed.reason.reason;
             return null;
           }
+          for (const stalled of open.filter((q) => isNeoTodoStalledCard(q.text)))
+            store.retireQuestion(stalled, 'its worker asked its own question', null, Date.now());
           const card =
             existing ??
             openHumanCard(
