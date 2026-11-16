@@ -56,3 +56,4 @@ For `packages/daemon` and `packages/space`. The root `AGENTS.md` still applies.
 - Vitest loads `tests/vitest.setup.ts` and aliases the SDK to `tests/sdk-mock.ts`; direct `bun test` preloads `tests/unit/setup.ts`.
 - Online tests boot a daemon. `HYPERNEO_USE_DEV_PROXY=1` routes Anthropic to `.devproxy/` with real credentials blanked; never silently fall back: `cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/multiturn-conversation.test.ts`.
 - `real-api-tests.yml` runs selected modules with real keys.
+
