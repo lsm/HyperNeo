@@ -341,7 +341,7 @@ describe('the Neo attention sweep', () => {
     await at(5);
     await at(6);
     await at(24);
-    expect(told).toEqual(expected);
+    expect(told).toEqual([...expected]);
   });
 
   test('tracked work that was never approved still wakes Neo on the ladder when its worker is blocked', async () => {
