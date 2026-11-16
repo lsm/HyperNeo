@@ -74,9 +74,13 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    an OAuth row instead of `{type: 'http', headers}`. All three registry paths
    (canonical inputs, MCP skills and plain registry rows) use that function.
    So the proxy flows through `mergeSessionMcpServers` as a registry server,
-   with the usual enablement, layering and reserved-name handling. There are no
-   live updates: a connect or disconnect takes effect when the session's MCP
-   config is next computed, and an old proxy is fenced as described below. The
+   with the usual enablement, layering and reserved-name handling. Connect,
+   disconnect, remove and replace emit the existing `mcp.registry.changed` event, the
+   same one the registry RPCs emit. The session manager already turns that event
+   into `reconcileEffectiveMcpServers`, which recomputes the effective set and
+   pushes it to every running query with `setMcpServers`. So running sessions
+   gain or lose the proxy without a restart, and a call already in flight on an
+   old proxy is fenced as described below. The
    token never reaches session config, the harness, prompts or logs, and a
    refresh in the middle of a long session just works.
 5. **Health and refresh.** Refresh goes through the SDK provider, serialized per
@@ -189,7 +193,7 @@ and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
 | --- | --- | --- |
 | 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
 | 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID, and an existing proxy refuses calls. The import service cannot delete or retarget an OAuth row. |
-| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
+| 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. A running session gains the tools on connect and loses them on disconnect without a restart. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
 | 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
 
