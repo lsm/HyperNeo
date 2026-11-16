@@ -250,7 +250,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
         await releaseWorkerSandbox(sessionSdkPath(session));
         return { ok: true, value: { archived: false } };
       }
-      await sessionManager.archiveSessionResources(ref.id, 'ui_session_archive');
+      await sessionManager.archiveSessionResources(ref.id, 'work_archive');
       return { ok: true, value: { archived: true } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>

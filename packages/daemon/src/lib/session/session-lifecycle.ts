@@ -1,4 +1,5 @@
-import { releaseRemovedWorkerFolders } from '../drivers/work-placement.ts';
+import { cleanupOwnedWorktree, releaseRemovedWorkerFolders } from '../drivers/work-placement.ts';
+import { getWorktreeBaseDir } from '../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../drivers/worker-sandbox.ts';
 import type { SessionToolProfile } from '@hyperneo/shared/types/session-tool-choice';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
@@ -33,7 +34,7 @@ export function buildTitleGenerationPrompt(messageText: string): string {
   return `${TITLE_GENERATION_PROMPT}\n${messageText.slice(0, 2000)}`;
 }
 
-export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
+export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive' | 'work_archive';
 export type DeleteResourcesTrigger = 'ui_session_delete';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
@@ -653,6 +654,14 @@ export class SessionLifecycle {
 
     if (session.worktree) {
       try {
+        if (trigger === 'work_archive') {
+          const { worktreePath, mainRepoPath } = session.worktree;
+          const cleanup = await cleanupOwnedWorktree(worktreePath, [
+            getWorktreeBaseDir(mainRepoPath),
+          ]);
+          if (!cleanup?.removed)
+            throw new Error(cleanup?.reason ?? 'The worktree is outside its project root; kept.');
+        }
         await this.worktreeManager.removeWorktree(session.worktree, true);
         await releaseRemovedWorkerFolders(session.worktree.worktreePath);
         completedPhases.push('worktree-remove');
