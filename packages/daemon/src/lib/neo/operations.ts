@@ -823,21 +823,6 @@ export function createNeoOperations(
         advance: () => service.todoRunner.advance(),
         changed: () => service.notifyChanged(),
         project: (todos) => service.todoWorkers(todos),
-        reply: async (todo, to, text) => {
-          const from = service.todos.getAsk(todo.askId)?.sessionId;
-          const sent = await invokeOperation(
-            service.sessions.getOperationRegistry(),
-            'message.send',
-            {
-              sessionId: to,
-              message: { type: 'user', message: { content: text }, parent_tool_use_id: null },
-            },
-            { source: 'internal', sessionId: from, role: 'neo' }
-          );
-          if (sent.kind === 'failed') return sent.message;
-          const value = sent.value as { kind: string; reason?: string };
-          return value.kind === 'accepted' ? null : (value.reason ?? value.kind);
-        },
       }
     ),
     createNeoCardSearchOperation(

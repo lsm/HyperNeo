@@ -11,6 +11,8 @@ import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTodoCheckPacks } from '../../helpers/todo-check-packs.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { vi } from 'vitest';
 
 type Receipt = { ok: false; reason: string } | { ok: true; todo: NeoTodo; records?: string[] };
 describe('Writer-backed todo operation activation', () => {
@@ -21,8 +23,6 @@ describe('Writer-backed todo operation activation', () => {
   let stopFailure: string | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
-  let replies: { to: string; text: string }[];
-  let replyFailure: string | null;
   let advance: () => Promise<unknown>;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
   beforeEach(() => {
@@ -35,8 +35,6 @@ describe('Writer-backed todo operation activation', () => {
     stopFailure = null;
     checkDone = true;
     workerRemotes = undefined;
-    replies = [];
-    replyFailure = null;
     gateway.onChanges = () => {
       order.push('commit');
     };
@@ -108,10 +106,6 @@ describe('Writer-backed todo operation activation', () => {
           order.push('announce');
         },
         project: async (todos) => todos.map((todo) => ({ ...todo, worker: null })),
-        reply: async (_todo, to, text) => {
-          replies.push({ to, text });
-          return replyFailure;
-        },
       })
     );
     call = async (name, input, role = 'neo') => {
@@ -340,8 +334,12 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual([]);
   });
 
-  test('closing a request todo replies once to its recorded sender with the outcome', async () => {
+  const addRequest = (sender: string, live = true) => {
     advance = async () => undefined;
+    if (live)
+      db.prepare(
+        "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Requester', '/synthetic', '2026-11-16', '2026-11-16', 'active', '{}', '{}')"
+      ).run(sender);
     store.addTodo(
       'request',
       'ask',
@@ -351,10 +349,22 @@ describe('Writer-backed todo operation activation', () => {
         doneWhen: 'Neo replied',
         check: null,
         instruction: null,
-        named: { requestFrom: 'stranger' },
+        named: { requestFrom: sender },
       },
       1
     );
+  };
+  const inbox = (sessionId: string) =>
+    (
+      db
+        .prepare(
+          "SELECT status, json_extract(payload, '$.message.message.content') AS text FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.to.sessionId') = ?"
+        )
+        .all(sessionId) as { status: string; text: string }[]
+    ).map((row) => ({ status: row.status, text: String(row.text) }));
+
+  test('closing a request todo queues one reply to its recorded sender with the outcome', async () => {
+    addRequest('stranger');
     expect(
       await call('neo.todo.done', { todoId: 'request', reason: 'Closed it as merged' })
     ).toMatchObject({ ok: true, todo: { state: 'done' } });
@@ -362,30 +372,51 @@ describe('Writer-backed todo operation activation', () => {
       ok: true,
     });
     await call('neo.todo.done', { todoId: 'first' });
-    expect(replies).toEqual([
-      {
-        to: 'stranger',
-        text: 'Neo closed your request "Close the merged todo" as done: Closed it as merged',
-      },
-    ]);
+    const replies = inbox('stranger');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({ status: 'pending' });
+    expect(replies[0].text).toContain(
+      'Neo closed your request "Close the merged todo" as done: Closed it as merged'
+    );
   });
 
-  test('a failed reply to a request sender is shown to Neo', async () => {
-    advance = async () => undefined;
-    store.addTodo(
-      'request',
-      'ask',
-      {
-        approvedAt: 1,
-        title: 'Close the merged todo',
-        doneWhen: 'Neo replied',
-        check: null,
-        instruction: null,
-        named: { requestFrom: 'stranger' },
-      },
-      1
-    );
-    replyFailure = 'unknown session';
+  test('concurrent done and remove of a request send exactly one answer, the committed one', async () => {
+    addRequest('stranger');
+    const [done, removed] = await Promise.all([
+      call('neo.todo.done', { todoId: 'request', reason: 'Merged' }),
+      call('neo.todo.remove', { todoId: 'request', reason: 'Not needed' }),
+    ]);
+    expect(removed).toMatchObject({ ok: true });
+    const winner = done.ok ? 'as done: Merged' : 'as removed: Not needed';
+    const replies = inbox('stranger');
+    expect(replies).toHaveLength(1);
+    expect(replies[0].text).toContain(winner);
+  });
+
+  test('a close whose reply cannot be queued commits nothing, and the retry answers once', async () => {
+    addRequest('stranger');
+    const enqueue = vi
+      .spyOn(JobQueueRepository.prototype, 'enqueueUniquePending')
+      .mockImplementationOnce(() => {
+        throw new Error('synthetic crash before the reply is queued');
+      });
+    try {
+      await expect(
+        call('neo.todo.done', { todoId: 'request', reason: 'Merged' })
+      ).rejects.toThrow();
+      expect(store.getTodo('request')!.state).toBe('todo');
+      expect(inbox('stranger')).toEqual([]);
+    } finally {
+      enqueue.mockRestore();
+    }
+    expect(await call('neo.todo.done', { todoId: 'request', reason: 'Merged' })).toMatchObject({
+      ok: true,
+    });
+    expect(inbox('stranger')).toHaveLength(1);
+  });
+
+  test('a reply to a request sender whose session is gone is shown to Neo', async () => {
+    addRequest('stranger', false);
     expect(
       await call('neo.todo.remove', { todoId: 'request', reason: 'Not needed' })
     ).toMatchObject({
@@ -393,6 +424,7 @@ describe('Writer-backed todo operation activation', () => {
       todo: { state: 'removed' },
       records: [expect.stringContaining('reply_failed: the requester stranger was not told')],
     });
+    expect(inbox('stranger')).toEqual([]);
   });
 
   test('remove cancels a never-started todo whose check has not passed', async () => {

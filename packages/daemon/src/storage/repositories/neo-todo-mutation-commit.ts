@@ -13,6 +13,7 @@ import { type ChangeRecorder, defineDbOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoAskTodoRepository, type NeoTodoPatch } from './neo-ask-todo-repository.ts';
 import { neoTodoMutationReads } from './neo-todo-mutation-planning.ts';
+import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 
 type Planner = InstanceType<typeof neoTodoMutationReads.Repository>;
@@ -148,6 +149,11 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       }
       if (args.input.kind === 'edit' && args.input.target)
         new NeoTodoSessionRepository(db, changes).create(plan.todo.id, args.input.target);
+      const replied =
+        args.input.kind === 'edit'
+          ? null
+          : queueNeoRequestReply(db, plan.todo, committed.todo!, args.input.reason);
+      const records = [...(plan.records ?? []), ...(replied ? [replied] : [])];
       return {
         ok: true,
         todo: committed.todo!,
@@ -155,7 +161,7 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
           committed.startNext ??
           removal?.writes.find(({ patch }) => patch.state !== 'removed')?.todo.id ??
           null,
-        ...(plan.records ? { records: plan.records } : {}),
+        ...(records.length ? { records } : {}),
       };
     },
     ['db', 'store', 'outcome', 'args', 'removal', 'changes'],

@@ -33,7 +33,6 @@ interface Dependencies {
   advance(): Promise<unknown>;
   changed(): void;
   project<T extends NeoTodo>(todos: readonly T[]): Promise<T[]>;
-  reply(todo: NeoTodo, to: string, text: string): Promise<string | null>;
 }
 const kinds = new Map<string, Input['kind']>([
   ['neo.todo.edit', 'edit'],
@@ -41,11 +40,6 @@ const kinds = new Map<string, Input['kind']>([
   ['neo.todo.done', 'done'],
   ['neo.todo.remove', 'remove'],
 ]);
-
-const neoRequestReply = (todo: NeoTodo, input: Input) => {
-  const reason = 'reason' in input && input.reason ? `: ${input.reason}` : '.';
-  return `Neo closed your request "${todo.title}" as ${todo.state}${reason}`;
-};
 
 const holdAsEdit = (name: string, input: unknown): object => {
   if (name !== 'neo.todo.hold') return input as object;
@@ -166,7 +160,6 @@ export function wireNeoTodoMutations(
       ['outcome', 'input'],
       'result:outcome'
     )
-    .pipe((plan: Plan) => plan.todo, 'outcome', 'before')
     .pipe(
       (
         input: Input,
@@ -204,30 +197,6 @@ export function wireNeoTodoMutations(
         return receipt;
       },
       ['outcome', 'input'],
-      'outcome'
-    )
-    .pipe(
-      async (receipt: Receipt, input: Input, before: NeoTodo) => {
-        const to = before.named?.requestFrom;
-        if (
-          input.kind === 'edit' ||
-          typeof to !== 'string' ||
-          ['done', 'removed'].includes(before.state) ||
-          !['done', 'removed'].includes(receipt.todo.state)
-        )
-          return receipt;
-        const failed = await deps.reply(receipt.todo, to, neoRequestReply(receipt.todo, input));
-        return failed
-          ? {
-              ...receipt,
-              records: [
-                ...(receipt.records ?? []),
-                `reply_failed: the requester ${to} was not told (${failed}). Tell it yourself with message.send.`,
-              ],
-            }
-          : receipt;
-      },
-      ['outcome', 'input', 'before'],
       'outcome'
     )
     .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<Result>;
