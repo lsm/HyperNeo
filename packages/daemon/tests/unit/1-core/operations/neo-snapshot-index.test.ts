@@ -198,6 +198,30 @@ test('working over 100 says more.working.count', async () => {
     reader.mockRestore();
   }
 });
+test('a held Neo session reaches the snapshot with its role and model hold', async () => {
+  db.getDatabase()
+    .prepare(
+      "UPDATE sessions SET processing_state = ?, config = json_set(config, '$.provider', 'anthropic') WHERE id = ?"
+    )
+    .run(
+      JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryCount: 0,
+        maxRetries: 0,
+        retryAt: 9_000,
+        reason: 'login',
+        since: 7_000,
+      }),
+      mcp.sessionId
+    );
+  expect((await snapshot(rpc)).working).toEqual([
+    expect.objectContaining({
+      sessionId: mcp.sessionId,
+      role: 'neo',
+      modelHold: { provider: 'anthropic', reason: 'login', since: 7_000 },
+    }),
+  ]);
+});
 
 test('MCP historyCursor retains the finished-ask continuation', async () => {
   seed(45);
