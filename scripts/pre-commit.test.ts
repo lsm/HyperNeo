@@ -133,3 +133,19 @@ test('a commit staging code runs the code checks', async () => {
   expect(result.code).toBe(0);
   expect(fixture.bunCalls()).toEqual(['lint', 'format:check', 'typecheck', 'knip']);
 });
+
+test('a docs JSON file still runs the code checks', async () => {
+  const fixture = hookFixture();
+  fixture.stage('docs/branding/tokens.json');
+  const result = await fixture.run();
+  expect(result.code).toBe(0);
+  expect(fixture.bunCalls()).toEqual(['lint', 'format:check', 'typecheck', 'knip']);
+});
+
+test('a docs-only commit with a non-ASCII file name skips every code check', async () => {
+  const fixture = hookFixture();
+  fixture.stage('docs/design/设计 plan.md');
+  const result = await fixture.run();
+  expect(result.code).toBe(0);
+  expect(fixture.bunCalls()).toEqual([]);
+});
