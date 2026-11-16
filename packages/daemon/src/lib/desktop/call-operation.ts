@@ -5,39 +5,36 @@ import { z } from 'zod';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { getDataDir } from '../data-dir.ts';
-import {
-  defineOperation,
-  isAgentSessionCaller,
-  type OperationCaller,
-} from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { DesktopDispatchReply, dispatchDesktopCall } from './host-dispatch.ts';
 import { desktopOptIn, readDesktopTodos, type DesktopTodoRow } from './opt-in.ts';
 import catalog from './tool-catalog.json' with { type: 'json' };
 
-const Input = z
-  .object({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()) })
-  .strict();
+const arm = (tool: { name: string; description: string; inputSchema: unknown }) =>
+  z
+    .object({
+      tool: z.literal(tool.name).describe(tool.description),
+      args: z.fromJSONSchema(tool.inputSchema as z.core.JSONSchema.JSONSchema) as z.ZodType<
+        Record<string, unknown>
+      >,
+    })
+    .strict();
+const [first, ...rest] = catalog.map(arm);
+const Input = z.discriminatedUnion('tool', [first, ...rest]);
 const Refusal = z.object({
   ok: z.literal(false),
   decision: z.literal('refused'),
   reason: z.string(),
   dispatched: z.literal(false),
 });
-const tools = new Set(catalog.map((tool) => tool.name));
 const refuse = (reason: string) => ({
   reason: { ok: false, decision: 'refused', reason, dispatched: false },
 });
 type Binding = { todo: string; worker: string; workDir: string };
-type Facts = {
-  todo: DesktopTodoRow | null;
-  worker: string;
-  workDir: string | null;
-  toolAllowed: boolean;
-};
+type Facts = { todo: DesktopTodoRow | null; worker: string; workDir: string | null };
 
 export function decideDesktopCall(facts: Facts) {
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
-  if (!facts.toolAllowed) return refuse('tool_not_allowed');
   return { value: { todo: facts.todo.id, worker: facts.worker, workDir: facts.workDir } };
 }
 
@@ -53,23 +50,25 @@ export function createDesktopCallOperation(
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller) =>
-        isAgentSessionCaller(caller) && caller.principal === undefined
+        caller.source === 'mcp' &&
+        !!caller.sessionId &&
+        !!caller.role &&
+        caller.principal === undefined
           ? { value: caller.sessionId! }
           : refuse('desktop_not_enabled'),
       'caller',
       'result:outcome'
     )
     .pipe(
-      (worker: string, input: z.infer<typeof Input>): Facts => {
+      (worker: string): Facts => {
         const session = options.getSession(worker);
         return {
           todo: desktopOptIn(readDesktopTodos(db, worker), worker),
           worker,
           workDir: session?.worktree?.worktreePath ?? session?.workspacePath ?? null,
-          toolAllowed: tools.has(input.tool),
         };
       },
-      ['outcome', 'input'],
+      'outcome',
       'facts'
     )
     .pipe(decideDesktopCall, 'facts', 'result:outcome')

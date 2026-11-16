@@ -23,15 +23,19 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
       | undefined;
     if (!row) return { ok: false as const, reason: 'no_bound_proposal' };
     if (row.applied_at !== null) return { ok: true as const, applied: false };
-    if (
-      row.state !== 'answered' ||
-      !humanPickedApply({
-        kind: row.kind,
-        options: JSON.parse(row.options ?? 'null'),
-        answer: JSON.parse(row.answer ?? 'null'),
-      }) ||
-      !['button', 'chat'].includes(row.answered_by ?? '')
-    )
+    const stored = JSON.parse(row.values_json) as
+      | NeoPackSetting[]
+      | { alternatives: NeoPackSetting[][] };
+    const question = {
+      kind: row.kind,
+      options: JSON.parse(row.options ?? 'null') as string[] | null,
+      answer: JSON.parse(row.answer ?? 'null'),
+    };
+    const values = Array.isArray(stored)
+      ? humanPickedApply(question) && stored
+      : question.kind === 'choice' &&
+        stored.alternatives[question.options?.indexOf([question.answer].flat().join('\n')) ?? -1];
+    if (row.state !== 'answered' || !values || !['button', 'chat'].includes(row.answered_by ?? ''))
       return { ok: false as const, reason: 'human_apply_required' };
     if (row.text !== row.question_text) throw new Error('proposal_question_changed');
     const insert = db.prepare(`INSERT INTO neo_pack_preferences
@@ -39,7 +43,7 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
       ON CONFLICT(pack, scope_kind, scope_key, key) DO UPDATE SET
       value_json=excluded.value_json, set_by=excluded.set_by, set_at=excluded.set_at`);
     const now = Date.now();
-    for (const value of JSON.parse(row.values_json) as NeoPackSetting[])
+    for (const value of values)
       insert.run(
         value.pack,
         value.scope.kind,

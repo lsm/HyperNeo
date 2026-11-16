@@ -89,8 +89,12 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ref: WorkRef
   ): Promise<ReturnType<NeoTodoSessionRepository['syncedLive']>>;
   read(
+    method: 'finishedWorkers',
+    since: number
+  ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(
     method: (typeof neoTodoSessionReads.methods)[number],
-    key?: string | WorkRef | Record<string, string | null>
+    key?: string | number | WorkRef | Record<string, string | null>
   ) {
     return gatewayFor(this.db).call(
       neoTodoSessionReads,
@@ -441,28 +445,43 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   recordNudge(todoId: string, incident: FollowThroughIncident): void {
     const blockerReport = incident.blockerReport ?? this.readNudge(todoId)?.blockerReport;
+    this.writeCoreFact(todoId, 'nudge', {
+      ...incident,
+      ...(blockerReport ? { blockerReport } : {}),
+    });
+  }
+
+  private writeCoreFact(todoId: string, key: string, value: unknown): void {
     this.db
       .prepare(
-        "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
+        "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', ?, ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
       )
-      .run(todoId, JSON.stringify({ ...incident, ...(blockerReport ? { blockerReport } : {}) }));
+      .run(todoId, key, JSON.stringify(value));
   }
 
   doingTodoOn(
     ref: WorkRef,
-    startedAfter: number | null = null
+    startedAfter: number | null = null,
+    states: readonly string[] = ['doing']
   ): { id: string; title: string } | null {
     return (
       (this.db
         .prepare(
           `SELECT t.id, t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-            WHERE t.state = 'doing' AND (? IS NULL OR t.started_at > ?)
+            WHERE t.state IN (SELECT value FROM json_each(?)) AND (? IS NULL OR t.started_at > ?)
               AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
               AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
               AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
             LIMIT 1`
         )
-        .get(startedAfter, startedAfter, ref.adapter, ref.id, ref.daemon ?? null) as {
+        .get(
+          JSON.stringify(states),
+          startedAfter,
+          startedAfter,
+          ref.adapter,
+          ref.id,
+          ref.daemon ?? null
+        ) as {
         id: string;
         title: string;
       } | null) ?? null
@@ -637,6 +656,53 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     ).map((row) => row.todoId);
   }
 
+  finishedWorkers(since: number): {
+    todoId: string;
+    target: NeoDriverTarget;
+    ref: WorkRef;
+    shared: boolean;
+    releasedBy: string | null;
+  }[] {
+    const match = (column: string, key: string) =>
+      `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
+    return (
+      this.db
+        .prepare(
+          `SELECT s.todo_id AS todoId, s.target, s.ref,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS shared,
+              (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
+                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released'
+                WHERE o.todo_id <> s.todo_id
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+                LIMIT 1) AS releasedBy
+             FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+            WHERE t.state = 'done' AND t.finished_at > ? AND s.ref IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM pack_facts f
+                WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
+        )
+        .all(since) as {
+        todoId: string;
+        target: string;
+        ref: string;
+        shared: number;
+        releasedBy: string | null;
+      }[]
+    ).map((row) => ({
+      todoId: row.todoId,
+      target: JSON.parse(row.target) as NeoDriverTarget,
+      ref: JSON.parse(row.ref) as WorkRef,
+      shared: row.shared === 1,
+      releasedBy: row.releasedBy,
+    }));
+  }
+
+  recordReleased(todoId: string, released: unknown): void {
+    this.writeCoreFact(todoId, 'released', released);
+  }
+
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
     return (
       this.db
@@ -665,6 +731,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'workerName',
     'syncedActivity',
     'syncedLive',
+    'finishedWorkers',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -684,5 +751,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'noteWorkerStatus',
     'markWorkerUnusable',
     'queueOn',
+    'recordReleased',
   ]
 );
