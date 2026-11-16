@@ -17,11 +17,11 @@ export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state'>): NeoAskGroup
       : 'running';
 }
 
-const newestOpenCardAt = (entry: Pick<NeoAskEntry, 'questions'>) =>
+const newestOpenCardAt = (entry: Pick<NeoAskEntry, 'questions'>, held: boolean) =>
   Math.max(
     0,
     ...entry.questions
-      .filter((question) => question.state === 'open' && !question.heldAt)
+      .filter((question) => question.state === 'open' && !!question.heldAt === held)
       .map((question) => question.createdAt)
   );
 
@@ -33,7 +33,8 @@ export function neoAskEntriesInOrder<
     if (waiting) return waiting;
     if (a.state === 'waiting') {
       return (
-        newestOpenCardAt(b) - newestOpenCardAt(a) ||
+        newestOpenCardAt(b, false) - newestOpenCardAt(a, false) ||
+        newestOpenCardAt(b, true) - newestOpenCardAt(a, true) ||
         b.ask.createdAt - a.ask.createdAt ||
         a.ask.id.localeCompare(b.ask.id)
       );
