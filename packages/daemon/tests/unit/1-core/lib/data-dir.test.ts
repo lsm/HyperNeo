@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { homedir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { DATA_DIR_NAME, getDataDir, resolveDataDir } from '../../../../src/lib/data-dir';
 
@@ -18,6 +18,12 @@ describe('data-dir', () => {
 
   test('getDataDir returns ~/.hyperneo', () => {
     expect(getDataDir()).toBe(join(homedir(), '.hyperneo'));
+  });
+
+  test('getDataDir resolves inside the test temp directory, never the real home', () => {
+    const dataDir = getDataDir();
+    expect(dataDir.startsWith(tmpdir())).toBe(true);
+    expect(dataDir.startsWith(join(userInfo().homedir, DATA_DIR_NAME))).toBe(false);
   });
 
   test('getDataDir prefers HYPERNEO_DATA_DIR when set', () => {
