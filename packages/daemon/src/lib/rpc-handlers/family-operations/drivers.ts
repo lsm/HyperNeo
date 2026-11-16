@@ -39,6 +39,7 @@ import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { WorkChatKind, WorkChatMatch } from '../../../storage/work-chat-search.ts';
 import {
+  claimStartedWork,
   markWorkUnusable,
   readReusableWorkers,
   recordStartedWork,
@@ -675,6 +676,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
+    claimWorker: (ref: StartedWork, todoId?: string) => claimStartedWork(db(), ref, todoId),
     reportUncertain: async (report: WorkSendUncertainty) => {
       const to = sessionSender(report.from) ?? new NeoRepository(db()).defaultBinding()?.sessionId;
       if (!to) throw new Error('No originating session or default Neo for the uncertainty report.');

@@ -24,6 +24,37 @@ export function markWorkUnusable(db: BunDatabase, ref: StartedWork): void {
 
 const UNUSABLE_FOR_MS = 60 * 60_000;
 
+export function claimStartedWork(
+  db: BunDatabase,
+  ref: StartedWork,
+  todoId?: string
+): (() => void) | null {
+  const claim = () => {
+    if (
+      db
+        .prepare(
+          'SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND released_at IS NOT NULL'
+        )
+        .get(ref.adapter, ref.id)
+    )
+      return null;
+    if (!todoId) return () => {};
+    const previous =
+      (
+        db.prepare('SELECT ref FROM neo_todo_sessions WHERE todo_id = ?').get(todoId) as
+          | { ref: string | null }
+          | undefined
+      )?.ref ?? null;
+    const claimed = JSON.stringify({ adapter: ref.adapter, id: ref.id });
+    db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(claimed, todoId);
+    return () =>
+      void db
+        .prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ? AND ref = ?')
+        .run(previous, todoId, claimed);
+  };
+  return db.transaction(claim, 'immediate')();
+}
+
 export function readStartedWork(
   db: BunDatabase,
   freeOn: string | null = null,
@@ -65,7 +96,7 @@ export function readStartedWork(
        WHERE ?1 IS NULL OR (worker.adapter = ?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked
            WHERE marked.adapter = worker.adapter AND marked.id = worker.id
-             AND marked.unusable_at > ?2)
+             AND (marked.unusable_at > ?2 OR marked.released_at IS NOT NULL))
          AND NOT EXISTS (SELECT 1 FROM neo_todo_sessions bound
            JOIN neo_todos todo ON todo.id = bound.todo_id
            JOIN neo_asks ask ON ask.id = todo.ask_id

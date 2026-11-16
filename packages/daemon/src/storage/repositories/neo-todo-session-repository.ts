@@ -666,7 +666,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
                 LIMIT 1) AS releasedBy
              FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-            WHERE t.state = 'done' AND t.finished_at > ? AND s.ref IS NOT NULL
+            WHERE t.state IN ('done', 'removed') AND COALESCE(t.finished_at, t.updated_at) > ?
+              AND s.ref IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM pack_facts f
                 WHERE f.todo_id = s.todo_id AND f.pack = 'core' AND f.key = 'released')`
         )
@@ -684,6 +685,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       shared: row.shared === 1,
       releasedBy: row.releasedBy,
     }));
+  }
+
+  fenceRelease(ref: WorkRef, now: number): boolean {
+    const fence = () => {
+      if (this.doingTodoOn(ref, null, ['todo', 'doing', 'blocked', 'failed'])) return false;
+      this.db
+        .prepare(`INSERT INTO work_started_sessions (adapter, id, started_at, released_at)
+          VALUES (?1, ?2, ?3, ?3) ON CONFLICT (adapter, id)
+          DO UPDATE SET released_at = COALESCE(released_at, excluded.released_at)`)
+        .run(ref.adapter, ref.id, now);
+      return true;
+    };
+    return this.db.transaction(fence, 'immediate')();
   }
 
   recordReleased(todoId: string, released: unknown): void {
@@ -738,6 +752,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'noteWorkerStatus',
     'markWorkerUnusable',
     'queueOn',
+    'fenceRelease',
     'recordReleased',
   ]
 );

@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_TODO_RELEASE_PRINCIPAL } from './session-archive-operation.ts';
+import { WORKTREE_IN_USE } from '../drivers/work-placement.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -87,8 +88,11 @@ async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: 
 export function readNeoTodoArchive(
   outcome: OperationOutcome
 ): { value: Released } | { reason: Pending } {
-  const result = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
-  return result?.ok
+  const result =
+    outcome.kind === 'completed'
+      ? (outcome.value as { ok?: boolean; value?: { worktree?: { reason?: string } } })
+      : null;
+  return result?.ok && result.value?.worktree?.reason !== WORKTREE_IN_USE
     ? { value: { released: result } }
     : { reason: { pending: JSON.stringify(result ?? outcome).slice(0, 300) } };
 }
@@ -108,6 +112,14 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(planNeoTodoRelease, 'release', 'result:release')
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
+  .pipe(
+    async (ref: WorkRef, sessions: NeoTodoSessionRepository) =>
+      (await sessions.write('fenceRelease', ref, Date.now()))
+        ? { value: ref }
+        : { reason: { kept: 'bound_to_live_todo' as const } },
+    ['release', 'sessions'],
+    'result:release'
+  )
   .pipe(
     async (ref: WorkRef, invoke: Invoke) =>
       readNeoTodoArchive(await invoke(daemon, 'neo.session.archive', { ref })),

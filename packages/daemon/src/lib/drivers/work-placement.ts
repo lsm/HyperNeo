@@ -1,4 +1,6 @@
-import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { simpleGit } from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -8,6 +10,7 @@ import type { Result, WorkArchived } from './types.ts';
 import { releaseWorkerWorkFolders } from './worker-sandbox.ts';
 
 const log = new Logger('work-placement');
+const execFileAsync = promisify(execFile);
 
 export async function releaseRemovedWorkerFolders(directory: string) {
   await releaseWorkerWorkFolders(directory).catch((error) =>
@@ -107,6 +110,17 @@ const cleanupPlan = (superpipe({})('worker-worktree-cleanup') as PipelineAPI)
   )
   .end('ready') as (facts: Facts) => true | { reason: string };
 
+export const WORKTREE_IN_USE = 'A running process is inside the worktree; kept.';
+
+async function folderInUse(directory: string): Promise<boolean> {
+  const uid = String(process.getuid?.() ?? '');
+  const { stdout } = await execFileAsync('lsof', ['-w', '-a', '-d', 'cwd', '-u', uid, '-Fn']);
+  const root = realpathSync(directory);
+  return stdout
+    .split('\n')
+    .some((line) => line.startsWith('n') && `${line.slice(1)}/`.startsWith(`${root}/`));
+}
+
 export async function cleanupOwnedWorktree(
   directory: string,
   roots: readonly string[]
@@ -145,6 +159,7 @@ export async function cleanupOwnedWorktree(
     ]);
     const plan = cleanupPlan({ dirty: !status.isClean(), unpushed: unpushed.trim(), submodules });
     if (plan !== true) return { directory, removed: false, reason: plan.reason };
+    if (await folderInUse(directory)) return { directory, removed: false, reason: WORKTREE_IN_USE };
     await simpleGit(dirname(directory)).raw(['--git-dir', common, 'worktree', 'remove', directory]);
     await releaseRemovedWorkerFolders(directory);
     return { directory, removed: true };
