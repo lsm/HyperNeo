@@ -133,6 +133,16 @@ describe('rankLines', () => {
     ]);
   });
 
+  test('a repository route or rule applies whatever the case of the repository name', () => {
+    const scope = { repo: 'Owner/Repo' };
+    const routes = [{ kind: 'coding.write', repos: ['owner/repo'], lines: [C] }];
+    expect(rankLines(input({ scope, prefs: { routes, rules: [] } })).ranked[0].line).toEqual(C);
+    const rules = [{ line: A, never: { repos: ['owner/REPO'] } }];
+    expect(rankLines(input({ scope, prefs: { routes: [], rules } })).skipped).toEqual([
+      { line: A, reason: 'excluded by a rule' },
+    ]);
+  });
+
   test('is exhausted only when every candidate is skipped', () => {
     const ranking = rankLines(input({ availability: {} }));
     expect(ranking.ranked).toEqual([]);

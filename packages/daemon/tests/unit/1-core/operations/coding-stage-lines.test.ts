@@ -159,24 +159,26 @@ describe('rankCodingTargets', () => {
 });
 
 describe('codingStartAlternatives', () => {
-  test('a hyperneo start offers every usable catalog model after its own, at the same place', () => {
-    expect(codingStartAlternatives(hyperneo, catalog)).toEqual([hyperneo, { ...hyperneo, ...glm }]);
-    expect(codingStartAlternatives(desktop, catalog)).toEqual([desktop]);
+  test('a hyperneo start offers every usable catalog model after its own, at the same place', async () => {
+    expect(await codingStartAlternatives(hyperneo, driverCodingLines(catalog))).toEqual([
+      hyperneo,
+      { ...hyperneo, ...glm },
+    ]);
+    expect(await codingStartAlternatives(desktop, driverCodingLines(catalog))).toEqual([desktop]);
   });
 
   test('a model id two providers share is offered once, as the line the driver starts', async () => {
     const shared = [catalogModel('m-1', 'x'), catalogModel('m-1', 'y'), catalogModel('n-1', 'z')];
     const target = { adapter: 'hyperneo', place, model: 'n-1' };
-    expect(codingStartAlternatives(target, shared).map((entry) => entry.model)).toEqual([
-      'n-1',
-      'm-1',
-    ]);
+    expect(
+      (await codingStartAlternatives(target, driverCodingLines(shared))).map((entry) => entry.model)
+    ).toEqual(['n-1', 'm-1']);
     const held = { holds: [{ provider: 'z', model: 'n-1', retryAt: 5_000 }] };
     expect(
       await rankCodingTargets(
         driverCodingLines(shared, held),
         'coding.write',
-        codingStartAlternatives(target, shared),
+        await codingStartAlternatives(target, driverCodingLines(shared)),
         {}
       )
     ).toMatchObject({ value: [{ ...target, model: 'm-1' }] });
@@ -185,7 +187,7 @@ describe('codingStartAlternatives', () => {
   test('a remote start is left to its own daemon and never ranked here', async () => {
     const remote = { ...hyperneo, place: { ...place, daemon: 'other-host' } };
     const calls: string[] = [];
-    expect(codingStartAlternatives(remote, catalog)).toEqual([remote]);
+    expect(await codingStartAlternatives(remote, driverCodingLines(catalog))).toEqual([remote]);
     expect(
       await rankCodingTargets(
         driverCodingLines(catalog, { ready: [] }, calls),
@@ -210,7 +212,7 @@ describe('rankCodingTargets with an inherited start', () => {
     const result = await rankCodingTargets(
       driverCodingLines(catalog, { rules }),
       'coding.write',
-      codingStartAlternatives(defaulted, catalog),
+      await codingStartAlternatives(defaulted, driverCodingLines(catalog)),
       {}
     );
     if ('reason' in result) throw new Error(result.reason);
@@ -285,11 +287,9 @@ describe('codingStartAlternatives with a shared id whose providers have their ow
       catalogModel('n-1', 'z'),
     ];
     const target = { adapter: 'hyperneo', place, model: 'n-1' };
-    expect(codingStartAlternatives(target, shared).map((entry) => entry.model)).toEqual([
-      'n-1',
-      'm-1',
-      'M Y',
-    ]);
+    expect(
+      (await codingStartAlternatives(target, driverCodingLines(shared))).map((entry) => entry.model)
+    ).toEqual(['n-1', 'm-1', 'M Y']);
     const holds = [
       { provider: 'x', model: 'm-1', retryAt: 5_000 },
       { provider: 'z', model: 'n-1', retryAt: 5_000 },
@@ -298,10 +298,35 @@ describe('codingStartAlternatives with a shared id whose providers have their ow
       await rankCodingTargets(
         driverCodingLines(shared, { holds }),
         'coding.write',
-        codingStartAlternatives(target, shared),
+        await codingStartAlternatives(target, driverCodingLines(shared)),
         {}
       )
     ).toMatchObject({ value: [{ ...target, model: 'M Y' }] });
+  });
+});
+
+describe('codingStartAlternatives with a shared id and a shared name', () => {
+  test('the second provider is offered by its own alias, and wins when the first is held', async () => {
+    const shared = [
+      { ...catalogModel('m-1', 'x', 'M'), alias: 'm-1-x' },
+      { ...catalogModel('m-1', 'y', 'M'), alias: 'm-1-y' },
+    ];
+    const target = { adapter: 'hyperneo', place, model: 'm-1' };
+    const lines = driverCodingLines(shared, {
+      holds: [{ provider: 'x', model: 'm-1', retryAt: 5_000 }],
+    });
+    expect((await codingStartAlternatives(target, lines)).map((entry) => entry.model)).toEqual([
+      'm-1',
+      'm-1-y',
+    ]);
+    expect(
+      await rankCodingTargets(
+        lines,
+        'coding.write',
+        await codingStartAlternatives(target, lines),
+        {}
+      )
+    ).toMatchObject({ value: [{ ...target, model: 'm-1-y' }] });
   });
 });
 

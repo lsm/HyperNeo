@@ -52,6 +52,8 @@ function world(coding = false) {
     refuse: null as string | null,
     start: false,
     status: null as (() => unknown) | null,
+    closeOnStart: false,
+    attend: false,
   };
   const pack = {
     id: 'synthetic',
@@ -81,6 +83,10 @@ function world(coding = false) {
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
         return completed({ ok: false, reason: 'start_failed', detail: 'driver down' });
+      if (name === 'work.start' && failing.closeOnStart) {
+        const open = store.getAsk('ask');
+        if (open) store.settleAsk(open, 'dropped', 'Dropped', 2);
+      }
       if (name === 'work.start')
         return completed({ ok: true, value: { ref: { adapter: 'hyperneo', id: 'fresh' } } });
       if (name === 'work.send') return completed({ ok: true, value: { delivered: true } });
@@ -89,6 +95,7 @@ function world(coding = false) {
     packs: () => [coding ? real : pack],
     tell: async () => {},
     attend: async (event) => {
+      if (failing.attend) throw new Error('attention write failed');
       told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
     },
     changed: () => {},
@@ -198,6 +205,16 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     await w.runner.start(id);
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
     expect(w.told).toContainEqual({ id, note: why, key: 'todo.line_moved' });
+  });
+
+  test('a moved start whose ask closes during the start is stopped even when the note fails', async () => {
+    const w = (current = world());
+    w.failing.closeOnStart = true;
+    w.failing.attend = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.calls.map((call) => call.name)).toContain('work.stop');
   });
 
   test('a moved start that fails to start tells Neo nothing about the move', async () => {
