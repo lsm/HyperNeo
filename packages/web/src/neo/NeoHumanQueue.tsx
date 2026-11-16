@@ -1,10 +1,14 @@
-import type { NeoAskEntry, NeoQuestionAnswer } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoAskEntry,
+  NeoQuestionAnswer,
+  NeoQuestionEntry,
+} from '@hyperneo/shared/types/neo-ask';
 import type {
   NeoHumanQueue as Queue,
   NeoHumanQueueItem,
   NeoHumanQueueState,
 } from '@hyperneo/shared/types/neo-snapshot';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
 import { QuestionBox } from './NeoAskTodos.tsx';
 import { neoPlainClass } from './NeoCardParts.tsx';
@@ -21,15 +25,32 @@ export function NeoHumanQueue({
   disabled,
   onAnswer,
   onHold,
+  onLoadDetails,
+  onReply,
+  onOpen,
+  focusQuestionId,
 }: {
   queue: Queue;
   entries: readonly NeoAskEntry[];
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onHold: (questionId: string, held: boolean) => void;
+  onLoadDetails?: (askId: string) => Promise<NeoAskEntry>;
+  onReply?: (question: NeoQuestionEntry) => void;
+  onOpen?: (link: string, title: string) => void;
+  focusQuestionId?: string;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
+  const focused = queue.items.find(
+    (item) => 'questionId' in item && item.questionId === focusQuestionId
+  );
+  useEffect(() => {
+    if (!focused) return;
+    setState(focused.state);
+    setAsk(null);
+  }, [focusQuestionId, focused?.state]);
   const title = (id: string) => entries.find((entry) => entry.ask.id === id)?.ask.title ?? id;
   const count = (s: NeoHumanQueueState, a: string | null) =>
     Object.entries(queue.counts).reduce(
@@ -41,6 +62,22 @@ export function NeoHumanQueue({
     (item) => item.state === state && (ask === null || item.askId === ask)
   );
   const groups = [...new Set(items.map((item) => item.askId))];
+  const card = (askId: string): NeoAskEntry | undefined => {
+    const entry = entries.find((candidate) => candidate.ask.id === askId);
+    const loaded = details[askId];
+    if (!entry?.summary) return entry;
+    return loaded && loaded.ask.updatedAt >= entry.ask.updatedAt ? loaded : undefined;
+  };
+  const stale = groups.filter(
+    (id) => !card(id) && entries.some((entry) => entry.ask.id === id && entry.summary)
+  );
+  useEffect(() => {
+    for (const id of stale)
+      void onLoadDetails?.(id).then(
+        (value) => setDetails((current) => ({ ...current, [id]: value })),
+        () => {}
+      );
+  }, [stale.join(), onLoadDetails]);
   if (!queue.items.length) return null;
   return (
     <div data-human-queue class="mt-6 space-y-3">
@@ -102,10 +139,12 @@ export function NeoHumanQueue({
               <QueueItem
                 key={'questionId' in item ? item.questionId : item.todoId}
                 item={item}
-                entries={entries}
+                entry={card(id)}
                 disabled={disabled}
                 onAnswer={onAnswer}
                 onHold={onHold}
+                onReply={onReply}
+                onOpen={onOpen}
               />
             ))}
         </section>
@@ -116,16 +155,20 @@ export function NeoHumanQueue({
 
 function QueueItem({
   item,
-  entries,
+  entry,
   disabled,
   onAnswer,
   onHold,
+  onReply,
+  onOpen,
 }: {
   item: NeoHumanQueueItem;
-  entries: readonly NeoAskEntry[];
+  entry?: NeoAskEntry;
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onHold: (questionId: string, held: boolean) => void;
+  onReply?: (question: NeoQuestionEntry) => void;
+  onOpen?: (link: string, title: string) => void;
 }) {
   if (item.state === 'progress')
     return (
@@ -136,9 +179,7 @@ function QueueItem({
     );
   const held = item.state === 'held';
   const hold = { held, toggle: () => onHold(item.questionId, !held) };
-  const question = entries
-    .find((entry) => entry.ask.id === item.askId)
-    ?.questions.find((card) => card.id === item.questionId);
+  const question = entry?.questions.find((card) => card.id === item.questionId);
   return (
     <div data-queue-card={item.questionId}>
       <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-fg-muted">
@@ -153,6 +194,8 @@ function QueueItem({
           question={question}
           disabled={disabled}
           onAnswer={(answer) => onAnswer(item.questionId, answer)}
+          onReply={onReply && (() => onReply(question))}
+          onOpen={onOpen}
           hold={hold}
         />
       ) : (

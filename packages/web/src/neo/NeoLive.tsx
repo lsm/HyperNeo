@@ -1062,6 +1062,20 @@ export function NeoLive() {
               disabled={!connected || !!neo.busyWork}
               onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
               onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+              onLoadDetails={loadNeoAskDetails}
+              onOpen={openSession}
+              focusQuestionId={cardTarget?.questionId}
+              onReply={
+                ready
+                  ? (question) =>
+                      replyInComposer({
+                        author: 'Neo',
+                        text: neoQuestionText(question),
+                        anchor: `neo-ref-question-${question.id}`,
+                        replyTo: { kind: 'question', id: question.id },
+                      })
+                  : undefined
+              }
             />
           )}
           {!workQuery.trim() && (
