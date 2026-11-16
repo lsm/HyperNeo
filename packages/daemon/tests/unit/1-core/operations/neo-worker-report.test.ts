@@ -20,7 +20,6 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
-import { recordNeoRequestTodo } from '../../../../src/lib/neo/request-todo.ts';
 import { NEO_ATTENTION_KINDS } from '../../../../src/lib/neo/attention/decide.ts';
 import { createNeoAttentionSweep } from '../../../../src/lib/neo/attention/sweep.ts';
 import {
@@ -859,23 +858,36 @@ test('a request todo names its sender, and a repeat after Neo closes it records 
   }
 });
 
-test('a request todo that fails to record leaves no ask behind', async () => {
-  const { db, service } = await setup();
-  const add = vi.spyOn(service.todos, 'addTodo').mockImplementation(() => {
+test('a retried request whose todo failed to record records it on the retry, waking Neo once', async () => {
+  const { db, service, send } = await setup();
+  const request = {
+    to: 'neo',
+    kind: 'question',
+    text: 'Close the merged todo',
+    idempotencyKey: 'request-once',
+  };
+  const wakes = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .filter((job) => JSON.stringify(job.payload).includes('Close the merged todo'));
+  const add = vi.spyOn(service.todos, 'addTodo').mockImplementationOnce(() => {
     throw new Error('synthetic todo write failure');
   });
   try {
-    expect(() =>
-      recordNeoRequestTodo(service.todos, {
-        incident: 'synthetic-incident',
-        neoSession: 'neo',
-        sender: 'stranger',
-        text: 'Close the merged todo',
-        messageId: 'synthetic-message',
-        now: 1,
-      })
-    ).toThrow('synthetic todo write failure');
-    expect(service.todos.listOpenAsks().map((ask) => ask.id)).toEqual(['ask']);
+    expect(await send(request, 'stranger')).not.toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    add.mockRestore();
+    expect(await send(request, 'stranger')).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'accepted' },
+    });
+    const asks = service.todos.listOpenAsks().filter((ask) => ask.id !== 'ask');
+    expect(asks).toHaveLength(1);
+    expect(service.todos.listTodos(asks[0].id)).toHaveLength(1);
+    expect(wakes()).toHaveLength(1);
   } finally {
     add.mockRestore();
     service.dispose();
