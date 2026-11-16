@@ -903,6 +903,26 @@ test.each(['human', undefined])(
   }
 );
 
+test('label invalidation during a facts read cannot be overwritten by that sweep', async () => {
+  labels = ['human-merge'];
+  let invalidated = false;
+  const racing: SpawnFn = (args, options) => {
+    const result = spawn(args, options);
+    if (!invalidated && args.some((arg) => arg.includes('/labels'))) {
+      invalidated = true;
+      labels = [];
+      run.invalidate(url);
+    }
+    return result;
+  };
+  const run = sweep(racing);
+  await run(10);
+  expect(invalidated).toBe(true);
+  expect(merges()).toHaveLength(0);
+  await run(11);
+  expect(merges()).toHaveLength(1);
+});
+
 test('same-head sign-off holds skip reads for ten minutes then refresh every gate', async () => {
   labels = ['human-merge'];
   const run = sweep();
