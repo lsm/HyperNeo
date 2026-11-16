@@ -286,6 +286,18 @@ type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
 
+function ownedTodoId(
+  input: StartInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): string | undefined {
+  return input.todoId &&
+    (caller.source === 'internal' ||
+      (!!caller.sessionId && deps.isOpenTodo?.(input.todoId, caller.sessionId)))
+    ? input.todoId
+    : undefined;
+}
+
 function neoTodoRecords(
   input: StartDraft | QueuedInput,
   caller: OperationCaller,
@@ -679,7 +691,9 @@ export async function reuseIdleWorker(
           harness: adapter.id,
         })
       : input.message;
-    const unclaim = deps.claimWorker ? deps.claimWorker(work.ref, input.todoId) : () => {};
+    const unclaim = deps.claimWorker
+      ? deps.claimWorker(work.ref, ownedTodoId(input, caller, deps))
+      : () => {};
     if (!unclaim) {
       reuseHolds.delete(key);
       continue;
