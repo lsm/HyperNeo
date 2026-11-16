@@ -9,8 +9,8 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const out = `${run}/evidence/${phase}`;
 mkdirSync(out, { recursive: true });
-const expected = ['waiting-old', 'waiting-a', 'waiting-b', 'blocked', 'queued', 'running', 'done'];
-const expectedCards = ['waiting-old-question', 'waiting-a-question', 'waiting-b-question', 'waiting-old-early', 'waiting-a-held'];
+const expected = ['waiting-old', 'waiting-b', 'waiting-a', 'blocked', 'queued', 'running', 'done'];
+const expectedCards = ['waiting-old-question', 'waiting-b-report', 'waiting-a-question', 'waiting-b-question', 'waiting-old-early', 'waiting-a-held'];
 const observations = [];
 const pair = async (page) => {
   const code = execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'device.pair.create', JSON.stringify({ kind: 'human', name: 'Synthetic order browser' })], {
@@ -42,9 +42,32 @@ try {
       const initial = await order();
       const cards = await cardOrder();
       assert.equal(await page.locator('[data-ask="waiting-a"]:visible').getByText('Waiting on you', { exact: true }).count(), 1);
+      const show = (selector, block) => page.locator(`${selector}:visible`).first().evaluate((node, at) => node.scrollIntoView({ block: at }), block);
+      const report = page.locator('#neo-ref-question-waiting-b-report:visible').first();
+      let tail = false;
+      for (let attempt = 0; attempt < 20 && !tail; attempt++) {
+        await report.getByRole('button', { name: 'View full report' }).click();
+        tail = (await page.getByRole('dialog').innerText()).includes('TAIL-OF-REPORT');
+        await page.keyboard.press('Escape');
+        await page.getByRole('dialog').waitFor({ state: 'detached' });
+        if (!tail) await page.waitForTimeout(250);
+      }
       for (const scheme of ['light', 'dark']) {
         await page.emulateMedia({ colorScheme: scheme });
-        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}.png` });
+        await page.evaluate(() => document.querySelectorAll('*').forEach((node) => { if (node.scrollTop) node.scrollTop = 0; }));
+        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-top.png` });
+        await show('#neo-ref-question-waiting-a-held', 'center');
+        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-held.png` });
+        await show('[data-scene-group="attention"]', 'start');
+        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-asks.png` });
+        if (!tail) continue;
+        await report.getByRole('button', { name: 'View full report' }).click();
+        await page.getByRole('dialog').getByText('TAIL-OF-REPORT').evaluate((node) => node.scrollIntoView({ block: 'end' }));
+        await page.getByRole('dialog').getByText('TAIL-OF-REPORT').waitFor({ state: 'visible' });
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: `${out}/waiting-order-${width}-${scheme}-report.png` });
+        await page.keyboard.press('Escape');
+        await page.getByRole('dialog').waitFor({ state: 'detached' });
       }
       await page.emulateMedia({ colorScheme: 'light' });
       execFileSync('bun', ['.claude/skills/verify/waiting-card-order-seed.ts', run, 'update'], {
@@ -54,13 +77,14 @@ try {
       await openWork();
       const reloaded = await order();
       const fits = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
-      observations.push({ width, initial, reloaded, cards, fits });
+      observations.push({ width, initial, reloaded, cards, tail, fits });
       writeFileSync(`${out}/waiting-order.json`, JSON.stringify(observations, null, 2));
       assert(fits, 'no horizontal overflow');
       if (phase === 'after') {
         assert.deepEqual(reloaded, initial, 'unrelated status update and reload keep the same order');
         assert.deepEqual(initial, expected);
         assert.deepEqual(cards, expectedCards, 'unanswered cards newest first across asks, held cards after');
+        assert(tail, 'the promoted long report opens in full');
       }
       else assert.notDeepEqual(cards, expectedCards, 'reproduce cards grouped by ask instead of by card time');
     } finally { await context.close(); }

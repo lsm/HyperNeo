@@ -32,23 +32,25 @@ try {
   new SettingsRepository(db).updateGlobalSettings({ language: 'en' });
   const store = new NeoAskTodoRepository(db);
   const base = Date.parse('2026-10-25T00:00:00Z');
+  const minute = 60_000;
   for (const [id, title, time, state] of [
-    ['waiting-old', 'Older human decision', 1, 'blocked'],
-    ['waiting-b', 'New human decision B', 2, 'todo'],
-    ['waiting-a', 'New human decision A', 2, 'todo'],
+    ['waiting-old', 'Oldest request, newest card', 1, 'blocked'],
+    ['waiting-b', 'Newer request B', 2, 'todo'],
+    ['waiting-a', 'Newer request A', 2, 'todo'],
     ['blocked', 'Blocked work in progress', 3, 'blocked'],
     ['running', 'Running work', 4, 'doing'],
     ['queued', 'Queued work', 5, 'todo'],
     ['done', 'Finished work', 6, 'done'],
   ] as const) {
-    const now = base + time * 1000;
+    const now = base + time * minute;
     store.openAsk({ id, title, sessionId: root, projectId: null, originMessageId: null, request: 'Synthetic ordering verification.', createdAt: now });
     const todo = store.addTodo(`${id}-step`, id, { title: `${title} step`, doneWhen: 'Observed result', check: null, instruction: null, named: null }, now);
     store.updateTodo(todo, { state, ...(state === 'blocked' ? { blockedReason: 'Synthetic dependency' } : {}) }, now);
-    const askedAt = id === 'waiting-old' ? base + 7000 : now;
-    if (id.startsWith('waiting-')) store.askQuestion(`${id}-question`, id, { kind: 'choice', text: `Choose for ${title}`, options: ['Continue', 'Revise'] }, askedAt);
+    const askedAt = id === 'waiting-old' ? base + 7 * minute : now;
+    if (id.startsWith('waiting-')) store.askQuestion(`${id}-question`, id, { kind: 'choice', text: `Card asked at minute ${(askedAt - base) / minute}`, options: ['Continue', 'Revise'] }, askedAt);
   }
-  store.askQuestion('waiting-old-early', 'waiting-old', { kind: 'choice', text: 'Earlier card on the older decision', options: ['Continue', 'Revise'] }, base + 1000);
-  store.askQuestion('waiting-a-held', 'waiting-a', { kind: 'choice', text: 'Held card on decision A', options: ['Continue', 'Revise'] }, base + 9000);
-  db.prepare("UPDATE neo_questions SET held_at = ? WHERE id = 'waiting-a-held'").run(base + 9001);
+  store.askQuestion('waiting-b-report', 'waiting-b', { kind: 'yesno', text: 'Card asked at minute 5: approve the long report?', document: `${'Synthetic report line.\n'.repeat(150)}TAIL-OF-REPORT` }, base + 5 * minute);
+  store.askQuestion('waiting-old-early', 'waiting-old', { kind: 'choice', text: 'Card asked at minute 1', options: ['Continue', 'Revise'] }, base + minute);
+  store.askQuestion('waiting-a-held', 'waiting-a', { kind: 'choice', text: 'Card asked at minute 9, on hold', options: ['Continue', 'Revise'] }, base + 9 * minute);
+  db.prepare("UPDATE neo_questions SET held_at = ? WHERE id = 'waiting-a-held'").run(base + 9 * minute + 1);
 } finally { db.close(); }

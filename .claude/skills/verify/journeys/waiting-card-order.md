@@ -22,12 +22,15 @@ Keep the launch process alive. Run `before` before the production fix, and `afte
 after rebuilding web. The seed creates seven synthetic cards: three waiting on a
 human (including one with a blocked todo), blocked work, running work, queued work,
 and finished work. The oldest waiting ask holds the newest card; the two newer asks
-hold older cards with equal timestamps. The oldest ask also holds its earliest
-card, and ask A holds a newer card that is on hold, so card times interleave
-across asks.
+hold older cards with equal timestamps. Cards are minutes apart and say when they
+were asked, so the visible times read newest first. The oldest ask also holds its
+earliest card, ask B holds a long report card, and ask A holds a newer card that
+is on hold, so card times interleave across asks.
 
 The browser helper opens the mobile work sheet, records card IDs in rendered
-order, screenshots each viewport in light and dark, and uses the seed's guarded update mode to
+order, opens the long report until its full tail shows, screenshots each viewport
+in light and dark (top, scrolled to the held card, scrolled to the work-only ask
+cards, and the open report), and uses the seed's guarded update mode to
 change only an older fixture card's outcome/activity time. It reloads the actual
 snapshot and records the resulting order. No model runs or production DB writes.
 Before proves the cards render grouped by ask instead of by card time.
@@ -37,7 +40,8 @@ unanswered card,
 and the previous order for everything else. The unrelated outcome update and
 reload must leave the order unchanged. Neither viewport may overflow horizontally.
 
-Inspect evidence/{before,after}/waiting-order-{1280,390}-{light,dark}.png and waiting-order.json.
+Inspect evidence/{before,after}/waiting-order-{1280,390}-{light,dark}-{top,held,asks,report}.png
+and waiting-order.json. After also requires the report's tail.
 Component coverage also changes snapshot input order and moves a waiting card back
 to doing, asserting the visible card order after each live rerender. A failed
 assertion or unreadable/clipped screenshot fails the journey.
