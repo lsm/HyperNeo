@@ -104,4 +104,45 @@ describe('goal work wakes', () => {
     expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
     expect(await fire(goal.id)).toEqual({ outcome: 'skipped_budget' });
   });
+
+  test('silent budget skips do not hold back the next day notice', async () => {
+    const goal = await create({
+      dailyRunLimit: 1,
+      cadence: { kind: 'every', everyMs: 14_400_000 },
+    });
+    const outcomes = [];
+    for (let run = 0; run < 8; run++) outcomes.push((await fire(goal.id)).outcome);
+    expect(outcomes).toEqual([
+      'fired',
+      'skipped_budget',
+      'skipped_budget',
+      'skipped_budget',
+      'skipped_budget',
+      'skipped_budget',
+      'fired',
+      'skipped_budget',
+    ]);
+    expect(messages).toHaveLength(4);
+    expect(messages[1]).toContain('daily run limit of 1');
+    expect(messages[3]).toContain('daily run limit of 1');
+  });
+
+  test('completing and reactivating a goal keeps its runs in the daily limit until they age out', async () => {
+    const goal = await create({ dailyRunLimit: 1 });
+    expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
+    const firedAt = now;
+    await call('goal.session.update', { goalId: goal.id, status: 'completed' });
+    expect(scheduler.repo.getBySource('goal', goal.id)).toBeNull();
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+
+    expect(await fire(goal.id)).toEqual({ outcome: 'skipped_budget' });
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toContain('daily run limit of 1');
+
+    await call('goal.session.update', { goalId: goal.id, status: 'archived' });
+    now = firedAt + 86_400_000;
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
+    expect(messages).toHaveLength(3);
+  });
 });
