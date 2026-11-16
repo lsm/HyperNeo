@@ -142,8 +142,6 @@ export async function procFolderInUse(
   return busy.includes(true);
 }
 
-// Unit tests set HYPERNEO_TEST_OWN_PROCESSES so that host processes outside the test
-// run (a CI runner's own sudo, say) cannot keep their worktrees.
 async function testRunProcesses(): Promise<string[]> {
   const pids = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
   const parents = new Map<string, string>();
