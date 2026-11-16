@@ -12,7 +12,12 @@ import {
   type CodingPrTransition,
   planCodingLedgerTurnOwner,
 } from './pr-ledger.ts';
-import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
+import {
+  CODING_MANUAL_MERGE_NEXT_STEP,
+  codingFindingsText,
+  codingPrUrl,
+  type CodingSweepDeps,
+} from './pr-sweep.ts';
 import {
   codingPrMayBeInRunningTurn,
   planCodingUnclaimedPrs,
@@ -35,7 +40,9 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
   if (row.state === 'failing')
     return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
   if (row.state === 'changes_requested')
-    return owner(`has requested changes on head ${head(row)}. Address the review and push.`);
+    return owner(
+      `has requested changes on head ${head(row)}. Address the review and push.${codingFindingsText(row.findings)}`
+    );
   if (row.state === 'dirty')
     return owner('now conflicts with its base. Merge the base branch in and push.');
   if (row.state === 'approved_green')

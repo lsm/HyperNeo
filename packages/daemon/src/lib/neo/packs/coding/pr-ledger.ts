@@ -8,6 +8,7 @@ import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './wa
 import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
+  codingCrossModelFindings,
   codingCrossModelReviewed,
   codingHasAuthorLine,
   codingReviewerPolicy,
@@ -196,7 +197,8 @@ export function codingPrState(
   const review =
     pr.reviews.nodes.filter((item) => item.commit?.oid === pr.headRefOid).at(-1)?.state ??
     pr.reviewDecision;
-  if (review === 'CHANGES_REQUESTED') return 'changes_requested';
+  if (review === 'CHANGES_REQUESTED' || codingCrossModelFindings(pr.headRefOid, stageFacts).length)
+    return 'changes_requested';
   if (!policy.mergePolicy) return 'waiting_human';
   const readyCi = noCi || ci === 'SUCCESS';
   const humanSignoff =
@@ -244,6 +246,7 @@ export type CodingLedgerRow = {
   replyAt?: number | null;
   createdAt?: number | null;
   authorIsBot?: boolean;
+  findings?: string[];
 };
 
 export function planCodingLedgerRead(
@@ -264,24 +267,24 @@ export function planCodingLedgerRead(
   );
   const policy = readPolicy(canonical);
   const rows = [...open.nodes, ...done.nodes]
-    .map((pr) => ({
-      repo: canonical,
-      number: pr.number,
-      title: pr.title,
-      branch: pr.headRefName,
-      head: pr.headRefOid,
-      state: codingPrState(
-        pr,
-        repoHasCi,
-        policy,
-        policy.crossModelReview ? readStageFacts(canonical, pr.number) : []
-      ),
-      ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
-      replyAt: codingPrReplyAt(pr),
-      closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
-      createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
-      authorIsBot: pr.author?.__typename !== 'User',
-    }))
+    .map((pr) => {
+      const facts = policy.crossModelReview ? readStageFacts(canonical, pr.number) : [];
+      const findings = codingCrossModelFindings(pr.headRefOid, facts);
+      return {
+        repo: canonical,
+        number: pr.number,
+        title: pr.title,
+        branch: pr.headRefName,
+        head: pr.headRefOid,
+        state: codingPrState(pr, repoHasCi, policy, facts),
+        ...(findings.length ? { findings } : {}),
+        ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
+        replyAt: codingPrReplyAt(pr),
+        closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
+        createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
+        authorIsBot: pr.author?.__typename !== 'User',
+      };
+    })
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
   return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
 }

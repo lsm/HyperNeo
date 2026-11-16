@@ -7,6 +7,7 @@ import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
+import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-facts.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -26,6 +27,7 @@ export type CodingSweepRow = {
   nudges: number;
   owner: WorkRef | null;
   mergeBy?: 'owner' | 'daemon';
+  findings?: string[];
 };
 
 export type CodingSweepDeps = {
@@ -71,8 +73,11 @@ const minutesSince = (row: CodingSweepRow, now: number) =>
 
 const owned = (ref: WorkRef) => `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
 
+export const codingFindingsText = (findings: readonly string[] = []) =>
+  findings.length ? ` Review findings: ${findings.join(' ')}` : '';
+
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
-  return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
+  return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}${codingFindingsText(row.findings)}`;
 }
 
 export function codingPrEscalationText(row: CodingSweepRow): string {
@@ -104,6 +109,15 @@ export class CodingPrSweepRepository {
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
         owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
+        findings:
+          row.state === 'changes_requested'
+            ? codingCrossModelFindings(
+                row.head,
+                new CodingStageFactsRepository(this.db).read(
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+                )
+              )
+            : [],
       }));
   }
 
