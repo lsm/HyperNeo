@@ -31,9 +31,6 @@ const holds = (item: NeoHumanQueueItem, focus: NeoWorkFocus) =>
 export const neoHumanQueueHolds = (queue: Queue, focus: NeoWorkFocus) =>
   queue.items.some((item) => holds(item, focus));
 
-export const neoHumanQueueHolder = (queue: Queue, focus: NeoWorkFocus) =>
-  queue.items.find((item) => holds(item, focus));
-
 const tone = (on: boolean) =>
   on ? 'border-accent bg-accent/10 text-fg' : 'border-line text-fg-muted hover:text-fg';
 
@@ -270,10 +267,7 @@ export function NeoHumanQueue({
         )}
       </div>
       {groups.map((id) => {
-        const full =
-          renderAsk &&
-          id !== outside &&
-          (entries.find((entry) => entry.ask.id === id) ?? details[id]);
+        const full = renderAsk && id !== outside && card(id);
         const showFull = !!full && opened.has(id);
         return (
           <section
