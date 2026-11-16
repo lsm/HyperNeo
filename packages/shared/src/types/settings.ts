@@ -112,6 +112,7 @@ export interface VoiceLivePart {
 export interface VoiceSpeechPart {
   provider: 'openai';
   endpoint: string;
+  model?: string;
   voice?: string;
 }
 

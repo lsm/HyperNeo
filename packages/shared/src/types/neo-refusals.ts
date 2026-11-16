@@ -26,7 +26,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   updating:
     'A daemon restart is reserved. Retry speech after the brief update finishes; keep the reply on screen meanwhile.',
   speech_backend_not_configured:
-    'The daemon has no speech backend configured. Ask the operator to set HYPERNEO_SPEECH_URL; reply on screen in the meantime.',
+    'The daemon has no speech backend configured. Ask the operator to set the spoken replies address in the voice settings; reply on screen in the meantime.',
   speech_backend_unavailable:
     'The speech backend could not be reached or returned an unsuccessful response. Reply on screen and ask the operator to check the service before retrying.',
   invalid_speech_backend:

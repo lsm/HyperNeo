@@ -8,7 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { Logger } from '../logger.ts';
 import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
-import { NeoSpeechAudio } from './speech-audio.ts';
+import { NeoSpeechAudio, type SpeechPart } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 import { isSDKResultSuccess, type SDKMessage } from '@hyperneo/shared/sdk';
@@ -59,7 +59,7 @@ type SpeechReceipt = {
   guidance?: string;
 };
 type Entry = { id: string; sessionId: string; clientId: string; text: string; state: SpeechState };
-type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice: string };
+type Listener = { clientId: string; pending: Set<string>; audio: boolean; voice?: string };
 
 function spokenReply(text: string): string {
   const plain = text
@@ -151,7 +151,8 @@ export class NeoSpeech {
     private readonly modeNote?: (sessionId: string) => string | undefined,
     private readonly canSay: (sessionId: string) => boolean = isNeo,
     private readonly speechSession: (sessionId: string) => string = (id) => id,
-    private readonly handOffMode?: (sessionId: string) => boolean
+    private readonly handOffMode?: (sessionId: string) => boolean,
+    speechPart?: () => Promise<SpeechPart | undefined>
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -163,7 +164,8 @@ export class NeoSpeech {
           { source: 'rpc', principal: 'local', clientId: target.clientId }
         ),
       audioBase,
-      audioRequest
+      audioRequest,
+      speechPart
     );
     this.unsubscribe =
       hub.onClientDisconnect?.((id) => {
@@ -473,7 +475,7 @@ export class NeoSpeech {
           clientId,
           pending: new Set(),
           audio: input.audio ?? false,
-          voice: input.voice ?? 'vivian',
+          voice: input.voice,
         });
       return { ok: true };
     }
@@ -495,7 +497,7 @@ export class NeoSpeech {
       if (target?.clientId !== clientId) return { ok: false, reason: 'voice_replies_off' };
       input = {
         requestId: input.requestId,
-        text: ['ryan', 'aiden'].includes(target.voice)
+        text: ['ryan', 'aiden'].includes(target.voice ?? '')
           ? 'Hello. This is Neo speaking.'
           : '你好，这是 Neo 的语音试听。',
       };
