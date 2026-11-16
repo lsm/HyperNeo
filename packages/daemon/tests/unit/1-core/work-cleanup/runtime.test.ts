@@ -42,6 +42,7 @@ test.each(
           {
             env: {
               NODE_ENV: 'test',
+              HYPERNEO_TEST_OWN_PROCESSES: '1',
               HOME: join(fixture, 'home'),
               PATH: process.env.PATH,
               HYPERNEO_CLEANUP_FIXTURE: fixture,
