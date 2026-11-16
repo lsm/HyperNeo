@@ -67,12 +67,7 @@ export function createNeoAttention(deps: {
   digest: Deliver;
   dropped(event: NeoAttentionEvent, reason: string): void;
 }) {
-  const settle = (event: NeoAttentionEvent, told: boolean) =>
-    deps
-      .kinds()
-      .find((kind) => kind.id === event.kind)
-      ?.settled?.(event, told);
-  const tell = (superpipe({})('neo.attention.tell') as PipelineAPI)
+  return (superpipe({})('neo.attention.tell') as PipelineAPI)
     .input(['event', 'now'])
     .pipe(deps.read, 'event', 'known')
     .pipe(
@@ -80,7 +75,6 @@ export function createNeoAttention(deps: {
         const decision = decideNeoAttention(event, known, now, deps.kinds());
         if ('value' in decision) return decision;
         deps.dropped(event, decision.reason);
-        settle(event, false);
         return { reason: { dropped: decision.reason } };
       },
       ['event', 'known', 'now'],
@@ -97,16 +91,15 @@ export function createNeoAttention(deps: {
     )
     .pipe(
       async (event: NeoAttentionEvent, message: Extract<NeoAttentionOutcome, { told: string }>) => {
-        settle(event, await deps[message.told](message.uuid, message.text));
+        if (await deps[message.told](message.uuid, message.text))
+          deps
+            .kinds()
+            .find((kind) => kind.id === event.kind)
+            ?.sent?.(event);
         return message;
       },
       ['event', 'message'],
       'outcome'
     )
     .endAsync('outcome') as (event: NeoAttentionEvent, now: number) => Promise<NeoAttentionOutcome>;
-  return (event: NeoAttentionEvent, now: number) =>
-    tell(event, now).catch((error: unknown) => {
-      settle(event, false);
-      throw error;
-    });
 }

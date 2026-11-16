@@ -84,7 +84,7 @@ function readPrefs(db: Database): RankInput['prefs'] {
 type HeldTodo = {
   todo: { id: string; title: string; named: string | null };
   worker: string;
-  told: number | null;
+  told: { since: number; text: string; sent: boolean } | null;
   hold: HeldLine;
 };
 
@@ -99,7 +99,9 @@ function readCooldowns(db: Database): Cooldown[] {
         json_extract(x.processing_state, '$.since') AS since,
         json_extract(x.processing_state, '$.retryAt') AS retryAt,
         json_extract(x.processing_state, '$.manualRetry') AS manualRetry,
-        json_extract(f.value_json, '$.since') AS told
+        json_extract(f.value_json, '$.since') AS told,
+        json_extract(f.value_json, '$.text') AS toldText,
+        json_extract(f.value_json, '$.sent') AS sent
       FROM sessions x
       LEFT JOIN neo_todo_sessions s ON json_valid(s.ref)
         AND json_extract(s.ref, '$.id') = x.id
@@ -117,7 +119,8 @@ const waitsOnSomeone = ({ reason, manualRetry }: Cooldown) =>
 
 function readHeldTodos(db: Database, now: number): HeldTodo[] {
   return readCooldowns(db).flatMap((row) => {
-    const { id, title, named, worker, provider, model, reason, since, retryAt, told } = row;
+    const { id, title, named, worker, provider, model, reason, since, retryAt, told, toldText } =
+      row;
     const live = waitsOnSomeone(row) || typeof retryAt !== 'number' || retryAt > now;
     return id !== null &&
       live &&
@@ -129,7 +132,10 @@ function readHeldTodos(db: Database, now: number): HeldTodo[] {
           {
             todo: { id: String(id), title: String(title), named: named as string | null },
             worker: String(worker),
-            told: typeof told === 'number' ? told : null,
+            told:
+              typeof told === 'number'
+                ? { since: told, text: String(toldText ?? ''), sent: row.sent === 1 }
+                : null,
             hold: {
               line: { provider, model, harness: 'hyperneo' },
               reason: reason as RateLimitHoldReason,
@@ -168,7 +174,6 @@ async function readAvailability(provider: Provider | undefined): Promise<Availab
 export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
   const now = deps.now ?? Date.now;
   const readings = new Map<string, UsageReading>();
-  const inFlight = new Set<string>();
   const providers = (candidates: readonly NeoLine[]) => [
     ...new Set(candidates.map((line) => line.provider)),
   ];
@@ -268,20 +273,29 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
               entry.worker === worker &&
               entry.hold.since === hold.since
           );
-          const claim = `${todo.id}:${hold.since}`;
+          if (!live) return [];
+          const pending =
+            live.told?.since === hold.since && !live.told.sent ? live.told.text : null;
           if (
-            !live ||
-            inFlight.has(claim) ||
-            onLineHeld({ hold, rules, ranking, now: at, told: live.told }).action !== 'tellNeo'
+            pending === null &&
+            onLineHeld({ hold, rules, ranking, now: at, told: live.told?.since ?? null }).action !==
+              'tellNeo'
           )
             return [];
-          inFlight.add(claim);
+          const text = pending ?? lineHeldText(todo, hold, ranking);
+          if (pending === null)
+            deps.database().run(
+              `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
+               ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json`,
+              todo.id,
+              JSON.stringify({ since: hold.since, text })
+            );
           return [
             {
               kind: LINE_HELD,
               subject: { type: 'todo', id: todo.id },
               since: hold.since,
-              facts: { text: lineHeldText(todo, hold, ranking) },
+              facts: { text },
             },
           ];
         });
@@ -291,16 +305,14 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     )
     .endAsync('events') as (now: number) => Promise<NeoAttentionEvent[]>;
 
-  const settled = (event: NeoAttentionEvent, told: boolean) => {
-    inFlight.delete(`${event.subject.id}:${event.since}`);
-    if (told)
-      deps.database().run(
-        `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, '${PACK}', 'told', ?)
-           ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json`,
-        event.subject.id,
-        JSON.stringify({ since: event.since })
-      );
-  };
+  const sent = (event: NeoAttentionEvent) =>
+    deps.database().run(
+      `UPDATE pack_facts SET value_json = json_set(value_json, '$.sent', json('true'))
+       WHERE todo_id = ? AND pack = '${PACK}' AND key = 'told'
+         AND json_extract(value_json, '$.since') = ?`,
+      event.subject.id,
+      event.since
+    );
 
   return {
     ...MODEL_ROUTING_PACK_BRIEF,
@@ -312,7 +324,7 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
           id: LINE_HELD,
           decide: () => 'wake',
           render: ({ facts }) => String(facts.text),
-          settled,
+          sent,
         },
       ],
       scan,
