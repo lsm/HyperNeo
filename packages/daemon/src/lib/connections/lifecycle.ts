@@ -203,7 +203,9 @@ export function createConnectionLifecycle(deps: {
       ...(current && (!loginId || current.id === loginId) ? current.view : { state: 'missing' }),
       storage: deps.vault.storageStatus(),
     }),
-    disconnect: (connectionId: string) => {
+    disconnect: async (connectionId: string) => {
+      if (!(await deps.read()).some((record) => record.id === connectionId))
+        return { ok: false, reason: 'unknown_connection' };
       access.cancel(connectionId);
       http.cancel(connectionId);
       return serial(async () => {

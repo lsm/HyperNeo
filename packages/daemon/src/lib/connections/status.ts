@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const connectionProviders = ['google'] as const;
+export const connectionProviders = ['google', 'microsoft'] as const;
 
 const connectionProvider = z.enum(connectionProviders);
 
@@ -14,6 +14,9 @@ export const connectionStatus = z.object({
 });
 
 export type ConnectionStatus = z.infer<typeof connectionStatus>;
+
+export const googleConnections = (rows: ConnectionStatus[]) =>
+  rows.filter((row) => row.provider === 'google');
 
 export const googleClient = z.object({
   clientId: z.string().trim().min(1).max(500),
