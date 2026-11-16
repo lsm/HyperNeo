@@ -52,7 +52,7 @@ export function createNeoTodoRetarget(
           changed();
           await start(move.todoId);
         }
-        return { ok: true, todo: store.getTodo(move.todoId) };
+        return { ok: true, todo: store.getTodo(move.todoId) ?? undefined };
       },
       ['move', 'reopened'],
       'move'
@@ -68,7 +68,10 @@ export function createNeoTodoRetarget(
       })) as ReturnType<InstanceType<typeof neoTodoMoveWrites.Repository>['claim']>;
       if ('reason' in claim) return { ok: false, reason: claim.reason };
       return (
-        (claim.move && (await resume(claim.move))) ?? { ok: true, todo: store.getTodo(todoId) }
+        (claim.move && (await resume(claim.move))) ?? {
+          ok: true,
+          todo: store.getTodo(todoId) ?? undefined,
+        }
       );
     },
     async recoverMoves() {
