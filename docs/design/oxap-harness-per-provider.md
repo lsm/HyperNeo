@@ -346,8 +346,9 @@ The OXAP Codex entry fixes `approval_policy: on-request` and
 else, and none of them is enforced on the OXAP path today:
 
 - Create admission carries `permissionMode`, `tools`, `sdkToolsPreset`,
-  `allowedTools`, `disallowedTools`, `maxTurns` and `maxBudgetUsd`
-  (`create-session-config.ts`). The SDK path passes `sdkToolsPreset` as
+  `allowedTools`, `disallowedTools`, `maxTurns`, `maxBudgetUsd`,
+  `mcpServers`, `strictMcpConfig`, `additionalDirectories` and
+  `maxThinkingTokens` (`create-session-config.ts`). The SDK path passes `sdkToolsPreset` as
   `options.tools`.
 - Session create merges the global `sandbox` default with the session's own
   (`session-lifecycle.ts`), and the SDK path forwards it with its
@@ -370,7 +371,10 @@ PR 2 extends the admission decision to refuse what the harness cannot enforce:
 - any `tools`, `sdkToolsPreset`, `allowedTools` or `disallowedTools`;
 - an effective `sandbox`, meaning the session's value merged with the global
   default exactly as session create merges it, that sets any rule;
-- any `maxTurns` or `maxBudgetUsd`.
+- any `maxTurns` or `maxBudgetUsd`;
+- any non-empty `mcpServers` or `additionalDirectories`, and any
+  `maxThinkingTokens`. `strictMcpConfig` alone is an accepted no-op: with no
+  MCP servers it changes nothing.
 
 The same decision runs in four places: `session.create`, `session.update`,
 the live permission change, and `session.sandbox.switch`, which writes the
@@ -457,7 +461,7 @@ Limits users will see, from code that already exists:
 
 - OXAP chats refuse system prompts, agents, tool guards, Space and Neo, and
   (from PR 2) permission modes other than `default`, tool restrictions,
-  sandbox rules, turn or budget limits, and thinking levels. They accept text
+  sandbox rules, turn or budget limits, MCP servers, extra directories and thinking levels. They accept text
   only.
 - A run fails if the harness asks for a permission or asks the user a question
   (`unsupportedInteraction` in `oap-query.ts`). With Codex's `on-request` and
