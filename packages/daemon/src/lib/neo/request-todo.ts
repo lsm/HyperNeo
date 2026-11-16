@@ -5,6 +5,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const requestTodoId = (incident: string) => neoDerivedId(`neo-request-todo:${incident}`);
+export const neoRequestAskId = (incident: string) => neoDerivedId(`neo-request-ask:${incident}`);
 
 export function closedNeoRequest(store: NeoAskTodoRepository, incident: string): string | null {
   const todo = store.getTodo(requestTodoId(incident));
@@ -22,7 +23,7 @@ export function recordNeoRequestTodo(
     now: number;
   }
 ): void {
-  const askId = neoDerivedId(`neo-request-ask:${input.incident}`);
+  const askId = neoRequestAskId(input.incident);
   const todoId = requestTodoId(input.incident);
   if (store.getTodo(todoId)) return;
   const title = input.text.trim().split('\n')[0].trim().slice(0, 120) || 'Request from a session';

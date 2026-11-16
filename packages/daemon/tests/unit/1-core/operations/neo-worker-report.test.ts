@@ -810,6 +810,28 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
   }
 });
 
+test('a request names its ask on the session message, and a worker report on an open todo does not', async () => {
+  const { db, service, send } = await setup();
+  const delivered = () =>
+    db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'neo' })
+      .map((job) => JSON.stringify(job.payload));
+  try {
+    await send({ to: 'neo', kind: 'question', text: 'Label the pull request' }, 'stranger');
+    const [ask] = service.todos.listOpenAsks().filter((item) => item.id !== 'ask');
+    const request = delivered().find((text) => text.includes('Label the pull request'));
+    expect(request).toContain(`from-session=\\"stranger\\" ask=\\"${ask.id}\\"`);
+    await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker');
+    const report = delivered().find((text) => text.includes('Which region should I use?'));
+    expect(report).toContain('from-session=\\"worker\\"');
+    expect(report).not.toContain(' ask=');
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a request todo names its sender, and a repeat after Neo closes it records nothing', async () => {
   const { db, service, send } = await setup();
   const now = Date.now();
