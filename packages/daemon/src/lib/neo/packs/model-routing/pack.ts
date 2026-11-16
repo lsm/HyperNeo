@@ -199,20 +199,25 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     ...new Set(candidates.map((line) => line.provider)),
   ];
 
+  const inflight = new Map<string, Promise<void>>();
+  const refresh = (id: string) => {
+    const running = inflight.get(id);
+    if (running) return running;
+    const read = readProviderUsage({ providerId: id }, deps)
+      .then((result) => {
+        if (result) readings.set(id, { result, readAt: now() });
+      })
+      .catch(() => {})
+      .finally(() => inflight.delete(id));
+    inflight.set(id, read);
+    return read;
+  };
+
   const readUsage = async (candidates: readonly NeoLine[]) => {
     const stale = providers(candidates).filter(
       (id) => now() - (readings.get(id)?.readAt ?? Number.NEGATIVE_INFINITY) > USAGE_STALE_MS
     );
-    await Promise.all(
-      stale.map(async (id) => {
-        const result = await within(
-          readProviderUsage({ providerId: id }, deps).catch(() => null),
-          deadline,
-          null
-        );
-        if (result) readings.set(id, { result, readAt: now() });
-      })
-    );
+    await Promise.all(stale.map((id) => within(refresh(id), deadline, undefined)));
     return Object.fromEntries(readings);
   };
 

@@ -36,9 +36,14 @@ export async function codingCandidateLine<T extends Candidate>(
   const resolved = await lines.resolve(target).catch(() => null);
   const value = resolved?.ok ? resolved.value : null;
   const model = value?.model ?? target.model;
+  const again =
+    value?.model && value.model !== target.model
+      ? await lines.resolve({ adapter: target.adapter, model: value.model }).catch(() => null)
+      : null;
+  const stable = again?.ok && again.value.provider === value?.provider;
   return {
     line: { provider: value?.provider ?? '', model: model ?? '', harness: target.adapter },
-    target: value && model ? { ...target, model } : target,
+    target: stable && model ? { ...target, model } : target,
   };
 }
 
