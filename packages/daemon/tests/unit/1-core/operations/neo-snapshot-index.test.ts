@@ -315,3 +315,43 @@ test.each(['workers', 'packs', 'projects'] as const)(
     expect(snapshotRows).not.toHaveBeenCalled();
   }
 );
+
+test('the snapshot carries the human queue: open cards waiting on the human, counted by ask', async () => {
+  seed(2);
+  service.todos.askQuestion(
+    'queue-card',
+    'index-1',
+    {
+      text: 'Ship it?',
+      kind: 'reply',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      document: null,
+      replyTo: [],
+      confirm: null,
+    },
+    1
+  );
+  for (const caller of [rpc, mcp]) {
+    const { humanQueue } = await snapshot(caller);
+    expect(humanQueue).toMatchObject({
+      state: 'waiting',
+      askId: null,
+      items: [
+        {
+          state: 'waiting',
+          askId: 'index-1',
+          questionId: 'queue-card',
+          text: 'Ship it?',
+          todos: [{ id: 'todo-1' }],
+        },
+      ],
+      counts: {
+        'index-0': { waiting: 0, held: 0, progress: 1 },
+        'index-1': { waiting: 1, held: 0, progress: 0 },
+      },
+    });
+  }
+});
