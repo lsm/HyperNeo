@@ -13,7 +13,7 @@ The helper changes voice settings, so before it reads any credential or opens
 a socket it requires `NODE_ENV=test`, a valid non-8399 port, a `RUN` that holds
 a daemon started by `launch.sh`, and `HYPERNEO_DATA_DIR` resolving to
 `$RUN/data`. Check the refusal first with a data directory outside the run;
-it must exit non-zero with the data-directory message and print nothing else:
+it must exit non-zero with the data-directory assertion and no voice output:
 
 ```bash
 NODE_ENV=test RUN="$RUN" VERIFY_PORT=19311 HYPERNEO_DATA_DIR="$(mktemp -d)" \
