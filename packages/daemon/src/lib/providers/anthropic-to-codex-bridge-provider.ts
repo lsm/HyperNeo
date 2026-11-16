@@ -242,6 +242,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private discoveryGeneration = 0;
 
   private credentialRefreshInFlight: Promise<StoredRefreshAttempt> | null = null;
+  private authFileWrites: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
@@ -1194,6 +1195,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
     this.resetDiscoveryState();
+    await this.queueAuthFileWrite(() => this.removeCredentialsFile());
+  }
+
+  private async removeCredentialsFile(): Promise<void> {
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
       const data = JSON.parse(content) as Record<string, unknown>;
@@ -1235,7 +1240,17 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return null;
   }
 
-  private async saveCredentials(credentials: StoredCredentials): Promise<void> {
+  private queueAuthFileWrite(write: () => Promise<void>): Promise<void> {
+    const next = this.authFileWrites.then(write);
+    this.authFileWrites = next.catch(() => {});
+    return next;
+  }
+
+  private saveCredentials(credentials: StoredCredentials): Promise<void> {
+    return this.queueAuthFileWrite(() => this.writeCredentialsFile(credentials));
+  }
+
+  private async writeCredentialsFile(credentials: StoredCredentials): Promise<void> {
     const dir = path.dirname(this.authPath);
     await fs.mkdir(dir, { recursive: true });
 
