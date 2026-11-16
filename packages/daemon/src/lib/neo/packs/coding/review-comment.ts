@@ -62,24 +62,31 @@ export async function postCodingReviewComment(api: CodingGithubApi, fact: Coding
   const pages = Pages.parse(
     await api(pr.host, [path, '--paginate', '--slurp', '-f', 'per_page=100', '--method', 'GET'])
   );
-  if (pages.flat().some((comment) => comment.body?.includes(marker))) return false;
+  const newest = pages
+    .flat()
+    .flatMap((comment) => /<!-- hyperneo-review:[0-9a-f]{16} -->/.exec(comment.body ?? '') ?? [])
+    .at(-1);
+  if (newest === marker) return false;
   await api(pr.host, [path, '--method', 'POST', '-f', `body=${body}`]);
   return true;
 }
 
 export function createCodingReviewComments(api: CodingGithubApi) {
-  const posted = new Set<string>();
-  return async (facts: readonly CodingStageFact[]) => {
-    for (const fact of facts) {
+  const newest = new Map<string, string>();
+  let queue = Promise.resolve();
+  const post = async (read: () => Promise<readonly CodingStageFact[]>) => {
+    for (const fact of await read()) {
       const { marker } = planCodingReviewComment(fact);
-      if (posted.has(marker)) continue;
+      if (newest.get(fact.url) === marker) continue;
       await postCodingReviewComment(api, fact).then(
-        () => posted.add(marker),
+        () => newest.set(fact.url, marker),
         (error: unknown) =>
           log.warn('review comment not posted', { url: fact.url, error: String(error) })
       );
     }
   };
+  return (read: () => Promise<readonly CodingStageFact[]>) =>
+    (queue = queue.then(() => post(read)));
 }
 
 export async function readCodingOpenReviews(db: Database, ledger: CodingPrLedgerRepository) {

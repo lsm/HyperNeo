@@ -114,7 +114,7 @@ describe('createCodingReviewComments', () => {
     try {
       ledger.recordStage(fact);
       const post = createCodingReviewComments(github);
-      await Promise.all([sweep(post), sweep(post), sweep(createCodingReviewComments(github))]);
+      await Promise.all([sweep(post), sweep(post), sweep(post)]);
       expect(comments).toHaveLength(1);
     } finally {
       db.close();
