@@ -8,6 +8,9 @@ import { CodingStageFact } from './stage-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingAssignmentsRepository } from './assignments.ts';
 import { postCodingReviewComment, type CodingGithubApi } from './review-comment.ts';
+import { Logger } from '../../../logger.ts';
+
+const log = new Logger('NeoCodingResult');
 
 const Input = z.object({
   todoId: z.string().min(1),
@@ -48,7 +51,10 @@ export function createCodingResultOperation(
         const stored = ledger.stageFacts
           .read(fact.url)
           .find((item) => item.stage === 'review' && item.head === fact.head);
-        if (fact.stage === 'review' && stored) await postCodingReviewComment(github, stored);
+        if (fact.stage === 'review' && stored)
+          await postCodingReviewComment(github, stored).catch((error: unknown) =>
+            log.warn('review comment not posted', { url: fact.url, error: String(error) })
+          );
         return recorded ? { ok: true } : { ok: false, reason: 'head_changed_or_failed_stage' };
       },
       'fact',

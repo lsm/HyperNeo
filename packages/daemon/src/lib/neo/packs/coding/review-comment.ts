@@ -13,7 +13,7 @@ export const codingGithubApi: CodingGithubApi = async (host, args) => {
     ['gh', 'api', '--hostname', host, ...args],
     homedir(),
     spawnProcess,
-    { stripGHRepo: true }
+    { stripGHRepo: true, timeoutMs: 120_000, maxBufferBytes: 64 * 1024 * 1024 }
   );
   if (!result.ok) throw new Error(result.error);
   return result.data;
