@@ -1,7 +1,9 @@
 #!/bin/bash
-# Calls every device.* operation over RPC on an isolated daemon and prints each answer.
-# Usage: device-operations.sh <port>   (never 8399). Prints outcomes, names and counts only:
-# pairing codes and credentials stay in shell variables and are never echoed.
+# Calls every device.* operation over RPC on an isolated daemon, prints each answer and
+# exits non-zero on the first failed call or when the transcript differs from the expected one.
+# Usage: device-operations.sh <port>   (never 8399). DEVICE_OPS_FAIL=<operation> sends that
+# laptop call to an unknown operation, so the run must fail (see device-operations-fails.sh).
+# Prints outcomes, names and counts only: pairing codes and credentials are never echoed.
 set -euo pipefail
 PORT=${1:?usage: device-operations.sh <port>}
 [ "$PORT" = 8399 ] && { echo "refusing 8399"; exit 1; }
@@ -30,24 +32,58 @@ r=json.load(sys.stdin)['reply']
 keys=sorted(k for k in r if k not in ('ok','reason','code','codeId','expiresAt'))
 print('ok' if r['ok'] else 'refused: '+r['reason'].split(':')[0], *('%s=%s'%(k,len(r[k]) if isinstance(r[k],list) else r[k]) for k in keys))"; }
 
+laptop() {
+  local op=$1
+  shift
+  [ "$op" = "${DEVICE_OPS_FAIL:-}" ] && op=$op.unknown
+  rpc "$op" "$@" | outcome
+}
+local_tools() { terminal "$@" | outcome; }
+step() {
+  local label=$1 got
+  shift
+  got=$("$@")
+  echo "$label: $got" | tee -a "$RUN/transcript"
+}
+
 FIRST=$(cli pair --name Laptop)
-echo "first device: $(pair "$(echo "$FIRST" | field "['code']")" Laptop)"
+CODE=$(echo "$FIRST" | field "['code']")
+step "first device" pair "$CODE" Laptop
 LAPTOP=$(python3 -c "import json;print(json.load(open('$RUN/pair.json'))['credential'])")
 WAITING=$(cli pair --name Waiting | field "['codeId']")
 DENIED=$(cli pair --name Denied | field "['codeId']")
-echo "device.pair.create: $(rpc device.pair.create '{"kind":"human","name":"Phone"}' | outcome)"
-echo "device.pair.pending: $(rpc device.pair.pending '{}' | outcome)"
-echo "device.pair.approve: $(rpc device.pair.approve "{\"codeId\":\"$WAITING\"}" | outcome)"
-echo "device.pair.deny: $(rpc device.pair.deny "{\"codeId\":\"$DENIED\"}" | outcome)"
-echo "device.pair.deny again: $(rpc device.pair.deny "{\"codeId\":\"$DENIED\"}" | outcome)"
-echo "device.pair.terminal_approval.get: $(terminal device.pair.terminal_approval.get '{}' | outcome)"
-echo "device.pair.terminal_approval.set off: $(terminal device.pair.terminal_approval.set '{"enabled":false}' | outcome)"
-echo "device.pair.terminal_approval.set on from the terminal: $(terminal device.pair.terminal_approval.set '{"enabled":true}' | outcome)"
-echo "device.pair.terminal_approval.set on from the laptop: $(rpc device.pair.terminal_approval.set '{"enabled":true}' | outcome)"
-echo "device.list: $(rpc device.list '{}' | outcome)"
-echo "device.unpaired.list: $(rpc device.unpaired.list '{}' | outcome)"
-echo "device.would_refuse.list: $(rpc device.would_refuse.list '{}' | outcome)"
-echo "device.pair.reset_lockout: $(rpc device.pair.reset_lockout '{}' | outcome)"
+step device.pair.create laptop device.pair.create '{"kind":"human","name":"Phone"}'
+step device.pair.pending laptop device.pair.pending '{}'
+step device.pair.approve laptop device.pair.approve "{\"codeId\":\"$WAITING\"}"
+step device.pair.deny laptop device.pair.deny "{\"codeId\":\"$DENIED\"}"
+step "device.pair.deny again" laptop device.pair.deny "{\"codeId\":\"$DENIED\"}"
+step device.pair.terminal_approval.get local_tools device.pair.terminal_approval.get '{}'
+step "device.pair.terminal_approval.set off" local_tools device.pair.terminal_approval.set '{"enabled":false}'
+step "device.pair.terminal_approval.set on from the terminal" local_tools device.pair.terminal_approval.set '{"enabled":true}'
+step "device.pair.terminal_approval.set on from the laptop" laptop device.pair.terminal_approval.set '{"enabled":true}'
+step device.list laptop device.list '{}'
+step device.unpaired.list laptop device.unpaired.list '{}'
+step device.would_refuse.list laptop device.would_refuse.list '{}'
+step device.pair.reset_lockout laptop device.pair.reset_lockout '{}'
 AGENT=$(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT id FROM paired_devices WHERE name = 'Local agent reader'")
-echo "device.revoke: $(rpc device.revoke "{\"deviceId\":\"$AGENT\"}" | outcome)"
-echo "revoked rows: $(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT COUNT(*) FROM paired_devices WHERE revoked_at IS NOT NULL")"
+step device.revoke laptop device.revoke "{\"deviceId\":\"$AGENT\"}"
+step "revoked rows" sqlite3 -readonly "$RUN/data/daemon.db" "SELECT COUNT(*) FROM paired_devices WHERE revoked_at IS NOT NULL"
+
+diff -u - "$RUN/transcript" <<'EXPECTED' && echo "device operations: transcript matches"
+first device: 200
+device.pair.create: ok approval=approved
+device.pair.pending: ok pending=2
+device.pair.approve: ok
+device.pair.deny: ok
+device.pair.deny again: refused: not_pending
+device.pair.terminal_approval.get: ok enabled=True
+device.pair.terminal_approval.set off: ok enabled=False
+device.pair.terminal_approval.set on from the terminal: refused: not_paired
+device.pair.terminal_approval.set on from the laptop: ok enabled=True
+device.list: ok devices=3
+device.unpaired.list: ok connections=0
+device.would_refuse.list: ok requests=0
+device.pair.reset_lockout: ok
+device.revoke: ok
+revoked rows: 1
+EXPECTED
