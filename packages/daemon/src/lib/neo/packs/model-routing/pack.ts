@@ -104,6 +104,7 @@ function readHeldTodos(db: Database, now: number): HeldTodo[] {
         AND json_valid(x.processing_state) AND json_valid(x.config)
         AND json_extract(x.processing_state, '$.status') = 'rate_limit_cooldown'
         AND (json_extract(x.processing_state, '$.reason') = 'login'
+          OR json_extract(x.processing_state, '$.manualRetry') = 1
           OR json_extract(x.processing_state, '$.retryAt') IS NULL
           OR json_extract(x.processing_state, '$.retryAt') > ?)`)
     .all(now)
