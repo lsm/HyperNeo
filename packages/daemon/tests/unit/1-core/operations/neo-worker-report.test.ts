@@ -758,6 +758,7 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
     sessions: service.todoSessions,
     packs: () => [],
     limits: () => ({ running: 6, perGroup: 3 }),
+    scan: async () => [],
     tell: createNeoAttention({
       kinds: () => NEO_ATTENTION_KINDS,
       read: () => ({ covered: false, latestReportAt: null }),
