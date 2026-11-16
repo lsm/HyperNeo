@@ -198,6 +198,7 @@ export const en = {
   'queue.hold': 'Hold',
   'queue.loadFailed': 'Couldn’t load the full card.',
   'queue.refreshFailed': 'Couldn’t refresh the queue.',
+  'queue.openAsk': 'Open the ask',
   'queue.takeBack': 'Take back',
   'queue.onHold': 'On hold',
   'queue.owner.human': 'Your step',

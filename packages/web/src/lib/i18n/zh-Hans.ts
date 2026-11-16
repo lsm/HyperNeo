@@ -199,6 +199,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'queue.hold': '先放着',
   'queue.loadFailed': '没能载入完整卡片。',
   'queue.refreshFailed': '没能刷新列表。',
+  'queue.openAsk': '打开整件事',
   'queue.takeBack': '拿回来',
   'queue.onHold': '已放着',
   'queue.owner.human': '该你做',

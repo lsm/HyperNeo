@@ -8,6 +8,7 @@ import type {
   NeoHumanQueueItem,
   NeoHumanQueueState,
 } from '@hyperneo/shared/types/neo-snapshot';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
 import { QuestionBox } from './NeoAskTodos.tsx';
@@ -49,6 +50,7 @@ export function NeoHumanQueue({
   reveal = 0,
   onStale,
   onDesktopControl,
+  renderAsk,
 }: {
   queue: Queue;
   entries: readonly NeoAskEntry[];
@@ -62,11 +64,13 @@ export function NeoHumanQueue({
   reveal?: number;
   onStale?: () => Promise<unknown>;
   onDesktopControl?: (todoId: string, on: boolean) => void;
+  renderAsk?: (entry: NeoAskEntry) => ComponentChildren;
 }) {
   const [state, setState] = useState<NeoHumanQueueState>('waiting');
   const [ask, setAsk] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, NeoAskEntry>>({});
   const [attempt, setAttempt] = useState(0);
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [settled, setSettled] = useState(0);
   const requests = useRef(
     new Map<string, { pending: boolean; queue: Queue; known: string; attempt: number }>()
@@ -212,6 +216,7 @@ export function NeoHumanQueue({
           <button
             key={s}
             type="button"
+            data-queue-state={s}
             class={`${chip} ${tone(state === s)}`}
             aria-pressed={state === s}
             onClick={() => setState(s)}
@@ -256,36 +261,62 @@ export function NeoHumanQueue({
           </select>
         )}
       </div>
-      {groups.map((id) => (
-        <section
-          key={id}
-          id={id === outside ? undefined : `neo-ref-ask-${id}`}
-          aria-label={title(id)}
-          class="rounded-2xl border border-line p-4"
-        >
-          <h3 class="text-sm font-medium">{title(id)}</h3>
-          {items
-            .filter((item) => item.askId === id)
-            .map((item) => (
-              <QueueItem
-                key={'questionId' in item ? item.questionId : item.todoId}
-                item={item}
-                entry={card(id) ?? details[id]}
-                listed={entries.find((candidate) => candidate.ask.id === id)}
-                refreshing={!card(id)}
-                onDesktopControl={onDesktopControl}
-                failed={failed(id)}
-                onRetry={() => setAttempt((value) => value + 1)}
-                anchor={anchor}
-                disabled={disabled}
-                onAnswer={onAnswer}
-                onHold={onHold}
-                onReply={onReply}
-                onOpen={onOpen}
-              />
-            ))}
-        </section>
-      ))}
+      {groups.map((id) => {
+        const full = renderAsk && (entries.find((entry) => entry.ask.id === id) ?? details[id]);
+        const showFull = !!full && opened.has(id);
+        return (
+          <section
+            key={id}
+            id={id === outside || showFull ? undefined : `neo-ref-ask-${id}`}
+            data-queue-ask={id}
+            aria-label={title(id)}
+            class="rounded-2xl border border-line p-4"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-medium">{title(id)}</h3>
+              {full && (
+                <button
+                  type="button"
+                  data-queue-open
+                  class={neoPlainClass}
+                  aria-expanded={showFull}
+                  onClick={() =>
+                    setOpened((current) => {
+                      const next = new Set(current);
+                      if (!next.delete(id)) next.add(id);
+                      return next;
+                    })
+                  }
+                >
+                  {t('queue.openAsk')}
+                </button>
+              )}
+            </div>
+            {showFull
+              ? renderAsk(full)
+              : items
+                  .filter((item) => item.askId === id)
+                  .map((item) => (
+                    <QueueItem
+                      key={'questionId' in item ? item.questionId : item.todoId}
+                      item={item}
+                      entry={card(id) ?? details[id]}
+                      listed={entries.find((candidate) => candidate.ask.id === id)}
+                      refreshing={!card(id)}
+                      onDesktopControl={onDesktopControl}
+                      failed={failed(id)}
+                      onRetry={() => setAttempt((value) => value + 1)}
+                      anchor={anchor}
+                      disabled={disabled}
+                      onAnswer={onAnswer}
+                      onHold={onHold}
+                      onReply={onReply}
+                      onOpen={onOpen}
+                    />
+                  ))}
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -309,6 +309,64 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
+  const askCard = (entry: NeoAskEntry) => (
+    <NeoAskTodos
+      key={entry.ask.id}
+      entry={entry}
+      focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
+      disabled={!connected || !!neo.busyWork}
+      onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+      onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+      onControl={(todo, control) => neo.controlTodo(todo, control)}
+      onReply={
+        ready
+          ? (question) =>
+              replyInComposer({
+                author: 'Neo',
+                text: neoQuestionText(question),
+                anchor: `neo-ref-question-${question.id}`,
+                replyTo: { kind: 'question', id: question.id },
+              })
+          : undefined
+      }
+      onReplyAsk={
+        ready
+          ? () =>
+              replyInComposer({
+                author: 'Neo',
+                text: entry.ask.title,
+                anchor: `neo-ref-ask-${entry.ask.id}`,
+                replyTo: { kind: 'ask', id: entry.ask.id },
+              })
+          : undefined
+      }
+      onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
+      onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+      onTopic={
+        workQuery.trim() && !sceneEntries.some((loaded) => loaded.ask.topic === entry.ask.topic)
+          ? undefined
+          : (next) => {
+              if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
+              setWorkQuery('');
+              chooseTopic(next);
+            }
+      }
+      onLoadDone={(askId, offset) =>
+        connectionManager.getHub().then((hub) =>
+          invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
+            askId,
+            offset,
+          })
+        )
+      }
+      onLoadDetails={
+        entry.ask.id === outsideQueue
+          ? (input) => loadNeoAskDetails(input).then(withoutQueued)
+          : loadNeoAskDetails
+      }
+      onOpen={openSession}
+    />
+  );
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const sceneEntries = sceneGroups.flatMap((group) => group.entries);
   const [savedTopic, setSavedTopic] = useState(() => {
@@ -1106,6 +1164,7 @@ export function NeoLive() {
               onOpen={openSession}
               focus={cardTarget}
               reveal={reveal}
+              renderAsk={askCard}
               onStale={() =>
                 neo.refresh().catch((cause: unknown) => {
                   neo.setError(cause instanceof Error ? cause.message : t('queue.refreshFailed'));
@@ -1154,65 +1213,7 @@ export function NeoLive() {
                     ? attentionCount
                     : group.entries.length}
                 </h2>
-                {group.entries.map((entry) => (
-                  <NeoAskTodos
-                    key={entry.ask.id}
-                    entry={entry}
-                    focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
-                    disabled={!connected || !!neo.busyWork}
-                    onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
-                    onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
-                    onControl={(todo, control) => neo.controlTodo(todo, control)}
-                    onReply={
-                      ready
-                        ? (question) =>
-                            replyInComposer({
-                              author: 'Neo',
-                              text: neoQuestionText(question),
-                              anchor: `neo-ref-question-${question.id}`,
-                              replyTo: { kind: 'question', id: question.id },
-                            })
-                        : undefined
-                    }
-                    onReplyAsk={
-                      ready
-                        ? () =>
-                            replyInComposer({
-                              author: 'Neo',
-                              text: entry.ask.title,
-                              anchor: `neo-ref-ask-${entry.ask.id}`,
-                              replyTo: { kind: 'ask', id: entry.ask.id },
-                            })
-                        : undefined
-                    }
-                    onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
-                    onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
-                    onTopic={
-                      workQuery.trim() &&
-                      !sceneEntries.some((loaded) => loaded.ask.topic === entry.ask.topic)
-                        ? undefined
-                        : (next) => {
-                            if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
-                            setWorkQuery('');
-                            chooseTopic(next);
-                          }
-                    }
-                    onLoadDone={(askId, offset) =>
-                      connectionManager.getHub().then((hub) =>
-                        invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
-                          askId,
-                          offset,
-                        })
-                      )
-                    }
-                    onLoadDetails={
-                      entry.ask.id === outsideQueue
-                        ? (input) => loadNeoAskDetails(input).then(withoutQueued)
-                        : loadNeoAskDetails
-                    }
-                    onOpen={openSession}
-                  />
-                ))}
+                {group.entries.map(askCard)}
               </section>
             )
           )}
