@@ -108,6 +108,8 @@ describe('NeoHumanQueue', () => {
     const trip = within(view.getByRole('region', { name: 'Plan the trip' }));
     expect(await trip.findByText('Question q2')).toBeTruthy();
     expect(trip.getByText('The whole ask')).toBeTruthy();
+    expect(trip.getByText('On hold')).toBeTruthy();
+    expect(trip.queryByText('Awaiting your answer')).toBeNull();
     fireEvent.click(trip.getByRole('button', { name: 'Take back' }));
     expect(onHold).toHaveBeenCalledWith('q2', false);
   });

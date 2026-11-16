@@ -45,7 +45,7 @@ try {
   result.asks = await labels('Ask');
   assert.equal(result.asks[0], 'All 2');
   assert.deepEqual((await regions()).sort(), ['Synthetic tax filing', 'Synthetic trip plan']);
-  assert.equal(await page.locator('[data-scene-group="attention"]').count(), 0, 'the old attention group gives way to the queue');
+  assert.equal(await page.locator('[data-scene-group="attention"], [data-scene-group="running"]').count(), 0, 'the queue is the only list of open work');
   await queue.getByText('Book the hotel by the station for three nights?').waitFor();
   await queue.getByText('Book the hotel', { exact: true }).waitFor();
   for (const scheme of ['light', 'dark']) {
@@ -59,6 +59,7 @@ try {
   await states.getByRole('button', { name: 'Held 2' }).click();
   await queue.getByText('The whole ask').waitFor();
   await queue.getByText('Keep the trip to one week?').waitFor();
+  assert.equal(await queue.getByText('On hold').count(), 2, 'held cards say they are held');
   result.heldAfterHold = await queue.locator('[data-queue-card]').evaluateAll((all) => all.map((node) => node.getAttribute('data-queue-card')).sort());
   assert.deepEqual(result.heldAfterHold, ['hotel-card', 'trip-card']);
   await page.screenshot({ path: join(evidence, 'queue-1280-held.png') });
@@ -70,6 +71,14 @@ try {
   await states.getByRole('button', { name: 'In progress 2' }).click();
   await queue.getByText('Call the garage').waitFor();
   result.progress = await queue.getByRole('region').allInnerTexts();
+  const progressShots = async (width) => {
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: join(evidence, `queue-${width}-progress-${scheme}.png`) });
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+  };
+  await progressShots(1280);
   await queue.getByRole('group', { name: 'Ask' }).getByRole('button', { name: /Synthetic car service/ }).click();
   assert.deepEqual(await regions(), ['Synthetic car service']);
   assert.deepEqual(await labels('State'), ['Waiting on you 0', 'Held 0', 'In progress 1'], 'state counts follow the ask choice');
@@ -81,6 +90,9 @@ try {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: join(evidence, `queue-390-${scheme}.png`) });
   }
+  await states.getByRole('button', { name: 'In progress 2' }).click();
+  await queue.getByText('Call the garage').waitFor();
+  await progressShots(390);
   result.pageErrors = errors;
   assert.deepEqual(errors, []);
   result.passed = true;
