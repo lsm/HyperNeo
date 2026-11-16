@@ -43,6 +43,8 @@ with channel.makefile('rwb') as stream:
         if name is not None and request.get('arguments', {}).get('fixture_error'):
             result = {'isError': True, 'content': [{'type': 'text', 'text': 'Call get_window_state first'}],
                       'structuredContent': {'code': 'no_screenshot'}}
+        if name is not None and request.get('arguments', {}).get('fixture_large'):
+            result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
             time.sleep(0.3)
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
@@ -950,6 +952,15 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(reply['structuredContent'], {'code': 'no_screenshot'})
         self.assertEqual(self.call('status')['result']['state'], 'running')
         print('driver_error=reported body=returned driver_kept=1')
+
+    def test_a_full_window_screenshot_reaches_the_caller(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_large': True}, workDir=str(self.work))['result']
+        self.assertIsNone(reply['reason'])
+        self.assertEqual(len(reply['content'][0]['data']), 3 << 20)
+        self.assertEqual(self.call('status')['result']['state'], 'running')
+        print('screenshot_bytes=3MiB driver_kept=1')
 
     def test_daemon_advert_uses_the_process_birth_even_after_a_long_suite(self):
         from unittest.mock import patch
