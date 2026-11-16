@@ -513,6 +513,41 @@ test('a card Neo opens during the relay source lookup keeps the worker question 
   }
 });
 
+test('a Neo card with the same words is not taken over by a worker relay', async () => {
+  const { db, service, send } = await setup();
+  try {
+    await send(input);
+    service.todos.askQuestion(
+      'neo-card',
+      'ask',
+      {
+        text: 'Deploy where?',
+        kind: 'choice',
+        options: ['Staging', 'Production'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        todoId: 'todo',
+        document: 'Neo context',
+      },
+      3
+    );
+    const words = { todoId: 'todo', title: 'Deploy where?', options: ['Staging', 'Production'] };
+    expect(await service.relayWorkerQuestion(words, 'neo')).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('card_open'),
+    });
+    expect(service.todos.getQuestion('neo-card')?.document).toBe('Neo context');
+    expect(service.todos.questionAnswers.list('neo-card')).toEqual([]);
+    expect(service.todoSessions.readNudge('todo')?.workerQuestion?.title).toBe(
+      'Choose a destination'
+    );
+  } finally {
+    service.dispose();
+    db.close();
+  }
+});
+
 test('a new worker question on the same todo wakes Neo again, and a repeat does not', async () => {
   const { db, service, send } = await setup();
   try {
