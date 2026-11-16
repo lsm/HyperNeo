@@ -14,6 +14,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { codingPrKey } from './pr-key.ts';
 import { CodingTurnPrRepository, readCodingTurnFacts } from './turn-prs.ts';
+import { codingNamedPrKeys } from './turn-owner.ts';
 import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pack-contract.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
@@ -176,17 +177,23 @@ export const CODING_PR_REPLACEMENT_GRACE_MS = 15 * 60_000;
 export function codingTodoCheck(
   kind: string,
   prs: readonly NeoWorkPr[],
-  now = Date.now()
+  now = Date.now(),
+  replacements: readonly NeoWorkPr[] = []
 ): NeoTodoCheckResult | null {
   if (kind !== 'pr_merged') return null;
   const live = prs.filter((pr) => pr.state !== 'CLOSED');
-  const spare = [...live].sort((a, b) => createdAt(a) - createdAt(b));
+  const spare = [...live, ...replacements.filter((pr) => pr.state !== 'CLOSED')].sort(
+    (a, b) => createdAt(a) - createdAt(b)
+  );
   const unreplaced = prs
     .filter((pr) => pr.state === 'CLOSED')
     .sort((a, b) => createdAt(a) - createdAt(b))
     .filter((closed) => {
       const at = spare.findIndex((pr) => createdAt(pr) > createdAt(closed));
-      return at < 0 || !spare.splice(at, 1);
+      if (at < 0) return true;
+      const [replacement] = spare.splice(at, 1);
+      if (!live.includes(replacement)) live.push(replacement);
+      return false;
     });
   const expired = unreplaced.filter(
     (pr) => now - (pr.closedAt ?? 0) >= CODING_PR_REPLACEMENT_GRACE_MS
@@ -502,14 +509,22 @@ export function createCodingTodoPack(
     const [issue] = ref ? await (readRefs ?? (async () => []))([ref]) : [];
     return { prs: facts.prs, observedAt: facts.observedAt, issue };
   };
-  const checked = (todo: NeoTodo, facts: CodingTodoFacts) =>
-    todo.check?.kind === 'pr_approved'
+  const checked = (todo: NeoTodo, facts: CodingTodoFacts) => {
+    const named = new Set(codingNamedPrKeys(todo));
+    const required = named.size
+      ? facts.prs.filter((pr) => named.has(codingPrKey(pr.url) ?? ''))
+      : facts.prs;
+    const replacements = named.size
+      ? facts.prs.filter((pr) => !named.has(codingPrKey(pr.url) ?? ''))
+      : [];
+    return todo.check?.kind === 'pr_approved'
       ? (facts.approval ?? { done: false, evidence: null })
       : todo.check?.kind === 'issue_closed'
         ? codingIssueCheck(facts.issue)
         : todo.check
-          ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
+          ? codingTodoCheck(todo.check.kind, required, facts.observedAt, replacements)
           : null;
+  };
   return {
     readFacts,
     judge: (todo, facts) => {

@@ -15,6 +15,7 @@ import { codingPrUrl } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { recordWorkTurns } from '../../../../src/storage/repositories/work-turn-repository.ts';
 
 const pr = (
   number: number,
@@ -59,6 +60,146 @@ function setup(read: (urls: readonly string[]) => Promise<NeoWorkPr[] | null>) {
 }
 
 describe('coding todo pack', () => {
+  test.each(['MERGED', 'OPEN'] as const)(
+    'a closed named PR follows its owned %s replacement',
+    async (state) => {
+      const named = {
+        ...pr(1, 'CLOSED'),
+        url: 'https://github.com/acme/app/pull/1',
+        createdAt: 150,
+        closedAt: 0,
+      };
+      const replacement = {
+        ...pr(2, state),
+        url: 'https://github.com/acme/app/pull/2',
+        createdAt: 160,
+      };
+      const { db, pack, repo, todo } = setup(async () => [named, replacement]);
+      const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } });
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      db.prepare(`INSERT INTO work_delivery_inputs
+        (id,todo_id,origin_session_id,target,message,accepted_at,deadline_at,outcome)
+        VALUES ('send',?,'neo','{}','work',1,2,?)`).run(
+        row.id,
+        JSON.stringify({ ref, receipt: { inputId: 'input' } })
+      );
+      recordWorkTurns.run(
+        db,
+        {
+          ref,
+          turns: [
+            {
+              id: 'turn',
+              startedAt: 100,
+              endedAt: 200,
+              ended: 'success',
+              inputs: ['input'],
+              urls: [named.url, replacement.url],
+              finalUrls: [named.url, replacement.url],
+              complete: true,
+              cursor: '{}',
+            },
+          ],
+        },
+        undefined as never
+      );
+      try {
+        expect(await pack.check(row)).toEqual({
+          done: state === 'MERGED',
+          evidence: state === 'MERGED' ? '#2 merged' : null,
+        });
+        expect(repo.prs(row.id).map(({ url }) => url)).toEqual([named.url, replacement.url]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test('an unread named PR cannot be replaced by another merged PR', async () => {
+    const named = 'https://github.com/acme/app/pull/1';
+    const { db, pack, todo } = setup(async () => [
+      { ...pr(2, 'MERGED'), url: 'https://github.com/acme/app/pull/2' },
+    ]);
+    try {
+      expect(
+        await pack.check(todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named] } }))
+      ).toEqual({ done: false, evidence: null });
+    } finally {
+      db.close();
+    }
+  });
+  test('approval checks consult only their named PR', async () => {
+    const named = 'https://github.com/acme/app/pull/1';
+    const read: string[] = [];
+    const { db, repo, todo } = setup(async () => {
+      throw new Error('Approval must not depend on turn PR reads');
+    });
+    const pack = createCodingTodoPack(
+      repo,
+      async () => null,
+      undefined,
+      undefined,
+      async (url) => {
+        read.push(url);
+        return { done: true, evidence: 'Named PR approved' };
+      }
+    );
+    try {
+      expect(
+        await pack.check(todo({ pack: 'coding', kind: 'pr_approved', params: { url: named } }))
+      ).toEqual({ done: true, evidence: 'Named PR approved' });
+      expect(read).toEqual([named]);
+    } finally {
+      db.close();
+    }
+  });
+  test.each(['mentioned', 'reported', 'partial'] as const)(
+    'a named merged PR closes its todo despite an extra %s PR',
+    async (extra) => {
+      const named = {
+        ...pr(1, 'MERGED'),
+        url: 'https://github.com/acme/app/pull/1',
+        createdAt: 150,
+      };
+      const other = { ...pr(2, 'OPEN'), url: 'https://github.com/acme/app/pull/2', createdAt: 150 };
+      const { db, pack, repo, todo } = setup(async () => [named, other]);
+      const row = todo({ pack: 'coding', kind: 'pr_merged', params: { urls: [named.url] } });
+      const ref = { adapter: 'hyperneo', id: 'synthetic-worker' };
+      db.prepare(`INSERT INTO work_delivery_inputs
+        (id,todo_id,origin_session_id,target,message,accepted_at,deadline_at,outcome)
+        VALUES ('send',?,'neo','{}','work',1,2,?)`).run(
+        row.id,
+        JSON.stringify({ ref, receipt: { inputId: 'input' } })
+      );
+      recordWorkTurns.run(
+        db,
+        {
+          ref,
+          turns: [
+            {
+              id: 'turn',
+              startedAt: 100,
+              endedAt: 200,
+              ended: 'success',
+              inputs: ['input'],
+              urls: [named.url, other.url],
+              finalUrls: extra === 'reported' ? [named.url, other.url] : [named.url],
+              complete: extra !== 'partial',
+              cursor: '{}',
+            },
+          ],
+        },
+        undefined as never
+      );
+      try {
+        expect(await pack.check(row)).toEqual({ done: true, evidence: '#1 merged' });
+        expect(repo.prs(row.id).map(({ url }) => url)).toContain(named.url);
+        if (extra === 'reported')
+          expect(repo.prs(row.id).map(({ url }) => url)).toContain(other.url);
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('a todo that replaces a removed one owns the PR they both name and closes on merge', async () => {
     const { db, pack, repo, todo } = setup(async () => [pr(9, 'MERGED')]);
     const check = { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(9, 'OPEN').url] } };
