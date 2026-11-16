@@ -866,6 +866,11 @@ open(sys.argv[2], 'w').write(reply.decode())
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
 
+    def test_dialog_puts_allow_on_the_right_as_the_default(self):
+        buttons = self.call('fixture-dialog-buttons')['result']['buttons']
+        self.assertEqual(buttons, [['Allow', '\r'], ["Don't Allow", '\x1b']])
+        print('dialog_buttons=allow_rightmost_return deny_left_escape')
+
     def test_owner_yes_grants_exactly_the_shown_pair(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
