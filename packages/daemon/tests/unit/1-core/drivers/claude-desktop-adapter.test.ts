@@ -660,6 +660,28 @@ describe('claude-desktop adapter against the app session records', () => {
     }
   );
 
+  test('archive removes the prepared Claude Desktop folder', async () => {
+    const { repo, git } = createPushedWorkerRepo(dir);
+    const folder = join(workerDataDir, 'claude-worktrees', 'repo', 'local_a1');
+    mkdirSync(dirname(folder), { recursive: true });
+    git('clone', '--quiet', repo, folder);
+    writeFileSync(join(folder, '.git', 'hyperneo-source-checkout'), repo);
+    const path = join(dir, 'acct-a/scope-1/local_a1.json');
+    writeFileSync(
+      path,
+      JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), cwd: folder, originCwd: repo })
+    );
+    const result = await adapter([]).archive!(
+      { adapter: 'claude-desktop', id: 'local_a1' },
+      () => null
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { archived: true, worktree: { directory: folder, removed: true } },
+    });
+    expect(existsSync(folder)).toBe(false);
+  });
+
   test('keeps the Claude record unarchived when runtime removal fails', async () => {
     const path = join(dir, 'acct-a/scope-1/local_a1.json');
     const failure = vi
