@@ -1,7 +1,7 @@
 import * as nodeDns from 'node:dns';
 import { mkdtempSync, rmSync } from 'node:fs';
 import * as nodeNet from 'node:net';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
@@ -11,6 +11,7 @@ import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 
 process.env.HYPERNEO_SPACE ??= 'on';
 const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
+process.env.BUN_INSTALL ??= join(homedir(), '.bun');
 process.env.HOME = isolatedHome;
 if ('Bun' in globalThis) {
   process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
