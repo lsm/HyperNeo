@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { getConfig } from '../../../../src/config.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -34,23 +36,20 @@ test.each(
       const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'cleanup-runtime-')));
       mkdirSync(join(fixture, 'home'));
       try {
-        const child = Bun.spawn([process.execPath, 'test', import.meta.path], {
-          env: {
-            NODE_ENV: 'test',
-            HOME: join(fixture, 'home'),
-            PATH: process.env.PATH,
-            HYPERNEO_CLEANUP_FIXTURE: fixture,
-            HYPERNEO_CLEANUP_LISTING_FAILURE: listingFailure ? '1' : '0',
-          },
-          stdout: 'pipe',
-          stderr: 'pipe',
-        });
-        const [stdout, stderr, code] = await Promise.all([
-          new Response(child.stdout).text(),
-          new Response(child.stderr).text(),
-          child.exited,
-        ]);
-        if (code !== 0) throw new Error(stdout + stderr);
+        const { stdout, stderr } = await promisify(execFile)(
+          'bun',
+          ['test', fileURLToPath(import.meta.url)],
+          {
+            env: {
+              NODE_ENV: 'test',
+              HOME: join(fixture, 'home'),
+              PATH: process.env.PATH,
+              HYPERNEO_CLEANUP_FIXTURE: fixture,
+              HYPERNEO_CLEANUP_LISTING_FAILURE: listingFailure ? '1' : '0',
+            },
+            encoding: 'utf8',
+          }
+        );
         expect(stdout + stderr).toContain('1 pass');
       } finally {
         rmSync(fixture, { recursive: true, force: true });

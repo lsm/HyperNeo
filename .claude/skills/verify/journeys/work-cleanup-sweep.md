@@ -33,3 +33,11 @@ owned folders under all six root kinds. Session paths come directly from the DB;
 confirmed removal receipts exclude released refs. Git tracing confirms that live
 owners receive no Git probes; the first pass inspects at most four folders at a time.
 This proof does not exercise native Desktop clients or a day of elapsed time.
+
+Run the focused contracts under Node 24 and Vitest, matching CI, with pinned Bun
+on PATH for the isolated fixture children. A Bun-only parent run does not verify
+the Node/Vitest wrapper. From `packages/daemon`:
+
+```bash
+node node_modules/vitest/vitest.mjs run tests/unit/1-core/work-cleanup
+```
