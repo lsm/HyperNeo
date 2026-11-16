@@ -37,7 +37,7 @@ const runner=createNeoTodoRunner({ limits: () => ({ running: 99, perGroup: 99 })
   const receipt=await app.db.gateway.run(op,args);
   record=false;
   return receipt;
-},packs:()=>[],changed:()=>{effects.push({name:'changed'});},tell:async()=>{effects.push({name:'tell'});},attend:async()=>{effects.push({name:'tell'});},
+},packs:()=>[],changed:()=>{effects.push({name:'changed'});},attend:async()=>{effects.push({name:'tell'});},
   invoke:async(_caller,name,input)=>{
     record=false;
     if(name==='work.status') return {kind:'completed',value:{ok:true,value:{status:'done',lastActivityAt:1}}};
@@ -143,7 +143,6 @@ try {
     limits: () => ({ running: 0, perGroup: 99 }),
     store, sessions, write: app.db.gateway.run.bind(app.db.gateway), packs: () => [],
     changed: () => {},
-    tell: async () => {},
     attend: async (event) => { if (event.subject.id === 'capacity') capacityNotes.push(String(event.facts.text)); },
     invoke: async () => ({ kind: 'completed', value: { ok: true, value: { status: 'done', lastActivityAt: Date.now() } } }),
   });

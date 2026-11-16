@@ -337,15 +337,6 @@ export class NeoService {
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
       enabledPacks: () => this.packs(),
-      tell: (ask, todo, note, key, kind) => {
-        return this.deliverForward(
-          ask.sessionId,
-          key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
-          note,
-          ask.sessionId,
-          kind
-        );
-      },
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
       limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
@@ -360,11 +351,11 @@ export class NeoService {
           ...NEO_ATTENTION_KINDS,
           ...this.installedPacks().flatMap((pack) => pack.attention?.kinds ?? []),
         ],
-        read: ({ subject }) => {
+        read: ({ subject, facts }) => {
           const todo = subject.type === 'todo' ? this.todos.getTodo(subject.id) : null;
           return {
             covered: !!todo && neoTodoCovered(todo, this.todos.todoCards(todo)),
-            latestReportAt: null,
+            latestReportAt: typeof facts.latestAt === 'number' ? facts.latestAt : null,
           };
         },
         ...neoAttentionDelivery(

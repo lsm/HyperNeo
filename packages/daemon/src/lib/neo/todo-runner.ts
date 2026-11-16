@@ -97,13 +97,6 @@ export interface NeoTodoRunnerDeps {
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
   enabledPacks?(): readonly NeoPack[];
-  tell(
-    ask: NeoAsk,
-    todo: NeoTodo,
-    note: string,
-    key?: string,
-    kind?: 'focused_status' | 'quiet_heartbeat' | 'event'
-  ): Promise<void>;
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
   limits(): { running: number; perGroup: number };
@@ -932,6 +925,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return;
     const inputs = sessions.inputs.list(ref);
     const priorStatus = sessions.readLiveStatus(id);
+    const latestAt = Math.max(...turns.map((turn) => turn.at));
     for (const turn of turns) {
       const temporalDispatch = inputs.findLast((input) => {
         const result = input.outcome;
@@ -969,8 +963,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ref,
           readDriverLive(outcome),
           { ...turn, humanInput: origin.humanInput },
-          deps.tell,
-          sessions.turnReports
+          deps.attend,
+          sessions.turnReports,
+          undefined,
+          latestAt
         );
         await sessions.write('recordFollowAnchor', id, turn.at);
         continue;
@@ -997,15 +993,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ref,
           readDriverLive(outcome),
           notice ? { ...turn, notice } : turn,
-          deps.tell,
+          deps.attend,
           sessions.turnReports,
           {
             priorStatus,
             state: reportTodo.state,
             blockedBy: reportTodo.blockedBy,
             questionOpen: questions.some((question) => neoQuestionCoversTodo(question, reportTodo)),
-            blockerEpisode: sessions.readNudge(id)?.blockerReport?.at,
-          }
+          },
+          latestAt
         );
       }
     }

@@ -196,10 +196,6 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
         packs: () => neo.packs(),
         limits: () => ({ running: 9, perGroup: 9 }),
         changed: () => {},
-        tell: async (_ask, _todo, note) => {
-          if (rejectNotes) throw new Error('Synthetic mailbox failure');
-          notes.push(note);
-        },
         attend: async (event) => {
           const note = String(event.facts.text);
           if (rejectNotes) throw new Error('Synthetic mailbox failure');
