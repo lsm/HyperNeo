@@ -281,7 +281,9 @@ function QueueItem({
     );
   const held = item.state === 'held';
   const hold = { held, toggle: () => onHold(item.questionId, !held) };
-  const question = entry?.questions.find((card) => card.id === item.questionId);
+  const question = entry?.questions.find(
+    (card) => card.id === item.questionId && card.state === 'open'
+  );
   return (
     <div data-queue-card={item.questionId}>
       <p class="mt-2 flex flex-wrap gap-x-2 text-xs text-fg-muted">
