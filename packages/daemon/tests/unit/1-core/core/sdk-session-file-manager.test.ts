@@ -733,7 +733,7 @@ describe('SDK Session File Manager', () => {
         JSON.stringify({
           type: 'user',
           uuid: 'u1',
-          message: { content: [{ type: 'tool_result', tool_use_id: 'gone' }] },
+          message: { content: [{ type: 'tool_result', tool_use_id: 'kept' }] },
         }) + '\n',
         'utf-8'
       );
@@ -750,9 +750,16 @@ describe('SDK Session File Manager', () => {
         testWorkspacePath,
         testSdkSessionId,
         'hyperneo-session-1',
-        createMockDb([])
+        createMockDb([
+          {
+            type: 'assistant',
+            uuid: 'kept-assistant',
+            message: { content: [{ type: 'tool_use', id: 'kept', name: 'Bash' }] },
+          },
+        ])
       );
 
+      expect(result.success).toBe(true);
       expect(readdirSync(backupDir).sort()).toEqual(
         [
           'notes.txt',
@@ -761,6 +768,32 @@ describe('SDK Session File Manager', () => {
           result.backupPath!.split('/').pop()!,
         ].sort()
       );
+    });
+
+    test('a failed repair leaves the transcript and its backups untouched', async () => {
+      const transcript =
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'gone' }] },
+        }) + '\n';
+      writeFileSync(testSessionFile, transcript, 'utf-8');
+      const backupDir = join(testSessionDir, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const own = `${testSdkSessionId}.jsonl.backup.`;
+      writeFileSync(join(backupDir, `${own}2020-01-01`), 'good');
+      writeFileSync(join(backupDir, `${own}2020-01-02`), 'broken');
+
+      const result = await repairSDKSessionFile(
+        testWorkspacePath,
+        testSdkSessionId,
+        'hyperneo-session-1',
+        createMockDb([])
+      );
+
+      expect(result.success).toBe(false);
+      expect(readdirSync(backupDir).sort()).toEqual([`${own}2020-01-01`, `${own}2020-01-02`]);
+      expect(readFileSync(testSessionFile, 'utf-8')).toBe(transcript);
     });
   });
 
