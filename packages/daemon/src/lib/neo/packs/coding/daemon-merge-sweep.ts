@@ -198,11 +198,8 @@ export function createCodingDaemonMergeSweep(
   const sweep = async (now: number): Promise<void> => {
     const revision = holdRevision;
     const open = (await ledger.read('list')).filter((row) => row.closedAt === null);
-    for (const { url, head, startedAt } of await record({ kind: 'limits' })) {
-      const row = open.find((row) => prUrl(row) === url && row.head === head);
-      if (row && !(row.state === 'approved_green' && row.stateSince > startedAt))
-        await retryLimit(url, head);
-    }
+    for (const { url, head } of await record({ kind: 'limits' }))
+      if (open.some((row) => prUrl(row) === url && row.head === head)) await retryLimit(url, head);
     const rows = open.filter((row) =>
       ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state)
     );

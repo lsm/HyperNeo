@@ -1330,7 +1330,7 @@ test('gates passing again after a stopped budget tell Neo once per time they pas
   expect(merges()).toHaveLength(3);
 });
 
-test('a stopped budget whose gates pass again is reminded as ready, not as stopped', async () => {
+test('a failed fresh read sends no ready cue and each report repeats once', async () => {
   mergeFailed = true;
   const { run, wakes } = entry();
   for (const at of [10, 11, 12]) await run(at);
@@ -1341,11 +1341,12 @@ test('a stopped budget whose gates pass again is reminded as ready, not as stopp
   fail = '';
   await run(22);
   await run(12 + FOUR_HOURS);
-  expect(wakes()).toHaveLength(2);
   await run(20 + FOUR_HOURS);
+  await run(20 + 6 * FOUR_HOURS);
   expect(wakes().map((text) => text.includes('Fresh merge gates now pass'))).toEqual([
     false,
     true,
+    false,
     true,
   ]);
   expect(merges()).toHaveLength(3);
