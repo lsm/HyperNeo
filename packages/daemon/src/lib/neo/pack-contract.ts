@@ -7,6 +7,7 @@ import type { WorkRef } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
+import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
 
 export interface NeoPackBrief {
   id: string;
@@ -116,6 +117,10 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   matter?(ask: Pick<NeoAsk, 'title' | 'request' | 'projectId'>): string | null;
   tracker?: NeoTrackerAdapter;
   sweep?(now: number): Promise<void>;
+  attention?: {
+    kinds: readonly NeoAttentionKind[];
+    scan?(now: number): Promise<readonly NeoAttentionEvent[]>;
+  };
   stats?(now: number): Record<string, number> | Promise<Record<string, number>>;
   snapshotRows?(
     repos: readonly string[] | null,

@@ -22,7 +22,7 @@ const step = event('todo.neo_step', { title: 'Ship it', reason: 'no_worker' });
 const decide = (item: NeoAttentionEvent, facts = known(), now = item.since) =>
   decideNeoAttention(item, facts, now, NEO_ATTENTION_KINDS);
 
-describe('decideNeoAttention', () => {
+describe('the attention decision', () => {
   test.each<[string, NeoAttentionEvent, ReturnType<typeof decide>]>([
     ['a Neo step wakes', step, { value: { action: 'wake', step: 0 } }],
     [

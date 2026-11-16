@@ -53,8 +53,8 @@ describe('neo.attention.tell', () => {
     expect(await tell(step(), 1_000 + HOUR)).toMatchObject({ told: 'wake', step: 1 });
     await tell(step(), 1_000 + HOUR + 1);
     expect(wakes()).toBe(2);
-    expect(JSON.stringify(mailbox.jobsByQueue('mailbox')[0])).toContain(
-      'Todo \\"Ship it\\" (todo-1) needs your next step'
+    expect(JSON.parse(mailbox.jobsByQueue('mailbox')[0].payload).message.message.content).toBe(
+      'Todo "Ship it" (todo-1) needs your next step: its prerequisites are done and it has no instruction or worker. Write the instruction and start it, or remove it.'
     );
   });
 
@@ -129,6 +129,6 @@ describe('neo.attention.tell', () => {
       dropped: () => {},
     });
     await busy(step(), 1_000);
-    expect(JSON.stringify(mailbox.jobsByQueue('mailbox'))).toContain('defer');
+    expect(JSON.parse(mailbox.jobsByQueue('mailbox')[0].payload).deliveryMode).toBe('defer');
   });
 });
