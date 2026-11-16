@@ -116,7 +116,8 @@ describe('the attention sweep with model-routing on', () => {
     status = 'active',
     retryAt: number | null = NOW + 10 * MINUTE,
     reason = 'limit',
-    n = 1
+    n = 1,
+    extra: Record<string, unknown> = {}
   ) => {
     const store = new NeoAskTodoRepository(db);
     const sessions = new NeoTodoSessionRepository(db);
@@ -153,6 +154,7 @@ describe('the attention sweep with model-routing on', () => {
         ...(retryAt === null ? {} : { retryAt }),
         reason,
         since: NOW - sinceMinutes * MINUTE,
+        ...extra,
       })
     );
   };
@@ -279,6 +281,13 @@ describe('the attention sweep with model-routing on', () => {
     expect(wakes()).toEqual([
       'Todo "Ship it" (todo-1) is held on anthropic opus via hyperneo (login) since 2026-11-16T11:29:00.000Z. Other lines on its route: kimi k2 via hyperneo. Check their usage with settings.provider.usage, then decide whether it waits or moves.',
     ]);
+  });
+
+  test('a limit hold waiting for a manual retry is live and told once', async () => {
+    heldTodo(31, 'active', NOW - MINUTE, 'limit', 1, { manualRetry: true });
+    await sweep(NOW);
+    await sweep(NOW + 5 * MINUTE);
+    expect(wakes()).toHaveLength(1);
   });
 
   test('two todos held on the same line are ranked once per sweep', async () => {
