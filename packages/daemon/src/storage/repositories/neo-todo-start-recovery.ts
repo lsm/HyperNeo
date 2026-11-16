@@ -39,9 +39,8 @@ export const recoverNeoTodoStart = (superpipe({})('neo.todo.recover-start-state'
         plan.todo.id,
         planNeoTodoFailure(
           plan.todo,
-          'Start was interrupted; a session may have started without being recorded.',
-          now
-        )!,
+          'Start was interrupted; a session may have started without being recorded.'
+        ) ?? {},
         now,
         { state: 'no_opinion' }
       );

@@ -607,9 +607,14 @@ describe('a doing todo never sits idle without someone on it', () => {
     const w = (current = world());
     w.knobs.startRefused = true;
     const todo = w.adopt(null);
+    w.db.prepare('UPDATE neo_todos SET reason = ? WHERE id = ?').run('An older failure', todo.id);
     for (const minutes of [20, 40, 60]) await w.at(minutes);
     expect(w.named('work.start')).toHaveLength(1);
-    expect(w.todo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'stalled' });
+    expect(w.todo(todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'stalled',
+      blockedReason: expect.stringContaining('synthetic place refusal'),
+    });
     expect(w.store.listQuestions('ask').filter((question) => question.todoId === todo.id)).toEqual(
       []
     );

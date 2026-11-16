@@ -53,8 +53,9 @@ try {
   assert.equal(started.todo.blockedBy, null);
   assert.equal(world.sessions.inputs.list(started.todo.id).length, 1);
   const denied = await rpc({ askId: ask.id, ...world.draft('Missing identity', ['missing']) });
-  assert.equal(denied.todo.state, 'failed');
-  assert(denied.todo.reason?.includes('missing_worker_binding'));
+  assert.equal(denied.todo.state, 'blocked');
+  assert.equal(denied.todo.blockedBy, 'failure');
+  assert(denied.todo.blockedReason?.includes('missing_worker_binding'));
   assert.equal(world.calls.length, 1);
   assert.deepEqual(world.sessions.inputs.list(denied.todo.id), []);
   assert.equal(world.sessions.readRef(denied.todo.id), null);

@@ -67,7 +67,8 @@ describe('core todo starts respect pack worker exclusions', () => {
       });
       expect(result.todo).toMatchObject({
         state: 'blocked',
-        reason: expect.stringContaining('missing_worker_binding'),
+        blockedBy: 'failure',
+        blockedReason: expect.stringContaining('missing_worker_binding'),
       });
       expect(world.store.listQuestions(ask.id).map((q) => [q.cause, q.state, q.todos])).toEqual([
         ['retries_exhausted', 'open', [result.todo.id]],
