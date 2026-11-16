@@ -324,20 +324,16 @@ describe('coding session target decision', () => {
       worked(item, session, 'dev', 'done');
       db.prepare('UPDATE neo_todo_sessions SET started_at = ? WHERE todo_id = ?').run(at, item.id);
     };
-    const [x, y, z] = [
-      todo('feature', repo, url),
-      todo('feature', repo, url),
-      todo('feature', repo, url),
-    ];
-    ran(x, 'a', 1);
+    const original = todo('feature', repo, url);
+    const waiting = todo('feature', repo, url);
+    const later = todo('feature', repo, url);
+    ran(original, 'a', 1);
+    ran(later, 'a', 2);
     live.a = 'archived';
-    expect(await decide(z, start('dev'))).toEqual({ value: start('dev') });
-    ran(z, 'b', 2);
-    live.b = 'archived';
-    expect(await decide(y, start('dev'))).toEqual({ value: start('dev') });
-    ran(y, 'c', 3);
+    expect(await decide(waiting, start('dev'))).toEqual({ value: start('dev') });
+    ran(waiting, 'b', 3);
     expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('c') },
+      value: { verb: 'send', ref: ref('b') },
     });
   });
 });
