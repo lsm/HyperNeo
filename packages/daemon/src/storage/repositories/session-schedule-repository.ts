@@ -74,12 +74,12 @@ export class SessionScheduleRepository {
       .run(schedule.nextRunAt, firedAt, outcome, messageId, schedule.id);
   }
 
-  listRuns(scheduleId: string): SessionScheduleRun[] {
+  listRuns(scheduleId: string, limit: number): SessionScheduleRun[] {
     return (
       this.db
         .prepare(`SELECT due_at, fired_at, outcome, message_id FROM session_schedule_runs
-        WHERE schedule_id = ? ORDER BY id DESC`)
-        .all(scheduleId) as {
+        WHERE schedule_id = ? ORDER BY id DESC LIMIT ?`)
+        .all(scheduleId, limit) as {
         due_at: number | null;
         fired_at: number;
         outcome: string;

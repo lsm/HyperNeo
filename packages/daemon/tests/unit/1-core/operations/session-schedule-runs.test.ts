@@ -5,6 +5,8 @@ import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedule
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire';
 import { createSessionScheduleOperations } from '../../../../src/lib/scheduler/operations';
 import { NEO_RARE_OPERATION_NAMES } from '../../../../src/lib/operations/neo-discovery';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import type { WorkStatus } from '../../../../src/lib/drivers/types';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
@@ -60,10 +62,13 @@ describe('schedule.session.runs', () => {
     return row.nextRunAt!;
   };
   const runs = async (scheduleId: string, limit?: number) => {
-    const op = createSessionScheduleOperations(scheduler).find(
-      (operation) => operation.name === 'schedule.session.runs'
+    const outcome = await invokeOperation(
+      createOperationRegistry(createSessionScheduleOperations(scheduler)),
+      'schedule.session.runs',
+      limit === undefined ? { scheduleId } : { scheduleId, limit },
+      { source: 'internal', role: 'neo' }
     );
-    return op?.execute({ scheduleId, limit }, { source: 'internal', role: 'neo' });
+    return outcome.kind === 'completed' ? outcome.value : outcome;
   };
 
   test('a limit returns only the newest runs', async () => {

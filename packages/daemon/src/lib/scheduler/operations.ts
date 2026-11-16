@@ -37,6 +37,7 @@ const Create = z.object({
 });
 const List = z.object({ target: WorkRefSchema.optional() });
 const ById = z.object({ scheduleId: z.string().min(1) });
+const Runs = ById.extend({ limit: z.number().int().min(1).max(500).default(100) });
 
 const ScheduleShape = z.object({ id: z.string(), status: z.string() }).passthrough();
 const ScheduleResult = z.union([
@@ -169,11 +170,11 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
 
   const runs = byId('schedule.session.runs', null)
     .pipe(
-      (schedule: SessionSchedule) => ({
+      (schedule: SessionSchedule, input: z.infer<typeof Runs>) => ({
         ok: true as const,
-        runs: scheduler.repo.listRuns(schedule.id),
+        runs: scheduler.repo.listRuns(schedule.id, input.limit),
       }),
-      'outcome',
+      ['outcome', 'input'],
       'outcome'
     )
     .end('outcome');
@@ -206,8 +207,8 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     defineOperation({
       name: 'schedule.session.runs',
       description:
-        "List a session schedule's runs, newest first: due time, fired time, outcome, skip reason and the message id when one was sent.",
-      inputSchema: ById,
+        "List a session schedule's newest runs first (limit, default 100): due time, fired time, outcome, skip reason and the message id when one was sent.",
+      inputSchema: Runs,
       resultSchema: RunsResult,
       policy: policy('read'),
       execute: async (input, caller) => (runs as Run)(input, caller) as z.infer<typeof RunsResult>,
