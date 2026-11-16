@@ -188,6 +188,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.pr.dirty': '{pr} 和基线冲突',
   'todo.pr.draft': '{pr} 草稿',
   'todo.reportedNoPr': '会话说做完了，没查到 PR',
+  'live.group.cards': '等你回答',
   'live.group.attention': '等你处理',
   'live.group.running': '在做',
   'live.group.outcomes': '最近结果',

@@ -17,17 +17,47 @@ export function neoAskEntryGroup(entry: Pick<NeoAskEntry, 'state'>): NeoAskGroup
       : 'running';
 }
 
-export function neoAskEntriesInOrder<T extends Pick<NeoAskEntry, 'ask' | 'state' | 'todos'>>(
-  entries: readonly T[]
-): T[] {
+const newestOpenCardAt = (entry: Pick<NeoAskEntry, 'questions'>, held: boolean) =>
+  Math.max(
+    0,
+    ...entry.questions
+      .filter((question) => question.state === 'open' && !!question.heldAt === held)
+      .map((question) => question.createdAt)
+  );
+
+export function neoAskEntriesInOrder<
+  T extends Pick<NeoAskEntry, 'ask' | 'state' | 'todos' | 'questions'>,
+>(entries: readonly T[]): T[] {
   return [...entries].sort((a, b) => {
     const waiting = Number(b.state === 'waiting') - Number(a.state === 'waiting');
     if (waiting) return waiting;
     if (a.state === 'waiting') {
-      return b.ask.createdAt - a.ask.createdAt || a.ask.id.localeCompare(b.ask.id);
+      return (
+        newestOpenCardAt(b, false) - newestOpenCardAt(a, false) ||
+        newestOpenCardAt(b, true) - newestOpenCardAt(a, true) ||
+        b.ask.createdAt - a.ask.createdAt ||
+        a.ask.id.localeCompare(b.ask.id)
+      );
     }
     return Number(holdsBlocked(b)) - Number(holdsBlocked(a));
   });
+}
+
+export function neoOpenCards<T extends Pick<NeoAskEntry, 'questions'>>(
+  entries: readonly T[]
+): { entry: T; question: T['questions'][number] }[] {
+  return entries
+    .flatMap((entry) =>
+      entry.questions
+        .filter((question) => question.state === 'open')
+        .map((question) => ({ entry, question }))
+    )
+    .sort(
+      (a, b) =>
+        Number(!!a.question.heldAt) - Number(!!b.question.heldAt) ||
+        b.question.createdAt - a.question.createdAt ||
+        a.question.id.localeCompare(b.question.id)
+    );
 }
 
 export function neoDonePageMerge(

@@ -187,6 +187,7 @@ export const en = {
   'todo.pr.dirty': '{pr} in conflict with its base',
   'todo.pr.draft': '{pr} draft',
   'todo.reportedNoPr': 'Session says it is done; no PR found',
+  'live.group.cards': 'Waiting for your answer',
   'live.group.attention': 'Needs your attention',
   'live.group.running': 'In progress',
   'live.group.outcomes': 'Recent outcomes',
