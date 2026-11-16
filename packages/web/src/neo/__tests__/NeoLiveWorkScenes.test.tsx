@@ -791,6 +791,64 @@ describe('card reply notice navigation', () => {
     expect(group.querySelector('h2')?.textContent).toBe('Needs your attention · 1');
   });
 
+  it('drops a topic that hides an opened reference', async () => {
+    const { model } = mount();
+    const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
+    trip.ask.topic = 'Travel';
+    const tax = testAskEntry('tax', 'Fictional tax', {
+      state: 'doing',
+      todos: [testTodo('tax-step', { title: 'tax step', state: 'doing' })],
+    });
+    tax.ask.topic = 'Money';
+    const progress = (askId: string) => ({
+      state: 'progress' as const,
+      askId,
+      todoId: `${askId}-step`,
+      title: `${askId} step`,
+      owner: 'worker' as const,
+    });
+    act(() => {
+      model.value = {
+        ...model.value,
+        snapshot: {
+          ...model.value.snapshot,
+          todoAsks: [trip, tax],
+          humanQueue: {
+            items: [progress('trip'), progress('tax')],
+            counts: {
+              trip: { waiting: 0, held: 0, progress: 1 },
+              tax: { waiting: 0, held: 0, progress: 1 },
+            },
+          },
+        } as never,
+        viewPublicConversation: {
+          ...model.value.viewPublicConversation!,
+          entries: [
+            {
+              kind: 'ask',
+              key: 'tax-quote',
+              ask: {
+                conversationId: root.slice(4),
+                requestId: '20000000-0000-4000-8000-000000000009',
+                askOrigin: { sessionId: root, messageId: 'quoted-tax' },
+                content: 'About the tax step',
+                replyTo: { kind: 'todo', id: 'tax-step', excerpt: 'Quoted tax target' },
+                sequence: 1,
+                createdAt: '2026-10-24T12:00:00Z',
+              },
+            },
+          ],
+        },
+      };
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Travel 1' }));
+    fireEvent.click(screen.getByRole('button', { name: /Quoted tax target/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('neo-ref-todo-tax-step'));
+    expect(screen.getByRole('button', { name: 'Travel 1' }).getAttribute('aria-pressed')).toBe(
+      'false'
+    );
+  });
+
   it('applies the chosen topic to the queue', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
