@@ -1,6 +1,6 @@
 import { createEventMessage, type MessageHub } from '@hyperneo/shared';
 import { NEO_QUICK_ACK, NEO_QUICK_ACK_LISTENING, neoToolDescription } from '@hyperneo/prompts';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { RunDbOp } from '../../storage/db-gateway/db-op.ts';
 import { recordOperationRefusal } from '../../storage/repositories/operation-refusal-repository.ts';
@@ -176,8 +176,11 @@ export class NeoSpeech {
           new Logger('NeoSpeech').warn('Playback disconnect record failed')
         );
       }) ?? (() => {});
-    const route = (action: 'listen' | 'say' | 'ack' | 'preview') =>
-      (superpipe({})(`neo.speech.${action}`) as PipelineAPI)
+    const route = (
+      action: 'listen' | 'say' | 'ack' | 'preview',
+      pipeline: ReturnType<SuperPipeFactory>
+    ) =>
+      (pipeline as PipelineAPI)
         .input(['input', 'caller'])
         .pipe(
           (input: Input, caller: OperationCaller) => {
@@ -229,7 +232,7 @@ export class NeoSpeech {
         inputSchema: Listen,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('listen'),
+        execute: route('listen', superpipe({})('neo.speech.listen')),
       }),
       defineOperation({
         name: 'neo.speech.say',
@@ -237,7 +240,7 @@ export class NeoSpeech {
         inputSchema: NeoSpeechSay,
         resultSchema: Result,
         policy: { safetyClass: 'mutate', roles: ['neo'] },
-        execute: route('say'),
+        execute: route('say', superpipe({})('neo.speech.say')),
       }),
       defineOperation({
         name: 'neo.speech.preview',
@@ -245,7 +248,7 @@ export class NeoSpeech {
         inputSchema: Preview,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('preview'),
+        execute: route('preview', superpipe({})('neo.speech.preview')),
       }),
       defineOperation({
         name: 'neo.speech.catalog',
@@ -267,7 +270,7 @@ export class NeoSpeech {
         inputSchema: Ack,
         resultSchema: Result,
         policy: { safetyClass: 'human_only', caller: 'local_user' },
-        execute: route('ack'),
+        execute: route('ack', superpipe({})('neo.speech.ack')),
       }),
     ];
   }
