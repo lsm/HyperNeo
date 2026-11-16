@@ -41,7 +41,6 @@ export function recordStartedWork(
   );
 }
 
-/** Only a session work.start itself opened becomes a worker the daemon may reuse. */
 export function recordWorkerStarted(db: BunDatabase, ref: StartedWork): void {
   recordStartedWork(db, ref, Date.now(), false, false, undefined, 'worker');
 }

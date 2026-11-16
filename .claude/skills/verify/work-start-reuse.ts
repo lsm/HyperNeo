@@ -77,7 +77,6 @@ try {
     store.updateTodo(store.getTodo(`todo-${id}`)!, { state }, 2);
   };
   lease(third.id, 'doing', true);
-  // A session the human opened in the folder, which only ever did a review todo.
   const reviewer = await app.sessionManager.createSession({ workspacePath: folder, title: 'Human review', worktreeMode: 'direct', createdBy: 'human' });
   lease(reviewer, 'done', true);
   await settle([reviewer]);
