@@ -183,7 +183,7 @@ describe('anthropic-subscription-oauth helpers', () => {
       refreshToken: 'expired-refresh',
       fetchImpl,
     });
-    expect(result).toEqual({ ok: false, definitive: true });
+    expect(result).toEqual({ ok: false, definitive: true, oauthError: 'invalid_grant' });
   });
 
   it('classifies a server error during refresh as transient', async () => {
@@ -194,7 +194,18 @@ describe('anthropic-subscription-oauth helpers', () => {
       refreshToken: 'refresh-value',
       fetchImpl,
     });
-    expect(result).toEqual({ ok: false, definitive: false });
+    expect(result).toEqual({ ok: false, definitive: false, oauthError: 'unavailable' });
+  });
+
+  it('reports no OAuth error code when the error field is not a string', async () => {
+    const fetchImpl = mock(async () =>
+      jsonResponse({ error: { code: 'invalid_grant' } }, 400)
+    ) as unknown as typeof fetch;
+    const result = await refreshClaudeSubscriptionToken({
+      refreshToken: 'refresh-value',
+      fetchImpl,
+    });
+    expect(result).toEqual({ ok: false, definitive: true });
   });
 
   it('classifies a network failure during refresh as transient', async () => {
@@ -324,7 +335,10 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       expiresAt: Date.now() + 3600_000,
     });
 
-    expect(await provider.refreshToken()).toBe('definitive');
+    expect(await provider.refreshToken()).toEqual({
+      outcome: 'definitive',
+      oauthError: 'invalid_grant',
+    });
     expect(provider.getCredentials()).toMatchObject({
       accessToken: 'old-access-token',
       refreshToken: 'stored-refresh-token',
@@ -342,7 +356,10 @@ describe('AnthropicProvider Claude subscription OAuth', () => {
       expiresAt: Date.now() + 3600_000,
     });
 
-    expect(await provider.refreshToken()).toBe('transient');
+    expect(await provider.refreshToken()).toEqual({
+      outcome: 'transient',
+      oauthError: 'overloaded',
+    });
     expect(provider.getCredentials()).toMatchObject({
       accessToken: 'old-access-token',
       refreshToken: 'stored-refresh-token',
