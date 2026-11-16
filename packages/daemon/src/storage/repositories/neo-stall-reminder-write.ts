@@ -132,7 +132,7 @@ export const neoStallReminderWrite = defineDbOp<{ now: number }, void>({
         continue;
       }
       if (!todo.check || new NeoTodoSessionRepository(db).get(todo.id)) continue;
-      if (neoHumanStepDue(todo, store.listFamilyTodos(todo.askId), store.todoCards(todo)))
+      if (neoHumanStepDue(todo, store.listFamilyTodos(todo.askId), store.todoCards(todo), now))
         openHumanCard(
           store,
           crypto.randomUUID(),

@@ -1,7 +1,6 @@
 import type { NeoQuestion, NeoStatusCode, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoQuestionDraft } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoStatusLine } from './status-codes.ts';
-import { neoTodoReady } from './todo-dependencies.ts';
 import { neoQuestionCoversTodo, neoTodoCovered } from './todo-state.ts';
 
 export const NEO_WORKER_BLOCKER = 'worker_blocker';
@@ -68,7 +67,9 @@ const TEXT_CODES: Record<Cause, keyof typeof DAEMON_EN> = {
 };
 
 type Row = Pick<NeoTodo, 'id' | 'title' | 'state' | 'blockedReason' | 'updatedAt'>;
-type Covered = Row & Pick<NeoTodo, 'blockedBy' | 'check' | 'startedAt'>;
+type Covered = Row &
+  Pick<NeoTodo, 'blockedBy' | 'check' | 'startedAt'> &
+  Partial<Pick<NeoTodo, 'instruction' | 'dependsOn'>>;
 type Card = Pick<
   NeoQuestion,
   'id' | 'state' | 'cause' | 'todos' | 'text' | 'answer' | 'answeredAt' | 'options'
@@ -155,13 +156,20 @@ export function neoDaemonCardCodes(
 const blockedBy = (todo: Covered, ...by: NeoTodo['blockedBy'][]) =>
   todo.state === 'blocked' && by.includes(todo.blockedBy);
 
-const covers: Record<Cause, (todo: Covered) => boolean> = {
+const humanStep = (todo: Covered, family: readonly Covered[]) =>
+  !!todo.check &&
+  !todo.instruction?.trim() &&
+  (todo.dependsOn ?? []).every((id) =>
+    family.some((item) => item.id === id && item.state === 'done')
+  );
+
+const covers: Record<Cause, (todo: Covered, family: readonly Covered[]) => boolean> = {
   [NEO_WORKER_BLOCKER]: (todo) => blockedBy(todo, 'needs-human', 'question'),
   [NEO_RETRIES_EXHAUSTED]: (todo) => blockedBy(todo, 'failure'),
   [NEO_CHECK_OVERDUE]: (todo) =>
     !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
-  [NEO_HUMAN_STEP]: (todo) =>
-    !!todo.check && (todo.state === 'todo' || blockedBy(todo, 'question')),
+  [NEO_HUMAN_STEP]: (todo, family) =>
+    humanStep(todo, family) && (todo.state === 'todo' || blockedBy(todo, 'question')),
   [NEO_HOLD]: (todo) =>
     todo.startedAt === null && (todo.state === 'todo' || blockedBy(todo, 'question')),
   [NEO_PAUSE]: (todo) =>
@@ -169,8 +177,11 @@ const covers: Record<Cause, (todo: Covered) => boolean> = {
     (todo.state === 'doing' || blockedBy(todo, 'question', 'needs-human')),
 };
 
-export const neoDaemonCardCovers = (cause: string | null | undefined, todo: Covered) =>
-  isCause(cause) && covers[cause](todo);
+export const neoDaemonCardCovers = (
+  cause: string | null | undefined,
+  todo: Covered,
+  family: readonly Covered[]
+) => isCause(cause) && covers[cause](todo, family);
 
 export function planNeoDaemonCardPrune(
   question: Pick<NeoQuestion, 'cause' | 'todos' | 'text'>,
@@ -179,7 +190,7 @@ export function planNeoDaemonCardPrune(
   if (!isCause(question.cause)) return null;
   const cause = question.cause;
   const kept = question.todos.flatMap((id) =>
-    family.filter((todo) => todo.id === id && covers[cause](todo))
+    family.filter((todo) => todo.id === id && covers[cause](todo, family))
   );
   if (kept.length === question.todos.length) return null;
   return {
@@ -229,10 +240,20 @@ export function planNeoRetriesCard<C extends Card>(
 }
 
 export const neoHumanStepDue = (
-  todo: Pick<NeoTodo, 'id'>,
-  family: readonly NeoTodo[],
-  cards: readonly Card[]
-) => !neoTodoCovered(todo, cards) && neoTodoReady(family, todo.id);
+  todo: Covered,
+  family: readonly Covered[],
+  cards: readonly Card[],
+  now: number
+) =>
+  !neoTodoCovered(todo, cards) &&
+  humanStep(todo, family) &&
+  !cards.some(
+    (card) =>
+      card.cause === NEO_CHECK_OVERDUE &&
+      card.state === 'answered' &&
+      card.todos.includes(todo.id) &&
+      now - (card.answeredAt ?? 0) < NEO_CHECK_DEADLINE_MS
+  );
 
 export type NeoDaemonCardAction = {
   todoId: string;
@@ -281,7 +302,7 @@ export function planNeoHoldCard(
   reason: string
 ): { value: NeoQuestionDraft } | { reason: string } {
   const cause = todo.startedAt === null ? NEO_HOLD : NEO_PAUSE;
-  if (!covers[cause](todo))
+  if (!covers[cause](todo, [todo]))
     return {
       reason: `not_holdable: only a todo that is waiting to start or running can be held; this one is ${todo.state}.`,
     };
