@@ -594,6 +594,7 @@ describe('SDK Session File Manager', () => {
       expect(inserted.type).toBe('assistant');
       expect(inserted.message.content).toEqual(assistantContent);
       expect(repaired[3].parentUuid).toBe(inserted.uuid);
+      expect(inserted.parentUuid).toBe('u0');
     });
 
     test('restores a parallel tool_use message once for all of its results', async () => {
