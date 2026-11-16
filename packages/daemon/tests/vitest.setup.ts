@@ -1,12 +1,26 @@
 import * as nodeDns from 'node:dns';
+import { mkdtempSync, rmSync } from 'node:fs';
 import * as nodeNet from 'node:net';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
-import { vi } from 'vitest';
+import { afterAll, vi } from 'vitest';
 import { registerSchemaExtension } from '../src/storage/schema/extensions';
 import { SPACE_SCHEMA } from '../src/storage/schema/space-schema';
 
 process.env.HYPERNEO_SPACE ??= 'on';
+const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-unit-home-'));
+process.env.BUN_INSTALL ??= join(homedir(), '.bun');
+process.env.HOME = isolatedHome;
+if ('Bun' in globalThis) {
+  process.env.HYPERNEO_DATA_DIR = join(isolatedHome, '.hyperneo');
+  process.env.CODEX_HOME = join(isolatedHome, '.codex');
+} else {
+  delete process.env.HYPERNEO_DATA_DIR;
+  delete process.env.CODEX_HOME;
+}
+afterAll(() => rmSync(isolatedHome, { recursive: true, force: true }));
 registerSchemaExtension(SPACE_SCHEMA);
 
 vi.mock('../src/lib/safe-fs.ts', async (importOriginal) => {

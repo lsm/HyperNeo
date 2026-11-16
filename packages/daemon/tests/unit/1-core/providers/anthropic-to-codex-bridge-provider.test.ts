@@ -524,7 +524,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
           'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
           jti: 'token-2',
         });
-        p.setCredentials({
+        await p.setCredentials({
           type: 'oauth',
           accessToken: accessToken2,
           refreshToken: 'refresh-token-2',
@@ -1920,6 +1920,141 @@ describe('AnthropicToCodexBridgeProvider', () => {
       p.stopAllBridgeServers();
     });
 
+    it('Test 2l: a supplied login that cannot be saved is rejected and not kept', async () => {
+      const blocked = path.join(tmpDir, 'not-a-directory');
+      writeFileSync(blocked, 'regular file');
+      const p = makeProvider({}, path.join(blocked, 'hyperneo'), path.join(tmpDir, 'codex'));
+
+      await expect(
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account',
+          refreshToken: 'unsaved-refresh',
+        } as ProviderCredentials)
+      ).rejects.toThrow();
+      expect(await p.getCredentials()).toBeNull();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2n: two rejected queued saves leave no rejected login cached', async () => {
+      const blocked = path.join(tmpDir, 'not-a-directory');
+      writeFileSync(blocked, 'regular file');
+      const p = makeProvider({}, path.join(blocked, 'hyperneo'), path.join(tmpDir, 'codex'));
+
+      const results = await Promise.allSettled([
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-a',
+          refreshToken: 'unsaved-refresh-a',
+        } as ProviderCredentials),
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-b',
+          refreshToken: 'unsaved-refresh-b',
+        } as ProviderCredentials),
+      ]);
+
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+      expect(await p.getCredentials()).toBeNull();
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2o: a rejected save after a saved login keeps the saved login', async () => {
+      const p = makeProvider({}, path.join(tmpDir, 'hyperneo'), path.join(tmpDir, 'codex'));
+      await p.setCredentials({
+        type: 'oauth',
+        accessToken: 'saved-account-a',
+        refreshToken: 'saved-refresh-a',
+      } as ProviderCredentials);
+      fsPromiseMocks.writeFile.mockImplementationOnce(async () => {
+        throw new Error('synthetic write failure');
+      });
+
+      await expect(
+        p.setCredentials({
+          type: 'oauth',
+          accessToken: 'unsaved-account-b',
+          refreshToken: 'unsaved-refresh-b',
+        } as ProviderCredentials)
+      ).rejects.toThrow('synthetic write failure');
+      expect(await p.getCredentials()).toMatchObject({ accessToken: 'saved-account-a' });
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2m: the default Codex login path stays inside the test temp directory', () => {
+      const p = new AnthropicToCodexBridgeProvider();
+      const codexAuthPath = (p as unknown as { codexAuthPath: string }).codexAuthPath;
+      expect(codexAuthPath.startsWith(os.tmpdir())).toBe(true);
+      expect(codexAuthPath.startsWith(path.join(os.userInfo().homedir, '.codex'))).toBe(false);
+      p.stopAllBridgeServers();
+    });
+
+    it('Test 2k: a delayed earlier save does not overwrite a newer supplied login', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      const realWrite = fsPromiseMocks.writeFile.getMockImplementation()!;
+      let releaseFirst!: () => void;
+      const firstHeld = new Promise<void>((release) => {
+        releaseFirst = release;
+      });
+      fsPromiseMocks.writeFile.mockImplementationOnce(async (...args: unknown[]) => {
+        await firstHeld;
+        return realWrite(...args);
+      });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      const saveA = p.setCredentials({
+        type: 'oauth',
+        accessToken: 'supplied-account-a',
+        refreshToken: 'supplied-refresh-a',
+      } as ProviderCredentials);
+      const saveB = p.setCredentials({
+        type: 'oauth',
+        accessToken: 'supplied-account-b',
+        refreshToken: 'supplied-refresh-b',
+      } as ProviderCredentials);
+      await new Promise((settle) => setTimeout(settle, 20));
+      releaseFirst();
+      await Promise.all([saveA, saveB]);
+      p.stopAllBridgeServers();
+
+      const restarted = makeProvider({}, hyperneoDir, codexDir);
+      expect(await restarted.getCredentials()).toMatchObject({
+        accessToken: 'supplied-account-b',
+      });
+      restarted.stopAllBridgeServers();
+    });
+
+    it('Test 2j: an explicitly supplied login survives a restart instead of the Codex login', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-account-b', refresh_token: 'codex-refresh-b' },
+      });
+
+      const before = makeProvider({}, hyperneoDir, codexDir);
+      await before.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-account-a',
+        refreshToken: 'explicit-refresh-a',
+      } as ProviderCredentials);
+      await vi.waitFor(() => {
+        const stored = JSON.parse(readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')) as {
+          openai?: { access?: string };
+        };
+        expect(stored.openai?.access).toBe('explicit-account-a');
+      });
+      before.stopAllBridgeServers();
+
+      const after = makeProvider({}, hyperneoDir, codexDir);
+      expect(await after.getCredentials()).toMatchObject({
+        type: 'oauth',
+        accessToken: 'explicit-account-a',
+        refreshToken: 'explicit-refresh-a',
+      });
+      after.stopAllBridgeServers();
+    });
+
     it('Test 2f: an explicitly supplied login without an expiry is still refreshed', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
@@ -1939,7 +2074,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       );
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      p.setCredentials({
+      await p.setCredentials({
         type: 'oauth',
         accessToken: 'explicit-access-1',
         refreshToken: 'explicit-refresh-1',
@@ -1958,7 +2093,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
 
       const p = makeProvider({}, hyperneoDir, codexDir);
-      p.setCredentials({ type: 'oauth', accessToken: 'explicit-access' } as ProviderCredentials);
+      await p.setCredentials({
+        type: 'oauth',
+        accessToken: 'explicit-access',
+      } as ProviderCredentials);
       expect(await p.refreshToken()).toBe('definitive');
       expect(await p.getApiKey()).toBe('explicit-access');
       expect(fetchSpy).not.toHaveBeenCalled();
@@ -1994,7 +2132,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       const p = makeProvider({}, hyperneoDir, codexDir);
       const mirrored = await p.getCredentials();
-      p.setCredentials(mirrored as ProviderCredentials);
+      await p.setCredentials(mirrored as ProviderCredentials);
       await p.refreshToken();
       expect(fetchSpy).not.toHaveBeenCalled();
       p.stopAllBridgeServers();
