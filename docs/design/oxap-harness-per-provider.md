@@ -394,6 +394,30 @@ this restriction is not supported". Regression tests cover each restriction
 at each place and check the stored config is unchanged after a refusal. Translating restrictions into
 enforced OXAP policy can come later as an addition.
 
+The gate list comes from a sweep of every daemon writer of a session's
+provider, thinking, tools, skills, MCP, sandbox and permission settings on
+`dev`. Each writer is gated, covered by another gate, or out of scope:
+
+| Writer | Writes | OXAP chat |
+| --- | --- | --- |
+| `session.create` | all carried fields | admission refuses (PR 2) |
+| `session.update` (`admitUpdateSessionConfig`) | `provider`, `thinkingLevel`, restrictions | `decideSwitch` and admission, `thinkingLevel` included for a row without thinking support (PR 2) |
+| `session.model.switch` → `ModelSwitchHandler` | `provider`, `thinkingLevel` | `decideSwitch` (PR 2) |
+| `session.runtimeSettings.update` (cold commit) | `provider`, `thinkingLevel` | `decideSwitch` and thinking refusal (PR 2) |
+| `session.thinking.set` | `thinkingLevel` | thinking refusal (PR 2) |
+| live `setPermissionMode` | `permissionMode` | admission (PR 2) |
+| live `setMaxThinkingTokens` | `maxThinkingTokens` | admission (PR 2) |
+| `session.sandbox.switch` | `sandbox` | admission (PR 2) |
+| `session.coordinator.switch` | `coordinatorMode`, which adds agents | refused like `agents` (PR 2) |
+| `tools.save`, `mcp.enablement.setOverride` / `clearOverride` at session scope | tool, skill and MCP preferences, copied to the live config | the shared `writePreferences` boundary (`write-session-tool-preferences.ts`) refuses before it writes (PR 2) |
+| rate-limit fallback switch | `provider`, `thinkingLevel` | goes through `ModelSwitchHandler`, so `decideSwitch` covers it |
+| query start provider pin (`query-runner.ts`) | normalized id of the same provider | out of scope: never changes provider |
+| Neo and Space writers (`neo/service.ts`, `neo/folder.ts`) | Neo and Space sessions | out of scope: `codexSessionRefusal` refuses those chats |
+| global and Space defaults (tools, skills, MCP) | defaults, not session rows | out of scope: OXAP loads none of them; PR 7 hides the tools and MCP panel for OXAP chats |
+
+Each refusal-before-write test asserts both the stored config and the live
+session's config are unchanged.
+
 ### Pipelines and pure decisions
 
 The decisions are pure functions over recorded facts. Effects sit at the
@@ -448,13 +472,13 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | # | Change | Surface | Est. lines |
 | --- | --- | --- | --- |
 | 1 | `OXAP_HARNESSES` with the Codex row, `isOxapHarness` replacing every literal `'codex'` check (including the `query-runner.ts` dispatch), `'codex'` → `oxap-codex`, and the verify skill's OXAP wire script sends `oxap-codex` until PR 2 switches it to the provider | daemon | ~100 |
-| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce (create, update, live permission change, sandbox switch) and `session.thinking.set` for a harness without thinking levels, `decideSwitch` on all three doors (model switch, `session.update`, `session.runtimeSettings.update`), open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~210 |
+| 2 | `engineForProvider`, session create derives `harness` and refuses a client-sent one, admission refuses restrictions the harness cannot enforce, and `decideSwitch` and the thinking refusal run, at every writer the gate table lists, open/clear/reopen read link parser and label from the row while the adapter name stays the row's `codex` entry, synthetic second row in tests | daemon | ~250 |
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start with one entry per provider, the adapter name switched to `config.provider` in the same PR, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised | daemon | ~20 |
 | 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
 | OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction; two-phase open, with the pending token request kept and replayed to late subscribers, cancellation cleanup and real-stdio-hub tests including a delayed subscription | OXAP repo | upstream |
 | 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME`. Session-level auth dispatcher subscribed right after open returns | daemon | ~110 |
-| 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine, thinking control hidden and attach/paste/drop disabled with a reason when the row says so | **UI** | ~170 |
+| 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine, thinking control and tools/MCP panel hidden, attach/paste/drop disabled with a reason when the row says so | **UI** | ~180 |
 
 Merge order is 1 → 2 → 3 → 4 → 5, then the OXAP change and a new `oxap`
 release, then 6 → 7. The rename lands after PR 4 and before the UI PR. PRs 1–5
@@ -476,7 +500,7 @@ Limits users will see, from code that already exists:
 
 - OXAP chats refuse system prompts, agents, tool guards, Space and Neo, and
   (from PR 2) permission modes other than `default`, tool restrictions,
-  sandbox rules, turn or budget limits, MCP servers, extra directories and thinking levels. They accept text
+  sandbox rules, turn or budget limits, MCP servers, skills, coordinator mode, extra directories and thinking levels. They accept text
   only.
 - A run fails if the harness asks for a permission or asks the user a question
   (`unsupportedInteraction` in `oap-query.ts`). With Codex's `on-request` and
