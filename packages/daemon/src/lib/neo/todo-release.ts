@@ -2,7 +2,11 @@ import { existsSync, realpathSync } from 'node:fs';
 import simpleGit from 'simple-git';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_TODO_RELEASE_PRINCIPAL } from './session-archive-operation.ts';
-import { WORKTREE_IN_USE, WORKTREE_UNVERIFIED } from '../drivers/work-placement.ts';
+import {
+  branchesHeldElsewhere,
+  WORKTREE_IN_USE,
+  WORKTREE_UNVERIFIED,
+} from '../drivers/work-placement.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -51,19 +55,6 @@ export function requireNeoWorkerSaved(
   return { value: folder.ref };
 }
 
-export function neoBranchesHeldElsewhere(porcelain: string, own: string): string[] {
-  return porcelain
-    .split('\n\n')
-    .map((block) => block.split('\n'))
-    .filter((lines) => {
-      const path = lines.find((line) => line.startsWith('worktree '))?.slice(9);
-      return !!path && existsSync(path) && realpathSync(path) !== own;
-    })
-    .flatMap((lines) =>
-      lines.filter((line) => line.startsWith('branch ')).map((line) => line.slice(7))
-    );
-}
-
 async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: Folder }> {
   const outcome = await invoke(daemon, 'work.status', { ref });
   const status =
@@ -77,7 +68,7 @@ async function readWorkerFolder(ref: WorkRef, invoke: Invoke): Promise<{ value: 
   const git = simpleGit(directory);
   if (!(await git.checkIsRepo())) return { value: clean };
   const own = realpathSync((await git.revparse(['--show-toplevel'])).trim());
-  const held = neoBranchesHeldElsewhere(await git.raw(['worktree', 'list', '--porcelain']), own);
+  const held = branchesHeldElsewhere(await git.raw(['worktree', 'list', '--porcelain']), own);
   const [state, unpushed] = await Promise.all([
     git.status(['--ignore-submodules=none']),
     git.raw(['rev-list', '--count', 'HEAD', '--not', '--remotes', '--tags', ...held]),

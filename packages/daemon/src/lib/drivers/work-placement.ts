@@ -178,6 +178,19 @@ async function folderInUse(directory: string): Promise<boolean> {
   return stdout.split('\n').some((line) => line.startsWith('n') && inside(line.slice(1)));
 }
 
+export function branchesHeldElsewhere(porcelain: string, own: string): string[] {
+  return porcelain
+    .split('\n\n')
+    .map((block) => block.split('\n'))
+    .filter((lines) => {
+      const path = lines.find((line) => line.startsWith('worktree '))?.slice(9);
+      return !!path && existsSync(path) && realpathSync(path) !== own;
+    })
+    .flatMap((lines) =>
+      lines.filter((line) => line.startsWith('branch ')).map((line) => line.slice(7))
+    );
+}
+
 async function fetchCanonicalBranches(git: SimpleGit, own: string): Promise<void> {
   const source = (await readFile(join(own, 'hyperneo-source-checkout'), 'utf8')).trim();
   if (!isAbsolute(source)) throw new Error('The clone names no source checkout.');
@@ -253,7 +266,18 @@ export async function cleanupOwnedWorktree(
               '--not',
               '--glob=refs/hyperneo-check/*',
             ]
-          : ['rev-list', '--count', 'HEAD', '--not', '--remotes=origin']
+          : [
+              'rev-list',
+              '--count',
+              'HEAD',
+              '--not',
+              '--remotes',
+              '--tags',
+              ...branchesHeldElsewhere(
+                await git.raw(['worktree', 'list', '--porcelain']),
+                realpathSync(directory)
+              ),
+            ]
       ),
       workerWorktreeHasSubmodules(directory),
       clone ? git.raw(['stash', 'list']) : '',
