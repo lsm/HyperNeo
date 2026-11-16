@@ -6,7 +6,7 @@ import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NEO_ANSWER_NOTE, NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { NeoRepository } from './neo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { neoNoteBatches } from './neo-wake-queue-repository.ts';
@@ -155,6 +155,7 @@ type Candidate = {
   session_id: string;
   updated_at: number;
   since: number;
+  answer_note: string | null;
   uuids: string[];
 };
 type SessionFacts = {
@@ -163,7 +164,11 @@ type SessionFacts = {
 };
 
 const CANDIDATE_SELECT = `SELECT id, session_id, updated_at, title,
-  (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id) AS since FROM neo_asks`;
+  (SELECT MAX(updated_at) FROM neo_todos WHERE ask_id = neo_asks.id) AS since,
+  (SELECT CASE WHEN q.answered_by = 'button' THEN '${NEO_ANSWER_NOTE.button}' || q.id
+      WHEN q.answer_provenance_json IS NOT NULL THEN '${NEO_ANSWER_NOTE.relay}' || q.id END
+    FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'answered'
+    ORDER BY q.answered_at DESC LIMIT 1) AS answer_note FROM neo_asks`;
 
 const candidate = (row: Omit<Candidate, 'uuids'> & { title: string }): Candidate => ({
   ...row,
@@ -248,6 +253,8 @@ const askWakeEnded = (
   recipients: Recipients,
   facts: Map<string, SessionFacts>
 ): boolean => {
+  if (ask.answer_note && !wakeTurnSeqs(db, ask.session_id, [ask.answer_note], 0).length)
+    return false;
   let ended = false;
   for (const [sessionId, uuids] of recipients.get(ask.id) ?? []) {
     const wakeSeqs = wakeTurnSeqs(db, sessionId, uuids, ask.since);

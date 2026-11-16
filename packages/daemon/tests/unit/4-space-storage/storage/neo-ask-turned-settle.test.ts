@@ -257,11 +257,11 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     store.answerQuestion(card, true as never, 'button', answeredAt);
     expect(await sweep()).toEqual([]);
     expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
-    sdk('user', 'answer-note', 30);
+    sdk('user', 'neo-question:card', 30);
     expect(await sweep()).toEqual([]);
     sdk('result', 'answer-result', 31);
     db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
-      WHERE sdk_uuid IN ('answer-note', 'answer-result')`).run();
+      WHERE sdk_uuid IN ('neo-question:card', 'answer-result')`).run();
     expect(await sweep()).toEqual(['ask']);
   });
 
@@ -432,12 +432,12 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
       answeredAt - 1
     );
     store.answerQuestion(card, true as never, 'button', answeredAt);
-    sdk('user', 'answer-note', 30);
+    sdk('user', 'neo-question:card', 30);
     sdk('user', 'unrelated', 40, 'consumed', 0, 0, 'coordinator');
     sdk('result', 'unrelated-result', 41, 'consumed', 0, 0, 'coordinator');
     const later = db.prepare(`UPDATE sdk_messages SET timestamp = '2026-01-03T00:00:00.000Z'
       WHERE sdk_uuid = ?`);
-    for (const uuid of ['answer-note', 'unrelated', 'unrelated-result']) later.run(uuid);
+    for (const uuid of ['neo-question:card', 'unrelated', 'unrelated-result']) later.run(uuid);
     const reads = DB_OPS.get('neo.turnedAskSettleReads') as DbOp<Record<string, never>, string[]>;
     const write = DB_OPS.get('neo.turnedAskSettles') as DbOp<
       { now: number; ids: string[] },

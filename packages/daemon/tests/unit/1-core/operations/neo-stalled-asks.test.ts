@@ -262,7 +262,7 @@ test('an idle ask whose reminder was read settles once the card answer is read, 
   await service.refreshDriverWork();
   const raw = db.getDatabase();
   let turn = 0;
-  const row = (kind: 'user' | 'result') =>
+  const row = (kind: 'user' | 'result', uuid?: string) =>
     raw
       .prepare(`INSERT INTO sdk_messages
         (seq, id, session_id, message_type, sdk_message, timestamp, sdk_uuid, consumed_seq,
@@ -274,7 +274,7 @@ test('an idle ask whose reminder was read settles once the card answer is read, 
         kind,
         JSON.stringify({ type: kind }),
         new Date(clock).toISOString(),
-        `turn-${turn}`,
+        uuid ?? `turn-${turn}`,
         10 + turn,
         kind === 'result' ? 1 : 0
       );
@@ -309,7 +309,7 @@ test('an idle ask whose reminder was read settles once the card answer is read, 
   service.todos.answerQuestion(card, true as never, 'button', clock);
   await service.refreshDriverWork();
   expect(service.todos.getAsk('quiet')?.status).toBe('open');
-  row('user');
+  row('user', 'neo-question:card');
   row('result');
   await service.refreshDriverWork();
   expect(service.todos.getAsk('quiet')?.status).toBe('dropped');

@@ -273,6 +273,8 @@ const ASK_ALL_DONE = `(EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.i
   AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state NOT IN ('done', 'removed'))
   AND NOT EXISTS (SELECT 1 FROM neo_asks child WHERE child.parent_id = neo_asks.id AND child.status = 'open'))`;
 
+export const NEO_ANSWER_NOTE = { button: 'neo-question:', relay: 'neo-relay-answer:' } as const;
+
 export class NeoAskTodoRepository {
   async commitAdd(input: Parameters<typeof neoTodoAddWrites.run>[1]) {
     const gateway = gatewayFor(this.db);
