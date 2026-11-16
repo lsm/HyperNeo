@@ -2677,7 +2677,7 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       session: {
         id,
         getSessionData: () => ({ id, config: {}, status: 'active' }),
-        validateSdkTranscript: mock(async () => true),
+        validateSdkTranscript: mock(async () => ({ valid: true })),
         restart: mock(async (options?: { beforeStart?: () => void | Promise<void> }) => {
           await options?.beforeStart?.();
           calls.push('restart');
@@ -2742,7 +2742,7 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
         status: 'active',
         sdkSessionId: 'sdk-gone',
       }) as never;
-    replacement.session.validateSdkTranscript = mock(async () => false);
+    replacement.session.validateSdkTranscript = mock(async () => ({ valid: false }));
     const db = makeResumeDb();
     const sessionManager = {
       getSessionForControl: mock(async () => replacement.session),
@@ -2775,6 +2775,48 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       expect.objectContaining({
         resolved: false,
         error: expect.stringContaining('cannot resume as-is'),
+      })
+    );
+  });
+
+  it('says the transcript could not be repaired, with the reason, when repair fails', async () => {
+    const replacement = makeResumeFake('resume-session');
+    replacement.session.validateSdkTranscript = mock(async () => ({
+      valid: false,
+      repairError: 'Could not find tool_use message for t9',
+    }));
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => replacement.session),
+      getSessionAsync: mock(async () => replacement.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const choice = messageHubData.handlers.get('session.sdkResumeChoice')!(
+      { sessionId: 'resume-session', choice: 'leave_as_is', messageUuid: 'uuid-bad' },
+      {}
+    );
+
+    await expect(choice).rejects.toThrow(
+      'could not be repaired: Could not find tool_use message for t9'
+    );
+    await expect(choice).rejects.not.toThrow('not found');
+    expect(db.updateHyperNeoActionMessageByUuid).toHaveBeenLastCalledWith(
+      'resume-session',
+      'uuid-bad',
+      expect.objectContaining({
+        resolved: false,
+        repairError: 'Could not find tool_use message for t9',
       })
     );
   });

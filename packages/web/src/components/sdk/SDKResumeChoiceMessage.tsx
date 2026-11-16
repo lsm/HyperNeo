@@ -62,11 +62,23 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
           />
         </svg>
         <div class="flex-1 text-xs text-warning-soft space-y-1">
-          <p class="font-semibold">Session transcript not found</p>
-          <p class="text-warning-soft">
-            The conversation history for this session could not be located. How would you like to
-            proceed?
-          </p>
+          {message.repairError ? (
+            <>
+              <p class="font-semibold">Session transcript could not be repaired</p>
+              <p class="text-warning-soft">
+                The conversation history for this session is damaged: {message.repairError}. How
+                would you like to proceed?
+              </p>
+            </>
+          ) : (
+            <>
+              <p class="font-semibold">Session transcript not found</p>
+              <p class="text-warning-soft">
+                The conversation history for this session could not be located. How would you like
+                to proceed?
+              </p>
+            </>
+          )}
         </div>
       </div>
 

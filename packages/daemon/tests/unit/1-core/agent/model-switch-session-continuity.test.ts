@@ -499,6 +499,48 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
   );
 
   it(
+    'restart() card says the transcript could not be repaired, with the reason',
+    async () => {
+      const sdkId = 'sdk-continuity-unrepairable';
+      createSdkFile('/test/workspace', sdkId);
+      const projectKey = '/test/workspace'.replace(/[/.]/g, '-');
+      writeFileSync(
+        join(tmpDir, 'projects', projectKey, `${sdkId}.jsonl`),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'lost_t1' }] },
+        }) + '\n'
+      );
+      mockContext = createMockContext({
+        db: {
+          updateSession: updateSessionSpy,
+          saveHyperNeoActionMessage: mock(() => {}),
+          getSDKMessages: () => ({ messages: [], hasMore: false }),
+        } as unknown as Database,
+      });
+      mockContext.session.sdkSessionId = sdkId;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restart();
+
+      expect(publishSpy).toHaveBeenCalledWith(
+        'state.sdkMessages.delta',
+        expect.objectContaining({
+          added: [
+            expect.objectContaining({
+              action: 'sdk_resume_choice',
+              repairError: expect.stringContaining('Could not find tool_use message for lost_t1'),
+            }),
+          ],
+        }),
+        expect.any(Object)
+      );
+    },
+    { timeout: 5000 }
+  );
+
+  it(
     'a model-switch restart does NOT re-feed a UUID whose durable consumed marker exists',
     async () => {
       const db = await createTestDb();
