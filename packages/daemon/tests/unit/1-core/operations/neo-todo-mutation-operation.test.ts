@@ -21,6 +21,8 @@ describe('Writer-backed todo operation activation', () => {
   let stopFailure: string | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
+  let replies: { to: string; text: string }[];
+  let replyFailure: string | null;
   let advance: () => Promise<unknown>;
   let call: (name: string, input: object, role?: 'neo' | 'direct_task_worker') => Promise<Receipt>;
   beforeEach(() => {
@@ -33,6 +35,8 @@ describe('Writer-backed todo operation activation', () => {
     stopFailure = null;
     checkDone = true;
     workerRemotes = undefined;
+    replies = [];
+    replyFailure = null;
     gateway.onChanges = () => {
       order.push('commit');
     };
@@ -104,6 +108,10 @@ describe('Writer-backed todo operation activation', () => {
           order.push('announce');
         },
         project: async (todos) => todos.map((todo) => ({ ...todo, worker: null })),
+        reply: async (_todo, to, text) => {
+          replies.push({ to, text });
+          return replyFailure;
+        },
       })
     );
     call = async (name, input, role = 'neo') => {
@@ -330,6 +338,61 @@ describe('Writer-backed todo operation activation', () => {
     });
     expect(store.getTodo('first')!.state).toBe('removed');
     expect(order).toEqual([]);
+  });
+
+  test('closing a request todo replies once to its recorded sender with the outcome', async () => {
+    advance = async () => undefined;
+    store.addTodo(
+      'request',
+      'ask',
+      {
+        approvedAt: 1,
+        title: 'Close the merged todo',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: 'stranger' },
+      },
+      1
+    );
+    expect(
+      await call('neo.todo.done', { todoId: 'request', reason: 'Closed it as merged' })
+    ).toMatchObject({ ok: true, todo: { state: 'done' } });
+    expect(await call('neo.todo.remove', { todoId: 'request', reason: 'Retire' })).toMatchObject({
+      ok: true,
+    });
+    await call('neo.todo.done', { todoId: 'first' });
+    expect(replies).toEqual([
+      {
+        to: 'stranger',
+        text: 'Neo closed your request "Close the merged todo" as done: Closed it as merged',
+      },
+    ]);
+  });
+
+  test('a failed reply to a request sender is shown to Neo', async () => {
+    advance = async () => undefined;
+    store.addTodo(
+      'request',
+      'ask',
+      {
+        approvedAt: 1,
+        title: 'Close the merged todo',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: 'stranger' },
+      },
+      1
+    );
+    replyFailure = 'unknown session';
+    expect(
+      await call('neo.todo.remove', { todoId: 'request', reason: 'Not needed' })
+    ).toMatchObject({
+      ok: true,
+      todo: { state: 'removed' },
+      records: [expect.stringContaining('reply_failed: the requester stranger was not told')],
+    });
   });
 
   test('remove cancels a never-started todo whose check has not passed', async () => {

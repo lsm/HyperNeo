@@ -758,6 +758,7 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
     sessions: service.todoSessions,
     packs: () => [],
     limits: () => ({ running: 6, perGroup: 3 }),
+    scan: async () => [],
     tell: createNeoAttention({
       kinds: () => NEO_ATTENTION_KINDS,
       read: () => ({ covered: false, latestReportAt: null }),
@@ -793,6 +794,8 @@ test('a question from a session with no open todo becomes a Neo todo that wakes 
     const before = wakes().length;
     await sweep(now + 60 * 60_000);
     expect(wakes().length).toBe(before + 1);
+    expect(wakes().at(-1)).toContain('is a request from session stranger waiting for your answer');
+    expect(wakes().at(-1)).not.toContain('Write the instruction and start it');
     expect(
       await send({ to: 'neo', kind: 'question', text: 'Which region should I use?' }, 'worker')
     ).toMatchObject({ kind: 'completed', value: { kind: 'accepted' } });
