@@ -4,7 +4,7 @@ import { QA_SYSTEM_CONTRACT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts'
 import { afterEach, describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { z } from 'zod';
 import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -18,6 +18,8 @@ import { createCodingAssignmentOperation } from '../../../../src/lib/neo/packs/c
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
 import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
+import { neoStartPlace } from '../../../../src/lib/neo/start-place.ts';
+import { createCodingStartPlacePolicy } from '../../../../src/lib/neo/packs/coding/start-place.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, type OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
@@ -43,6 +45,9 @@ function fixture(
   simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
+  process.env.HYPERNEO_DATA_DIR = join(root, 'data');
+  const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
+  mkdirSync(join(view, '.git'), { recursive: true });
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -86,13 +91,18 @@ function fixture(
       value: {
         ref: { adapter: input.adapter, id: `fresh-${count}` },
         title: input.title,
-        place: input.place ?? place,
+        place: input.place,
         status: 'running',
         lastActivityAt: 1,
         model: input.model ?? reviewer.model,
         effort: input.effort,
       },
     },
+  });
+  const admitPlace = neoStartPlace({
+    db,
+    machine: hostname(),
+    policy: createCodingStartPlacePolicy(db),
   });
   const registry = createOperationRegistry([
     createCodingAssignmentOperation({
@@ -107,6 +117,8 @@ function fixture(
         }
         expect(name).toBe('work.start');
         const request = StartWorkInputSchema.parse(input);
+        const admitted = admitPlace(request, { source: 'internal', role: 'neo' });
+        if (!('value' in admitted)) return { kind: 'completed', value: admitted.reason };
         starts.push(request);
         return simulate ? simulate(request, starts.length) : success(request, starts.length);
       },
@@ -141,7 +153,20 @@ function fixture(
     (pack,scope_kind,scope_key,key,value_json,set_by,set_at) VALUES ('coding','repo','synthetic/actors',?,?,'human',1)
     ON CONFLICT DO UPDATE SET value_json=excluded.value_json`)
       .run(key, JSON.stringify(value));
-  return { db, ledger, assignments, sessions, assign, starts, stops, pr, publish, set, success };
+  return {
+    db,
+    ledger,
+    assignments,
+    sessions,
+    assign,
+    starts,
+    stops,
+    pr,
+    publish,
+    set,
+    success,
+    view,
+  };
 }
 
 describe('coding actor assignments', () => {
@@ -544,23 +569,35 @@ describe('coding actor assignments', () => {
 
 describe('review place', () => {
   const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
-  test('a repository with a read view hands the reviewer that checkout', async () => {
-    const data = mkdtempSync(join(tmpdir(), 'neo-read-'));
-    cleanups.push(() => rmSync(data, { recursive: true, force: true }));
-    const view = join(data, 'worktrees', 'synthetic', 'actors', 'neo-read');
-    mkdirSync(join(view, '.git'), { recursive: true });
-    process.env.HYPERNEO_DATA_DIR = data;
+  const remote = { ...reviewer, place: { ...place, daemon: 'remote-daemon' } };
+  test('the reviewer starts in the read view and passes start-place admission', async () => {
     const f = fixture();
     expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
-    expect(f.starts[0].place?.folder).toBe(view);
+    expect(f.starts[0].place).toEqual({
+      machine: hostname(),
+      folder: f.view,
+      name: 'synthetic/actors',
+    });
   });
-  test('a repository without a read view gets no place, never the default folder', async () => {
-    process.env.HYPERNEO_DATA_DIR = mkdtempSync(join(tmpdir(), 'neo-read-'));
-    const data = process.env.HYPERNEO_DATA_DIR;
-    cleanups.push(() => rmSync(data, { recursive: true, force: true }));
+  test('without a read view assignment refuses and starts nobody', async () => {
     const f = fixture();
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
-    expect(f.starts[0].place).toBeUndefined();
+    rmSync(f.view, { recursive: true, force: true });
+    for (const stage of ['review', 'verify'] as const)
+      expect(await f.assign({ stage, candidates: [homeFolder] })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('read checkout is not ready'),
+      });
+    expect(f.starts).toHaveLength(0);
+  });
+  test('a candidate on another daemon is never routed to', async () => {
+    const f = fixture();
+    expect(await f.assign({ candidates: [remote] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('on this daemon'),
+    });
+    expect(f.starts).toHaveLength(0);
+    expect((await f.assign({ candidates: [remote, reviewer] })).ok).toBe(true);
+    expect(f.starts[0].place?.daemon).toBeUndefined();
   });
 });
 

@@ -73,7 +73,7 @@ try {
           attempts++;
           if (rejectPreferred && input.model === preferredTarget.model) return { ok: false as const, reason: 'unsupported_model' as const, detail: 'Synthetic preferred model unavailable' };
           assert(input.adapter.startsWith('fixture-')); assert(input.preparation?.pack === 'coding');
-          const prepared = await prepareCodingExecution({ directory: source, destination: join(run, 'workers', `worker-${attempts}`), parameters: input.preparation.parameters }, { run: async (args, cwd) => command(args, cwd) });
+          const prepared = await prepareCodingExecution({ directory: input.place!.folder!, destination: join(run, 'workers', `worker-${attempts}`), parameters: input.preparation.parameters }, { run: async (args, cwd) => command(args, cwd) });
           assert(prepared.ok, prepared.ok ? '' : prepared.reason); releases.push(prepared.value.release);
           const role = String(input.preparation.parameters.role), expected = String(input.preparation.parameters.head);
           assert.equal(git(prepared.value.directory, 'rev-parse', 'HEAD'), expected);
@@ -84,7 +84,7 @@ try {
           assert(input.message.includes(role === 'review' ? REVIEWER_SYSTEM_CONTRACT : QA_SYSTEM_CONTRACT)); assert(input.message.includes(expected)); assert(input.message.length < 100000);
           const ref = { adapter: input.adapter, id: `worker-${attempts}` };
           starts.push({ role, ref, head: expected, model: input.model!, contractBytes: Buffer.byteLength(contract), message: input.message, folder: input.place?.folder });
-          return { ok: true as const, value: { ref, title: input.title, place: input.place ?? place, status: 'running' as const, lastActivityAt: Date.now(), model: input.model, effort: input.effort } };
+          return { ok: true as const, value: { ref, title: input.title, place: input.place!, status: 'running' as const, lastActivityAt: Date.now(), model: input.model, effort: input.effort } };
         },
       });
       const boundRegistry = createOperationRegistry(registry.entries.map(entry => entry.name === 'work.start' ? harness : entry));
@@ -96,8 +96,9 @@ try {
         ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); evidence.push({ phase, name, input, reply }); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
         ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
       });
-      const seed = async (name: string, number: number, repo: string) => {
+      const seed = async (name: string, number: number, repo: string, view = true) => {
         const url = `https://github.com/${repo}/pull/${number}`;
+        if (view) git(run, 'clone', '-q', origin, join(run, 'data/worktrees', repo, 'neo-read'));
         git(origin, 'update-ref', `refs/pull/${number}/head`, head);
         metadata[url] = { body: 'Agent: gpt-6-sol (effort: high) via fixture-author', headRefOid: head, state: 'OPEN' }; publish();
         db.prepare('INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES (?,?,?,?,1,1)').run(`ask-${name}`, 'fixture-neo', name, name);
@@ -117,9 +118,11 @@ try {
         const botVerify = await assign({ ...bot, stage: 'verify', candidates: [verifyTarget] }); assert(botVerify.ok);
         assert.deepEqual(await rpc('neo.coding.result', { todoId: bot.todoId, ref: botVerify.assignment.ref, fact: { url: bot.url, head, stage: 'verify', actor: botVerify.assignment.actor, verdict: 'inconclusive', acceptanceContract: bot.acceptanceContract, evidence: ['artifact:inconclusive-observation'] } }), { ok: true });
         assert.equal(ledger.stageFacts.read(bot.url)[0].stage, 'qa');
-        assert.equal(starts.at(-1)!.folder, undefined, 'A repository without a read view gets no place, never the candidate folder');
+        assert.equal(starts.at(-1)!.folder, join(run, 'data/worktrees/synthetic/bot/neo-read'), 'Verify starts in the repository read view');
+        const unsynced = await seed('unsynced', 12, 'synthetic/unsynced', false); const beforeUnsynced = attempts;
+        assert.match((await assign({ ...unsynced, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /read checkout is not ready/); assert.equal(attempts, beforeUnsynced, 'No actor starts without a read view');
         const session = await seed('session', 8, 'synthetic/session');
-        const readView = join(run, 'data/worktrees/synthetic/session/neo-read'); git(run, 'clone', '-q', origin, readView);
+        const readView = join(run, 'data/worktrees/synthetic/session/neo-read');
         for (const [field, value] of Object.entries({ harness: preferredTarget.adapter, model: preferredTarget.model, effort: preferredTarget.effort })) await setting('synthetic/session', `review.${field}`, value);
         const review = await assign({ ...session, stage: 'review', candidates: [authorModel, defaultTarget, preferredTarget] }); assert(review.ok); assert.equal(starts.at(-1)!.folder, readView, 'Review starts in the repository read view'); assert.equal(review.assignment.actor.harness, preferredTarget.adapter); assert.equal(review.assignment.effort, preferredTarget.effort);
         const verify = await assign({ ...session, stage: 'verify', candidates: [verifyTarget] }); assert(verify.ok); assert.notEqual(verify.assignment.ref.id, review.assignment.ref.id);
@@ -145,7 +148,7 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 5);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 6);
         assert(db.prepare('SELECT state FROM neo_todos').all().every((row: { state: string }) => row.state === 'doing'));
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });
