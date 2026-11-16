@@ -172,6 +172,8 @@ test.each(
       todos.updateTodo(mover, { state: 'doing' }, 1);
       paths.set('mover', join(root, 'elsewhere'));
     }
+    db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
+      VALUES ('sibling','sibling',?,'now','now','active','{}','{}')`).run(`${folders[0]}-2`);
     const broken = join(root, 'projects', 'broken', 'worktrees');
     if (listingFailure) {
       mkdirSync(join(root, 'projects', 'broken'), { recursive: true });
@@ -290,7 +292,9 @@ test.each(
                 if (rebound) {
                   paths.set('mover', folders[5]);
                   db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
-              VALUES ('resident','resident',?,'now','now','active','{}','{}')`).run(folders[4]);
+              VALUES ('resident','resident',?,'now','now','active','{}','{}')`).run(
+                    join(folders[4], 'nested')
+                  );
                   adopt('adopted');
                   paths.set('adopted', folders[3]);
                 }
