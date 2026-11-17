@@ -690,7 +690,9 @@ describe('ask topics', () => {
     h.store.settleAsk(h.store.getAsk(settled.id)!, 'done', 'Done', 5);
     const before = h.store.getAsk(settled.id)!.updatedAt;
 
-    expect(await h.call('neo.topic.merge', { from: 'kids', to: '孩子' }, turn('m5'))).toEqual({
+    expect(
+      await h.ops['neo.topic.merge'].execute({ from: 'kids', to: '孩子' }, turn('m5'))
+    ).toEqual({
       ok: true,
       merged: 3,
     });
@@ -705,8 +707,7 @@ describe('ask topics', () => {
       expect.not.arrayContaining([expect.objectContaining({ topic: 'Kids' })])
     );
     expect(
-      await h.call(
-        'neo.topic.merge',
+      await h.ops['neo.topic.merge'].execute(
         { from: 'Home', to: '家' },
         { source: 'mcp', role: 'neo', sessionId: 'stranger' }
       )

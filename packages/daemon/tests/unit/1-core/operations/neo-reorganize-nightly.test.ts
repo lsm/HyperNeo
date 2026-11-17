@@ -83,31 +83,29 @@ describe('runNeoNightlyReorganize', () => {
     });
   });
 
-  async function runDue(topics: { topic: string; count: number }[]) {
+  function due(topics: { topic: string; count: number }[]) {
     const woken: { key: string; text: string }[] = [];
-    const tidy = {
+    const deps = {
+      now: () => now,
+      lastHumanAt: () => null,
+      reorganize: async () => ({ cleanupPlanned: [], cleanupApplied: false, cleanupFailed: [] }),
+      log: () => {},
       topics: () => topics,
       wake: async (key: string, text: string) => {
         woken.push({ key, text });
         return true;
       },
     };
-    await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, {
-      now: () => now,
-      lastHumanAt: () => null,
-      reorganize: async () => ({ cleanupPlanned: [], cleanupApplied: false, cleanupFailed: [] }),
-      log: () => {},
-      ...tidy,
-    });
-    return woken;
+    return { woken, deps };
   }
 
   test('gives Neo one turn with its picked topics and counts so it can fold one into another', async () => {
-    const woken = await runDue([
+    const { woken, deps } = due([
       { topic: 'kids', count: 1 },
       { topic: 'Kids', count: 2 },
       { topic: '孩子', count: 4 },
     ]);
+    await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, deps);
     expect(woken).toHaveLength(1);
     expect(woken[0].key).toBe(`neo-topic-tidy:${now}`);
     expect(woken[0].text).toContain('孩子 4, Kids 3');
@@ -115,11 +113,11 @@ describe('runNeoNightlyReorganize', () => {
   });
 
   test('skips the topic turn when there is nothing to fold', async () => {
-    expect(
-      await runDue([
-        { topic: 'kids', count: 1 },
-        { topic: 'Kids', count: 2 },
-      ])
-    ).toEqual([]);
+    const { woken, deps } = due([
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 2 },
+    ]);
+    await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, deps);
+    expect(woken).toEqual([]);
   });
 });

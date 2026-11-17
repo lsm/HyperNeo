@@ -197,6 +197,7 @@ import mdToolAskOpen from './neo/tools/neo.ask.open.md' with { type: 'text' };
 import mdToolAskOutcome from './neo/tools/neo.ask.outcome.md' with { type: 'text' };
 import mdToolAskTopic from './neo/tools/neo.ask.topic.md' with { type: 'text' };
 import mdToolAskSettle from './neo/tools/neo.ask.settle.md' with { type: 'text' };
+import mdToolTopicMerge from './neo/tools/neo.topic.merge.md' with { type: 'text' };
 import mdToolConversationAsksRead from './neo/tools/neo.conversation.asks.read.md' with {
   type: 'text',
 };
@@ -662,6 +663,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.ask.outcome.md': mdToolAskOutcome,
     'neo/tools/neo.ask.topic.md': mdToolAskTopic,
     'neo/tools/neo.ask.settle.md': mdToolAskSettle,
+    'neo/tools/neo.topic.merge.md': mdToolTopicMerge,
     'neo/tools/neo.conversation.asks.read.md': mdToolConversationAsksRead,
     'neo/tools/neo.conversation.image.read.md': mdToolConversationImageRead,
     'neo/tools/neo.question.answer.md': mdToolQuestionAnswer,
