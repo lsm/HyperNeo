@@ -8,6 +8,7 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { ArchiveAdmission, WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
 import { NEO_WORK_CLOSED_DONE_PREFIX } from '@hyperneo/shared/types/neo-snapshot';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -95,6 +96,7 @@ describe('neo.session.archive', () => {
           .run('todo', JSON.stringify({ verb: 'send', ref: target }), JSON.stringify(target));
       };
       todo(ref);
+      recordWorkerStarted(db.getDatabase(), ref);
       expect(await invoke(ref, actor)).toMatchObject({
         value: {
           ok: false,
@@ -109,9 +111,26 @@ describe('neo.session.archive', () => {
   );
 
   test('admits the bound Neo session as well as the ordinary local user', async () => {
+    recordWorkerStarted(db.getDatabase(), ref);
     expect(await invoke(ref, caller)).toMatchObject({ value: { ok: true } });
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
     expect(archive).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps an unmarked session for Neo while allowing a human to archive it', async () => {
+    expect(await invoke(ref, caller)).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    expect(archive).not.toHaveBeenCalled();
+    expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
+  });
+
+  test('does not use local ownership to authorize a remote Neo archive', async () => {
+    recordWorkerStarted(db.getDatabase(), ref);
+    expect(await invoke({ ...ref, daemon: 'remote' }, caller)).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    expect(remote.invoke).not.toHaveBeenCalled();
   });
 
   test.each(['worker_binding', 'unbound', 'no_session', 'internal', 'untrusted_rpc'])(

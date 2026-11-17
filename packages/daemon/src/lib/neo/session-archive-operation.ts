@@ -47,7 +47,10 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
       'live_todo',
       `Todo "${todo.title}" is still working in this session; finish or drop it first.`
     );
-  if (!isLocalUser(caller) && readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
+  if (
+    !isLocalUser(caller) &&
+    (ref.daemon || readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
+  )
     return reject('not_started_by_us', 'This session was not started by the daemon.');
   return null;
 }
