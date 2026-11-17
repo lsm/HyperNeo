@@ -53,6 +53,7 @@ import {
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 
 export const CODING_PACK_BRIEF: NeoPackBrief = {
   id: 'coding',
@@ -113,6 +114,7 @@ export function createCodingPack(deps: {
     ...prSweepDeps,
     attend,
   });
+  const refreshThreads = createCodingReviewThreadReader(deps.database);
   const todos = createCodingTodoPack(
     deps.todoPrs,
     deps.readPrs,
@@ -286,7 +288,8 @@ export function createCodingPack(deps: {
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
-        now
+        now,
+        deps.readLedgerRepo ? undefined : refreshThreads
       );
       if (deps.postReviewComments)
         await deps.postReviewComments(

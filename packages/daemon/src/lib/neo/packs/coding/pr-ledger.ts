@@ -46,6 +46,7 @@ import { Logger } from '../../../logger.ts';
 import type { LedgerQuota } from './ledger-quota.ts';
 import { codingPrKey } from './pr-key.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
+import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export {
   codingLedgerArgs,
@@ -256,7 +257,14 @@ export function planCodingLedgerRead(
   raw: unknown,
   now: number,
   readPolicy: (repo: string) => CodingMergePolicy = () => ({}),
-  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => []
+  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => [],
+  readThreads: (
+    repo: string,
+    number: number
+  ) => {
+    headOid: string;
+    unresolvedThreadUrls: string[];
+  } | null = () => null
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -272,14 +280,19 @@ export function planCodingLedgerRead(
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => {
       const facts = policy.crossModelReview ? readStageFacts(canonical, pr.number) : [];
-      const findings = codingCrossModelFindings(pr.headRefOid, facts);
+      const threads = readThreads(canonical, pr.number);
+      const unresolved = threads?.headOid === pr.headRefOid ? threads.unresolvedThreadUrls : [];
+      const findings = [...codingCrossModelFindings(pr.headRefOid, facts), ...unresolved];
       return {
         repo: canonical,
         number: pr.number,
         title: pr.title,
         branch: pr.headRefName,
         head: pr.headRefOid,
-        state: codingPrState(pr, repoHasCi, policy, facts),
+        state:
+          pr.state === 'OPEN' && unresolved.length
+            ? ('changes_requested' as const)
+            : codingPrState(pr, repoHasCi, policy, facts),
         ...(findings.length ? { findings } : {}),
         ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
         replyAt: codingPrReplyAt(pr),
@@ -501,6 +514,12 @@ export class CodingPrLedgerRepository {
       (repo, number) =>
         this.stageFacts.read(
           `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`
+        ),
+      (repo, number) =>
+        readCodingReviewThreads(
+          this.db,
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`,
+          now
         )
     );
     const cycle = planLedgerHealth(raw, planned !== null, now);
@@ -1009,7 +1028,8 @@ export async function reconcileCodingPrLedger(
   ledger: CodingPrLedgerRepository,
   repos: readonly string[],
   read: CodingLedgerRead,
-  now: number
+  now: number,
+  refreshThreads?: (url: string, cwd: string) => Promise<{ ok: boolean; data?: unknown }>
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
@@ -1018,7 +1038,38 @@ export async function reconcileCodingPrLedger(
     const context = await ledger.pollContextCurrent(repo);
     if (!context.watched) continue;
     const observedAt = Date.now();
-    const raw = await read(repo, context.health?.quota);
+    let raw = await read(repo, context.health?.quota);
+    const parsed = Response.safeParse(raw);
+    if (refreshThreads && parsed.success && !parsed.data.errors?.length) {
+      const canonical = parsed.data.data.repository.nameWithOwner.toLowerCase();
+      for (const pr of parsed.data.data.repository.open.nodes) {
+        const url = `https://${process.env.GH_HOST ?? 'github.com'}/${canonical}/pull/${pr.number}`;
+        const page = await ledger.pollFacts.readCurrent(
+          {
+            credentialId: 'github-connector',
+            url: url.toLowerCase(),
+            accept: 'application/vnd.hyperneo.pr-review-threads+json',
+            apiVersion: 'v1',
+          },
+          observedAt,
+          10 * 60_000
+        );
+        if (
+          page.page.status !== 'known' ||
+          !z.object({ headOid: z.string() }).safeParse(page.page.value).success ||
+          (page.page.value as { headOid?: string }).headOid !== pr.headRefOid
+        ) {
+          const refreshed = await refreshThreads(url, '');
+          const current = refreshed.ok
+            ? z.object({ headOid: z.string() }).safeParse(refreshed.data)
+            : null;
+          if (!current?.success || current.data.headOid !== pr.headRefOid) {
+            raw = null;
+            break;
+          }
+        }
+      }
+    }
     const observation = await ledger.write('observePoll', repo, raw, now, observedAt, [...seen]);
     if (observation.warning)
       log.warn('PR ledger coverage missed three eligible cycles', {

@@ -448,14 +448,32 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
     const threadUrl = `${prUrl}#discussion_r1`;
     const author = { adapter: 'claude-desktop', id: 'author-1' };
     claim(db, 'live', 'doing', 10, prUrl, author);
-    expect(ledger.pollFacts.record(
-      { credentialId: 'github-connector', url: prUrl, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
-      { value: { headOid: 'h1', unresolvedThreadUrls: [threadUrl] }, etag: null, next: null },
-      100, 0
-    )).toBe(true);
-    await reconcile(ledger, ['x/x'], async () => response([
-      node(1, { reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] } }),
-    ]), 200);
+    expect(
+      ledger.pollFacts.record(
+        {
+          credentialId: 'github-connector',
+          url: prUrl,
+          accept: 'application/vnd.hyperneo.pr-review-threads+json',
+          apiVersion: 'v1',
+        },
+        { value: { headOid: 'h1', unresolvedThreadUrls: [threadUrl] }, etag: null, next: null },
+        100,
+        0
+      )
+    ).toBe(true);
+    await reconcile(
+      ledger,
+      ['x/x'],
+      async () =>
+        response([
+          node(1, {
+            reviews: {
+              nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }],
+            },
+          }),
+        ]),
+      200
+    );
     expect(ledger.snapshot(['x/x'], 200).map((row) => [row.state, row.ownerId])).toEqual([
       ['changes_requested', 'author-1'],
     ]);
