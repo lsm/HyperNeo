@@ -46,8 +46,34 @@ describe('coding worker handoff', () => {
       expect(brief).toContain(head.slice(0, 7));
       expect(brief).toContain('https://github.com/example/repo/pull/12');
       expect(brief).toContain(root);
+
+      git(['config', '--unset', 'branch.handoff.remote']);
+      git(['config', '--unset', 'branch.handoff.merge']);
+      const neverPushed = await withCodingWorkerStartBrief('Continue.', {
+        replacedWorker: { folder: root },
+      });
+      expect(neverPushed).toContain(head.slice(0, 7));
+      expect(neverPushed).not.toContain('Upstream unavailable');
     } finally {
       process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a large inherited checkout still fits a worker start', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'handoff-wide-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      for (let index = 0; index < 700; index++)
+        writeFileSync(join(root, `${String(index).padStart(4, '0')}-${'x'.repeat(155)}`), 'x');
+      const instruction = 'Continue this task. '.repeat(1000);
+      const brief = await withCodingWorkerStartBrief(instruction, {
+        replacedWorker: { folder: root },
+      });
+      expect(brief.length).toBeLessThanOrEqual(100_000);
+      expect(brief).toContain('truncated');
+      expect(brief).toContain(instruction);
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

@@ -32,9 +32,8 @@ git(['symbolic-ref', 'HEAD', 'refs/heads/handoff']);
 git(['update-ref', 'refs/remotes/origin/handoff', base]);
 git(['config', 'remote.origin.url', 'https://github.com/example/repo.git']);
 git(['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
-git(['config', 'branch.handoff.remote', 'origin']);
-git(['config', 'branch.handoff.merge', 'refs/heads/handoff']);
 writeFileSync(join(workspace, 'unfinished.txt'), 'unfinished');
+for (let index = 0; index < 700; index++) writeFileSync(join(workspace, `${String(index).padStart(4, '0')}-${'x'.repeat(155)}`), 'x');
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
 const root = 'neo:00000000-0000-4000-8000-000000000004';
 let oldId = '';
@@ -61,7 +60,7 @@ for (const phase of ['request', 'recovery']) {
       evidence.push({ phase, admittedStart: input });
       if (phase === 'request') {
         const message = String(input.message);
-        for (const expected of [workspace, 'handoff', 'unfinished.txt', head.slice(0, 7), 'https://github.com/example/repo/pull/12']) assert(message.includes(expected), `missing handoff fact: ${expected}`);
+        for (const expected of [workspace, 'handoff', head.slice(0, 7), 'https://github.com/example/repo/pull/12', 'truncated']) assert(message.includes(expected), `missing handoff fact: ${expected}`);
       }
       const result = await op.execute(input, caller) as { ok: boolean; value?: { ref: { id: string } } };
       assert(result.ok && result.value, JSON.stringify(result));
@@ -111,8 +110,8 @@ for (const phase of ['request', 'recovery']) {
       assert.equal(result.isError ?? false, false, JSON.stringify(result));
       assert.equal(JSON.parse(result.content[0]!.text).ok, true, JSON.stringify(result));
       assert.equal(starts, 1);
-      const delivered = db.prepare("SELECT message FROM work_delivery_inputs WHERE message LIKE '%unfinished.txt%' ORDER BY accepted_at DESC LIMIT 1").get() as { message: string } | null;
-      assert(delivered?.message.includes('unfinished.txt'), 'the actual worker delivery must contain the handoff');
+      const delivered = db.prepare("SELECT message FROM work_delivery_inputs WHERE message LIKE '%Unpushed commits%' ORDER BY accepted_at DESC LIMIT 1").get() as { message: string } | null;
+      assert(delivered?.message.includes(head.slice(0, 7)), 'the actual worker delivery must contain the unpushed commit');
       evidence.push({ phase, workerDeliveryContainsHandoff: true });
       assert.deepEqual(todoSessions.get('requested'), target);
       assert.deepEqual(todoSessions.readRef('requested'), { adapter: 'hyperneo', id: nextId });

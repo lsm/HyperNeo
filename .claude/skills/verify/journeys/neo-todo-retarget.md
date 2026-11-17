@@ -29,7 +29,8 @@ The production coding `chooseLine` wiring and held-line exclusion belong to step
 
 The request case also uses the real coding handoff brief with a synthetic Git
 checkout and a stub PR lookup. The admitted start must name the inherited folder,
-branch, uncommitted file, unpushed commit and PR URL. The coding target selection
+branch, bounded uncommitted changes, an unpushed commit on a branch without an
+upstream, and PR URL. The coding target selection
 is replaced by the stored target for this proof; model-line selection is separate.
 A start after the move has already reopened is an ordinary start without handoff
 facts and is covered by the focused regression.
