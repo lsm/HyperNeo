@@ -48,6 +48,10 @@ try {
   evidence.goal = created.goal;
   assert.equal(created.goal.dailyRunLimit, 2);
   const db = app.db.getDatabase();
+  assert((await call('goal.session.update', { ownerSessionId, goalId: created.goal.id, reviewCadence: { kind: 'every', everyMs: 120_000 } })).accepted);
+  const audit = db.prepare("SELECT params_summary FROM mcp_audit_log WHERE tool_name = 'goal.session.update' ORDER BY rowid DESC LIMIT 1").get() as { params_summary: string } | null;
+  assert(audit && JSON.parse(audit.params_summary).fields.includes('reviewCadence'), 'Review cadence update was not named in the audit log');
+  evidence.audit = { reviewCadenceRecorded: true };
   const schedule = () => db.prepare("SELECT id, next_run_at, pending_job_id, last_outcome, last_skip_reason, status FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(created.goal.id) as { id: string; next_run_at: number; pending_job_id: string; last_outcome: string; last_skip_reason: string | null; status: string };
   const mailbox = (messageId: string) => (db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') = ?").get(messageId) as { payload: string } | null)?.payload ?? null;
   Date.now = () => now;

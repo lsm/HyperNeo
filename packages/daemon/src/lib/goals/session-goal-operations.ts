@@ -403,7 +403,10 @@ export function createSessionGoalOperations({
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
         const patch = patchOf(input);
-        audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
+        audit(caller, 'goal.session.update', {
+          goalId: goal.id,
+          fields: [...Object.keys(patch), ...(input.reviewCadence ? ['reviewCadence'] : [])],
+        });
         return done(
           goals.update(goal, patch, Date.now(), (updated) => {
             if (patch.status || input.reviewCadence)

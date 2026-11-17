@@ -38,6 +38,8 @@ appended through RPC is readable through `goal.journal.list`.
 top-level session owners do not receive a review schedule.
 The opened Neo session's actual system prompt states the same exclusion. This
 does not exercise an SDK model turn.
+An RPC update to the review cadence also records `reviewCadence` as a changed
+field in the synthetic daemon's audit log.
 
 Inspect `goal-work-wakes.json` for each wake's outcome, delivery and text.
 Before the change the second due time is `skipped_unchanged` and nothing is
