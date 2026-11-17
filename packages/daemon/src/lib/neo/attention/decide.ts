@@ -91,6 +91,11 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   { id: 'driver.health', render: carried, decide: always('digest'), ladder: [DAY] },
   { id: 'work.cleanup', render: carried, decide: always('digest') },
   {
+    id: 'work.disk',
+    render: carried,
+    decide: ({ facts }) => (facts.level === 'floor' ? 'wake' : 'digest'),
+  },
+  {
     id: 'todo.follow_up_missing',
     decide: always('wake'),
     ladder: [HOUR, 4 * HOUR, DAY],
