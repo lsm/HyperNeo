@@ -1,6 +1,6 @@
 # New work needs a source
 
-Status: proposal, 2026-11-16. Design only. Paths without a prefix are under `packages/`.
+Status: proposal, 2026-11-16, tracked in #10943. Design only. Paths without a prefix are under `packages/`.
 
 ## Why
 
