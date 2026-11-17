@@ -23,11 +23,9 @@ export function requireHomeConfirmation(
     !question ||
     !read.ok ||
     !read.answeredByHuman ||
-    !(read.question.kind === 'yesno'
-      ? read.question.answer === 'yes'
-      : read.question.kind === 'choice' &&
-        question.options?.length === 1 &&
-        [read.question.answer].flat().join('\n') === question.options[0]) ||
+    read.question.kind !== 'choice' ||
+    question.options?.length !== 1 ||
+    [read.question.answer].flat().join('\n') !== question.options[0] ||
     read.question.answeredAt === null ||
     !sessionId ||
     store.getAsk(question.askId)?.sessionId !== sessionId ||
