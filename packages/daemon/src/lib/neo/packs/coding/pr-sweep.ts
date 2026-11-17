@@ -85,7 +85,9 @@ const TRUNCATED = ' … (truncated; ask Neo for the full cross-model review of t
 export function codingFindingsText(findings: readonly string[] = [], budget = Infinity): string {
   const text = findings.length ? ` Review findings: ${findings.join(' ')}` : '';
   if (text.length <= budget) return text;
-  return budget > TRUNCATED.length ? `${text.slice(0, budget - TRUNCATED.length)}${TRUNCATED}` : '';
+  if (budget <= TRUNCATED.length) return '';
+  const kept = text.slice(0, budget - TRUNCATED.length);
+  return `${kept.isWellFormed() ? kept : kept.slice(0, -1)}${TRUNCATED}`;
 }
 
 export const codingReviewKey = (findings: readonly string[] = []) =>
