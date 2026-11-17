@@ -17838,6 +17838,53 @@
             "minimum": 0,
             "type": "integer"
           },
+          "reviewCadence": {
+            "default": {
+              "everyMs": 86400000,
+              "kind": "every"
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "everyMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "every",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "everyMs"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "cron": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "cron",
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "default": "UTC",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "summary": {
             "type": "string"
           },
@@ -18498,6 +18545,49 @@
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
+          },
+          "reviewCadence": {
+            "oneOf": [
+              {
+                "properties": {
+                  "everyMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "every",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "everyMs"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "cron": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "cron",
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "default": "UTC",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "status": {
             "enum": [
