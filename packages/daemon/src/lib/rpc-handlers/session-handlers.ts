@@ -743,7 +743,8 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    if (neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
+    const db = sessionManager.getDatabase();
+    if (neoCoordinatorBinding(db, targetSessionId))
       return {
         success: false,
         sandboxEnabled: false,
@@ -758,7 +759,7 @@ export function setupSessionHandlers(
     }
 
     const updatedSandbox = {
-      ...(session.config.sandbox ?? sessionManager.getDatabase().getGlobalSettings().sandbox),
+      ...(session.config.sandbox ?? db.getGlobalSettings().sandbox),
       enabled: sandboxEnabled,
     };
     if (isOxapHarness(session.config.harness)) {
