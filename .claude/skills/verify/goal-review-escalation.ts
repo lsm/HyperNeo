@@ -75,6 +75,20 @@ try {
   const nextWake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') = ?").get(`schedule:${work.id}:${work.next_run_at}`) as { payload: string } | null;
   assert(nextWake?.payload.includes('Try a new audience'), 'the next work wake contains the human direction');
   evidence.nextWake = JSON.parse(nextWake.payload);
+  const second = await call('goal.session.create', { ownerSessionId, title: 'Explore another guide', doneTest: 'Published', noEffectReviewLimit: 1 });
+  const secondId = second.goal.id;
+  assert((await call('goal.journal.append', { ownerSessionId, goalId: secondId, runId: 'goal-review:synthetic:1', done: 'Reviewed', effect: 'no', worked: 'Explore' })).accepted);
+  const original = (await call('neo.snapshot')).humanQueue.items.find((item: any) => item.text.includes('Explore another guide'));
+  assert(original);
+  assert((await call('neo.question.retire', { questionId: original.questionId, reason: 'No longer current' })).ok);
+  evidence.retiredResume = await call('goal.session.update', { ownerSessionId, goalId: secondId, status: 'active' });
+  evidence.afterRetirement = await call('neo.snapshot');
+  const replacement = (evidence.afterRetirement as any).humanQueue.items.find((item: any) => item.text.includes('Explore another guide'));
+  assert(replacement && replacement.questionId !== original.questionId, 'retiring a review question must not strand the goal');
+  assert.equal((evidence.retiredResume as any).accepted, false, 'the human must answer before resumption');
+  assert((await call('neo.question.answer', { questionId: replacement.questionId, answer: 'Try a new approach' })).ok);
+  evidence.resumedAfterRetirement = await call('goal.session.update', { ownerSessionId, goalId: secondId, status: 'active', nextSteps: ['Try a new approach'] });
+  assert.equal((evidence.resumedAfterRetirement as any).goal.status, 'active');
   console.log('PASS: three no-effect reviews pause the goal, show a human question, and the answer reaches the next work wake');
 } finally {
   Date.now = clock;

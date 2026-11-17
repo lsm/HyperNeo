@@ -201,6 +201,56 @@ describe('goal work wakes', () => {
     }
   });
 
+  test.each(['retired', 'settled', 'replaced'] as const)(
+    'an escalation question that is %s does not strand the goal',
+    async (state) => {
+      const goal = await create({ noEffectReviewLimit: 1 });
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId: 'goal-review:synthetic:1',
+        done: 'Reviewed',
+        effect: 'no',
+        worked: 'Explore',
+      });
+      const asks = new NeoAskTodoRepository(db);
+      const ask = asks.listGoalAsks(goal.id)[0]!;
+      const original = asks.listQuestions(ask.id)[0]!;
+      if (state === 'settled') asks.settleAsk(ask, 'done', 'Closed', now);
+      else if (state === 'retired') asks.retireQuestion(original, 'No longer current', null, now);
+      else
+        asks.replaceQuestion(
+          original,
+          'replacement',
+          {
+            text: 'What should change?',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+          },
+          now
+        );
+      expect(
+        await call('goal.session.update', { goalId: goal.id, status: 'active' })
+      ).toMatchObject({ accepted: false, reason: expect.stringContaining('review_question_open') });
+      const open = asks
+        .listGoalAsks(goal.id)
+        .flatMap((item) => asks.listQuestions(item.id))
+        .filter((question) => question.state === 'open');
+      expect(open).toHaveLength(1);
+      asks.answerQuestion(open[0]!, 'Try a new audience', 'button', now);
+      expect(
+        await call('goal.session.update', {
+          goalId: goal.id,
+          status: 'active',
+          nextSteps: ['Try a new audience'],
+        })
+      ).toMatchObject({ accepted: true });
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    }
+  );
+
   test('review wakes carry new journal entries and note on every due time', async () => {
     const goal = await create();
     const review = () => scheduler.repo.getBySource('goal_review', goal.id)!;
