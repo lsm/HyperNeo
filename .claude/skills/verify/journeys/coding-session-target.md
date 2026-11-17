@@ -32,6 +32,8 @@ Last, it checks reservations that never got a session:
   slice wait;
 - the pack's `workerTargetRefused` hook drops an unstarted todo's unbound
   reservation, and leaves a started todo's reservation in place.
+- when a done or removed owner has an unreachable session, its next slice
+  dispatches to a live session and takes over the reservation.
 
 Then it archives both sessions over RPC (`session.archive`):
 

@@ -96,6 +96,19 @@ try {
   assert.equal(held.ref, null);
   const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
   const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
+  for (const state of ['done', 'removed']) {
+    const askId = `terminal-${state}`;
+    store.openAsk({ id: askId, projectId: null, sessionId: 'neo', originMessageId: null, title: askId, request: 'Synthetic', createdAt: 1 });
+    const owner = worked(askId, missing);
+    db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, owner.id);
+    reserve(askId, owner.id);
+    const successor = ready(askId);
+    const result = await dispatched(`${state} owner with an unreachable session releases the next slice`, successor);
+    assert.equal(result.todo?.state, 'doing');
+    assert.deepEqual(result.target, { verb: 'send', ref: back });
+    assert.deepEqual(result.ref, back);
+    assert.deepEqual(reserved(askId), [{ todoId: successor.id }]);
+  }
   for (const id of ['failed', 'refused'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
   const failed = ready('failed');
