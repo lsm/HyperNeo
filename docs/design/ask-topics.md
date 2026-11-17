@@ -39,10 +39,12 @@ first of these that exists:
    (`neo_todo_sessions.target`: the session ref through its `work:` alias, or the start
    place through its `folder:` alias); with several, the one with the most todos, and on a
    tie the earliest todo's. The topic is the project's title.
-2. **Its origin, one step only.** For a follow-up ask, its parent (`parent_id`); for a
-   request from a session, the sender session's project, else that sender's most recent
-   earlier request ask. The origin ask contributes only its rule 1 result or its stored
-   pick, never its own origin, so a read looks at most one other ask and cannot loop.
+2. **Its origin, one step only.** For a follow-up ask, its parent (`parent_id`), which
+   contributes only its rule 1 result or its stored pick, never its own origin. For a
+   request from a session, the sender session's project. One step keeps a read to at most
+   one other ask, so it cannot loop, and stops a topic from drifting down a chain of asks
+   that each moved on to something else. A sender's earlier requests are not used: one
+   session can ask about unrelated matters, so a sender with no project falls to rule 3.
 3. **Neo's pick:** the stored `topic`.
 4. Otherwise "Other".
 
@@ -113,6 +115,8 @@ Acceptance, as tests on the pure function and one integration case per row:
 | A follow-up of a follow-up whose grandparent alone has a topic | "Other": one step only |
 | Neo merges "A" into "B" | every ask stored as "A" now stores "B"; "A" leaves the list |
 | An ask with nothing at all | "Other" |
+| A request from a session with no project, after its earlier request in topic T | Neo's pick, not T |
+| Web, with two projects titled P and picks "kids" and "Kids": select each chip, reload, click a card's topic | each P chip shows only its project's asks; "kids" shows both picks; the saved filter and the card button select the same set |
 
 ## Risks
 
