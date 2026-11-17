@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness, OXAP_HARNESSES } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   CreateSessionRequest,
   GitBranchesResponse,
   ModelInfo,
   Provider,
+  ProviderRecord,
   ThinkingLevel,
   WorkspaceHistoryEntry,
 } from '@hyperneo/shared';
@@ -17,6 +19,7 @@ import {
   getGitBranches,
   addWorkspaceToHistory,
   addFolderToProject,
+  listProviders,
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -128,6 +131,9 @@ export function SessionsPage() {
   const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
+  const [providers, setProviders] = useState<ProviderRecord[] | null>(null);
+  const [providersError, setProvidersError] = useState<string | null>(null);
+  const [providersRetry, setProvidersRetry] = useState(0);
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [project, setProject] = useState<string | null>(initialSelection.project);
@@ -167,6 +173,48 @@ export function SessionsPage() {
     [availableModels, defaultModelId, globalSettings.value?.modelProvider]
   );
   const activeModelInfo = selectedModelInfo ?? defaultModelInfo;
+  const providerId =
+    (selectedModel && selectedModelInfo
+      ? selectedModelInfo.provider
+      : globalSettings.value?.modelProvider) ?? activeModelInfo?.provider;
+  const mayUseOxap = Object.values(OXAP_HARNESSES).some((row) =>
+    (row.providers as readonly string[]).includes(providerId ?? '')
+  );
+  const provider = providers?.find((record) => record.providerId === providerId);
+  let harness: unknown;
+  try {
+    harness = JSON.parse(provider?.configJson ?? '{}').harness;
+  } catch {}
+  const engine = isOxapHarness(harness) ? oxapHarness(harness) : undefined;
+  const isOxap = engine?.providers.includes(providerId ?? '') ?? false;
+  const thinkingAllowed = !isOxap || Boolean(engine?.thinking);
+
+  useEffect(() => {
+    if (connectionState.value !== 'connected') return;
+    let active = true;
+    let request = 0;
+    const load = () => {
+      const current = ++request;
+      setProviders(null);
+      setProvidersError(null);
+      void listProviders()
+        .then(({ providers }) => {
+          if (active && current === request) setProviders(providers);
+        })
+        .catch((error: unknown) => {
+          if (active && current === request) {
+            setProvidersError(error instanceof Error ? error.message : 'Could not load providers');
+          }
+        });
+    };
+    load();
+    const unsubscribe = connectionManager.getHubIfConnected()?.onEvent('providers.changed', load);
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [connectionState.value, providersRetry]);
+
   const activeModelLabel = getModelLabel(
     activeModelInfo,
     selectedModel ? selectedModel.id : defaultModelId
@@ -342,7 +390,7 @@ export function SessionsPage() {
 
   const handleSubmit = async () => {
     const content = text.trim();
-    if (!content || submitting) return;
+    if (!content || submitting || (mayUseOxap && providers === null)) return;
     if (!canCreate) {
       toast.error('Not connected to server. Please wait...');
       return;
@@ -361,10 +409,10 @@ export function SessionsPage() {
           provider: selectedModelInfo.provider as Provider,
         };
       }
-      if (selectedThinking) {
+      if (selectedThinking && thinkingAllowed) {
         req.config = { ...req.config, thinkingLevel: selectedThinking };
       }
-      if (sandboxChoice !== null) {
+      if (!isOxap && sandboxChoice !== null) {
         req.config = { ...req.config, sandbox: { enabled: sandboxChoice } };
       }
       if (project) {
@@ -442,6 +490,7 @@ export function SessionsPage() {
                   availableModels={availableModels}
                   loading={modelLoading}
                   thinkingLevel={thinkingLevel}
+                  showThinking={thinkingAllowed}
                   onSelectThinking={setSelectedThinking}
                   onReload={() => void reloadModels()}
                   onSelectModel={(model) => {
@@ -452,34 +501,42 @@ export function SessionsPage() {
                     setSelectedModel({ id: model.id, provider: model.provider });
                   }}
                 />
-                <button
-                  type="button"
-                  aria-label="Sandbox"
-                  aria-pressed={sandbox}
-                  onClick={() => setSandboxChoice(!sandbox)}
-                  title={sandbox ? 'Sandbox on: commands run isolated' : 'Sandbox off'}
-                  class={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
-                    sandbox
-                      ? 'border-success/40 bg-success/10 text-success'
-                      : 'border-line text-fg-muted hover:text-fg'
-                  }`}
-                >
-                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width={2}
-                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                    />
-                  </svg>
-                  Sandbox
-                </button>
+                {!isOxap && (
+                  <button
+                    type="button"
+                    aria-label="Sandbox"
+                    aria-pressed={sandbox}
+                    onClick={() => setSandboxChoice(!sandbox)}
+                    title={sandbox ? 'Sandbox on: commands run isolated' : 'Sandbox off'}
+                    class={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
+                      sandbox
+                        ? 'border-success/40 bg-success/10 text-success'
+                        : 'border-line text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width={2}
+                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                      />
+                    </svg>
+                    Sandbox
+                  </button>
+                )}
               </div>
               <button
                 type="button"
                 data-testid="landing-send"
                 onClick={handleSubmit}
-                disabled={!text.trim() || submitting || !canCreate || waitingForProjectGit}
+                disabled={
+                  !text.trim() ||
+                  submitting ||
+                  !canCreate ||
+                  waitingForProjectGit ||
+                  (mayUseOxap && providers === null)
+                }
                 title="Start chat"
                 aria-label="Start chat"
                 class="flex items-center justify-center w-8 h-8 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
@@ -514,6 +571,14 @@ export function SessionsPage() {
             </div>
           </div>
 
+          {providersError && (
+            <p role="alert" class="mt-2 px-1 text-sm text-danger">
+              {providersError}{' '}
+              <button type="button" onClick={() => setProvidersRetry((value) => value + 1)}>
+                Retry
+              </button>
+            </p>
+          )}
           <div class="mt-2 px-1">
             <WorkspaceChips
               projects={projectPaths}

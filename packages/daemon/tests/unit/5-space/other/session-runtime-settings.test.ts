@@ -155,6 +155,7 @@ function harness(): Harness {
     isPreparing: () => false,
     hasPendingWork: () => false,
     notify: async () => {},
+    engineOf: (provider) => (provider === 'anthropic-codex' ? 'oxap-codex' : 'sdk'),
   });
   for (const op of ops) h.operations.set(op.name, op);
   return h;
@@ -215,6 +216,79 @@ describe('session.runtimeSettings.read', () => {
     const result = await run(h, 'session.runtimeSettings.read', { sessionId: 'missing' });
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('session_not_found');
+  });
+});
+
+describe('session.runtimeSettings.update on a cold chat and an OXAP provider', () => {
+  const oxapConfig = {
+    model: 'gpt-5.5',
+    provider: 'anthropic-codex',
+    harness: 'oxap-codex',
+    maxTokens: 8192,
+    temperature: 0,
+  } as SessionConfig;
+
+  test('refuses moving a Claude Code chat to an OXAP provider before it commits', async () => {
+    const h = harness();
+    h.sessions.set('plain', makeSession({ id: 'plain' }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      provider: 'anthropic-codex',
+      model: 'gpt-5.5',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot move to an OXAP Codex provider'),
+    });
+    expect(h.persisted.size).toBe(0);
+  });
+
+  test('refuses an inferred OXAP provider for a cold Claude Code chat', async () => {
+    const h = harness();
+    const config = { model: 'claude-sonnet-5', maxTokens: 8192, temperature: 0 } as SessionConfig;
+    catalog.mockReturnValue([model('gpt-5.5', 'anthropic-codex')]);
+    h.sessions.set('plain', makeSession({ id: 'plain', config }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'gpt-5.5',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot move to'),
+    });
+    expect(h.persisted.size).toBe(0);
+    expect(h.sessions.get('plain')!.config).toEqual(config);
+  });
+
+  test('refuses moving an OXAP chat to another provider before it commits', async () => {
+    for (const provider of ['anthropic', 'glm']) {
+      const h = harness();
+      h.sessions.set('codex', makeSession({ id: 'codex', config: oxapConfig }));
+      const result = await run(h, 'session.runtimeSettings.update', {
+        sessionId: 'codex',
+        provider,
+      });
+      expect(result).toEqual({
+        ok: false,
+        reason: expect.stringContaining('OXAP Codex chat cannot change its provider'),
+      });
+      expect(h.persisted.size).toBe(0);
+      expect(h.sessions.get('codex')!.config).toEqual(oxapConfig);
+    }
+  });
+
+  test('refuses a thinking level on an OXAP chat before it commits', async () => {
+    const h = harness();
+    h.sessions.set('codex', makeSession({ id: 'codex', config: oxapConfig }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'codex',
+      thinkingLevel: 'think16k',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('OXAP Codex does not take a thinking level'),
+    });
+    expect(h.persisted.size).toBe(0);
   });
 });
 

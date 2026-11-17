@@ -1,4 +1,5 @@
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
+import type { ContextInfo, ModelInfo, SessionConfig, ThinkingLevel } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { useMessageHub } from '../hooks';
@@ -22,6 +23,7 @@ interface SessionStatusBarProps {
   modelSwitching: boolean;
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
+  harness?: SessionConfig['harness'];
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   coordinatorSwitching?: boolean;
@@ -42,6 +44,7 @@ export default function SessionStatusBar({
   modelSwitching,
   modelLoading,
   onModelSwitch,
+  harness,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
@@ -96,6 +99,7 @@ export default function SessionStatusBar({
           disabled={modelSwitching || coordinatorSwitching || isRecovering}
           busy={modelSwitching}
           thinkingLevel={thinkingLevel}
+          showThinking={!isOxapHarness(harness) || oxapHarness(harness).thinking}
           onSelectModel={(model) => void onModelSwitch(model)}
           onSelectThinking={(level) => void handleThinkingLevelChange(level)}
         />

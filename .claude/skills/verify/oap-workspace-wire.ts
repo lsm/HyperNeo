@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSyn
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
 import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
@@ -158,6 +159,7 @@ async function verifyNoticeInBrowser(currentApp: NonNullable<typeof app>, sessio
   } finally { web.stop(true); }
 }
 try {
+  answerCodexProbeLocally();
   app = await createDaemonApp({ config: { ...config, disableWorktrees: true, disableGoalProcessing: true }, verbose: false });
   assert.notEqual(app.server.port, 8399);
   assert.notEqual(app.server.port, 8499);
@@ -175,7 +177,8 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const makeSession = async (workspace: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, workspace), title: 'Synthetic OAP workspace', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  await hub.request('providers.create', oxapCodexProvider);
+  const makeSession = async (workspace: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, workspace), title: 'Synthetic OAP workspace', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
@@ -226,7 +229,7 @@ try {
     unlinkSync(join(config.oap.stateDirectory, 'session-history.jsonl'));
     await first.oap!.hub;
     assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery, undefined);
-    const notice = 'The previous Codex thread cannot be resumed. A new thread will start without earlier conversation.';
+    const notice = 'The previous OXAP Codex thread cannot be resumed. A new thread will start without earlier conversation.';
     assert(app.db.getSDKMessages(firstId, 1000).messages.some((row) => JSON.stringify(row).includes(notice)));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic explicit request after empty recovery' });
@@ -257,7 +260,7 @@ try {
     assert(excerpt?.includes('Synthetic prior completed turn'));
     assert(!excerpt.includes('Synthetic hold for crash'));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
-    if (mode === 'recovery-web') await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.');
+    if (mode === 'recovery-web') await verifyNoticeInBrowser(app, firstId, 'The previous OXAP Codex thread cannot be resumed. A new thread will use a saved conversation excerpt with your next message.');
     const newHub = await app.oapEngine.getHub(config.oap);
     const newChild = (newHub as unknown as { child: { kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
     const newExit = new Promise<void>((resolveExit) => newChild.once('close', resolveExit));
@@ -489,13 +492,13 @@ try {
     if (mode.startsWith('clear-')) {
       await assert.rejects(first.clearConversationContext(), /cannot be resumed/i);
     } else await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
-    const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous Codex thread cannot be resumed'));
+    const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous OXAP Codex thread cannot be resumed'));
     assert.equal(notices.length, 1);
     assert.equal(app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Could not clear the Codex thread')).length, 0);
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, saved);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    if (mode.endsWith('-web')) await verifyNoticeInBrowser(app, firstId, 'The previous Codex thread cannot be resumed. No new thread was started.');
+    if (mode.endsWith('-web')) await verifyNoticeInBrowser(app, firstId, 'The previous OXAP Codex thread cannot be resumed. No new thread was started.');
     Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, noticeCount: notices.length, priorThreadIdPreserved: true, newThreads: 0, automaticResends: 0, pass: true });
   } else if (mode === 'reopen') {
     const seen: Array<{ type: string; uuid?: string }> = [];

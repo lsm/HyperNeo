@@ -93,6 +93,12 @@ describe('SessionStatusBar', () => {
     expect(picker?.getAttribute('aria-controls')).toBe('session-preferences');
   });
 
+  it('hides thinking for a session whose harness cannot enforce it', async () => {
+    const { container, queryByRole } = renderBar({ harness: 'oxap-codex' });
+    await openPicker(container);
+    expect(queryByRole('slider', { name: 'Thinking' })).toBeNull();
+  });
+
   it('switches the model from the picker menu', async () => {
     const { container, findByText } = renderBar();
     await openPicker(container);

@@ -19,6 +19,7 @@ interface ModelPickerProps {
   availableModels: ModelInfo[];
   loading: boolean;
   thinkingLevel: ThinkingLevel;
+  showThinking?: boolean;
   onSelectModel: (model: ModelInfo) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
   onReload?: () => void;
@@ -43,6 +44,7 @@ export function ModelPicker({
   availableModels,
   loading,
   thinkingLevel,
+  showThinking = true,
   onSelectModel,
   onSelectThinking,
   onReload,
@@ -112,7 +114,7 @@ export function ModelPicker({
         type="button"
         onClick={() => setOpen(!open)}
         disabled={waiting || disabled}
-        title={`${label} · Thinking: ${thinking}`}
+        title={showThinking ? `${label} · Thinking: ${thinking}` : label}
         aria-label="Choose model and thinking"
         aria-expanded={open}
         aria-controls={menuId}
@@ -127,12 +129,16 @@ export function ModelPicker({
           </span>
         ) : null}
         <span class="min-w-0 truncate">{label}</span>
-        <span aria-hidden="true" class="text-fg-faint">
-          ·
-        </span>
-        <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
-          <ThinkingLevelIcon level={level} />
-        </span>
+        {showThinking && (
+          <>
+            <span aria-hidden="true" class="text-fg-faint">
+              ·
+            </span>
+            <span class="shrink-0" role="img" aria-label={`Thinking: ${thinking}`}>
+              <ThinkingLevelIcon level={level} />
+            </span>
+          </>
+        )}
         <NeoIcon
           name="chevron"
           class={`!h-3.5 !w-3.5 shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
@@ -144,6 +150,7 @@ export function ModelPicker({
           models={models}
           current={activeModelInfo ?? undefined}
           level={level}
+          showThinking={showThinking}
           busy={busy}
           align={align}
           loading={loading}

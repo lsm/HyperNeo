@@ -122,48 +122,21 @@ describe('admitCreateSessionConfig', () => {
     expect(() => admitUpdateSessionConfig({ toolProfile: 'manual' })).toThrow(/toolProfile/);
   });
 
-  it('admits a known harness only at creation and rejects unknown values', () => {
+  it('refuses a client-sent harness at both doors', () => {
     expect(admitCreateSessionConfig({})).not.toHaveProperty('harness');
-    expect(admitCreateSessionConfig({ harness: 'sdk' })).toEqual({ harness: 'sdk' });
-    expect(admitCreateSessionConfig({ harness: 'oxap-codex' })).toEqual({ harness: 'oxap-codex' });
-    expect(() => admitCreateSessionConfig({ harness: 'other' as 'oxap-codex' })).toThrow(
-      /harness/i
-    );
-    expect(() => admitCreateSessionConfig({ harness: 'codex' as 'oxap-codex' })).toThrow(
-      /harness/i
-    );
-    expect(() => admitUpdateSessionConfig({ harness: 'sdk' })).toThrow(/harness/);
-    expect(() => admitUpdateSessionConfig({ harness: 'oxap-codex' })).toThrow(/harness/);
+    for (const harness of ['sdk', 'oxap-codex', 'codex'] as const) {
+      expect(() => admitCreateSessionConfig({ harness: harness as 'oxap-codex' })).toThrow(
+        /harness/
+      );
+      expect(() => admitUpdateSessionConfig({ harness: harness as 'oxap-codex' })).toThrow(
+        /harness/
+      );
+    }
   });
 
-  it('refuses explicit Codex session instructions while instruction wiring is unavailable', () => {
-    expect(() =>
-      admitCreateSessionConfig({ harness: 'oxap-codex', systemPrompt: 'synthetic instruction' })
-    ).toThrow(/instruction/i);
-    expect(() =>
-      admitUpdateSessionConfig({ systemPrompt: 'synthetic instruction' }, undefined, 'oxap-codex')
-    ).toThrow(/instruction/i);
-    expect(
-      admitCreateSessionConfig({ harness: 'sdk', systemPrompt: 'synthetic instruction' })
-    ).toEqual({ harness: 'sdk', systemPrompt: 'synthetic instruction' });
-  });
-
-  it('refuses a Codex session that requires tool guards or worker operations', () => {
-    const guard = {
-      matcher: 'Bash',
-      pattern: 'git push',
-      decision: 'deny' as const,
-      reason: 'synthetic',
-    };
-    expect(() => admitCreateSessionConfig({ harness: 'oxap-codex', toolGuards: [guard] })).toThrow(
-      /Codex.*not supported/i
-    );
-    expect(() =>
-      admitCreateSessionConfig({ harness: 'oxap-codex', workerOperations: true })
-    ).toThrow(/Codex.*not supported/i);
-    expect(admitCreateSessionConfig({ harness: 'sdk', toolGuards: [guard] })).toEqual({
-      harness: 'sdk',
-      toolGuards: [guard],
+  it('carries session instructions for the daemon to judge after it derives the harness', () => {
+    expect(admitCreateSessionConfig({ systemPrompt: 'synthetic instruction' })).toEqual({
+      systemPrompt: 'synthetic instruction',
     });
   });
 
@@ -197,25 +170,95 @@ describe('admitCreateSessionConfig', () => {
 });
 
 describe('admitUpdateSessionConfig', () => {
+  const oxap = { harness: 'oxap-codex', provider: 'anthropic-codex' } as const;
+  const sdk = { provider: 'anthropic' } as const;
+  const engineOf = (provider: string) => (provider.endsWith('codex') ? 'oxap-codex' : 'sdk');
+
   it('refuses adding tool guards or worker operations to a Codex session', () => {
     const guard = {
       matcher: 'Bash',
-      pattern: 'git push',
+      pattern: 'rm -rf',
       decision: 'deny' as const,
       reason: 'synthetic',
     };
+    expect(() => admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, oxap)).toThrow(
+      /Codex.*not supported/i
+    );
+    expect(() => admitUpdateSessionConfig({ workerOperations: true }, undefined, oxap)).toThrow(
+      /Codex.*not supported/i
+    );
     expect(() =>
-      admitUpdateSessionConfig({ toolGuards: [guard] }, undefined, 'oxap-codex')
-    ).toThrow(/Codex.*not supported/i);
-    expect(() =>
-      admitUpdateSessionConfig({ workerOperations: true }, undefined, 'oxap-codex')
-    ).toThrow(/Codex.*not supported/i);
+      admitUpdateSessionConfig({ systemPrompt: 'synthetic instruction' }, undefined, oxap)
+    ).toThrow(/instruction/i);
     expect(
-      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, 'oxap-codex')
+      admitUpdateSessionConfig({ toolGuards: [], workerOperations: false }, undefined, oxap)
     ).toEqual({ toolGuards: [], workerOperations: false });
     expect(
-      admitUpdateSessionConfig({ toolGuards: [guard], workerOperations: true }, undefined, 'sdk')
+      admitUpdateSessionConfig({ toolGuards: [guard], workerOperations: true }, undefined, sdk)
     ).toEqual({ toolGuards: [guard], workerOperations: true });
+  });
+
+  it('refuses each restriction OXAP Codex cannot enforce on an OXAP chat only', () => {
+    const restrictions = [
+      { permissionMode: 'plan' },
+      { tools: {} },
+      { sdkToolsPreset: { type: 'preset', preset: 'claude_code' } },
+      { allowedTools: ['Read'] },
+      { disallowedTools: ['Bash'] },
+      { sandbox: { enabled: true } },
+      { sandbox: { filesystem: { denyRead: ['/secret'] } } },
+      { sandbox: { filesystem: { denyWrite: ['/secret'] } } },
+      { maxTurns: 3 },
+      { maxBudgetUsd: 1 },
+      { mcpServers: { synthetic: { command: 'true' } } },
+      { additionalDirectories: ['/elsewhere'] },
+      { maxThinkingTokens: 1024 },
+    ] as Partial<SessionConfig>[];
+    for (const restriction of restrictions) {
+      expect(() => admitUpdateSessionConfig(restriction, undefined, oxap)).toThrow(
+        /on-request approval in the workspace; this restriction is not supported/
+      );
+      expect(admitUpdateSessionConfig(restriction, undefined, sdk)).toEqual(restriction);
+    }
+    const accepted = {
+      permissionMode: 'default',
+      strictMcpConfig: true,
+      mcpServers: {},
+      sandbox: { enabled: false },
+    } as Partial<SessionConfig>;
+    expect(admitUpdateSessionConfig(accepted, undefined, oxap)).toEqual(accepted);
+  });
+
+  it('refuses a provider switch across or within OXAP and passes a same-provider update', () => {
+    expect(() =>
+      admitUpdateSessionConfig({ provider: 'anthropic-codex' }, undefined, sdk, engineOf)
+    ).toThrow(/Claude Code chat cannot move to an OXAP Codex provider/);
+    expect(() =>
+      admitUpdateSessionConfig({ provider: 'anthropic' }, undefined, oxap, engineOf)
+    ).toThrow(/OXAP Codex chat cannot change its provider/);
+    expect(() =>
+      admitUpdateSessionConfig({ provider: 'other-codex' as never }, undefined, oxap, engineOf)
+    ).toThrow(/OXAP Codex chat cannot change its provider/);
+    expect(
+      admitUpdateSessionConfig(
+        { provider: 'anthropic-codex', model: 'gpt-5.5' },
+        undefined,
+        oxap,
+        engineOf
+      )
+    ).toEqual({ provider: 'anthropic-codex', model: 'gpt-5.5' });
+    expect(admitUpdateSessionConfig({ provider: 'glm' }, undefined, sdk, engineOf)).toEqual({
+      provider: 'glm',
+    });
+  });
+
+  it('refuses a thinking level for an OXAP row without thinking support', () => {
+    expect(() => admitUpdateSessionConfig({ thinkingLevel: 'think16k' }, undefined, oxap)).toThrow(
+      /OXAP Codex does not take a thinking level/
+    );
+    expect(admitUpdateSessionConfig({ thinkingLevel: 'think16k' }, undefined, sdk)).toEqual({
+      thinkingLevel: 'think16k',
+    });
   });
 
   it('allows an unchanged owned selection echoed with an ordinary update without writing it', () => {
@@ -341,22 +384,21 @@ describe('stripRejectedSessionConfig', () => {
 
     const stripped = stripRejectedSessionConfig(stored as SessionConfig) as Record<string, unknown>;
 
-    expect(Object.keys(stripped).sort()).toEqual(
-      [...UPDATABLE_SESSION_CONFIG_FIELDS, 'harness'].sort()
-    );
+    expect(Object.keys(stripped).sort()).toEqual([...UPDATABLE_SESSION_CONFIG_FIELDS].sort());
     for (const field of UPDATABLE_SESSION_CONFIG_FIELDS) {
       expect(stripped[field]).toBe(`sentinel:${field}`);
     }
   });
 
-  it('preserves the chosen harness for a cloned session while stripping host controls', () => {
+  it('strips a stored harness so a clone derives its own from its provider', () => {
     expect(
       stripRejectedSessionConfig({
         model: 'synthetic',
+        provider: 'anthropic-codex',
         harness: 'oxap-codex',
         env: { SECRET: 'synthetic' },
       } as SessionConfig)
-    ).toEqual({ model: 'synthetic', harness: 'oxap-codex' });
+    ).toEqual({ model: 'synthetic', provider: 'anthropic-codex' });
   });
 
   it('leaves unknown keys alone', () => {
@@ -469,11 +511,13 @@ describe('SessionLifecycle.create', () => {
     expect(createdSessions[0]!.config.disallowedTools).toEqual(['Bash', 'Write', 'Edit']);
   });
 
-  it('persists the explicitly chosen harness and leaves the SDK default implicit', async () => {
-    await lifecycle.create({ config: { harness: 'oxap-codex' } });
+  it('refuses a client-chosen harness and leaves the SDK default implicit', async () => {
+    await expect(lifecycle.create({ config: { harness: 'oxap-codex' } })).rejects.toThrow(
+      /does not accept config field\(s\): harness/
+    );
     await lifecycle.create({});
-    expect(createdSessions[0]?.config.harness).toBe('oxap-codex');
-    expect(createdSessions[1]?.config.harness).toBeUndefined();
+    expect(createdSessions).toHaveLength(1);
+    expect(createdSessions[0]?.config.harness).toBeUndefined();
   });
 
   it('persists the rest of the tool-restriction config supplied by the caller', async () => {
