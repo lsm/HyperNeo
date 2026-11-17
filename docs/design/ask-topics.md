@@ -92,8 +92,12 @@ first.
 
 `bun run system-map impact` on `neo-ask-todo-repository.ts`: 54 importers, 32 of them in
 `lib/neo`. `topic` keeps its type (`string | null`) and `topicKey` is a new optional field,
-so none is forced to change; the chips change in slice 1
-(`packages/web/src/neo/NeoTopicChips.tsx`).
+so none is forced to change. In slice 1 every web consumer that groups or compares by topic
+switches to `topicKey` and keeps `topic` only as the label: the chip counts
+(`packages/web/src/neo/NeoTopicChips.tsx`), and in `packages/web/src/neo/NeoLive.tsx` the
+selection, the saved filter (`neo:topic-filter` in local storage), the list filter and the
+card's topic button (`onTopic` in `NeoAskTodos.tsx`). A saved filter that holds an old label
+matches nothing and clears, as an unknown topic does today. The colour stays keyed by label.
 
 Acceptance, as tests on the pure function and one integration case per row:
 
