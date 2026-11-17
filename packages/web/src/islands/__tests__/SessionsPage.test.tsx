@@ -82,7 +82,7 @@ describe('SessionsPage', () => {
     cleanup();
   });
 
-  it('omits persisted thinking for an OXAP provider', async () => {
+  it('omits persisted thinking and sandbox for an OXAP provider', async () => {
     modelFixture.models = [
       {
         id: 'codex',
@@ -109,6 +109,7 @@ describe('SessionsPage', () => {
       JSON.stringify({
         model: { id: 'codex', provider: 'anthropic-codex' },
         thinkingLevel: 'off',
+        sandbox: true,
       })
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
@@ -117,6 +118,9 @@ describe('SessionsPage', () => {
     await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
     await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
     fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
     await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
@@ -132,9 +136,10 @@ describe('SessionsPage', () => {
       })
     );
     expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
   });
 
-  it('keeps the thinking control and sends the persisted selection for SDK providers', async () => {
+  it('keeps thinking and sandbox choices for SDK providers', async () => {
     modelFixture.models = [
       {
         id: 'sonnet',
@@ -149,12 +154,16 @@ describe('SessionsPage', () => {
       JSON.stringify({
         model: { id: 'sonnet', provider: 'anthropic' },
         thinkingLevel: 'off',
+        sandbox: true,
       })
     );
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
     expect(screen.getByRole('slider')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });
@@ -164,7 +173,12 @@ describe('SessionsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith({
-        config: { model: 'sonnet', provider: 'anthropic', thinkingLevel: 'off' },
+        config: {
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          sandbox: { enabled: true },
+        },
       })
     );
   });
