@@ -342,21 +342,18 @@ describe('Neo private GitHub home proposal', () => {
     if (state === 'keep')
       expect((await call({ askId: 'ask' })).questionId).toBe(proposed.questionId);
   });
-  test.each(['chat A', 'chat exact words'])(
-    'creates the bound repository on %s',
-    async (how) => {
-      const { questionId } = await call({ askId: 'ask' });
-      const q = todos.getQuestion(questionId)!;
-      todos.answerQuestion(
-        q,
-        how === 'chat A' ? neoChoiceByLetter('A', q)! : CREATE,
-        'chat',
-        Date.now()
-      );
-      expect(await call({ questionId })).toMatchObject({ ok: true, status: 'created' });
-      expect((await log()).match(/repo create/g)).toHaveLength(1);
-    }
-  );
+  test.each(['chat A', 'chat exact words'])('creates the bound repository on %s', async (how) => {
+    const { questionId } = await call({ askId: 'ask' });
+    const q = todos.getQuestion(questionId)!;
+    todos.answerQuestion(
+      q,
+      how === 'chat A' ? neoChoiceByLetter('A', q)! : CREATE,
+      'chat',
+      Date.now()
+    );
+    expect(await call({ questionId })).toMatchObject({ ok: true, status: 'created' });
+    expect((await log()).match(/repo create/g)).toHaveLength(1);
+  });
   test('stays local without GitHub and does not probe or ask again after restart', async () => {
     await writeFile(join(fixture, 'unavailable'), '');
     expect(await call({ askId: 'ask' })).toMatchObject({ ok: true, status: 'local' });
