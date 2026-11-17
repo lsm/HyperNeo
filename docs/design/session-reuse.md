@@ -27,68 +27,114 @@ apply to other packs' work.
 
 ## The design
 
-**One rule, in core.** Reuse is decided only in `reuseIdleWorker`, and only among workers
-the daemon started. The setting picks which of them may take the work:
+Core decides which session takes the work. Packs only say who must not take it and which
+model to ask for. Core knows todos and sessions, not authors, reviewers or PRs.
 
-| Value | Who may take the next todo | Label shown to people |
+### Core
+
+**A todo's workers.** Core records every session the daemon starts or reuses for a todo:
+a new core table `neo_todo_workers (todo_id, adapter, id, at)`, written by `work.start`
+whenever it carries a `todoId`. This replaces the one-worker-per-todo claim rule
+(`claimWorker` in `packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`
+refuses a second claimed worker for the same todo). Today a todo's author is recorded in
+`neo_todo_sessions`, and its reviewers only in the coding pack's facts, so core cannot see
+them.
+
+**Picking a session.** Reuse happens only in `reuseIdleWorker`, only among sessions the
+daemon started (`work_started_sessions.role = 'worker'`), and never among the request's
+`excludeRefs`. Order:
+
+1. **The todo's own worker.** A worker in `neo_todo_workers` for this todo, same adapter,
+   not excluded. If it is free, send there. If it is busy, the work waits for it: the
+   message is queued on that worker and delivered when it is free (the existing todo
+   queue, `todoWorker.wait` in `drivers/work-operations.ts`, extended to a todo that is
+   already doing). A new session starts only when no such worker is left (archived,
+   released or unusable).
+2. **Otherwise, the setting** below.
+
+The setting `sessionReuse` decides step 2:
+
+| Value | Step 2 | Label shown to people |
 |---|---|---|
 | `long_lived` (default) | any free worker in the same folder; one that worked on the same ask first (today's core rule) | Long-lived sessions |
-| `per_ask` | only the worker that already worked on this todo's ask; if it is busy, the todo waits for it; a new one only when the ask has none | One session per matter |
-| `per_todo` | none; every todo starts a new worker | One session per step |
+| `per_ask` | only a worker that already worked on this todo's ask; if it is busy, wait for it as in step 1; start new only when the ask has none | One session per matter |
+| `per_todo` | none; start a new worker | One session per step |
 
-`per_ask` uses the `sameAskAt` fact core already reads (`packages/daemon/src/storage/work-started-sessions.ts`
-`readStartedWork`): a candidate is allowed only when it is set. That query leaves out
-workers with unfinished work, so `per_ask` also reads the ask's busy daemon worker and
-queues the todo on it (the existing `queueOn` path in `neo/todo-runner.ts`) instead of
-starting a second session for the ask. `per_todo` skips reuse.
-Neo's explicit `send` to a named session is unchanged; this setting only decides what a
-`start` may reuse.
+"Worked on this ask" reads `neo_todo_workers` joined to the ask, so reviewers count too.
+Neo's explicit `send` to a named session is unchanged; this only decides what a `start` may
+reuse.
 
-**Where it is stored.** A core preference `sessionReuse`, scope `project` (the todo's ask
-`projectId`), falling back to `global`, then to `long_lived`. It uses the existing
-preference store; core declares it as pack id `core`
+**Where the setting is stored.** A core preference `sessionReuse`, scope `project` (the
+todo's ask `projectId`), falling back to `global`, then to `long_lived`. It uses the
+existing preference store; core declares it as pack id `core`
 (`neo/preference-operations.ts` reads declarations by pack id). The settings page today
 writes pack preferences only at global or repo scope
 (`packages/web/src/components/settings/PackSettings.tsx`), so it gains a session-reuse
-block that shows, sets and clears the global value and each project's value. No question is asked
-before first use.
+block that shows, sets and clears the global value and each project's value. No question
+is asked before first use.
 
-**The coding pack stops choosing sessions.** Its `workerTarget` keeps model-line ranking
-and stage model/effort (the second half of `session-target.ts`) and drops the session part:
-the strategy preference and its question, the feature reservation
-(`pack_coding_feature_sessions`), PR-holder routing, takeover and work-type session names.
-A PR's review and CI follow-ups are not dispatch: the PR sweep tells the PR's owner
-session directly (`neo/packs/coding/pr-sweep.ts`, `deps.tell(row.owner, …)`), whatever
-the setting. Most PRs belong to a single todo, so `per_todo` is what `per_pr` was for. A
-later todo for an existing PR that lands on a new worker gets that PR's link (the coding
-check's `urls`) in its start brief.
+### Packs
+
+A pack does not pick sessions. When it starts work for a todo it passes two things it
+already knows:
+
+- **Who must not take it:** `excludeRefs`, as the coding pack already does for review
+  (`neo/packs/coding/assign-operation.ts`).
+- **Which model:** the start's `model` and `effort`.
+
+**Coding.**
+
+- Review excludes the author. Verify excludes the author and the reviewer. With the author
+  excluded, the todo's remaining worker is the earlier reviewer, so step 1 picks it.
+- A new review round asks for the earlier round's reviewer model and effort, read from the
+  pack's own assignment facts. Reuse requires a matching model
+  (`drivers/work-operations.ts`, `workStartConfiguration.confirm`), so this keeps the
+  same reviewer when a new ranking would pick another line.
+- A PR's review findings and CI failures still go straight to the author's session through
+  the PR sweep (`neo/packs/coding/pr-sweep.ts`, `deps.tell(row.owner, …)`). This is not
+  dispatch and the setting does not touch it.
+- `workerTarget` keeps model-line ranking and stage model/effort (the second half of
+  `session-target.ts`). It drops the session part: the strategy preference and its
+  question, the feature reservation (`pack_coding_feature_sessions`), PR-holder routing,
+  takeover and work-type session names.
+
+Under `per_todo`, a PR is then one author session plus one reviewer session, kept across
+review rounds.
+
+**Other packs** write nothing; they get core's rule as is.
 
 **Upgrade.** Saved coding `sessionStrategy` values move once to `sessionReuse` on each
 project that owns the repo: `long_lived` → `long_lived`, `per_task` → `per_todo`,
-`per_pr` → `per_todo`, keeping `set_by`. The old rows and the feature table are then
-dropped.
+`per_pr` → `per_todo` (a PR is one todo), keeping `set_by`. The old rows and the feature
+table are then dropped. Existing todos seed `neo_todo_workers` from `neo_todo_sessions`
+and the coding assignment facts.
 
 ## Change plan
 
 Each slice is one PR from `dev`, failing tests first.
 
-1. **Core setting.** Declare `sessionReuse`, read it in `reuseIdleWorker`, filter
-   candidates for `per_ask` and `per_todo`. About 60 production lines.
-2. **Coding pack.** Remove the session part of `workerTarget`, the strategy declaration,
-   the reservation table and its reads/writes; move saved values. Mostly deletions.
-3. **Settings page.** The session-reuse block: global value plus one row per project,
+1. **Core: a todo's workers.** The table, its writes in `work.start`, the seed, and step 1
+   with waiting; drop the one-claim rule.
+2. **Core setting.** Declare `sessionReuse` and apply step 2.
+3. **Coding pack.** Remove the session part of `workerTarget`, the strategy declaration
+   and the reservation table; pass the earlier reviewer's model on a new round; move saved
+   values. Mostly deletions.
+4. **Settings page.** The session-reuse block: global value plus one row per project,
    each settable and clearable.
-4. **Docs.** Replace the "Session strategy" section of `pack-preferences.md` with a link
+5. **Docs.** Replace the "Session strategy" section of `pack-preferences.md` with a link
    here.
 
 Acceptance, one integration case per row:
 
 | Case | Expected |
 |---|---|
+| `per_todo`, a PR reviewed in three rounds | one author session and one reviewer session throughout |
+| the earlier reviewer is busy when a new round starts | the review waits and goes to it; no new session |
+| the earlier reviewer was archived | a new reviewer starts |
+| verify after review | a third session, neither author nor reviewer |
 | `long_lived`, a free daemon worker that worked on the same ask | reused |
 | `per_ask`, a free daemon worker that only worked on another ask | new worker started |
-| `per_ask`, the ask's daemon worker is busy | the todo waits and is queued on it; no second session |
-| `per_todo`, any free worker | new worker started |
+| `per_ask`, the ask's daemon worker is busy | the todo waits for it; no second session |
+| `per_todo`, a free worker from another todo | not reused |
 | any value, a free session the daemon did not start | never reused |
-| coding todo whose PR is held by a session the daemon did not start | new worker started, PR link in the brief |
 | saved `per_pr` on a repo | the owning project reads `per_todo` |
