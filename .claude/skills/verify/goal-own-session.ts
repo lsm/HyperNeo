@@ -60,11 +60,11 @@ assert(work.content.includes('This session owns the goal below.') && work.conten
 const workEntry = await journaled(work.sdk_uuid);
 evidence.workEntry = workEntry;
 assert(workEntry.session_id === owner, 'Work journal entry is not from the goal session');
+evidence.returnsAfterWork = returns().length;
+assert(returns().length === 0, 'An ordinary work run reported to Neo');
 await finished('Journaled the work run.');
 const dueReview = db.query("SELECT last_outcome FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(goalId) as { last_outcome: string } | null;
 assert(dueReview?.last_outcome === 'fired', 'Review did not fire while the work turn was running');
-evidence.returnsAfterWork = returns().length;
-assert(returns().length === 0, 'An ordinary work run reported to Neo');
 
 const wake = await until(() => transcript(owner).find((row) => isWake(row) && row.content.includes('Journal entries since the previous review')), 'No review wake reached the goal session', 180000);
 evidence.reviewWake = wake;
