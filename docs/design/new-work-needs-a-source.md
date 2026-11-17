@@ -16,45 +16,48 @@ Example: a recent bug fix moved every review session into the daemon's internal 
 Three gaps allow this:
 
 - `prompts/src/neo/tools/neo.ask.open.md` says an ask records "a human request … in the human's words". The same file says "Any daemon session opens asks". Nothing enforces the first sentence.
-- `daemon/src/lib/neo/ask-record-operations.ts` sets `const origin = null` inside the `neo.ask.open` pipeline. Asks opened by Neo therefore never record which message they came from, so a human request and Neo's own idea cannot be told apart.
+- An ask already records where it came from on the two message paths. On the third path, `neo.ask.open`, it does not:
+  - **Human messages**: `claimNeoInputAsk` (`daemon/src/storage/repositories/neo-ask-input-worker.ts`) sets `neo_asks.origin_message_id` to the human message and binds every message on that matter in `neo_ask_inputs`.
+  - **Session requests**: `recordNeoRequestTodo` (`daemon/src/lib/neo/request-todo.ts`, called from `service.ts`) sets `origin_message_id` to the session message.
+  - **Neo's own asks**: `neo.ask.open` (`daemon/src/lib/neo/ask-record-operations.ts`) hard-codes `const origin = null`. It writes the ask and can start inline todos, with nothing to show who asked.
 - `work.start` (`daemon/src/lib/drivers/work-operations.ts`) takes `todoId` as optional. A missing or stale one is "recorded without blocking", so a session can start with no todo and no ask behind it.
 
 ## The rule
 
 Only the creation of new work changes. New work means opening an ask, adding a todo, or starting a session with `work.start`. A new PR is opened by a worker inside such a session, so it starts from an accepted ask. Merging, and PRs that already exist, are out of scope. Work that already traces to an accepted ask is unchanged.
 
-**1. Every ask records its source.** A source is one of these:
+**1. Where an ask came from is derived from records that already exist.** No new table is added.
 
-- **human**: one or more human message ids. Each must be a human message delivered into Neo's own session: a user turn stored with input kind `human`. The human often talks about one matter across several messages, and all of them can be attached to one ask.
-- **relayed**: one or more session message ids. Each must be a message that another session delivered to Neo's session (a `neo_session_messages` row with Neo's session as `to_session`), for example a session passing on what the human said. The relayed message itself carries the quote of the human's words. The ask stores only the message id and shows that message's text, so nothing is copied.
+- **human**: the ask's `origin_message_id` or a `neo_ask_inputs` row names a human message delivered into Neo's session (a user turn with input kind `human`). One matter told across several messages is already several `neo_ask_inputs` rows on one ask.
+- **relayed**: `origin_message_id` names a session message delivered to Neo's session (a `neo_session_messages` row with Neo's session as `to_session`). The message text is the quote of the human's words; the ask shows it, and nothing is copied. The sender must be a session the human runs, not a session the daemon or Neo runs. That excludes:
+  - every `neo:*` sender, on this daemon or another;
+  - every `system:*` sender;
+  - any session with role `worker` in `work_started_sessions`;
+  - the daemon's own agent sessions, such as space and task agents. A relay must come from an external adapter session (Claude Code, Claude Desktop, Codex) that is not a worker.
 
-The sender must be a session that the daemon did not start for Neo. That excludes:
+  This is a fact about where a session came from, not a list the human keeps. No list of allowed senders exists (see section 4). The human decided that a relay is trusted when it quotes them, and they do not want to confirm each one. Whether these sender exclusions stay is an open question to the human. If the human chooses "any quoted relay", the exclusion list goes and only the delivery check remains.
+- **card**: the ask has a proposal card (a `neo_questions` row on the ask with cause `proposal`) that the human answered with accept.
+- **neo**: none of the above. This is what `neo.ask.open` produces today.
 
-- Neo's own session;
-- `system:*` senders, such as worker batches;
-- any session with role `worker` in `work_started_sessions`.
+Goals get no exception. An ask opened in a goal cycle follows the same rule.
 
-This is a fact about where the session came from, not a list the human keeps. No list of allowed senders exists (see section 4). The human decided that a relay is trusted when it quotes them, and they do not want to confirm each one. Excluding Neo's own workers keeps Neo from relaying to itself.
-- **neo**: Neo came up with it.
+**2. An ask from `neo` is a proposal.** `neo.ask.open` takes optional `messageIds`. When they pass rule 1, they are bound through the existing `origin_message_id` and `neo_ask_inputs`, and the ask is human or relayed. Without them, the ask opens as a proposal, and a proposal card (cause `proposal`) is asked in the same call: the title, the request and why. If the human declines, the ask closes as declined. If the human accepts, the answered card makes it accepted.
 
-Goals get no exception. An ask opened in a goal cycle follows the same rule: without a `human` or `relayed` message for that ask, it is a proposal.
+An ask is **accepted** when it is human, relayed or card.
 
-`neo.ask.open` requires a source. A request with no source is refused. So is a request whose ids do not match their stated kind, or were not delivered to Neo's session.
-
-**2. An ask from `neo` is a proposal.** It opens as a card for the human: the title, the request and why. Until the human accepts the card, it cannot get a todo started and cannot start a session. If the human declines, the ask closes as declined. When the human accepts, the ask gets a source row of kind `card` that names the answered card (`neo_questions.id`, state answered, answer accept). A device answer writes no message, so the card itself is the record.
-
-An ask is **accepted** when it has a `human`, `relayed` or `card` source row.
-
-Asks that existed before this change have no source rows. They count as accepted, so their new todos and sessions keep working. No data is rewritten. The fact step marks an ask as existing before the change when it has no source rows and was created before the migration that adds the table. The migration records its own time for this.
+Asks created before this change keep working. They count as accepted, and no data is rewritten. The change ships with a marker migration. An ask whose `created_at` is earlier than that marker's `applied_at` in `migration_markers` counts as accepted.
 
 **3. New todos and sessions trace to an accepted ask.**
 
-- `neo.ask.open` can also record todos inline and start them. The admission check runs before its write step, so a `neo` ask that comes with todos is refused, and nothing is written. To make a proposal, Neo calls again without todos.
-- `neo.todo.add` refuses a todo whose ask is not accepted. A proposal holds only its request until the human answers.
-- `work.start` from Neo needs a todo whose ask is accepted. A start with no todo, with a stale todo, or with a proposal's todo is refused. This applies to the callers that get today's `todo_required` warning (`neoTodoRecords` in `work-operations.ts`: role `neo`, not an internal caller), and the warning becomes a refusal. Starts by the human's devices, by other roles, and starts forwarded from another daemon are unchanged. The forwarding daemon already ran the check for its own Neo.
+- `neo.ask.open` can record and start inline todos. The admission check runs before its write step. A proposal that comes with todos is refused, and nothing is written. Neo calls again without todos.
+- `neo.todo.add` refuses a todo whose ask is not accepted. Its input path, which opens an ask from a human message through `claimNeoInputAsk`, is human by rule 1 and passes.
+- `work.start` needs a todo whose ask is accepted. This applies to every agent caller: Neo, workers and other agent roles. Today's `todo_required` warning (`neoTodoRecords`) becomes a refusal and no longer applies only to Neo. These starts are unchanged:
+  - starts from the human's devices;
+  - internal daemon calls;
+  - starts forwarded from another daemon, because the forwarding daemon ran the check for its own caller.
 - Every refusal names what is missing.
 
-**4. Remove the relay-sender list.** The human does not choose which sessions may speak for them. A relay is accepted when it quotes the human's own words and comes from a sender allowed by section 1, for a new ask and for a card answer alike. Delete all of it:
+**4. Remove the relay-sender list.** The human does not choose which sessions may speak for them. A relay is accepted when it quotes the human's own words and comes from a sender allowed by rule 1, for a new ask and for a card answer alike. Delete all of it:
 
 - the `relaySenders` setting (`shared/src/types/settings.ts`, `daemon/src/lib/global-settings-patch.ts`, `daemon/src/storage/repositories/global-settings-writes.ts`);
 - the `neo.relaySenders.set` and `neo.relaySenders.recent` operations (`daemon/src/lib/neo/relay-answer.ts`, `shared/src/types/operation-names/neo.ts`, `daemon/src/lib/operations/neo-discovery.ts`), their tool texts (`prompts/src/neo/tools/neo.relaySenders.*.md`, `prompts/src/mod.ts`) and their tests;
@@ -72,38 +75,36 @@ Each entry point is already a superpipe pipeline, and its steps return `Gate<T>`
 
 The new checks are added as steps in these pipelines, not as checks beside them.
 
-- **Fact step (one per pipeline).** It reads what the new checks need. For each named id it reads the row it points to, as `{ id, kind: 'human_turn' | 'session_message' | 'missing', fromSession, toSession, fromWorker, text }`. It also reads the ask, its sources, and the todo and its ask. The new checks themselves never touch the database. The existing steps, such as the store write in `neo.ask.open`, do not change.
+- **Fact step (one per pipeline).** It reads what the new checks need:
+  - for each message id, `{ id, kind: 'human_turn' | 'session_message' | 'missing', fromSession, toSession, senderClass, text }`, where `senderClass` is `neo`, `system`, `worker`, `internal_agent` or `external`;
+  - for an ask, its `origin_message_id`, its `neo_ask_inputs`, its proposal card and whether it was created before the marker.
+
+  The new checks never touch the database. The existing steps, such as the store write in `neo.ask.open`, do not change.
 - **Pure checks.** Each takes facts and returns a `Gate`. They do not read the database, the clock or anything else.
-  - `requireAskSource(input, messageFacts, neoSession)` checks that a source is present. A `human` or `relayed` source must name at least one id. For `human`, every id must be a `human_turn` whose `toSession` is Neo's session. For `relayed`, every id must be a `session_message` whose `toSession` is Neo's session, whose `fromSession` is not Neo's, not `system:*` and not `fromWorker`, and whose `text` is not empty.
-  - `planAskAdmission(source)` returns open or proposal.
-  - `requireAcceptedAsk(askFacts)` is used by `neo.todo.add` and `work.start`.
-- **Storage.** A new table `neo_ask_sources (ask_id, kind, ref)` holds one row per source, so an ask can have many. `kind` is `human`, `relayed`, `neo` or `card`. `ref` is the message id, the card id, or empty for `neo`. The unused `origin = null` goes away. The never-filled `neo_asks.origin_message_id` column is left as it is.
+  - `classifyAskSource(askFacts, messageFacts, neoSession)` returns `human`, `relayed`, `card`, `neo` or `legacy`.
+  - `requireBindableMessages(messageIds, messageFacts, neoSession)` checks the ids passed to `neo.ask.open`.
+  - `requireAcceptedAsk(source)` is used by `neo.todo.add` and `work.start`.
+- **Storage.** A no-op marker migration; nothing else. The unused `origin = null` in `neo.ask.open` goes away.
 - **Verify journeys.** `.claude/skills/verify/work-todo-reference.ts` asserts that untracked Neo work starts with a `todo_required` record. It changes to assert the refusal.
 
 ## Tests (written first)
 
 - Pure checks, as unit tests:
-  - no source is refused;
-  - an unknown message id is refused;
-  - a `neo` source gives a proposal;
-  - a human id that is not a human turn in Neo's session is refused;
-  - a `human` or `relayed` source with an empty id list is refused (one test for each);
-  - a relayed id that is a human turn, or was delivered to another session, is refused;
-  - a relayed id that Neo's own session sent is refused;
-  - a relayed message with empty text is refused;
-  - a relayed message from a `system:*` sender or from a session with role `worker` is refused;
-  - a relayed card answer from a session that is not a worker is accepted when it has where, when and words, with no allow-list;
-  - an accepted card adds a `card` row and makes the ask accepted;
-  - a todo whose ask is an open proposal is refused;
-  - a todo whose ask is accepted passes;
-  - an ask from before the change, with no source rows, passes;
-  - `neo.ask.open` with source `neo` and inline todos is refused, and nothing is written.
-  - `neo.ask.open` with a `human` source and inline todos records the ask and its source rows and starts the todos;
-  - a new ask with no source rows, created after the migration, is refused for new todos and starts.
-- Neo opens an ask with source `neo`. The ask is not accepted and a card exists. Adding a todo to it is refused. After the card is accepted, a todo can be added and started. Today the todo is added and starts at once.
-- `work.start` from Neo with no `todoId` is refused. Today it starts with a warning.
-- `work.start` with no `todoId` from a human device, from another role, or forwarded from another daemon still starts.
-- An ask that names three human messages records three source rows.
+  - an ask with a human `origin_message_id` or `neo_ask_inputs` row is `human`;
+  - an ask whose origin is a session message from an external, non-worker session is `relayed`;
+  - an origin from a `neo:*`, `system:*`, worker or internal-agent sender is not relayed, and the ask is `neo`;
+  - a relayed message delivered to another session, or with empty text, is not relayed;
+  - an ask with an accepted proposal card is `card`, and a declined or open one is not;
+  - an ask created before the marker with no origin is `legacy` and accepted;
+  - an ask created after the marker with no origin is `neo` and refused for todos and starts;
+  - ids passed to `neo.ask.open` that are missing, of the wrong kind or from an excluded sender are refused;
+  - a relayed card answer from an external, non-worker session is accepted when it has where, when and words, with no allow-list.
+- `neo.ask.open` with no `messageIds` and inline todos is refused, and nothing is written.
+- `neo.ask.open` with no `messageIds` opens a proposal and its card. Adding a todo is refused until the card is accepted, then it starts.
+- `neo.ask.open` with human `messageIds` and inline todos records the ask and its inputs and starts the todos.
+- `neo.todo.add` with a human input message opens an ask through `claimNeoInputAsk`, and the todo starts.
+- `work.start` with no `todoId` is refused from Neo and from a worker session. Today it starts with a warning.
+- `work.start` with no `todoId` still starts from a human device, from an internal call, and when forwarded from another daemon.
 
 ## Not in scope
 
@@ -114,6 +115,6 @@ The new checks are added as steps in these pipelines, not as checks beside them.
 
 Three PRs, one rung each, as the repo's slicing rule requires:
 
-1. **Build**: the `neo_ask_sources` table, the fact readers and the pure checks, with their unit tests. Nothing calls them yet.
-2. **Wire**: the steps in `neo.ask.open`, `neo.todo.add` and `start-work`. It also includes the card acceptance row, the end-to-end tests, the `work-todo-reference` journey, and the matching text in `neo.ask.open.md` and the `work.start` description.
+1. **Build**: the marker migration, the fact readers and the pure checks, with their unit tests. Nothing calls them yet.
+2. **Wire**: the steps in `neo.ask.open`, `neo.todo.add` and `start-work`, the proposal card, the end-to-end tests, the `work-todo-reference` journey, and the matching text in `neo.ask.open.md` and the `work.start` description.
 3. **Delete**: the relay-sender list (section 4) and its journey, replaced by the sender rule.
