@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway';
 import { cancelRateLimitDelivery } from '../../../../src/storage/repositories/rate-limit-cancel-write';
 import { stopHyperneoWork } from '../../../../src/lib/drivers/hyperneo-adapter';
+import { WORKTREE_UNVERIFIED } from '../../../../src/lib/drivers/work-placement';
 import { sdkPendingRemoval } from '../../../../src/storage/repositories/sdk-message-transactions';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -372,6 +373,43 @@ describe('hyperneoSessionControl archive', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test.each(['commits', 'status'])(
+    'an archive whose %s check fails keeps the worktree as unverifiable',
+    async (failing) => {
+      const root = mkdtempSync(join(tmpdir(), 'archive-unverifiable-'));
+      const controls = hyperneoSessionControl({
+        deps: {
+          db: { listChildSessions: () => [] },
+          sessionManager: {
+            getSessionFromDB: () => ({
+              id: 'owned',
+              workspacePath: root,
+              status: 'active',
+              worktree: { branch: 'work', worktreePath: root, mainRepoPath: root },
+            }),
+            getWorktreeManager: () => ({
+              getCommitsAhead: async () => {
+                if (failing === 'commits') throw new Error('git log failed');
+                return { hasCommitsAhead: false };
+              },
+            }),
+            getCachedSession: () => undefined,
+            archiveSessionResources: async () => {
+              throw new Error('must not archive');
+            },
+          },
+        },
+      } as never);
+      try {
+        const result = await controls.archive!({ adapter: 'hyperneo', id: 'owned' }, () => null);
+        expect(result).toMatchObject({ ok: false, reason: 'unsupported' });
+        expect((result as { detail: string }).detail.startsWith(WORKTREE_UNVERIFIED)).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
 
   test.each(['idle', 'busy', 'clones', 'late_refusal', 'archived'])(
     'uses the preserving lifecycle only for an admitted idle session (%s)',

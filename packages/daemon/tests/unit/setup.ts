@@ -1,4 +1,5 @@
 import { afterAll, mock } from 'bun:test';
+import { archiveSession, deleteSession } from '@anthropic-ai/claude-agent-sdk/core';
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
   class MockMcpServer {
@@ -53,6 +54,8 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
       };
     }),
     tool,
+    archiveSession,
+    deleteSession,
   };
 });
 
