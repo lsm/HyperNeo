@@ -283,7 +283,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirm(null);
+      } else if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
       }

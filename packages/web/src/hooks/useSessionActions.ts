@@ -159,7 +159,10 @@ export function useSessionActions({
     try {
       setArchiving(true);
       const result = await archiveSession(sessionId, true, archiveConfirmDialog?.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirmDialog(null);
+      } else if (result.success) {
         toast.success(`Session archived (${result.commitsRemoved} commits removed)`);
         setArchiveConfirmDialog(null);
         const response = await listSessions();
