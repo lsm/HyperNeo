@@ -37,6 +37,9 @@ try {
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
   const ownerSessionId = (await call('neo.open')).sessionId;
   assert(ownerSessionId);
+  const prompt = app.db.getSession(ownerSessionId)?.config.systemPrompt;
+  assert(typeof prompt === 'string' && prompt.includes('A structured metric requires a Neo owner or a goal session'), 'Neo did not receive metric owner guidance');
+  evidence.neoGuidance = { delivered: true };
   const plainOwner = await hub.request<any>('session.create', { workspacePath: run, title: 'Synthetic parent' });
   const metric = { name: 'adopters', baseline: 2, target: 10, direction: 'increase' };
   evidence.plainOwner = await call('goal.session.create', { ownerSessionId: plainOwner.sessionId, title: 'Synthetic adoption', metric });
