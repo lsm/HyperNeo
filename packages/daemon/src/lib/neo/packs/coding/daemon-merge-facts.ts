@@ -90,7 +90,7 @@ export async function readCodingRequiredChecks(
 }
 const collect = async (db: Database, url: string, spawn: SpawnFn) => {
   const meta = parsePrUrl(url.toLowerCase())!;
-  const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn);
+  const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawn, { firstPage: true });
   const pull = await gh([
     'pr',
     'view',
@@ -212,6 +212,15 @@ const project = ([
     mergeCommit: pr.mergeCommit?.oid ?? null,
   };
 };
+export async function readCodingLocalMergeFacts<
+  F extends ReturnType<typeof project> | { ok: false; reason: string },
+>(db: Database, url: string, facts: F) {
+  const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
+  const stageFacts = await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', url);
+  return facts.ok
+    ? { ...facts, stageFacts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
+    : facts;
+}
 const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   .input(['db', 'url', 'spawn'])
   .pipe(
@@ -257,13 +266,8 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   )
   .pipe(project, 'observed', 'observed')
   .pipe(
-    async (facts: ReturnType<typeof project>, db: Database, url: string) => {
-      const mirrors = await gatewayFor(db).call(codingTodoPrReads, 'linkedIssues', url);
-      const stageFacts = await gatewayFor(db).call(codingLedgerReads, 'readStageFacts', url);
-      return facts.ok
-        ? { ...facts, stageFacts, linkedIssueReason: requireCodingLinkedIssue(facts, mirrors) }
-        : facts;
-    },
+    (facts: ReturnType<typeof project>, db: Database, url: string) =>
+      readCodingLocalMergeFacts(db, url, facts),
     ['observed', 'db', 'url'],
     'observed'
   )
@@ -273,9 +277,11 @@ const read = (superpipe({})('coding.read-daemon-merge-facts') as PipelineAPI)
   spawn: SpawnFn
 ) => Promise<ReturnType<typeof project>>;
 
+export const codingMergeFactReadFailed = {
+  ok: false as const,
+  reason:
+    'merge_fact_read_failed: Merge facts could not be read. Leave the PR unchanged until a fresh read succeeds.',
+};
+
 export const readCodingDaemonMergeFacts = (db: Database, url: string, spawn = spawnProcess) =>
-  read(db, url, spawn).catch(() => ({
-    ok: false as const,
-    reason:
-      'merge_fact_read_failed: Merge facts could not be read. Leave the PR unchanged until a fresh read succeeds.',
-  }));
+  read(db, url, spawn).catch(() => codingMergeFactReadFailed);

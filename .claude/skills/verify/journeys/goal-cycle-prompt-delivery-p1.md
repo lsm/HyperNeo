@@ -21,7 +21,7 @@ explicit 15-minute/nudgeEvery1-2 goal), but must not include the full scheduled
 goal-cycle instructions. The cycle now travels only in the goal wake content;
 run journey 27 for the real scheduled delivery. Focused contracts cover packs
 both enabled and disabled, reminders remaining unchanged and the exact run id.
-The root remains under 300 words, including the setup entry point and the
+The root remains under 350 words, including the setup entry point and the
 home-editing instruction. Run the focused prompt contracts against the PR merge
 tree too: changes on dev count toward the same budget.
 

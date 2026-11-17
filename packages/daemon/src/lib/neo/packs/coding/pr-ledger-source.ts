@@ -14,7 +14,7 @@ export type CodingLedgerRead = (repo: string, quota?: LedgerQuota) => Promise<un
 const log = new Logger('NeoCodingLedger');
 
 const DONE_FIELDS =
-  'number title body headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
+  'number title body headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt updatedAt';
 
 const FIELDS = `${DONE_FIELDS}
   labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
@@ -218,6 +218,7 @@ export function createCodingLedgerReader(run: LedgerQuotaRun = runCodingGh): Cod
                 reviewDecision: null,
                 closedAt: pr.closed_at,
                 createdAt: pr.created_at,
+                updatedAt: pr.updated_at,
               })),
             },
           },

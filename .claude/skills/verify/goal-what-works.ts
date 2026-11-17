@@ -64,6 +64,7 @@ try {
     } else {
     assert(payload,'Scheduled wake was not delivered to the actual mailbox');
     assert(payload.includes('rewrite')&&payload.includes('worksNote'),'Model-facing wake omitted compaction instruction');
+    for (const section of ['Resources and Do alone', 'Needs the human', 'Daily limit', 'ask the human first']) assert(payload.includes(section),`Model-facing wake omitted goal definition section: ${section}`);
     assert.equal(evidence.schedule.last_outcome,'fired');
     console.log(`PASS: actual ${mode} schedule delivered a compaction request to Neo mailbox`);
     }
