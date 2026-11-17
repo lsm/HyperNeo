@@ -134,9 +134,11 @@ function validatePair(target: Target, input: Input) {
 
 function gateHarness(target: Target, input: Input, deps: RuntimeSettingsDependencies) {
   const current = JSON.parse(target.snapshot.config) as Session['config'];
-  const switched = input.provider
-    ? decideSwitch(current, input.provider, deps.engineOf(input.provider))
-    : true;
+  const provider =
+    input.model !== undefined || input.provider !== undefined
+      ? (input.provider ?? current.provider ?? inferProviderForModel(input.model ?? current.model))
+      : undefined;
+  const switched = provider ? decideSwitch(current, provider, deps.engineOf(provider)) : true;
   const reason =
     switched === true ? thinkingRefusal(current.harness, input.thinkingLevel) : switched;
   return reason ? { reason: { ok: false, reason } as Failure } : { value: target };
