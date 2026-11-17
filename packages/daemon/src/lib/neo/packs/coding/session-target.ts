@@ -79,7 +79,15 @@ async function routedPool(
     pool.map(async (session) => {
       const routed = session.ref.adapter === 'hyperneo' && !session.ref.daemon;
       if (!routed || session.state !== 'available') return session;
-      const ranking = await lines.rank(kind, [session.line], scope());
+      const line = session.line.provider
+        ? session.line
+        : (
+            await codingCandidateLine(lines, {
+              adapter: session.ref.adapter,
+              ...(session.line.model ? { model: session.line.model } : {}),
+            })
+          ).line;
+      const ranking = await lines.rank(kind, [line], scope());
       return ranking.ranked.length ? session : { ...session, state: 'busy' as const };
     })
   );
