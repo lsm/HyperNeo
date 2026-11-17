@@ -1,8 +1,8 @@
 # Rule and setting cards apply or keep
 
 The daemon's own rule, pack-setting and home-repository cards are fixed
-two-option choices: A applies, B keeps what is there. A yes/no card opened before
-the upgrade still applies on yes.
+two-option choices: A applies, B keeps what is there. A yes on a yes/no card
+applies nothing.
 
 On a fresh isolated daemon from Launch, with `HYPERNEO_DATA_DIR="$RUN/data"`:
 
@@ -15,9 +15,9 @@ NODE_PATH=<directory containing playwright> VERIFY_BROWSER=<Chromium executable>
 The first helper drives the real RPC doors. A `neo.rule.ask` card reaches the
 snapshot as a choice of `Apply these rule changes` or `Keep current rules`. Keep and
 a bare chat `yes` change no rules. A chat `A` and the apply button each apply their
-edit. A card turned into a pre-upgrade yes/no card applies on a chat `yes`. A
-setting proposal saves nothing on keep, saves on a chat `A`, and a pre-upgrade
-yes/no setting card saves on a button `yes`. Evidence:
+edit. A card turned into a yes/no card changes no rules on a chat `yes`. A
+setting proposal saves nothing on keep, saves on a chat `A`, and a yes/no
+setting card saves nothing on a button `yes`. Evidence:
 `evidence/system-cards-apply-or-keep.json`.
 
 The second helper pairs a headless browser, opens `/neo` at 390 wide and finds the
@@ -31,3 +31,11 @@ The home-repository card is covered by `neo-home-github.ts` in
 with its `verify`, `chat`, `legacy` and `decline` modes. Citing a chat `A` to
 `neo.rule.save` needs a Neo session caller, so unit tests cover it, not this RPC
 helper. Stop the daemon with `stop.sh` in the same shell as launch.
+
+To check only that a yes on a yes/no card applies nothing, after building web run
+`.claude/skills/verify/yesno-refusals.sh <port>`. It runs the rule and setting
+helper, the confirmed home save (`after`) and the home-repository card (`legacy`,
+then `verify`), each on its own fresh isolated daemon, prints one `exit=` line per
+run and exits non-zero if any fails. Each run's evidence and daemon and mock logs
+are copied to its own folder. A run whose helper, evidence copy or daemon stop
+fails is kept, and its path is printed.

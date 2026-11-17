@@ -589,6 +589,22 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.read(url);
   }
 
+  readPostedReview(url: string) {
+    return this.stageFacts.postedMarker(url);
+  }
+
+  recordPostedReview(url: string, marker: string) {
+    this.stageFacts.markPosted(url, marker);
+  }
+
+  readReviewCommentHold(host: string) {
+    return this.stageFacts.commentHoldUntil(host);
+  }
+
+  recordReviewCommentHold(host: string, until: number) {
+    this.stageFacts.holdComments(host, until);
+  }
+
   reviewerProvenance(repo: string, body: string) {
     return codingReviewerProvenance(this.policy(repo), body);
   }
@@ -1020,6 +1036,8 @@ type CodingLedgerWrite =
   | 'recordHealth'
   | 'readHealth'
   | 'recordStage'
+  | 'recordPostedReview'
+  | 'recordReviewCommentHold'
   | 'recordAlias'
   | 'dropRepo'
   | 'replace'
@@ -1038,6 +1056,8 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'recordHealth',
     'readHealth',
     'recordStage',
+    'recordPostedReview',
+    'recordReviewCommentHold',
     'recordAlias',
     'dropRepo',
     'replace',
@@ -1059,5 +1079,7 @@ export const codingLedgerReads = defineRepositoryOp(
     'healthDelivery',
     'policyContext',
     'readStageFacts',
+    'readPostedReview',
+    'readReviewCommentHold',
   ] as const
 );
