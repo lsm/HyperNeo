@@ -1327,6 +1327,7 @@ export default function ChatContainer({
         readonly={readonly}
         sessionStatus={session?.status}
         sessionType={session?.type}
+        harness={session?.config?.harness}
         thinkingLevel={
           session?.config?.thinkingLevel
             ? normalizeThinkingLevel(session.config.thinkingLevel)

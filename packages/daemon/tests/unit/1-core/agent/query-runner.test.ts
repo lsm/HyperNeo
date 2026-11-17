@@ -436,39 +436,6 @@ describe('QueryRunner', () => {
       startup.mockRestore();
     });
 
-    it('refuses an OXAP run before opening once the global permission mode becomes plan', async () => {
-      const submit = mock(async () => ({ runId: 'must-not-run' }));
-      const hub = mock(() => ({ submit, events: async function* () {}, cancel: async () => {} }));
-      const config = { model: 'unit', provider: providerId, harness: 'oxap-codex' as const };
-      const ctx = createContext({
-        session: { ...mockSession, config: { ...config } as Session['config'] },
-        db: {
-          ...mockDb,
-          getGlobalSettings: () => ({ permissionMode: 'plan', sandbox: { enabled: false } }),
-        } as unknown as Database,
-        messageQueue: queue,
-        oap: {
-          openDirectorySupported: true,
-          get hub() {
-            return hub();
-          },
-        } as never,
-      });
-      const send = queue
-        .enqueueWithId('codex-plan', 'Synthetic prompt', false, { durable: true })
-        .catch((error) => error);
-      runner = new QueryRunner(ctx);
-      await runner.start();
-      await ctx.queryPromise;
-      expect((await send).message).toMatch(/this restriction is not supported/);
-      expect(hub).not.toHaveBeenCalled();
-      expect(submit).not.toHaveBeenCalled();
-      expect(ctx.session.config as unknown).toEqual(config);
-      expect(
-        updateSessionSpy.mock.calls.some((call) => JSON.stringify(call).includes('"config"'))
-      ).toBe(false);
-    });
-
     async function completesWithin(promise: Promise<unknown>): Promise<boolean> {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {

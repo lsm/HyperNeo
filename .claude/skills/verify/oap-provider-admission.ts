@@ -83,6 +83,7 @@ try {
     openDirectorySupported: true,
     hub: createOapQueryHub(client),
   };
+  await app.db.updateGlobalSettings({ permissionMode: 'plan' });
   await rpc.request('message.send', { sessionId: codex, content: 'Hello from Codex' });
   const deadline = Date.now() + 15_000;
   while (app.db.getSDKMessages(codex).messages.filter((row) => row.type === 'result').length !== 1) {

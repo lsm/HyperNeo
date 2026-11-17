@@ -7,7 +7,7 @@ The helper starts an isolated daemon and synthetic OAP stdio hub. It adds the
 synthetic OXAP Codex provider record from `oxap-codex-provider.ts` (its key lives
 only in the temporary database) and no login for the SDK provider. The Codex
 session takes its harness from that record, retains a legacy stored tool preference,
-and completes one RPC message through
+then the global permission changes to plan. The session completes one RPC message through
 the production OAP adapter. The SDK session must not fall back onto the OXAP
 provider. An SDK session in the same daemon keeps its
 message enqueued and displays the provider-login notice. Evidence records one OAP

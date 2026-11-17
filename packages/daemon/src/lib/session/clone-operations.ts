@@ -10,7 +10,7 @@ import {
   type OperationCaller,
   type OperationCallerRole,
 } from '../operations/registry.ts';
-import { thinkingRefusal } from '../agent/session-engine.ts';
+import { codexSessionRefusal, thinkingRefusal } from '../agent/session-engine.ts';
 import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { stripRejectedSessionConfig } from './create-session-config.ts';
 import { admitSpaceStage } from './ensure-agent-session.ts';
@@ -126,7 +126,10 @@ export function admitCloneThinking(
   parent: Session,
   input: SpawnInput
 ): { value: Session } | { reason: SpawnRejection } {
-  const message = thinkingRefusal(parent.config.harness, input.thinkingLevel);
+  const message =
+    (isOxapHarness(parent.config.harness)
+      ? codexSessionRefusal(parent.config, false, false)
+      : undefined) ?? thinkingRefusal(parent.config.harness, input.thinkingLevel);
   return message ? { reason: reject('harness_unsupported', message) } : { value: parent };
 }
 

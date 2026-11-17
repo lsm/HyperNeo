@@ -31,10 +31,6 @@ try {
   assert.ok(off);
   const clone = await hub.request<{ accepted: boolean }>('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId } });
   assert.equal(clone.accepted, true);
-  const legacy = app.db.getSession(sessionId)!;
-  await app.db.updateSession(sessionId, { config: { ...legacy.config, maxTurns: 3 } as typeof legacy.config });
-  const legacyResult = await hub.request('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId } }).catch((error: Error) => ({ thrown: error.message }));
-  assert.deepEqual(legacyResult, { accepted: false, reason: 'harness_unsupported', message: 'OXAP Codex runs with on-request approval in the workspace; this restriction is not supported' });
   const before = app.db.listSessions().length;
   const result = await hub.request('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId, thinkingLevel: 'think16k' } }).catch((error: Error) => ({ thrown: error.message }));
   const after = app.db.listSessions().length;
@@ -43,6 +39,12 @@ try {
   console.log(JSON.stringify(evidence));
   assert.deepEqual(result, { accepted: false, reason: 'harness_unsupported', message: 'OXAP Codex does not take a thinking level.' });
   assert.equal(after, before);
+  const legacy = app.db.getSession(sessionId)!;
+  await app.db.updateSession(sessionId, { config: { ...legacy.config, maxTurns: 3 } as typeof legacy.config });
+  const legacyResult = await hub.request('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId } }).catch((error: Error) => ({ thrown: error.message }));
+  assert.deepEqual(legacyResult, { accepted: false, reason: 'harness_unsupported', message: 'OXAP Codex runs with on-request approval in the workspace; this restriction is not supported' });
+  writeFileSync(join(run, 'evidence/legacy-result.json'), JSON.stringify(legacyResult, null, 2));
+  console.log(JSON.stringify({ legacyResult }));
 } finally {
   await transport?.close();
   await app?.cleanup();

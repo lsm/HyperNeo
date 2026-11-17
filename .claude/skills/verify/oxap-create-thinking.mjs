@@ -55,6 +55,9 @@ try {
       await page.getByRole('button', { name: 'Start chat' }).click();
       await page.waitForURL(/\/session\//, { timeout: 15000 });
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
+      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+      assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
+      console.log('OXAP session model picker hides thinking');
       console.log('OXAP create accepted with persisted thinking=off and sandbox=true; controls absent');
     }
     await context.close();
