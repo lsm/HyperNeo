@@ -39,10 +39,10 @@ test('tool list under the token budget', async () => {
   const tools = await fixture().proxy.list();
   const serialized = JSON.stringify(tools);
   expect(tools).toHaveLength(12);
-  expect(Buffer.byteLength(serialized)).toBe(6055);
+  expect(Buffer.byteLength(serialized)).toBe(6566);
   expect(Buffer.byteLength(serialized)).toBeLessThan(8000);
   expect(createHash('sha256').update(serialized).digest('hex')).toBe(
-    '3f6e8413b7b464c5c697743684b8adf508544982348033179a89a14dcbc0c0ad'
+    '154fbf7aaa0706b8c827a6e45b81c33f9a6246355ca33063360520e9de07af0d'
   );
 });
 

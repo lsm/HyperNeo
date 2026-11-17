@@ -39,12 +39,36 @@ try {
   await open();
   result.chips = (await chips()).map((text) => text.replace(/\s+/g, ' ').trim());
   assert.equal(result.chips[0], `全部 ${(await cards()).length}`);
-  assert.deepEqual(result.chips.slice(1, 2), ['家长控制 2']);
-  assert.equal(result.chips.at(-1), '其他 1');
+  assert.equal(result.chips.filter((chip) => chip === 'Shop 1').length, 2, 'two projects titled Shop stay two chips');
+  assert.equal(result.chips.filter((chip) => /^kids 2$/i.test(chip)).length, 1, 'kids and Kids fold into one chip');
+  assert(result.chips.includes('家长控制 2'));
+  assert.equal(result.chips.at(-1), '其他 2', 'an ask with no topic joins the 其他 chip, last');
   const header = await page.locator('article[data-ask="screen-time"] [data-ask-status]').innerText();
   assert.equal(header.trim(), '在做');
   assert.equal(await page.locator('article[data-ask] .rounded-full.px-2\\.5').count(), 0);
-  assert.equal(await page.locator('article[data-ask="plain"] [data-topic-swatch]').count(), 0);
+  assert.equal((await page.locator('article[data-ask="plain"]').getByRole('button', { name: '其他' }).count()), 1);
+  const shopChips = page.locator('[data-topic-chips] button', { hasText: 'Shop' });
+  const shopSets = [];
+  for (const index of [0, 1]) {
+    await shopChips.nth(index).click();
+    shopSets.push(await cards());
+  }
+  result.shopChipCards = shopSets;
+  assert.deepEqual(shopSets.flat().sort(), ['shop-a', 'shop-b'], 'each Shop chip shows only its own project');
+  await page.locator('[data-topic-chips] button', { hasText: /^kids 2$/i }).click();
+  assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper']);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: join(evidence, 'topics-1280-kids.png') });
+  await page.reload();
+  await page.locator('[data-topic-chips]').waitFor();
+  assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper'], 'the folded filter survives reload');
+  await page.locator('article[data-ask="kids-upper"]').getByRole('button', { name: 'Kids' }).click();
+  assert((await cards()).length > 2, 'the card button toggles the same folded key off');
+  await page.locator('article[data-ask="shop-b"]').getByRole('button', { name: 'Shop' }).click();
+  assert.deepEqual(await cards(), ['shop-b'], 'the card button selects its own project');
+  await page.locator('article[data-ask="shop-b"]').getByRole('button', { name: 'Shop' }).click();
+  result.topicKeys = true;
+  await page.waitForTimeout(800);
   for (const scheme of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: join(evidence, `topics-1280-${scheme}.png`), fullPage: true });

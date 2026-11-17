@@ -1,3 +1,5 @@
+import { NEO_OTHER_TOPIC } from '@hyperneo/shared/types/neo-ask';
+
 const palette = [
   'var(--neo-markdown-strong)',
   'var(--neo-markdown-inline-code)',
@@ -8,8 +10,6 @@ const palette = [
   'var(--neo-plum)',
   'var(--danger)',
 ];
-
-export const NEO_OTHER_TOPIC = '其他';
 
 export function neoTopicHash(topic: string): number {
   let hash = 0x811c9dc5;
