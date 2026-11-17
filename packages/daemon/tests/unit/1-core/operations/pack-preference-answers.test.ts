@@ -388,7 +388,7 @@ describe('immutable human settings proposals', () => {
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
   test.each(['button', 'chat', 'applyAnswer'])(
-    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    'a yes/no proposal answered yes saves nothing by %s',
     async (surface) => {
       const questionId = 'legacy-settings';
       openHumanCard(
@@ -412,18 +412,11 @@ describe('immutable human settings proposals', () => {
         .run(questionId, 'legacy', JSON.stringify(values), 'Apply these settings?');
       if (surface === 'chat') await chat(questionId, 'yes');
       else await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
-      if (surface === 'applyAnswer') {
-        db.getDatabase().prepare('DELETE FROM neo_pack_preferences').run();
-        db.getDatabase()
-          .prepare('UPDATE neo_pack_preference_proposals SET applied_at=NULL WHERE question_id=?')
-          .run(questionId);
+      if (surface === 'applyAnswer')
         expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
-          value: { ok: true },
+          value: { ok: false },
         });
-      }
-      expect(await saved()).toMatchObject({
-        value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
-      });
+      expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
   test('invalid values leave neither question nor proposal; retry preserves question identity', async () => {
