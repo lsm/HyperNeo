@@ -90,7 +90,7 @@ function setup(
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules, started, released, ops };
+  return { db, call, audited, scheduler, goals, schedules, started, released, ops, sessions };
 }
 
 describe('session goal detail reads', () => {
@@ -910,6 +910,24 @@ describe('a goal in its own session', () => {
           'goal.session.update',
         ])
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a clone that runs no goal cannot start owning goals', async () => {
+    const { db, call, sessions } = setup();
+    try {
+      sessions.push('goal-session-clone');
+      const clone: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-clone',
+        role: 'universal_read',
+      };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, clone)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });
     } finally {
       db.close();
     }

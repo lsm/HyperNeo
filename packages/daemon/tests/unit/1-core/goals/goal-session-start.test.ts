@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import { startGoalSession } from '../../../../src/lib/goals/goal-session-start';
+import { goalParentProblem, startGoalSession } from '../../../../src/lib/goals/goal-session-start';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle';
 
 function parent(overrides: Partial<Session> = {}): Session {
@@ -111,5 +111,40 @@ describe('starting a goal session', () => {
       )
     ).rejects.toThrow('space paused');
     expect(h.released).toEqual(['goal-1']);
+  });
+});
+
+describe('choosing a parent for a goal session', () => {
+  const problem = (
+    session: Session | null,
+    {
+      role = 'long_term_agent',
+      paused = false,
+    }: { role?: string; paused?: boolean } = {}
+  ) =>
+    goalParentProblem('parent', {
+      getSession: () => session,
+      resolveRole: () => role as never,
+      getSpace: async (id: string) => ({ id, status: 'active', paused }) as never,
+    });
+
+  test('takes the same parents a clone takes', async () => {
+    expect(await problem(parent())).toBeNull();
+    expect(await problem(parent({ context: { spaceId: 'space-1' } } as Partial<Session>))).toBeNull();
+  });
+
+  test('refuses a child, a missing or archived session, and task, room or lobby workers', async () => {
+    expect(await problem(parent({ parentSessionId: 'root' } as Partial<Session>))).toBe('child');
+    expect(await problem(null)).toBe('inactive');
+    expect(await problem(parent({ status: 'archived' } as Partial<Session>))).toBe('inactive');
+    for (const context of [{ taskId: 't1' }, { roomId: 'r1' }, { lobbyId: 'l1' }]) {
+      expect(await problem(parent({ context } as Partial<Session>))).toBe('inactive');
+    }
+  });
+
+  test('refuses a Space session that is not its agent, or a Space that is not active', async () => {
+    const inSpace = parent({ context: { spaceId: 'space-1' } } as Partial<Session>);
+    expect(await problem(inSpace, { role: 'universal_read' })).toBe('inactive');
+    expect(await problem(inSpace, { paused: true })).toBe('inactive');
   });
 });

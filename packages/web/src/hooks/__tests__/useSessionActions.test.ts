@@ -360,6 +360,49 @@ describe('useSessionActions', () => {
       expect(mockListSessions).not.toHaveBeenCalled();
     });
 
+    it('closes the clone choice and delete dialogs when a chat runs a goal', async () => {
+      const onDeleteModalClose = vi.fn();
+      const hasClones = {
+        success: false,
+        reason: 'has_clones',
+        clones: [{ id: 'c1', title: 'Clone' }],
+      };
+      const ownsGoals = {
+        success: false,
+        reason: 'owns_goals',
+        clones: [{ id: 'c1', title: 'Clone' }],
+      };
+      mockDeleteSession.mockResolvedValueOnce(hasClones).mockResolvedValueOnce(ownsGoals);
+      mockArchiveSession.mockResolvedValueOnce(hasClones).mockResolvedValueOnce(ownsGoals);
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose,
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleDeleteSession();
+      });
+      await act(async () => {
+        await result.current.handleCloneChoice('flatten');
+      });
+      expect(result.current.cloneChoiceDialog).toBeNull();
+      expect(onDeleteModalClose).toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.handleArchiveClick();
+      });
+      await act(async () => {
+        await result.current.handleCloneChoice('flatten');
+      });
+      expect(result.current.cloneChoiceDialog).toBeNull();
+      expect(mockToastError).toHaveBeenCalledTimes(2);
+      expect(mockToastError).toHaveBeenCalledWith(GOAL_CHILD_MESSAGE);
+    });
+
     it('asks for a clone choice before deleting', async () => {
       const onDeleteModalClose = vi.fn();
       mockDeleteSession
