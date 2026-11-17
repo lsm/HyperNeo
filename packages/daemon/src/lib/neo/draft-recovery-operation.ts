@@ -90,7 +90,7 @@ async function commitRecoveredDraft(captured: Captured, service: Recovers): Prom
   return { ok: false, reason: 'submitted' };
 }
 
-const recover = (superpipe({})('neo-draft-recover') as PipelineAPI)
+const recover = (superpipe({})('neo.draft.recover') as PipelineAPI)
   .input(['recovery', 'caller', 'service'])
   .pipe(requireDraftRecoveryHuman, ['recovery', 'caller'], 'result:draft')
   .pipe(captureRecoverableDraft, ['draft', 'service'], 'result:draft')
