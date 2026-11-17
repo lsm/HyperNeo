@@ -152,7 +152,8 @@ export function thinkingRefusal(
   harness: SessionConfig['harness'],
   thinkingLevel: unknown
 ): string | undefined {
-  if (thinkingLevel === undefined || !isOxapHarness(harness)) return undefined;
+  if (thinkingLevel === undefined || thinkingLevel === 'off' || !isOxapHarness(harness))
+    return undefined;
   const row = oxapHarness(harness);
   return row.thinking ? undefined : `${row.label} does not take a thinking level.`;
 }

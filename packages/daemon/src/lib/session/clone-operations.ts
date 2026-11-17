@@ -11,6 +11,7 @@ import {
   type OperationCallerRole,
 } from '../operations/registry.ts';
 import { thinkingRefusal } from '../agent/session-engine.ts';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { stripRejectedSessionConfig } from './create-session-config.ts';
 import { admitSpaceStage } from './ensure-agent-session.ts';
 import type { CreateSessionParams } from './session-lifecycle.ts';
@@ -149,7 +150,9 @@ export async function buildCloneParams(
     toolProfile: parent.config.toolProfile,
     config: {
       ...config,
-      ...(thinkingRefusal(parent.config.harness, thinkingLevel) ? {} : { thinkingLevel }),
+      ...(isOxapHarness(parent.config.harness) && !oxapHarness(parent.config.harness).thinking
+        ? {}
+        : { thinkingLevel }),
       ...(input.model ? { model: input.model } : {}),
       ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel as ThinkingLevel } : {}),
     },

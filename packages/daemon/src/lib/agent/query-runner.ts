@@ -48,12 +48,7 @@ import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
-import {
-  codexSessionRefusal,
-  effectiveOxapConfig,
-  selectSessionEngine,
-  type SessionEngine,
-} from './session-engine.ts';
+import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
@@ -827,7 +822,13 @@ export class QueryRunner {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
         const refusal = codexSessionRefusal(
-          effectiveOxapConfig(session.config, this.ctx.db.getGlobalSettings()),
+          {
+            systemPrompt: session.config.systemPrompt,
+            agent: session.config.agent,
+            agents: session.config.agents,
+            toolGuards: session.config.toolGuards,
+            workerOperations: session.config.workerOperations,
+          },
           !!session.context?.spaceId,
           !!neoCoordinatorBinding(this.ctx.db, session.id),
           !!this.ctx.toolGuards?.length

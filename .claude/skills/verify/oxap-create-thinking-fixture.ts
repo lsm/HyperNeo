@@ -74,6 +74,15 @@ setModelsCache(
   ])
 );
 await rpc.request('models.list', {});
+const listProviders = app.db.providers.listProviders.bind(app.db.providers);
+let failProviderList = true;
+app.db.providers.listProviders = () => {
+  if (failProviderList) {
+    failProviderList = false;
+    throw new Error('Synthetic provider lookup failure');
+  }
+  return listProviders();
+};
 console.log('READY');
 process.on('SIGTERM', async () => {
   await transport.close();

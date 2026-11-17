@@ -23,6 +23,12 @@ try {
     });
     const page = await context.newPage();
     await page.goto(`${base}/sessions`);
+    if (theme === 'light') {
+      await page.getByRole('alert').getByText('Synthetic provider lookup failure').waitFor();
+      await page.getByRole('button', { name: 'Retry' }).click();
+      await page.getByRole('alert').waitFor({ state: 'hidden' });
+      console.log('Provider lookup error surfaced and retry succeeded');
+    }
     await page.evaluate(
       ({ theme }) => {
         localStorage.setItem(

@@ -132,6 +132,8 @@ export function SessionsPage() {
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
   const [providers, setProviders] = useState<ProviderRecord[] | null>(null);
+  const [providersError, setProvidersError] = useState<string | null>(null);
+  const [providersRetry, setProvidersRetry] = useState(0);
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [project, setProject] = useState<string | null>(initialSelection.project);
@@ -194,11 +196,16 @@ export function SessionsPage() {
     const load = () => {
       const current = ++request;
       setProviders(null);
+      setProvidersError(null);
       void listProviders()
         .then(({ providers }) => {
           if (active && current === request) setProviders(providers);
         })
-        .catch(() => {});
+        .catch((error: unknown) => {
+          if (active && current === request) {
+            setProvidersError(error instanceof Error ? error.message : 'Could not load providers');
+          }
+        });
     };
     load();
     const unsubscribe = connectionManager.getHubIfConnected()?.onEvent('providers.changed', load);
@@ -206,7 +213,7 @@ export function SessionsPage() {
       active = false;
       unsubscribe?.();
     };
-  }, [connectionState.value]);
+  }, [connectionState.value, providersRetry]);
 
   const activeModelLabel = getModelLabel(
     activeModelInfo,
@@ -564,6 +571,14 @@ export function SessionsPage() {
             </div>
           </div>
 
+          {providersError && (
+            <p role="alert" class="mt-2 px-1 text-sm text-danger">
+              {providersError}{' '}
+              <button type="button" onClick={() => setProvidersRetry((value) => value + 1)}>
+                Retry
+              </button>
+            </p>
+          )}
           <div class="mt-2 px-1">
             <WorkspaceChips
               projects={projectPaths}

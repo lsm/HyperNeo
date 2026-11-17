@@ -143,6 +143,10 @@ describe('SessionsPage', () => {
     mockListProviders.mockRejectedValue(new Error('Provider lookup failed'));
     render(<SessionsPage />);
     await waitFor(() => expect(screen.getByText(/Provider lookup failed/)).toBeTruthy());
+    mockListProviders.mockResolvedValue({ providers: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/Provider lookup failed/)).toBeNull());
+    expect(mockListProviders).toHaveBeenCalledTimes(2);
   });
 
   it('keeps thinking and sandbox choices for SDK providers', async () => {
