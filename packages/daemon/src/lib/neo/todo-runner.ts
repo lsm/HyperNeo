@@ -100,7 +100,7 @@ export interface NeoTodoRunnerDeps {
   tell(ask: NeoAsk, todo: NeoTodo, note: string, key: string, kind: 'event'): Promise<void>;
   attend(event: NeoAttentionEvent): Promise<unknown>;
   changed(): void;
-  limits(): { running: number; perGroup: number };
+  limits(): { running: number; perGroup: number; hold?: string | null };
 }
 
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {

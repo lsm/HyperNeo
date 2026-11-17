@@ -19,6 +19,7 @@ import { isLocalUser } from '../operations/caller.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { defineOperation } from '../operations/registry.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
+import { WORK_CLEANUP_QUEUE } from './disk-guard.ts';
 import { planWorkRelease, type WorkFolderFacts, type WorkOwner } from './plan.ts';
 import { insideFolder, listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
 import { releaseWorkCleanup } from './release.ts';
@@ -333,7 +334,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     });
     return digest;
   };
-  const queue = 'work.cleanup.sweep';
+  const queue = WORK_CLEANUP_QUEUE;
   const schedule = () =>
     jobQueue.enqueueUniquePending({
       queue,
