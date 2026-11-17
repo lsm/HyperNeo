@@ -51,17 +51,18 @@ function setup(
   const audited: string[] = [];
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
-  const isChildSession = (sessionId: string) => sessionId.startsWith('goal-session-');
+  const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
+  const isChildSession = (sessionId: string) => canReturn(sessionId) || sessionId === 'moved';
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(db),
     scheduler,
     () => packs,
-    isChildSession,
+    canReturn,
     mandateChange
   );
   scheduler.registerSource(schedules);
-  const sessions = ['neo:root', 'neo:other', 'plain'];
+  const sessions = ['neo:root', 'neo:other', 'plain', 'moved'];
   const started: { parentSessionId: string; title: string }[] = [];
   const released: string[] = [];
   const ops = createSessionGoalOperations({
@@ -69,6 +70,7 @@ function setup(
     schedules,
     sessionExists: (sessionId) => sessions.includes(sessionId),
     isChildSession,
+    canReturn,
     releaseSession: async (sessionId) => {
       released.push(sessionId);
     },
@@ -897,6 +899,28 @@ describe('a goal in its own session', () => {
       expect(await call('goal.session.list', {}, plain)).toMatchObject({
         reason: expect.stringContaining('owner_denied'),
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a chat moved under a parent cannot report back, so it owns no goals itself', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const moved: OperationCaller = { source: 'mcp', sessionId: 'moved', role: 'universal_read' };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, moved)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      const named = await call(
+        'goal.session.create',
+        { ownerSessionId: 'moved', title: 'Named', doneTest: 'Done' },
+        human
+      );
+      expect(
+        schedules
+          .message(named.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
     } finally {
       db.close();
     }
