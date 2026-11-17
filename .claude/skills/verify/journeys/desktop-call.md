@@ -16,6 +16,7 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test PATH="$PATH"
 
 Pass prints `desktop.call journey PASS host_requests=2 audit_rows=2
 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
+The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
 A driver result with isError must come back as an MCP tool error (`isError: true`)
 with `ok: false, reason: driver_error`
 with the driver's text and image as MCP content blocks after the JSON reply. Its
