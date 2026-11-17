@@ -6,6 +6,7 @@ import { invokeOperation, type OperationOutcome } from './invoke.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
 import { Logger } from '../logger.ts';
+import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 
 const log = new Logger('operations-mcp');
 
@@ -30,7 +31,17 @@ function desktopCallResult(value: unknown): McpResult {
     reason?: unknown;
   };
   return {
-    content: [mcpResult(rest).content[0], ...content],
+    content: [
+      mcpResult(rest).content[0],
+      ...content.map((block) =>
+        block.type === 'image' && block.data.length > MAX_IMAGE_BASE64_SIZE
+          ? {
+              type: 'text' as const,
+              text: `Screenshot omitted: ${block.data.length} base64 bytes exceeds the ${MAX_IMAGE_BASE64_SIZE}-byte model image limit. Call get_window_state again with a smaller max_image_dimension.`,
+            }
+          : block
+      ),
+    ],
     ...(rest.reason === 'driver_error' ? { isError: true } : {}),
   };
 }
