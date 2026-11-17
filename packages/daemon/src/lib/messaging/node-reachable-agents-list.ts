@@ -116,7 +116,7 @@ const LIST_REACHABLE_AGENTS_DESCRIPTION =
   'List within-node peers and cross-node targets reachable over declared channels. The calling node-agent session identifies the workflow run and node; only workflow worker sessions are admitted. Rejects not_a_node_agent when the caller is not a live node-agent session and node_caller_denied when the caller is not a workflow worker or belongs to another Space.';
 
 export function createListNodeReachableAgentsOperation(deps: NodeMessagingDependencies) {
-  const run = (superpipe({ deps })('list-node-reachable-agents') as PipelineAPI)
+  const run = (superpipe({ deps })('workflow.run.reachableAgent.list') as PipelineAPI)
     .input(['caller'])
     .pipe(admitNodeCaller, 'caller', 'result:outcome')
     .pipe(resolveNodeContext, ['outcome', 'caller', 'deps'], 'result:outcome')
