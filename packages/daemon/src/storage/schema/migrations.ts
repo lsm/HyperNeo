@@ -9,6 +9,7 @@ import { runMigration518 } from './m518-work-cleanup-gone.ts';
 import { runMigration519 } from './m519-work-started-role.ts';
 import { runMigration520 } from './m520-neo-worker-batch-history-index.ts';
 import { runMigration521 } from './m521-session-schedule-runs.ts';
+import { runMigration522 } from './m522-goal-daily-run-limit.ts';
 import { runMigration523 } from './m523-session-schedule-once.ts';
 import { runMigration514 } from './m514-neo-todo-closed-unverified-rows.ts';
 import { runMigration515 } from './m515-neo-question-held.ts';
@@ -1078,6 +1079,7 @@ export function runMigrations(
   run(migrationMarkerKey(519), () => runMigration519(db));
   run(migrationMarkerKey(520), () => runMigration520(db));
   run(migrationMarkerKey(521), () => runMigration521(db));
+  run(migrationMarkerKey(522), () => runMigration522(db));
   run(migrationMarkerKey(523), () => runMigration523(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);

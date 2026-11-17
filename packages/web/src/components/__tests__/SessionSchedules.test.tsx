@@ -153,6 +153,16 @@ describe('SessionSchedules', () => {
     fireEvent.click(screen.getByText('Schedules'));
     expect(screen.getByText(/^Once:/)).toBeTruthy();
   });
+  it.each([
+    ['en', 'Daily limit reached'],
+    ['zh-Hans', '已达每日上限'],
+  ] as const)('labels a daily-limit skip in %s', async (language, label) => {
+    locale.value = language;
+    rows = [{ ...row, lastOutcome: 'skipped_budget', lastSkipReason: 'budget' }];
+    render(<SessionSchedules sessionId="root" />);
+    expect(await screen.findByText(new RegExp(label))).toBeTruthy();
+    expect(screen.queryByText(/budget/)).toBeNull();
+  });
   it('keeps refused mutations visible and allows a fresh read without changing status', async () => {
     render(<SessionSchedules sessionId="root" />);
     await open();
