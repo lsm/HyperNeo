@@ -37,6 +37,10 @@ try {
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
   const ownerSessionId = (await call('neo.open')).sessionId;
   assert(ownerSessionId);
+  const plainOwner = await hub.request<any>('session.create', { workspacePath: run, title: 'Synthetic parent' });
+  const metric = { name: 'adopters', baseline: 2, target: 10, direction: 'increase' };
+  evidence.plainOwner = await call('goal.session.create', { ownerSessionId: plainOwner.sessionId, title: 'Synthetic adoption', metric });
+  assert.equal((evidence.plainOwner as any).reason, 'metric_review_unavailable: use a goal session or a Neo owner for a structured metric.');
   const created = await call('goal.session.create', { ownerSessionId, title: 'Synthetic adoption', metric: { name: 'adopters', baseline: 2, target: 10, direction: 'increase' } });
   assert(created.accepted, JSON.stringify(created));
   const goalId = created.goal.id;
@@ -55,6 +59,10 @@ try {
     const runId = /runId (goal-review:[^, ]+)/.exec(mailbox.payload)?.[1];
     assert(runId);
     assert(mailbox.payload.includes('metricPoint'));
+    if (value === 4) {
+      evidence.missingPoint = await call('goal.journal.append', { ownerSessionId, goalId, runId, done: 'Review', effect: 'yes', worked: 'Guide' });
+      assert.equal((evidence.missingPoint as any).reason, 'metric_point_required: reviews of a metric goal must include metricPoint.');
+    }
     const receipt = await point(runId, value);
     assert(receipt.accepted, JSON.stringify(receipt));
     receipts.push(receipt);

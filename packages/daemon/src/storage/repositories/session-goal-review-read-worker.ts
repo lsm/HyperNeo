@@ -1,6 +1,7 @@
 import type { GoalJournalEntry, SessionGoal } from '@hyperneo/shared/types/session-goal';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { metricPrefix } from '../../lib/goals/session-goal-metric.ts';
 
 class SessionGoalReviewReader {
   constructor(private readonly db: Database) {}
@@ -32,9 +33,11 @@ class SessionGoalReviewReader {
         FROM goal_journal WHERE goal_id = ? AND run_id LIKE 'goal-review:%'
           AND EXISTS (SELECT 1 FROM json_each(goal_journal.evidence)
             WHERE json_extract(value, '$.kind') = 'metric'
-              AND json_extract(value, '$.ref') LIKE 'goal-metric-v1:%')
+              AND substr(json_extract(value, '$.ref'), 1, length(?)) = ?)
         ORDER BY rowid DESC LIMIT 2`)
-        .all(goalId) as (Omit<GoalJournalEntry, 'evidence'> & { evidence: string })[];
+        .all(goalId, metricPrefix, metricPrefix) as (Omit<GoalJournalEntry, 'evidence'> & {
+        evidence: string;
+      })[];
       return {
         delivered: !!delivered && !other,
         head: head?.id ?? null,

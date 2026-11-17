@@ -19,7 +19,7 @@ export const PointSchema = z
 
 const key = '__goal_metric_v1';
 export const metricKey = key;
-const prefix = 'goal-metric-v1:';
+export const metricPrefix = 'goal-metric-v1:';
 export const metricFields = (metric: z.infer<typeof MetricSchema>) => ({
   [key]: JSON.stringify(metric),
 });
@@ -35,16 +35,16 @@ export const readMetric = (goal: SessionGoal) => {
 };
 export const metricEvidence = (point: z.infer<typeof PointSchema>) => ({
   kind: 'metric' as const,
-  ref: prefix + JSON.stringify(point),
+  ref: metricPrefix + JSON.stringify(point),
 });
-export const reservedMetricEvidence = (ref: string) => ref.startsWith(prefix);
+export const reservedMetricEvidence = (ref: string) => ref.startsWith(metricPrefix);
 export const readPoint = (entry: GoalJournalEntry) => {
   const ref = entry.evidence.find(
     (item) => item.kind === 'metric' && reservedMetricEvidence(item.ref)
   )?.ref;
   if (!ref) return null;
   try {
-    const result = PointSchema.safeParse(JSON.parse(ref.slice(prefix.length)));
+    const result = PointSchema.safeParse(JSON.parse(ref.slice(metricPrefix.length)));
     return result.success ? { ...result.data, time: entry.createdAt } : null;
   } catch {
     return null;

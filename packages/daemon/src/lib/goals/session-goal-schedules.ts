@@ -8,7 +8,7 @@ import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 import { openHumanCard } from '../neo/human-card.ts';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
-import { readMetric, readPoint } from './session-goal-metric.ts';
+import { metricKey, readMetric, readPoint } from './session-goal-metric.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {
   readonly kind = 'goal';
@@ -59,7 +59,7 @@ export class SessionGoalSchedules implements ScheduleSource {
         });
     const review = reviewCadence ??
       previous?.reviewCadence ?? { kind: 'every' as const, everyMs: 86_400_000 };
-    const canReview = goal.ownerSessionId.startsWith('neo:') || this.canReturn(goal.ownerSessionId);
+    const canReview = this.canReview(goal.ownerSessionId);
     let reviewRow = this.scheduler.repo.getBySource('goal_review', goal.id);
     if (
       reviewRow &&
@@ -132,6 +132,10 @@ export class SessionGoalSchedules implements ScheduleSource {
 
   dailyRunLimit(id: string): number | null {
     return this.goals.get(id)?.dailyRunLimit ?? null;
+  }
+
+  canReview(owner: string): boolean {
+    return owner.startsWith('neo:') || this.canReturn(owner);
   }
 
   inTransaction<T>(work: () => T): T {
@@ -272,7 +276,7 @@ export class SessionGoalSchedules implements ScheduleSource {
         ];
       })(),
       ...Object.keys(goal.metrics)
-        .filter((key) => key !== '__goal_metric_v1')
+        .filter((key) => key !== metricKey)
         .sort()
         .map((key) => `Metric ${key}: ${JSON.stringify(goal.metrics[key])}`),
       ...asks.map(

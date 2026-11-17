@@ -357,6 +357,16 @@ export function createSessionGoalOperations({
     .pipe(requireGoalDoneTest, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (owner: string, input: z.infer<typeof Create>) =>
+        input.metric && !input.ownSession && !schedules.canReview(owner)
+          ? refuse(
+              'metric_review_unavailable: use a goal session or a Neo owner for a structured metric.'
+            )
+          : { value: owner },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (owner: string, input: z.infer<typeof Create>) =>
         input.metrics && metricKey in input.metrics
           ? refuse('reserved_metric_key')
           : { value: owner },
@@ -513,12 +523,13 @@ export function createSessionGoalOperations({
         const existing = input.runId ? goals.journalEntry(goal.id, { runId: input.runId }) : null;
         return input.evidence.some((item) => reservedMetricEvidence(item.ref))
           ? refuse('reserved_metric_evidence: use metricPoint on a review.')
-          : (input.metricPoint || (readMetric(goal) && input.runId?.startsWith('goal-review:'))) &&
-              (!readMetric(goal) || !input.metricPoint)
-            ? refuse('metric_review_required: metric points require a delivered review.')
-            : existing && readPoint(existing)
-              ? refuse('metric_review_recorded: a measured review cannot be replaced.')
-              : { value: goal };
+          : readMetric(goal) && input.runId?.startsWith('goal-review:') && !input.metricPoint
+            ? refuse('metric_point_required: reviews of a metric goal must include metricPoint.')
+            : input.metricPoint && !readMetric(goal)
+              ? refuse('metric_review_required: metric points require a delivered review.')
+              : existing && readPoint(existing)
+                ? refuse('metric_review_recorded: a measured review cannot be replaced.')
+                : { value: goal };
       },
       ['outcome', 'input'],
       'result:outcome'
@@ -627,7 +638,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Give a structured metric with name, target, direction and baseline, legacy metrics, or a written doneTest. A structured metric requires a measured point at every review. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. noEffectReviewLimit defaults to 3; consecutive reviews with no effect pause the goal and ask the human. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
+        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Give a structured metric with name, target, direction and baseline, legacy metrics, or a written doneTest. A structured metric requires a Neo owner or a goal session (created with ownSession) and a measured point at every review. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. noEffectReviewLimit defaults to 3; consecutive reviews with no effect pause the goal and ask the human. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
