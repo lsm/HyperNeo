@@ -19,12 +19,12 @@ End state:
 - A WebSocket without a device answers `401`; a wrong token answers `401 invalid_token`.
 - The file token answers `200 human` with a device cookie; that cookie opens the
   WebSocket (`101`); one active owner exists.
-- The same link again answers `409 has_owner`. The token appears nowhere in the daemon
+- The grant deletes `setup-token`. The same token again answers `409 has_owner`. The token appears nowhere in the daemon
   output, and nowhere in the data dir except `setup-token`.
 - After `hyperneo devices reset-human`, with no restart, the used link answers
   `401 invalid_token`: a token works only in the first-device window it was minted in.
 - The restart after the reset writes a new token: the old one answers `401`, the new
-  one grants once, then `409`. A restart with an owner mints no new token.
+  one grants once, then `409`. A restart with an owner mints no token and leaves no `setup-token` file.
 - Each line prints `PASS` or `FAIL`; the script exits 1 if any expectation fails.
 
 Windows file ACLs (`checkWindowsCredential`) are not covered here; this runs on POSIX only.

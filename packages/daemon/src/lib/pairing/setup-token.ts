@@ -17,6 +17,7 @@ export const setupTokenPath = (dataDir = getDataDir()) => join(dataDir, 'setup-t
 export interface SetupLink {
   readonly token: string;
   readonly window: string;
+  readonly path: string;
 }
 
 export async function mintSetupToken(
@@ -24,7 +25,10 @@ export async function mintSetupToken(
   path = setupTokenPath()
 ): Promise<SetupLink | null> {
   const window = await db.call(pairingRequestReads, 'setupWindow');
-  if (!window) return null;
+  if (!window) {
+    await rm(path, { force: true });
+    return null;
+  }
   const token = randomBytes(32).toString('base64url');
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
@@ -40,7 +44,7 @@ export async function mintSetupToken(
   } finally {
     await rm(temporary, { force: true });
   }
-  return { token, window };
+  return { token, window, path };
 }
 
 const SetupRequest = z.object({
@@ -95,6 +99,7 @@ export function createSetupRoute({ db, limiter, now, link }: SetupRouteDeps) {
       return (await db.call(pairingRequestReads, 'setupWindow'))
         ? answer(401, { error: 'invalid_token' })
         : answer(409, { error: 'has_owner' });
+    await rm(expected.path, { force: true });
     return answerPaired(req, {
       device: { id: granted.deviceId, kind: 'human' },
       credential: granted.credential,

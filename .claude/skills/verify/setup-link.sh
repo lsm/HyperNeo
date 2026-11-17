@@ -58,6 +58,7 @@ check "file token" "200 human" "$(setup "$TOKEN")"
 COOKIE=$(sed -n 's/^set-cookie: \(hyperneo_device=[^;]*\).*/\1/Ip' "$RUN/headers" | tr -d '\r')
 check "WebSocket with the setup cookie" 101 "$(ws "$COOKIE")"
 check "active owners" 1 "$(owners)"
+check "setup-token file after the grant" absent "$([ -e "$RUN/data/setup-token" ] && echo present || echo absent)"
 check "same link again" "409 has_owner" "$(setup "$TOKEN")"
 check "token in daemon output" 0 "$(grep -c "$TOKEN" "$RUN/daemon-1.log" || true)"
 check "token in data dir outside setup-token" 0 "$(grep -rl --exclude=setup-token "$TOKEN" "$RUN/data" 2>/dev/null | wc -l | tr -d ' ')"
@@ -74,6 +75,6 @@ check "new link again" "409 has_owner" "$(setup "$NEXT")"
 check "active owners" 1 "$(owners)"
 stop
 start 3
-check "restart with an owner mints no token" yes "$([ "$(link_token)" = "$NEXT" ] && echo yes || echo no)"
+check "restart with an owner leaves no setup-token file" absent "$([ -e "$RUN/data/setup-token" ] && echo present || echo absent)"
 [ "$FAILED" = 0 ] && echo "setup-link: all checks passed" || echo "setup-link: FAILED"
 exit "$FAILED"
