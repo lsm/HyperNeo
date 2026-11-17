@@ -1,7 +1,9 @@
-# Every device operation answers over RPC
+# Pairing device operations answer over RPC
 
-Calls each `device.*` and `device.pair.*` operation on a real isolated daemon. Use it
-when one of them changes. It stops with a non-zero exit at the first failed call, and
+Calls each of the eleven operations in `pairing-operations.ts` (`device.list`, `device.revoke`,
+the two diagnostics and every `device.pair.*`) on a real isolated daemon. Use it when one of them
+changes. It leaves out `device.reset_human`: that reset revokes every human device, so it cannot
+run mid-journey; `devices-reset-human.md` covers it. It stops with a non-zero exit at the first failed call, and
 diffs the whole transcript against the expected one below, exiting non-zero on any difference.
 It also fails when the daemon does not shut down cleanly (a non-zero exit, or no
 `Graceful shutdown complete` in its log), and keeps the run with its `daemon.log` whenever it fails.

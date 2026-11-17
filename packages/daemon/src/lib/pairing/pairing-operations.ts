@@ -73,7 +73,6 @@ export function planPairingCode(
 type Refusal = z.infer<typeof Refused>;
 type Gate<T> = { value: T } | { reason: Refusal };
 type Run<Result> = (input: unknown, caller: OperationCaller) => Promise<Awaited<Result> | Refusal>;
-const pipeline = (name: string) => superpipe({})(name) as PipelineAPI;
 
 export function createDevicePairingOperations({
   repo: pairing,
@@ -125,13 +124,13 @@ export function createDevicePairingOperations({
       now: now(),
       twoWay: input.confirm === 'two-way',
     });
-  const create = pipeline('device.pair.create')
+  const create = (superpipe({})('device.pair.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(createCode, ['input', 'caller'], 'created')
     .endAsync('created') as Run<ReturnType<typeof createCode>>;
 
   const listPending = () => ({ ok: true as const, pending: pairing().listPending(now()) });
-  const pending = pipeline('device.pair.pending')
+  const pending = (superpipe({})('device.pair.pending') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (caller: OperationCaller): Gate<OperationCaller> =>
@@ -145,7 +144,7 @@ export function createDevicePairingOperations({
     .pipe(listPending, 'caller', 'pending')
     .endAsync('pending') as Run<ReturnType<typeof listPending>>;
 
-  const approve = pipeline('device.pair.approve')
+  const approve = (superpipe({})('device.pair.approve') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitDecision(ALLOW_NEEDS_PAIRED_HUMAN, true), 'caller', 'result:approved')
     .pipe(
@@ -168,13 +167,13 @@ export function createDevicePairingOperations({
     .endAsync('approved') as Run<{ ok: true }>;
 
   const readTerminalApproval = () => ({ ok: true as const, enabled: pairing().terminalApproval() });
-  const terminalApprovalGet = pipeline('device.pair.terminal_approval.get')
+  const terminalApprovalGet = (superpipe({})('device.pair.terminal_approval.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:approval')
     .pipe(readTerminalApproval, 'caller', 'approval')
     .endAsync('approval') as Run<ReturnType<typeof readTerminalApproval>>;
 
-  const terminalApprovalSet = pipeline('device.pair.terminal_approval.set')
+  const terminalApprovalSet = (superpipe({})('device.pair.terminal_approval.set') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:approval')
     .pipe(
@@ -195,7 +194,7 @@ export function createDevicePairingOperations({
     )
     .endAsync('approval') as Run<{ ok: true; enabled: boolean }>;
 
-  const deny = pipeline('device.pair.deny')
+  const deny = (superpipe({})('device.pair.deny') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitDecision(DENY_NEEDS_PAIRED_HUMAN, false), 'caller', 'result:denied')
     .pipe(
@@ -213,7 +212,7 @@ export function createDevicePairingOperations({
       .listDevices()
       .map((device) => ({ ...device, current: device.id === caller.device?.deviceId })),
   });
-  const list = pipeline('device.list')
+  const list = (superpipe({})('device.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:devices')
     .pipe(
@@ -228,20 +227,20 @@ export function createDevicePairingOperations({
     .endAsync('devices') as Run<ReturnType<typeof listDevices>>;
 
   const listUnpaired = () => ({ ok: true as const, connections: pairing().listUnpaired() });
-  const unpaired = pipeline('device.unpaired.list')
+  const unpaired = (superpipe({})('device.unpaired.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:connections')
     .pipe(listUnpaired, 'caller', 'connections')
     .endAsync('connections') as Run<ReturnType<typeof listUnpaired>>;
 
   const listWouldRefuse = () => ({ ok: true as const, requests: pairing().listWouldRefuse() });
-  const wouldRefuse = pipeline('device.would_refuse.list')
+  const wouldRefuse = (superpipe({})('device.would_refuse.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:requests')
     .pipe(listWouldRefuse, 'caller', 'requests')
     .endAsync('requests') as Run<ReturnType<typeof listWouldRefuse>>;
 
-  const resetLockout = pipeline('device.pair.reset_lockout')
+  const resetLockout = (superpipe({})('device.pair.reset_lockout') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(requireLocal, 'caller', 'result:reset')
     .pipe(

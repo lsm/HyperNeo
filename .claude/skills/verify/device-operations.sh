@@ -1,5 +1,5 @@
 #!/bin/bash
-# Calls every device.* operation over RPC on an isolated daemon, prints each answer and
+# Calls the eleven pairing-operations.ts operations (not device.reset_human) over RPC on an isolated daemon, prints each answer and
 # exits non-zero on the first failed call or when the transcript differs from the expected one.
 # Usage: device-operations.sh <port>   (never 8399). DEVICE_OPS_FAIL=<operation> sends that
 # laptop call to an unknown operation, so the run must fail (see device-operations-fails.sh).
