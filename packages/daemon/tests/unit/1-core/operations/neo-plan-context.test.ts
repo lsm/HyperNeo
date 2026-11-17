@@ -71,6 +71,29 @@ describe('neoPlanLines', () => {
     expect(lines[0].text).toContain('topic=邮件');
     expect(lines[1].text).toContain('topic=none');
   });
+  test('lists the topics of the last 30 days first, folded for case and spacing', () => {
+    const topics = [
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 2 },
+      { topic: '邮件', count: 1 },
+      { topic: '家长控制', count: 4 },
+    ];
+    expect(neoPlanLines(asks.slice(0, 1), [], [], topics)[0].text).toBe(
+      'Topics used in the last 30 days (asks open or settled): 家长控制 4, Kids 3, 邮件 1'
+    );
+    expect(neoPlanLines([], [], [], [])[0].text).toBe(
+      'Topics used in the last 30 days (asks open or settled): none'
+    );
+  });
+  test('keeps the topic list when over budget', () => {
+    const lines = neoPlanLines(
+      asks,
+      asks.map((ask, i) => todo(`step-${i}`, { askId: ask.id, title: 'Detail '.repeat(1000) })),
+      [],
+      [{ topic: '邮件', count: 1 }]
+    );
+    expect(fitNeoPlanLines(lines, 400)[0].text).toContain('邮件 1');
+  });
   test('describes an absent reason as display text', () => {
     const line = neoPlanLines(asks, [todo('first')], []).find((item) => item.id === 'first');
     expect(line?.text).toContain('reason=not recorded');
