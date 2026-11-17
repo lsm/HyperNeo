@@ -30,9 +30,9 @@ function disk() {
     },
   };
   return {
-    sweep: (gib: number, now: number) => {
+    deps,
+    free: (gib: number) => {
       free = gib * GiB;
-      return guardDisk(deps, now);
     },
     events,
     backstops: () => backstops,
@@ -50,8 +50,12 @@ const action = (event: NeoAttentionEvent) =>
 describe('guardDisk', () => {
   test('below the warning level it tells Neo in the digest and holds nothing', async () => {
     const guard = disk();
-    expect(await guard.sweep(40, 1_000)).toEqual({ level: 'warn', hold: null });
-    expect(await guard.sweep(39, 2_000)).toEqual({ level: 'warn', hold: null });
+    const sweep = (gib: number, now: number) => {
+      guard.free(gib);
+      return guardDisk(guard.deps, now);
+    };
+    expect(await sweep(40, 1_000)).toEqual({ level: 'warn', hold: null });
+    expect(await sweep(39, 2_000)).toEqual({ level: 'warn', hold: null });
     expect(guard.events.map(({ subject, since }) => [subject.id, since])).toEqual([
       ['warn', 1_000],
       ['warn', 1_000],
@@ -62,10 +66,14 @@ describe('guardDisk', () => {
 
   test('below the floor it wakes Neo, runs the backstop once and holds new starts', async () => {
     const guard = disk();
-    const below = await guard.sweep(5, 1_000);
+    const sweep = (gib: number, now: number) => {
+      guard.free(gib);
+      return guardDisk(guard.deps, now);
+    };
+    const below = await sweep(5, 1_000);
     expect(below.level).toBe('floor');
     expect(below.hold).toEqual(expect.any(String));
-    await guard.sweep(4, 2_000);
+    await sweep(4, 2_000);
     expect(guard.backstops()).toBe(1);
     const floor = guard.events.filter(({ subject }) => subject.id === 'floor');
     expect(floor.map(({ since }) => since)).toEqual([1_000, 1_000]);
@@ -74,13 +82,17 @@ describe('guardDisk', () => {
 
   test('recovery above the floor releases the hold and a later drop runs the backstop again', async () => {
     const guard = disk();
-    await guard.sweep(5, 1_000);
-    expect(await guard.sweep(20, 2_000)).toEqual({ level: 'warn', hold: null });
-    expect(await guard.sweep(80, 3_000)).toEqual({ level: 'ok', hold: null });
+    const sweep = (gib: number, now: number) => {
+      guard.free(gib);
+      return guardDisk(guard.deps, now);
+    };
+    await sweep(5, 1_000);
+    expect(await sweep(20, 2_000)).toEqual({ level: 'warn', hold: null });
+    expect(await sweep(80, 3_000)).toEqual({ level: 'ok', hold: null });
     const told = guard.events.length;
-    await guard.sweep(80, 4_000);
+    await sweep(80, 4_000);
     expect(guard.events).toHaveLength(told);
-    await guard.sweep(5, 5_000);
+    await sweep(5, 5_000);
     expect(guard.backstops()).toBe(2);
     expect(guard.events.at(-1)?.since).toBe(5_000);
   });
