@@ -184,6 +184,20 @@ test('a full-window screenshot larger than 2 MiB reaches the session', async () 
   expect(response.isError).toBeFalsy();
 });
 
+test('a screenshot over the model image limit is replaced by a note', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(6 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(response.content).toHaveLength(2);
+  expect(response.content[1]).toMatchObject({
+    type: 'text',
+    text: expect.stringContaining('max_image_dimension'),
+  });
+});
+
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
