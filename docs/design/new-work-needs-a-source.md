@@ -86,6 +86,8 @@ The new checks are added as steps in these pipelines, not as checks beside them.
   - a todo whose ask is accepted passes;
   - an ask from before the change, with no source rows, passes;
   - `neo.ask.open` with source `neo` and inline todos is refused, and nothing is written.
+  - `neo.ask.open` with a `human` source and inline todos records the ask and its source rows and starts the todos;
+  - a new ask with no source rows, created after the migration, is refused for new todos and starts.
 - Neo opens an ask with source `neo`. The ask is not accepted and a card exists. Adding a todo to it is refused. After the card is accepted, a todo can be added and started. Today the todo is added and starts at once.
 - `work.start` with no `todoId` is refused. Today it starts.
 - An ask that names three human messages records three source rows.
