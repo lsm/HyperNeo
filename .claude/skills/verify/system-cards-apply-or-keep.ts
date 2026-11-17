@@ -43,7 +43,7 @@ await button(await rule('button', 'Synthetic rule by button.'), 'Apply these rul
 const old = await rule('legacy', 'Synthetic rule from an old card.');
 legacy(old, 'Keep current rules', 'Apply these rule changes');
 await chat(old, 'yes');
-assert.deepEqual(await rules(), ['Synthetic rule by letter.', 'Synthetic rule by button.', 'Synthetic rule from an old card.']);
+assert.deepEqual(await rules(), ['Synthetic rule by letter.', 'Synthetic rule by button.'], 'a yes on a yes/no card must not apply');
 
 const setting = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/one' }, key: 'mergePolicy' };
 const propose = async (requestId: string, value: string) => (await rpc('pack.preferences.ask', { askId, requestId, values: [{ ...setting, value }] })).questionId as string;
@@ -58,8 +58,8 @@ assert.equal(await saved(), 'ci_only');
 const oldSettings = await propose('settings-legacy', 'human');
 legacy(oldSettings, options[1], options[0]);
 await button(oldSettings, 'yes');
-assert.equal(await saved(), 'human');
+assert.equal(await saved(), 'ci_only', 'a yes on a yes/no card must save nothing');
 
 await mkdir(`${run}/evidence`, { recursive: true });
 await writeFile(`${run}/evidence/system-cards-apply-or-keep.json`, JSON.stringify(evidence, null, 2));
-console.log(`PASS: rule and settings cards are apply-or-keep choices; keep and a bare yes change nothing, letter A and the apply button apply, and a pre-upgrade yes/no card still applies on yes. ${run}/evidence/system-cards-apply-or-keep.json`);
+console.log(`PASS: rule and settings cards are apply-or-keep choices; keep and a bare yes change nothing, letter A and the apply button apply, and a yes on a yes/no card applies nothing. ${run}/evidence/system-cards-apply-or-keep.json`);

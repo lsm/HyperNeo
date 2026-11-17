@@ -66,7 +66,11 @@ export function createCodingPack(deps: {
   attend: CodingAttend;
   projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
-  postReviewComments?: (read: () => Promise<readonly CodingStageFact[]>) => Promise<void>;
+  postReviewComments?: (
+    read: () => Promise<readonly CodingStageFact[]>,
+    posted: (fact: CodingStageFact, marker: string) => Promise<void>,
+    held: (host: string, until: number) => Promise<void>
+  ) => Promise<void>;
 }): NeoPack & {
   readMergeFacts: typeof readCodingDaemonMergeFacts;
   decideMerge: typeof decideCodingDaemonMerge;
@@ -115,7 +119,12 @@ export function createCodingPack(deps: {
     prepareMerge: prepareCodingMerge,
     operations: [
       createCodingHumanMergeOperation(undefined, mergeSweep.invalidate),
-      createCodingRetryMergeOperation(deps.database, deps.prLedger),
+      createCodingRetryMergeOperation(
+        deps.database,
+        deps.prLedger,
+        undefined,
+        mergeSweep.invalidate
+      ),
       createCodingPrFileOperation(deps.database),
     ],
     tracker: createCodingIssueTracker({
@@ -243,8 +252,8 @@ export function createCodingPack(deps: {
         }),
       };
     },
-    workerTarget: (todo, target, status) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status),
+    workerTarget: (todo, target, status, askSetting) =>
+      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting),
     workerTargetRefused: (todo) =>
       gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
         todoId: todo.id,
@@ -262,16 +271,18 @@ export function createCodingPack(deps: {
     judge: todos.judge,
     attention: { kinds: CODING_ATTENTION_KINDS, scan: scanCodingIdleOpenPrs(deps.todoPrs) },
     sweep: async (now) => {
-      if (deps.postReviewComments)
-        await deps.postReviewComments(() =>
-          readCodingPostableReviews(deps.database(), deps.prLedger)
-        );
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         codingWatchedRepos(deps.database()) ?? deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now
       );
+      if (deps.postReviewComments)
+        await deps.postReviewComments(
+          () => readCodingPostableReviews(deps.database(), deps.prLedger, now),
+          (fact, marker) => deps.prLedger.write('recordPostedReview', fact.url, marker),
+          (host, until) => deps.prLedger.write('recordReviewCommentHold', host, until)
+        );
       await mergeSweep(now);
       await deliverCodingPrEvents(deps.prEvents, transitions, prSweepDeps);
       await deliverCodingHealth(

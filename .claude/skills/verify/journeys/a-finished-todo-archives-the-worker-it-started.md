@@ -7,18 +7,19 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
   .claude/skills/verify/todo-finish-archives-worker.ts verify
 ```
 
-The helper boots an isolated daemon with its job processor running. It seeds three
+The helper boots an isolated daemon with its job processor running. It seeds four
 done todos on HyperNeo worker sessions: one the todo started with a generated
-name, one started under a human-given name, and one whose folder is a Git
-checkout with an uncommitted file. A fourth todo is `removed` without a finish
+name, one Neo named (`dev-6`), one the human named (the todo's `named.session`),
+and one whose folder is a Git
+checkout with an uncommitted file. A fifth todo is `removed` without a finish
 time, as `neo.todo.remove` leaves it. It moves the pending driver refresh
 job to now and waits for that job to run.
 
-End state in `todo-release.json`: the generated-name worker and the removed
-todo's worker are `archived`; the named worker and the worker with unsaved work
-stay `active`; one `core/released` fact exists for each archived worker. Both
+End state in `todo-release.json`: the generated-name worker, the Neo-named
+worker and the removed todo's worker are `archived`; the human-named worker and the worker with unsaved work
+stay `active`; one `core/released` fact exists for each archived worker. All
 archived workers carry `released_at` in `work_started_sessions`, and with every
-`unusable_at` mark cleared (as after an hour) neither is in the free-worker list
+`unusable_at` mark cleared (as after an hour) none of them is in the free-worker list
 the reuse path reads. `proof.log` shows the
 "uncommitted changes" pending warning that a later refresh rechecks. No model,
 provider or real data is used.

@@ -44711,6 +44711,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "hold": {
+            "const": false,
+            "type": "boolean"
+          },
           "requestId": {
             "minLength": 1,
             "type": "string"
@@ -45933,6 +45937,25 @@
                 "required": [
                   "kind",
                   "cron"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "at": {
+                    "description": "Epoch milliseconds",
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "at"
                 ],
                 "type": "object"
               }

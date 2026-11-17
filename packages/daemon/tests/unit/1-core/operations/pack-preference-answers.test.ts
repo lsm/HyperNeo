@@ -114,6 +114,42 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('a settings question holds the ask work unless it is asked with hold false', async () => {
+    const work = service.todos.addTodo(
+      'held-work',
+      'ask',
+      { title: 'Work', doneWhen: 'Done', check: null, instruction: 'Do it', named: null },
+      1
+    );
+    const held = service.todos.getQuestion(await propose())!;
+    expect(held.todos).toEqual([work.id]);
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'free-request',
+      values: [values[0]],
+      hold: false,
+    });
+    const free = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(free.todos).toEqual([]);
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'free-request',
+        values: [values[0]],
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+    expect(
+      await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'synthetic-request',
+        values,
+        hold: false,
+      })
+    ).toMatchObject({ value: { ok: false, reason: 'proposal_is_immutable' } });
+  });
+
   test('renders global and project settings without losing false, zero or literal paths', async () => {
     db.updateGlobalSettings({ language: 'en' });
     service.filePacks = [
@@ -388,7 +424,7 @@ describe('immutable human settings proposals', () => {
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
   test.each(['button', 'chat', 'applyAnswer'])(
-    'a yes/no proposal opened before the upgrade still applies on yes by %s',
+    'a yes/no proposal answered yes saves nothing by %s',
     async (surface) => {
       const questionId = 'legacy-settings';
       openHumanCard(
@@ -412,18 +448,11 @@ describe('immutable human settings proposals', () => {
         .run(questionId, 'legacy', JSON.stringify(values), 'Apply these settings?');
       if (surface === 'chat') await chat(questionId, 'yes');
       else await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
-      if (surface === 'applyAnswer') {
-        db.getDatabase().prepare('DELETE FROM neo_pack_preferences').run();
-        db.getDatabase()
-          .prepare('UPDATE neo_pack_preference_proposals SET applied_at=NULL WHERE question_id=?')
-          .run(questionId);
+      if (surface === 'applyAnswer')
         expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
-          value: { ok: true },
+          value: { ok: false },
         });
-      }
-      expect(await saved()).toMatchObject({
-        value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
-      });
+      expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
   test('invalid values leave neither question nor proposal; retry preserves question identity', async () => {

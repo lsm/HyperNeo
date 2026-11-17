@@ -5,18 +5,20 @@ import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
-import type { NeoWorkerTargetDecision } from '../../pack-contract.ts';
+import type { NeoPack, NeoWorkerTargetDecision } from '../../pack-contract.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
-import { planCodingSessionDispatch } from './session-strategy.ts';
+import { planCodingSessionDispatch, planCodingStrategyQuestion } from './session-strategy.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
+type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
 type Pooled = { ref: WorkRef; name: string; held: boolean };
 type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
+  strategySaved: boolean;
   owner: { todoId: string; session: Pooled | null } | null;
   feature: { todoId: string; session: Pooled | null } | null;
   successors: { todoId: string; session: Pooled | null }[];
@@ -55,17 +57,55 @@ const prUrl = (todo: NeoTodo) => {
     : undefined;
 };
 
+const strategyAsks = new Map<string, Promise<unknown>>();
+
+function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
+  const key = repo.toLowerCase();
+  const asked = (strategyAsks.get(key) ?? Promise.resolve()).then(async () => {
+    const plan = async () =>
+      planCodingStrategyQuestion({
+        repo,
+        nonce: crypto.randomUUID(),
+        ...(await gatewayFor(db).call(codingSessionAssignmentReads, 'strategyQuestions', repo)),
+      });
+    let outcome: Awaited<ReturnType<AskSetting>> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const next = await plan();
+      if (!next?.ask) return next;
+      outcome = await askSetting(next.ask);
+      const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
+      if (reply?.ok) return next;
+    }
+    return { refused: outcome };
+  });
+  strategyAsks.set(
+    key,
+    asked.catch(() => null)
+  );
+  return asked;
+}
+
+const readFacts = (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
+  gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
+    todoId: todo.id,
+    featureKey: todo.askId,
+    adapter: target.verb === 'start' ? target.adapter : target.ref.adapter,
+    prUrl: prUrl(todo),
+  });
+
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
-  .input(['db', 'todo', 'target', 'status'])
+  .input(['db', 'todo', 'target', 'status', 'askSetting'])
+  .pipe(readFacts, ['db', 'todo', 'target'], 'asked')
   .pipe(
-    (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
-      gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
-        todoId: todo.id,
-        featureKey: todo.askId,
-        adapter: target.verb === 'start' ? target.adapter : target.ref.adapter,
-        prUrl: prUrl(todo),
-      }),
-    ['db', 'todo', 'target'],
+    (db: Database, asked: Facts, askSetting: AskSetting) =>
+      asked && !asked.strategySaved ? askStrategyOnce(db, asked.repo, askSetting) : null,
+    ['db', 'asked', 'askSetting'],
+    'strategyQuestion'
+  )
+  .pipe(
+    (db: Database, todo: NeoTodo, target: NeoTodoTarget, asked: Facts) =>
+      asked && !asked.strategySaved ? readFacts(db, todo, target) : asked,
+    ['db', 'todo', 'target', 'asked', 'strategyQuestion'],
     'facts'
   )
   .pipe(
@@ -148,5 +188,6 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   db: Database,
   todo: NeoTodo,
   target: NeoTodoTarget,
-  status: Status
+  status: Status,
+  askSetting: AskSetting
 ) => Promise<NeoWorkerTargetDecision>;
