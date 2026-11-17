@@ -115,7 +115,7 @@ describe('openWorkerRefs', () => {
     todo('a', 'open', 'doing');
     todo('b', 'open', 'done');
     todo('c', 'shut', 'doing');
-    todo('e', 'open', 'failed');
+    todo('e', 'open', 'removed');
     const send = (id: string, todoId: string, outcome: object | null) =>
       db
         .prepare(
@@ -131,7 +131,7 @@ describe('openWorkerRefs', () => {
     send('d3', 'a', null);
     send('d4', 'b', { ref: { adapter: 'hyperneo', id: 'done' } });
     send('d5', 'c', { ref: { adapter: 'hyperneo', id: 'shut' } });
-    send('d6', 'e', { ref: { adapter: 'hyperneo', id: 'failed' } });
+    send('d6', 'e', { ref: { adapter: 'hyperneo', id: 'removed' } });
     todo('f', 'open', 'doing');
     const bound = { adapter: 'hyperneo', id: 'bound' };
     db.prepare(
