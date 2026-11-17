@@ -30,7 +30,7 @@ try {
       const measurement = await page.evaluate(() => {
         const root = document.querySelector('.neo-shell, .desktop-window-shell, #root > *');
         const hit = document.elementFromPoint(400, 25);
-        return { path: location.pathname, bottom: root?.getBoundingClientRect().bottom, desktop: document.documentElement.classList.contains('tauri-desktop'), bodyText: document.body.innerText.slice(0, 100), top: root?.getBoundingClientRect().top, drag: hit?.hasAttribute('data-tauri-drag-region') ?? false };
+        return { sidebarTop: document.querySelector('.desktop-window-shell > div')?.getBoundingClientRect().top, path: location.pathname, bottom: root?.getBoundingClientRect().bottom, desktop: document.documentElement.classList.contains('tauri-desktop'), bodyText: document.body.innerText.slice(0, 100), top: root?.getBoundingClientRect().top, drag: hit?.hasAttribute('data-tauri-drag-region') ?? false };
       });
       await page.evaluate(() => {
         const box = document.createElement('div');
@@ -98,6 +98,7 @@ for (const result of results) {
   assert(result.bottom <= 900, `${result.name}: bottom=${result.bottom}`);
   assert(result.desktop, `${result.name}: desktop class missing`);
   assert(result.bodyText, `${result.name} has no visible content`);
+  if (result.sidebarTop !== undefined) assert.equal(result.sidebarTop, 52, `${result.name}: sidebar displaced`);
   if (result.name === 'session') assert(Math.abs(result.menuGap - 4) <= 2, `Chat menu gap: ${result.menuGap}`);
   assert(result.top >= 52 && result.drag, `${result.name} ${result.theme}: top=${result.top} drag=${result.drag}`);
 }
