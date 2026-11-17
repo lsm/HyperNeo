@@ -76,6 +76,17 @@ try {
   await status('completed'); now = first.due + 86_400_000; await status('active');
   const nextDay = await wake();
   assert.equal(nextDay.outcome, 'fired', 'Runs older than 24 hours still counted');
+  const review = db.prepare("SELECT id, next_run_at, pending_job_id FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(created.goal.id) as { id: string; next_run_at: number; pending_job_id: string };
+  assert(review, 'Neo-owned goal has no review schedule');
+  now = review.next_run_at;
+  await fire!(app!.jobQueue.getJob(review.pending_job_id)!);
+  const reviewId = `goal-review:${review.id}:${review.next_run_at}`;
+  const reviewWake = mailbox(`schedule:${review.id}:${review.next_run_at}`);
+  assert(reviewWake?.includes('Journal entries since the previous review'), 'Review wake did not reach Neo mailbox');
+  assert((await call('goal.journal.append', { ownerSessionId, goalId: created.goal.id, runId: reviewId, done: 'Reviewed the period', effect: 'yes', worked: 'Examples' })).accepted);
+  const journal = await call('goal.journal.list', { ownerSessionId, goalId: created.goal.id });
+  assert(journal.entries.some((entry: { runId: string; effect: string }) => entry.runId === reviewId && entry.effect === 'yes'), 'Review result was not readable');
+  evidence.review = { delivered: true, journaled: true };
   console.log(`PASS unchanged goal due times woke the owner, the third run in a day hit the limit of 2 with one notice, reactivation kept the limit and the next day fired. ${run}/evidence/goal-work-wakes.json`);
 } finally {
   Date.now = clock;

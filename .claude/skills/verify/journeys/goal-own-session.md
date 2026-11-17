@@ -17,8 +17,6 @@ scripted model, and registers the dev-proxy provider. It then runs
 The scripted work turn remains active when the review is due. The review fires
 into the mailbox, contains the earlier work entry and asks the session to record
 its summary and effect.
-The runner also creates an independently owned goal and checks that its review
-is journaled and delivered directly to Neo.
 
 The scripted model loads the deferred operations door with ToolSearch. It then
 acts as the goal session through the real MCP door. On a work wake it calls only
@@ -32,7 +30,7 @@ Pass means all of these hold:
 - both wakes are in its transcript with the goal-session cycle, not Neo's home steps;
 - root Neo's transcript has no wake for the goal;
 - each wake's journal entry was written by the goal session, with the review effect recorded as yes;
-- after the work wake's turn ends, Neo has received nothing;
+- after the work entry is recorded, Neo has received no work report;
 - the review wake rewrites the what-works note;
 - root Neo's transcript then holds exactly one `分身 returned` message, the review summary;
 - completing the goal removes its schedule and leaves the session active.

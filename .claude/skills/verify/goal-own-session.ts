@@ -33,9 +33,6 @@ async function until<T>(read: () => T | null | undefined, message: string, timeo
 const transcript = (sessionId: string) => db.query('SELECT sdk_uuid, sdk_message AS content FROM sdk_messages WHERE session_id = ? ORDER BY rowid').all(sessionId) as { sdk_uuid: string; content: string }[];
 
 const root = (await rpc('neo.open', {})).sessionId;
-const otherOwner = (await rpc('rpc:session.create', { workspacePath: run, title: 'Independent goal owner' })).sessionId;
-const other = await rpc('goal.session.create', { ownerSessionId: otherOwner, title: 'Independent goal', doneTest: 'Done', reviewCadence: { kind: 'every', everyMs: 60000 } });
-assert(other.accepted, 'Could not create an independent goal');
 const created = await rpc('goal.session.create', {
   ownerSessionId: root, title: 'Market the adapter guide', doneTest: 'Ten readers a week',
   cadence: { kind: 'every', everyMs: 60000 }, reviewCadence: { kind: 'every', everyMs: 90000 }, ownSession: true,
@@ -56,7 +53,6 @@ const returns = () => transcript(root).filter((row) => row.content.includes('分
 const journaled = (runId: string) => until(() => db.query('SELECT * FROM goal_journal WHERE goal_id = ? AND run_id = ?').get(goalId, runId) as Record<string, string> | null, `Goal session did not journal ${runId}`);
 const finished = (text: string) => until(() => transcript(owner).find((row) => row.content.includes(text)), `Goal session turn did not end with "${text}"`);
 assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
-
 
 const work = await until(() => transcript(owner).find(isWake), 'No work wake reached the goal session');
 evidence.workWake = work;
@@ -91,11 +87,6 @@ await finished('Journaled the run; review sent to Neo.');
 evidence.returnsAfterReview = returns().length;
 assert(review.content.includes(owner) && returns().length === 1, 'Neo did not receive exactly the review summary');
 assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
-
-const otherReview = await until(() => transcript(root).find((row) => row.content.includes(`Review of goal ${other.goal.id}`)), 'Neo did not receive the independent goal review');
-evidence.independentReview = otherReview;
-const otherJournal = await rpc('goal.journal.list', { ownerSessionId: otherOwner, goalId: other.goal.id });
-assert(otherJournal.entries.some((item: { runId: string | null; effect: string }) => item.runId?.startsWith('goal-review:') && item.effect === 'yes'), 'Independent review was not journaled');
 
 const closed = await rpc('goal.session.update', { ownerSessionId: owner, goalId, status: 'completed' });
 evidence.closed = closed;

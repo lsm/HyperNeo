@@ -7,7 +7,7 @@ type Body = { stream?: boolean; messages?: { role?: string; content?: unknown }[
 function nextBlock(body: Body) {
   const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
   const messages = body.messages ?? [];
-  const wakeAt = messages.findLastIndex((message) => message.role === 'user' && (JSON.stringify(message.content).includes(WAKE) || JSON.stringify(message.content).includes('Journal entries since the previous review')));
+  const wakeAt = messages.findLastIndex((message) => message.role === 'user' && JSON.stringify(message.content).includes(WAKE));
   if (wakeAt < 0) return { type: 'text', text: 'Noted.' };
   if (!invoke)
     return { type: 'tool_use', id: `toolu_${Date.now()}_search`, name: 'ToolSearch', input: { query: 'select:mcp__hyperneo-operations__invoke', max_results: 1 } };
@@ -16,13 +16,12 @@ function nextBlock(body: Body) {
   const step = messages.slice(wakeAt).flatMap((message) => (message.role === 'assistant' && Array.isArray(message.content) ? message.content : []))
     .filter((block) => block?.type === 'tool_use' && String(block.name).endsWith('hyperneo-operations__invoke')).length;
   const review = wake.includes('Journal entries since the previous review');
-  const [, recipient] = /message\.send to (neo:[^ ,\\"]+)/.exec(wake) ?? [];
   const calls = [
     { name: 'goal.journal.append', input: { goalId, runId, done: review ? 'Review: three readers arrived' : 'Posted the guide in two forums', effect: review ? 'yes' : 'Three readers arrived', worked: 'Forum posts with one example' } },
     ...(review
       ? [
           { name: 'goal.session.update', input: { goalId, worksNote: 'Forum posts with one example bring readers.' } },
-          ...(recipient ? [{ name: 'message.send', input: { to: recipient, kind: 'done', text: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } }] : [{ name: 'session.clone.return', input: { summary: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } }]),
+          { name: 'session.clone.return', input: { summary: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } },
         ]
       : []),
   ];

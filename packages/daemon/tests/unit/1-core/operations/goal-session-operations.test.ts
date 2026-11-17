@@ -196,6 +196,36 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test('a goal assigned to an ordinary top-level session has no review schedule', async () => {
+    const { db, call, scheduler } = setup();
+    try {
+      const created = await call(
+        'goal.session.create',
+        {
+          ownerSessionId: 'plain',
+          title: 'Assigned goal',
+          doneTest: 'Done',
+        },
+        human
+      );
+      expect(created.accepted).toBe(true);
+      expect(scheduler.repo.getBySource('goal', created.goal.id)).not.toBeNull();
+      expect(scheduler.repo.getBySource('goal_review', created.goal.id)).toBeNull();
+      await call(
+        'goal.session.update',
+        { ownerSessionId: 'plain', goalId: created.goal.id, status: 'paused' },
+        human
+      );
+      await call(
+        'goal.session.update',
+        { ownerSessionId: 'plain', goalId: created.goal.id, status: 'active' },
+        human
+      );
+      expect(scheduler.repo.getBySource('goal_review', created.goal.id)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
   test('an existing active goal gains a review schedule during reconciliation', async () => {
     const { db, call, scheduler, goals, schedules } = setup();
     try {
