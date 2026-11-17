@@ -3,6 +3,7 @@ import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo
 import { SessionGoalRepository } from '../../../storage/repositories/session-goal-repository.ts';
 import { createSessionGoalOperations } from '../../goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../goals/session-goal-schedules.ts';
+import { startGoalSession } from '../../goals/goal-session-start.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -39,13 +40,19 @@ export function registerSessionGoalOperations(
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
     parentProblem,
     canReturn,
-    startSession: (parentSessionId, title) =>
-      context.deps.sessionManager.createSession({
-        workspacePath: context.deps.db.getSession(parentSessionId)?.workspacePath,
-        detectGit: false,
-        title,
-        parentSessionId,
-      }),
+    startSession: async (parentSessionId, title) => {
+      const parent = context.deps.db.getSession(parentSessionId);
+      if (!parent) throw new Error(`Session not found: ${parentSessionId}`);
+      return startGoalSession(parent, title, {
+        isGitRepo: async (workspacePath) =>
+          (await context.deps.sessionManager.getWorktreeManager().detectGitSupport(workspacePath))
+            .isGitRepo,
+        createSession: (params) => context.deps.sessionManager.createSession(params),
+        addSpaceSession: async (spaceId, sessionId) =>
+          context.sessionSpace?.addSession(spaceId, sessionId),
+        attachSpaceTools: async (sessionId) => context.sessionSpace?.attachTools(sessionId),
+      });
+    },
     releaseSession: async (sessionId) => {
       await context.deps.sessionManager.archiveSessionResources(sessionId, 'work_archive');
     },

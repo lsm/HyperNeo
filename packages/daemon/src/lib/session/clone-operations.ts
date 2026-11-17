@@ -122,7 +122,7 @@ export async function admitSpaceParent(
 export async function buildCloneParams(
   parent: Session,
   input: SpawnInput,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'isGitRepo'>
 ): Promise<CreateSessionParams> {
   const workspacePath = parent.worktree?.mainRepoPath ?? parent.workspacePath;
   const isGit = workspacePath ? await deps.isGitRepo(workspacePath) : false;
