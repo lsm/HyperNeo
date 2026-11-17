@@ -5,12 +5,19 @@ import { isAbsolute } from 'node:path';
 import { readGithubBranchPrs } from './branch-prs.ts';
 
 const HANDOFF_SECTION_LIMIT = 6_000;
-const HANDOFF_COMMIT_LIMIT = 100;
+const HANDOFF_FILE_LIMIT = 50;
+const HANDOFF_COMMIT_LIMIT = 20;
 
-function bounded(text: string) {
-  return text.length > HANDOFF_SECTION_LIMIT
-    ? `${text.slice(0, HANDOFF_SECTION_LIMIT)}\n... truncated; inspect the checkout for the rest`
-    : text;
+function bounded(lines: string[], total: number, limit: number) {
+  const shown: string[] = [];
+  let length = 0;
+  for (const line of lines.slice(0, limit)) {
+    if (length + line.length + 1 > HANDOFF_SECTION_LIMIT) break;
+    shown.push(line);
+    length += line.length + 1;
+  }
+  if (total > shown.length) shown.push(`... and ${total - shown.length} more`);
+  return shown.join('\n') || 'none';
 }
 
 async function readHandoff(folder: string) {
@@ -18,10 +25,11 @@ async function readHandoff(folder: string) {
   try {
     const status = await git.status();
     const comparison = status.tracking ? ['@{upstream}..HEAD'] : ['HEAD', '--not', '--remotes'];
-    const commits = await git
-      .raw(['log', `--max-count=${HANDOFF_COMMIT_LIMIT + 1}`, '--format=%h %s', ...comparison])
-      .catch(() => 'unavailable');
-    const lines = commits.trim().split('\n');
+    const commits = await Promise.all([
+      git.raw(['log', `--max-count=${HANDOFF_COMMIT_LIMIT}`, '--format=%h %s', ...comparison]),
+      git.raw(['rev-list', '--count', ...comparison]),
+    ]).catch(() => null);
+    const commitLines = commits?.[0].trim().split('\n').filter(Boolean) ?? [];
     const prs = status.current
       ? await readGithubBranchPrs({ cwd: folder, branch: status.current })
       : [];
@@ -29,14 +37,13 @@ async function readHandoff(folder: string) {
       folder,
       branch: status.current ?? 'detached HEAD',
       changes: bounded(
-        status.files.map((file) => `${file.index}${file.working_dir} ${file.path}`).join('\n') ||
-          'none'
+        status.files.map((file) => `${file.index}${file.working_dir} ${file.path}`),
+        status.files.length,
+        HANDOFF_FILE_LIMIT
       ),
-      commits:
-        bounded(lines.slice(0, HANDOFF_COMMIT_LIMIT).join('\n') || 'none') +
-        (lines.length > HANDOFF_COMMIT_LIMIT
-          ? '\n... truncated; inspect the checkout for the rest'
-          : ''),
+      commits: commits
+        ? bounded(commitLines, Number(commits[1].trim()), HANDOFF_COMMIT_LIMIT)
+        : 'unavailable',
       withoutUpstream: !status.tracking,
       prs,
     };
