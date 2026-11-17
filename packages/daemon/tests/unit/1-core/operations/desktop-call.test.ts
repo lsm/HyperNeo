@@ -28,7 +28,7 @@ let dispatched: boolean;
 let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
-let body: Record<string, unknown>;
+let body: { content?: Record<string, unknown>[]; structuredContent?: unknown };
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
@@ -179,7 +179,7 @@ test('a full-window screenshot larger than 2 MiB reaches the session', async () 
   }));
   const response = await handler({ name: 'desktop.call', input });
   expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true });
-  expect(response.content[1]).toEqual(body.content[0]);
+  expect(response.content[1]).toEqual(body.content?.[0]);
 });
 
 test.each([

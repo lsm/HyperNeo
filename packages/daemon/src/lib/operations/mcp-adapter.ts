@@ -14,16 +14,19 @@ export const OperationMcpInvocationSchema = z.object({
   input: z.looseObject({}).optional(),
 });
 
-function mcpResult(value: unknown, isError = false) {
+type TextBlock = { type: 'text'; text: string };
+type McpResult = { content: [TextBlock, ...CallToolResult['content']]; isError?: boolean };
+
+function mcpResult(value: unknown, isError = false): McpResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value ?? null) }],
     ...(isError ? { isError: true } : {}),
   };
 }
 
-function desktopCallResult(value: unknown) {
+function desktopCallResult(value: unknown): McpResult {
   const { content = [], ...rest } = value as { content?: CallToolResult['content'] };
-  return { content: [...mcpResult(rest).content, ...content] };
+  return { content: [mcpResult(rest).content[0], ...content] };
 }
 
 export type OperationRefusal = { operation: string; reason: string; accepted?: true };
