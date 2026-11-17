@@ -124,7 +124,7 @@ export function createRetryTaskOperation(
   getDatabase: () => Database,
   tasks: RetryTaskDependencies
 ) {
-  const retry = (superpipe({ getDatabase, tasks })('retry-space-task') as PipelineAPI)
+  const retry = (superpipe({ getDatabase, tasks })('task.retry') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(getDatabase, undefined, 'db')
     .pipe(admitRetrier, ['db', 'input', 'caller', 'tasks'], 'result:outcome')

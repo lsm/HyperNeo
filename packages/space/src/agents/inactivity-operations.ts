@@ -172,7 +172,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         }),
         REJECTIONS,
       ]),
-      execute: readPipeline(superpipe({ agents })('inactivity-config-get'), readConfig),
+      execute: readPipeline(superpipe({ agents })('inactivity.config.get'), readConfig),
     }),
     defineOperation({
       name: 'inactivity.config.set',
@@ -180,7 +180,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
       description: `Adjust an agent inactivity watchdog: enable, pause, or resume it, and set the idle threshold (ms before a nag) or nag prompt; an empty prompt clears it. Omitted fields keep their current value. Enabling clears the degraded flag and restores the default threshold when none is set; pausing keeps the threshold and prompt but stops new nags until resumed. Any change bumps the config revision so a pending nag revalidates against the new settings. ${SCOPE_DOC}, and session_inactive when the calling MCP session is not active in that Space.`,
       inputSchema: SetInput,
       resultSchema: z.union([InactivityConfigSchema, REJECTIONS]),
-      execute: writePipeline(superpipe({ agents })('inactivity-config-set'), applyConfig),
+      execute: writePipeline(superpipe({ agents })('inactivity.config.set'), applyConfig),
     }),
     defineOperation({
       name: 'inactivity.scan.run',
@@ -191,7 +191,7 @@ export function createInactivityOperations(agents: InactivityDependencies): Oper
         z.object({ started: z.literal(true), scope: z.object({ spaceId: z.string() }) }),
         REJECTIONS,
       ]),
-      execute: writePipeline(superpipe({ agents })('inactivity-scan-run'), runScanNow),
+      execute: writePipeline(superpipe({ agents })('inactivity.scan.run'), runScanNow),
     }),
   ];
 }
