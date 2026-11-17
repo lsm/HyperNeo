@@ -1243,7 +1243,14 @@ html.tauri-desktop .desktop-drag-strip {
   background: var(--bg);
 }
 
-html.tauri-desktop :is(.neo-session-pane, .neo-drawer-layer, .neo-scene-list.neo-scene-sheet, .fixed.inset-0, .fixed.top-0) {
+html.tauri-desktop
+  :is(
+    .neo-session-pane,
+    .neo-drawer-layer,
+    .neo-scene-list.neo-scene-sheet,
+    .fixed.inset-0,
+    .fixed.top-0.left-0.right-0
+  ) {
   top: 52px;
 }
 
