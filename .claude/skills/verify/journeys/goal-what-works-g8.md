@@ -27,7 +27,8 @@ exercise the actual scheduler fire and mailbox delivery. `wake` creates ten new
 entries; `nudge` seeds only the synthetic schedule's previous facts digest with
 its current real RPC digest and nudgeEvery 1. Both make that one synthetic job due
 now instead of waiting an hour. The changed `wake` mailbox note must ask Neo to
-read journal pages and rewrite worksNote. The unchanged `nudge` must still
+read journal pages and rewrite worksNote, and name the goal definition sections
+(Resources, Do alone, Needs the human, Daily limit). The unchanged `nudge` must still
 report `fired` and deliver a work wake saying "Nothing moved; check what can
 advance.", because a goal's due time is a reason to work. The
 [goal work wakes journey](goal-work-wakes.md) covers the daily run limit; the
