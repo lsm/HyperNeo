@@ -16069,7 +16069,7 @@
             "type": "string"
           },
           "runId": {
-            "description": "Scheduler run that woke this cycle; a second entry for the same run replaces the first",
+            "description": "Scheduler run that woke this cycle; a second entry replaces the first except for measured reviews, which cannot be replaced",
             "minLength": 1,
             "type": "string"
           },

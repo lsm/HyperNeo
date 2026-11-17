@@ -154,7 +154,7 @@ const Append = z
       .min(1)
       .optional()
       .describe(
-        'Scheduler run that woke this cycle; a second entry for the same run replaces the first'
+        'Scheduler run that woke this cycle; a second entry replaces the first except for measured reviews, which cannot be replaced'
       ),
     done: z.string().min(1).describe('What this cycle did'),
     effect: z.string().min(1).describe('What changed because of it'),
