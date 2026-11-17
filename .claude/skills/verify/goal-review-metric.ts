@@ -6,6 +6,7 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { JobQueueProcessor, type JobHandler } from '../../../packages/daemon/src/storage/job-queue-processor.ts';
+import { SessionGoalRepository } from '../../../packages/daemon/src/storage/repositories/session-goal-repository.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -66,7 +67,32 @@ try {
       evidence.missingPoint = await call('goal.journal.append', { ownerSessionId, goalId, runId, done: 'Review', effect: 'yes', worked: 'Guide' });
       assert.equal((evidence.missingPoint as any).reason, 'metric_point_required: reviews of a metric goal must include metricPoint.');
     }
-    const receipt = await point(runId, value);
+    let receipt;
+    if (value === 4) {
+      const original = SessionGoalRepository.prototype.metricSnapshot;
+      let release!: () => void;
+      let signal!: () => void;
+      const paused = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { signal = resolve; });
+      let calls = 0;
+      SessionGoalRepository.prototype.metricSnapshot = async function (...args) {
+        calls++;
+        if (calls === 2) { signal(); await paused; }
+        return original.apply(this, args);
+      };
+      try {
+        const first = point(runId, value);
+        const second = point(runId, 8);
+        await started;
+        receipt = await first;
+        release();
+        evidence.concurrent = await second;
+        assert.equal((evidence.concurrent as any).reason, 'metric_review_recorded: a measured review cannot be replaced.');
+      } finally {
+        release();
+        SessionGoalRepository.prototype.metricSnapshot = original;
+      }
+    } else receipt = await point(runId, value);
     assert(receipt.accepted, JSON.stringify(receipt));
     receipts.push(receipt);
   }

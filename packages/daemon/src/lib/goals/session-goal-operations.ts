@@ -550,6 +550,12 @@ export function createSessionGoalOperations({
           return refuse('metric_review_required: metric points require a delivered review.').reason;
         audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
         const result = schedules.inTransaction(() => {
+          const existing = input.runId ? goals.journalEntry(goal.id, { runId: input.runId }) : null;
+          if (existing && readPoint(existing))
+            return {
+              accepted: false as const,
+              reason: 'metric_review_recorded: a measured review cannot be replaced.',
+            };
           if (
             snapshot &&
             (goals.listJournal(goal.id, null, 1, null)[0]?.id ?? null) !== snapshot.head
