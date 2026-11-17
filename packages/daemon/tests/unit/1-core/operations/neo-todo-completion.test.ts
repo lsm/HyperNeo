@@ -334,28 +334,25 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
-  test.each(['done', 'failed', 'removed'] as const)(
-    'a %s todo does not reserve the PR',
-    async (state) => {
-      const { db, store, call } = setup();
-      try {
-        const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
-        store.updateTodo(old, { state }, 2);
-        expect(
-          await call('neo.todo.add', {
-            after: [],
-            askId: 'ask',
-            ...draft([url(2)]),
-            instruction: null,
-          })
-        ).toMatchObject({
-          ok: true,
-        });
-      } finally {
-        db.close();
-      }
+  test.each(['done', 'removed'] as const)('a %s todo does not reserve the PR', async (state) => {
+    const { db, store, call } = setup();
+    try {
+      const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
+      store.updateTodo(old, { state }, 2);
+      expect(
+        await call('neo.todo.add', {
+          after: [],
+          askId: 'ask',
+          ...draft([url(2)]),
+          instruction: null,
+        })
+      ).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      db.close();
     }
-  );
+  });
   test('concurrent edits both record the same PR', async () => {
     const { db, store, call } = setup();
     try {

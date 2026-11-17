@@ -129,7 +129,7 @@ class CodingSessionAssignments {
       const ref = JSON.parse(row.ref) as WorkRef;
       const known = pool.get(workKey(ref)) ?? { ref, name: '', held: false };
       known.name ||= row.name ?? '';
-      known.held ||= row.id !== input.todoId && ['doing', 'blocked', 'failed'].includes(row.state);
+      known.held ||= row.id !== input.todoId && ['doing', 'blocked'].includes(row.state);
       pool.set(workKey(ref), known);
     }
     const holders = input.prUrl ? this.prHolders(input.prUrl) : [];

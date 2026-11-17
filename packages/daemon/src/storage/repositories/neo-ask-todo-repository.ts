@@ -393,7 +393,7 @@ export class NeoAskTodoRepository {
       .prepare(
         `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
          FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'`
+         WHERE t.state IN ('todo', 'doing', 'blocked') AND a.status = 'open'`
       )
       .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[];
     const questions = (
@@ -680,7 +680,7 @@ export class NeoAskTodoRepository {
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
       AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('blocked', 'failed')))
+      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
       .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
       NeoAskTodoRepository['listStalledAsks']
@@ -928,7 +928,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
              AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
                OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
@@ -941,7 +941,7 @@ export class NeoAskTodoRepository {
   getCheckable(id: string): NeoTodo | null {
     const row = this.db
       .prepare(
-        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed')
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;

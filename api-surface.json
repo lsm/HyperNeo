@@ -21257,7 +21257,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -22340,7 +22339,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -23266,7 +23264,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -23802,7 +23799,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -24869,7 +24865,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -24990,7 +24985,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25578,7 +25572,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -26114,7 +26107,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -31834,7 +31826,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -40149,7 +40140,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -41328,7 +41318,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -41702,7 +41691,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42076,7 +42064,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42751,7 +42738,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43134,7 +43120,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43498,7 +43483,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43886,7 +43870,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44278,7 +44261,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"

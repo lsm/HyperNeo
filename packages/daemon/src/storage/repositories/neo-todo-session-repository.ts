@@ -65,7 +65,7 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
   ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
 
-const LIVE_TODO_STATES = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE_TODO_STATES = ['todo', 'doing', 'blocked'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
@@ -710,7 +710,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS shared,
               (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f

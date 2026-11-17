@@ -37,7 +37,7 @@ try {
   db.transaction(() => {
     const ask = prepare("INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES (?,?,'Synthetic card','',?,?)");
     for (let i = 0; i < 101; i++) ask.run(`a${i}`, root, i + 1, i + 1);
-    prepare("INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,report,created_at,updated_at) VALUES ('t0','a0',0,'Failed old work','Observed','failed','Exact failure evidence',1,1)").run();
+    prepare("INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,report,created_at,updated_at) VALUES ('t0','a0',0,'Failed old work','Observed','removed','Exact failure evidence',1,1)").run();
     prepare("INSERT INTO neo_questions (id,ask_id,text,kind,state,created_at) VALUES ('q0','a0','Synthetic question','reply','open',1)").run();
   })();
   const mainQueries: string[] = [];

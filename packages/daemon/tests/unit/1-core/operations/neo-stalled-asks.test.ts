@@ -208,7 +208,11 @@ test('an ask with a failed todo is the todo’s own step, not an idle ask', asyn
     },
     clock
   );
-  service.todos.updateTodo(item, { state: 'failed', reason: 'No network' }, clock);
+  service.todos.updateTodo(
+    item,
+    { state: 'blocked', blockedBy: 'failure', blockedReason: 'No network' },
+    clock
+  );
   clock += 2 * hour;
   await service.sweepPacks();
   await service.refreshDriverWork();

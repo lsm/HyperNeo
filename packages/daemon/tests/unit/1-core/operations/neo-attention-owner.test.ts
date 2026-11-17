@@ -54,23 +54,10 @@ describe('nextStepOwner', () => {
       { owner: 'neo', reason: 'failed', since: 50 },
     ],
     [
-      'an old failed row',
-      facts({ todo: { ...doing, state: 'failed', finishedAt: 40 } }),
-      { owner: 'neo', reason: 'failed', since: 40 },
-    ],
-    [
       'a failure long after its worker went idle',
       facts({
         todo: blocked('failure'),
         failedAt: 72 * 3_600_000,
-        worker: { status: 'idle', since: 0 },
-      }),
-      { owner: 'neo', reason: 'failed', since: 72 * 3_600_000 },
-    ],
-    [
-      'an old failed row that finished long after its worker went idle',
-      facts({
-        todo: { ...doing, state: 'failed', finishedAt: 72 * 3_600_000 },
         worker: { status: 'idle', since: 0 },
       }),
       { owner: 'neo', reason: 'failed', since: 72 * 3_600_000 },

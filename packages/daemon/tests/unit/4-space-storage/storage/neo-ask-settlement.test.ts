@@ -154,7 +154,7 @@ describe('Data-only atomic ask settlement', () => {
     const report = 'Complete prior report 🦊\n'.repeat(20000);
     store.updateTodo(
       store.getTodo('first')!,
-      { state: 'failed', reason: 'check_failed: exit 7', report },
+      { state: 'blocked', blockedBy: 'failure', blockedReason: 'check_failed: exit 7', report },
       3
     );
     store.updateTodo(store.getTodo('second')!, { state: 'done', evidence: 'Observed' }, 3);

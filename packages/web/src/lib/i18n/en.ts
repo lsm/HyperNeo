@@ -163,7 +163,6 @@ export const en = {
   'todo.replaced': 'Replaced by "{title}"',
   'todo.replaced.reason': 'Replaced by "{title}": {reason}',
   'todo.removed': 'Removed',
-  'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.held': 'On hold',

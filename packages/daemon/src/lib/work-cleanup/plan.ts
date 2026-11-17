@@ -16,7 +16,7 @@ export type WorkRelease =
   | { keep: 'unknown' | 'live' | 'in_use' | 'unsaved' | 'evidence' };
 
 const DAY = 24 * 60 * 60 * 1000;
-const LIVE: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
 
 export function planWorkRelease(
   facts: WorkFolderFacts,

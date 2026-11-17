@@ -108,7 +108,6 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   doing: 'queued',
   blocked: 'queued',
   done: 'reported',
-  failed: 'failed',
   removed: 'cancelled',
 };
 
@@ -203,7 +202,7 @@ export function neoTodoNeedsYouNote(
 }
 
 export const neoTodoFailed = (todo: Pick<NeoTodo, 'state' | 'blockedBy'>) =>
-  todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+  todo.state === 'blocked' && todo.blockedBy === 'failure';
 
 export function requireNeoTodoRetryable(read: {
   todo: NeoTodo | null;
@@ -295,7 +294,6 @@ export function planNeoTodoCheck(
 }
 
 export function neoTodoNote(todo: NeoTodo): string {
-  if (todo.state === 'failed') return `Todo "${todo.title}" failed: ${todo.reason ?? ''}`;
   if (todo.state === 'done' && todo.evidence)
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
@@ -1144,7 +1142,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const retireWorker = ({ todo, ref }: NudgeClaim) =>
-    ['done', 'failed', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
+    ['done', 'removed'].includes(store.getTodo(todo.id)?.state ?? 'removed')
       ? null
       : sessions.write('markWorkerUnusable', ref);
 
@@ -1152,7 +1150,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .input(['claim', 'reason', 'now'])
     .pipe(
       (claim: NudgeClaim) =>
-        ['done', 'failed', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
+        ['done', 'removed'].includes(store.getTodo(claim.todo.id)?.state ?? 'removed')
           ? { reason: null }
           : { value: claim },
       'claim',
@@ -1173,7 +1171,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       ({ todo }: NudgeClaim, reason: string, now: number) => {
         const current = store.getTodo(todo.id) ?? todo;
-        if (['done', 'failed', 'removed'].includes(current.state)) return current;
+        if (['done', 'removed'].includes(current.state)) return current;
         return recompute(
           current,
           planNeoTodoBlocked(current, 'stalled', reason, NEO_TODO_STALL_NEXT) ?? {},
@@ -1467,11 +1465,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             current.updatedAt,
             `Todo "${todo.title}" was stalled, so the daemon started a fresh worker for it where its last worker ran.`
           );
-        if (
-          current &&
-          (current.state === 'failed' ||
-            (current.state === 'blocked' && current.blockedBy === 'failure'))
-        ) {
+        if (current && current.state === 'blocked' && current.blockedBy === 'failure') {
           const restored = await recompute(
             current,
             {
