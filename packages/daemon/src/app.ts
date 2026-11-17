@@ -1449,7 +1449,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (setupLink) {
         const link = `${origin}/setup#${setupLink.token}`;
         withConsoleLogCaptureSuppressed(() =>
-          console.log(`\n   Open ${link} to set up HyperNeo\n`)
+          console.error(`\n   Open ${link} to set up HyperNeo\n`)
         );
         logInfo('[Daemon] First-run setup link printed on the starting terminal');
       }
