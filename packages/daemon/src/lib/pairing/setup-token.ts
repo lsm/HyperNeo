@@ -14,11 +14,17 @@ import type { PairingLimiter } from './pairing-limiter.ts';
 
 export const setupTokenPath = (dataDir = getDataDir()) => join(dataDir, 'setup-token');
 
+export interface SetupLink {
+  readonly token: string;
+  readonly window: string;
+}
+
 export async function mintSetupToken(
   db: DbGateway,
   path = setupTokenPath()
-): Promise<string | null> {
-  if (!(await db.call(pairingRequestReads, 'firstDeviceOpen'))) return null;
+): Promise<SetupLink | null> {
+  const window = await db.call(pairingRequestReads, 'setupWindow');
+  if (!window) return null;
   const token = randomBytes(32).toString('base64url');
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
@@ -34,7 +40,7 @@ export async function mintSetupToken(
   } finally {
     await rm(temporary, { force: true });
   }
-  return token;
+  return { token, window };
 }
 
 const SetupRequest = z.object({
@@ -54,10 +60,10 @@ export interface SetupRouteDeps {
   readonly db: DbGateway;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
-  readonly token: () => string | null;
+  readonly link: () => SetupLink | null;
 }
 
-export function createSetupRoute({ db, limiter, now, token }: SetupRouteDeps) {
+export function createSetupRoute({ db, limiter, now, link }: SetupRouteDeps) {
   return async (req: Request): Promise<Response> => {
     if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
     const admitted = limiter.admit(now());
@@ -69,11 +75,11 @@ export function createSetupRoute({ db, limiter, now, token }: SetupRouteDeps) {
       body = text === null ? null : JSON.parse(text);
     } catch {}
     const parsed = SetupRequest.safeParse(body);
-    const expected = token();
+    const expected = link();
     if (
       !parsed.success ||
       !expected ||
-      !timingSafeEqual(digest(parsed.data.token), digest(expected))
+      !timingSafeEqual(digest(parsed.data.token), digest(expected.token))
     ) {
       limiter.fail(now());
       return answer(401, { error: 'invalid_token' });
@@ -82,9 +88,13 @@ export function createSetupRoute({ db, limiter, now, token }: SetupRouteDeps) {
       pairingRequestWrites,
       'grantSetupDevice',
       parsed.data.name ?? 'First device',
+      expected.window,
       now()
     );
-    if (!granted) return answer(409, { error: 'has_owner' });
+    if (!granted)
+      return (await db.call(pairingRequestReads, 'setupWindow'))
+        ? answer(401, { error: 'invalid_token' })
+        : answer(409, { error: 'has_owner' });
     return answerPaired(req, {
       device: { id: granted.deviceId, kind: 'human' },
       credential: granted.credential,

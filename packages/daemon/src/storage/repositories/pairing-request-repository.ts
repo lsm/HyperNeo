@@ -346,11 +346,23 @@ export class PairingRequestRepository {
     })();
   }
 
-  grantSetupDevice(name: string, now: number): { deviceId: string; credential: string } | null {
+  setupWindow(): string | null {
+    if (!this.firstDeviceOpen()) return null;
+    const reset = this.db
+      .prepare('SELECT id FROM human_device_resets ORDER BY rowid DESC LIMIT 1')
+      .get() as { id: string } | null;
+    return reset ? `reset:${reset.id}` : 'initial';
+  }
+
+  grantSetupDevice(
+    name: string,
+    window: string,
+    now: number
+  ): { deviceId: string; credential: string } | null {
     const credential = randomBytes(32).toString('base64url');
     const deviceId = randomUUID();
     return this.db.transaction(() => {
-      if (!this.firstDeviceOpen()) return null;
+      if (this.setupWindow() !== window) return null;
       this.cancelFirstDeviceRequests(now);
       const devices = new DevicePairingRepository(this.db);
       devices.unapproveHumanCodes();
@@ -375,6 +387,7 @@ export const pairingRequestReads = defineRepositoryOp(
     'ownerCount',
     'activePhoneCount',
     'firstDeviceOpen',
+    'setupWindow',
     'pendingForApproval',
   ] as const
 );

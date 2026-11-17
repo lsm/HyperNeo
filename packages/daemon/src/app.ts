@@ -18,7 +18,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
-import { createSetupRoute, mintSetupToken } from './lib/pairing/setup-token.ts';
+import { createSetupRoute, mintSetupToken, type SetupLink } from './lib/pairing/setup-token.ts';
 import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
@@ -1242,12 +1242,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
       waits: daemonPairWaits,
     });
-    let setupToken: string | null = null;
+    let setupLink: SetupLink | null = null;
     const handleSetup = createSetupRoute({
       db: db.gateway,
       limiter: daemonPairingLimiter,
       now: Date.now,
-      token: () => setupToken,
+      link: () => setupLink,
     });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
@@ -1445,9 +1445,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       const origin = new URL(`http://${dialableHost(config.host)}:${server.port}`).origin;
       await ensureLocalCredential(db.gateway, 'agent', origin);
-      setupToken = await mintSetupToken(db.gateway);
-      if (setupToken) {
-        const link = `${origin}/setup#${setupToken}`;
+      setupLink = await mintSetupToken(db.gateway);
+      if (setupLink) {
+        const link = `${origin}/setup#${setupLink.token}`;
         withConsoleLogCaptureSuppressed(() =>
           console.log(`\n   Open ${link} to set up HyperNeo\n`)
         );
