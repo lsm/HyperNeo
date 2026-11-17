@@ -37,17 +37,21 @@ rpc task.list '{}' > "$RUN/list.json"
 rpc task.update "{\"taskId\":\"$TASK_ID\",\"title\":\"updated task\"}" > "$RUN/update.json"
 rpc task.transition "{\"taskId\":\"$TASK_ID\",\"status\":\"in_progress\"}" > "$RUN/transition.json"
 rpc task.get "{\"taskId\":\"$TASK_ID\"}" > "$RUN/final.json"
+rpc task.get '{"taskId":"missing-task"}' > "$RUN/missing-get.json"
+rpc task.update '{"taskId":"missing-task","title":"absent"}' > "$RUN/missing-update.json"
+rpc task.transition '{"taskId":"missing-task","status":"in_progress"}' > "$RUN/missing-transition.json"
 python3 - "$RUN" "$TASK_ID" <<'PY'
 import json, sys
 from pathlib import Path
 run, task_id = Path(sys.argv[1]), sys.argv[2]
-names = ['create', 'get', 'list', 'update', 'transition', 'final']
+names = ['create', 'get', 'list', 'update', 'transition', 'final', 'missing-get', 'missing-update', 'missing-transition']
 replies = {name: json.loads((run / (name + '.json')).read_text())['reply'] for name in names}
 assert replies['get']['id'] == task_id
 assert replies['list']['total'] == 1 and replies['list']['tasks'][0]['id'] == task_id
 assert replies['update']['title'] == 'updated task'
 assert replies['transition']['status'] == 'in_progress'
 assert replies['final']['title'] == 'updated task' and replies['final']['status'] == 'in_progress'
+assert replies['missing-get'] is None and replies['missing-update'] is None and replies['missing-transition'] is None
 def normalize(value):
     if isinstance(value, dict):
         return {k: normalize(v) for k, v in value.items() if k not in ('createdAt', 'updatedAt', 'startedAt', 'completedAt', 'archivedAt')}
