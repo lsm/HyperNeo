@@ -14,6 +14,9 @@ import { createCodingMergeReader } from './coding/merge-reader.ts';
 import { createCodingAncestryReader } from './coding/ancestry-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
+import type { CodingLines } from './coding/stage-lines.ts';
+import { chooseLine } from '../pack-selection.ts';
+import { getAvailableModels } from '../../model-service.ts';
 import { CodingAssignmentsRepository } from './coding/assignments.ts';
 import { createCodingMergeOperation } from './coding/merge-operation.ts';
 import { createCodingSmokeOperation } from './coding/smoke-operation.ts';
@@ -93,10 +96,27 @@ export function createNeoService(...args: NeoServiceArgs) {
   const service = new NeoService(
     (core) => {
       const configured = Object.assign(core, readers, { todoPrs });
+      const lines: CodingLines = {
+        active: () => configured.packs().some((pack) => pack.rankLines),
+        rank: (kind, candidates, scope) => chooseLine(configured.packs(), kind, candidates, scope),
+        resolve: async (target) =>
+          (await configured
+            .workAdapters?.()
+            .find((adapter) => adapter.id === target.adapter)
+            ?.resolveStartConfiguration?.({
+              place: { machine: '', name: '' },
+              title: '',
+              message: '',
+              ...(target.model ? { model: target.model } : {}),
+              ...(target.effort ? { effort: target.effort } : {}),
+            })) ?? null,
+        models: () => getAvailableModels('global'),
+      };
       const { coding, lifeAdmin, delegation } = createNeoBuiltinPacks(db.getDatabase(), {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
         todoPrs,
+        lines,
         postReviewComments: createCodingReviewComments(codingGithubApi),
         prSweepDeps: {
           human: (key, text) =>
@@ -132,6 +152,7 @@ export function createNeoService(...args: NeoServiceArgs) {
           review: coding.review,
           invoke: (name, input, caller) =>
             invokeOperation(core.sessions.getOperationRegistry(), name, input, caller),
+          lines,
         }),
         createCodingSmokeOperation(
           todoPrs.deliveryFacts,

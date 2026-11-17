@@ -56,6 +56,7 @@ function world(coding = false) {
     askInTarget: false,
     attend: false,
     status: null as (() => unknown) | null,
+    closeOnStart: false,
   };
   const pack = {
     id: 'synthetic',
@@ -96,6 +97,10 @@ function world(coding = false) {
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
         return completed({ ok: false, reason: 'start_failed', detail: 'driver down' });
+      if (name === 'work.start' && failing.closeOnStart) {
+        const open = store.getAsk('ask');
+        if (open) store.settleAsk(open, 'dropped', 'Dropped', 2);
+      }
       if (name === 'work.start')
         return completed({ ok: true, value: { ref: { adapter: 'hyperneo', id: 'fresh' } } });
       if (name === 'work.send') return completed({ ok: true, value: { delivered: true } });
@@ -250,6 +255,37 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       { name: 'work.start', input: expect.objectContaining({ title: 'backend-2' }) },
     ]);
     expect(w.sessions.get(id)).toEqual({ ...start, name: 'backend-2' });
+  });
+
+  test('a start that moved to another model line tells Neo why', async () => {
+    const w = (current = world());
+    const why = 'Started on another model line: glm/glm-6 via hyperneo: held.';
+    w.decideWith((target) => ({ value: target, note: why }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.told).toContainEqual({ id, note: why, key: 'todo.line_moved' });
+  });
+
+  test('a moved start whose ask closes during the start is stopped even when the note fails', async () => {
+    const w = (current = world());
+    w.failing.closeOnStart = true;
+    w.failing.attend = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.calls.map((call) => call.name)).toContain('work.stop');
+  });
+
+  test('a moved start that fails to start tells Neo nothing about the move', async () => {
+    const w = (current = world());
+    w.failing.start = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().length).toBeGreaterThan(0);
+    expect(w.dispatched().every((call) => call.name === 'work.start')).toBe(true);
+    expect(w.told.filter((entry) => entry.key === 'todo.line_moved')).toEqual([]);
   });
 
   test('a wait decision dispatches nothing, keeps the todo and its target, and tells Neo once', async () => {

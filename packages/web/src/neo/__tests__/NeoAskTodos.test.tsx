@@ -365,9 +365,10 @@ describe('NeoAskTodos', () => {
     expect(settle).not.toHaveBeenCalled();
   });
 
-  it('shows the topic at left and filters by it when tapped', () => {
+  it('shows the topic at left and filters by its key when tapped', () => {
     const data = entry({ state: 'waiting' });
     data.ask.topic = '家长控制';
+    data.ask.topicKey = 'p';
     const onTopic = vi.fn();
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onTopic={onTopic} />);
     const topic = app.getByRole('button', { name: '家长控制' });
@@ -375,7 +376,7 @@ describe('NeoAskTodos', () => {
     expect(topic.style.borderColor).toBe('var(--neo-teal)');
     expect(topic.style.color).toBe('var(--neo-teal)');
     fireEvent.click(topic);
-    expect(onTopic).toHaveBeenCalledWith('家长控制');
+    expect(onTopic).toHaveBeenCalledWith('p');
   });
 
   it('shows no topic when the ask has none', () => {

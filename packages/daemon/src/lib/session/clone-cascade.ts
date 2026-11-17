@@ -11,7 +11,7 @@ export interface CloneSummary {
 
 export interface ClonesRejection {
   accepted: false;
-  reason: 'has_clones';
+  reason: 'has_clones' | 'owns_goals';
   clones: CloneSummary[];
 }
 
@@ -46,6 +46,7 @@ export interface CloneAgentDependencies {
 
 export interface CloneCascadeDependencies {
   readonly listChildren: (parentId: string) => Session[];
+  readonly ownsActiveGoal: (sessionId: string) => boolean;
   readonly detach: (sessionId: string) => Promise<void>;
   readonly agents?: CloneAgentDependencies;
   readonly archiveChild: (sessionId: string) => Promise<void>;
@@ -69,6 +70,24 @@ export function admitCloneChoice(
       clones: children.map((child) => ({ id: child.id, title: child.title })),
     },
   };
+}
+
+export function requireNoGoalChildren(
+  choice: CloneChoice | 'none',
+  children: Session[],
+  deps: CloneCascadeDependencies
+): { value: CloneChoice | 'none' } | { reason: ClonesRejection } {
+  const owners =
+    choice === 'flatten' ? children.filter((child) => deps.ownsActiveGoal(child.id)) : [];
+  return owners.length === 0
+    ? { value: choice }
+    : {
+        reason: {
+          accepted: false,
+          reason: 'owns_goals',
+          clones: owners.map((child) => ({ id: child.id, title: child.title })),
+        },
+      };
 }
 
 export async function applyCloneChoice(
@@ -130,6 +149,7 @@ export function createResolveClones(deps: CloneCascadeDependencies): ResolveClon
     .input(['parentId', 'choice', 'action'])
     .pipe((parentId: string) => deps.listChildren(parentId), 'parentId', 'children')
     .pipe(admitCloneChoice, ['children', 'choice'], 'result:outcome')
+    .pipe(requireNoGoalChildren, ['outcome', 'children', 'deps'], 'result:outcome')
     .pipe(applyCloneChoice, ['outcome', 'parentId', 'action', 'children', 'deps'], 'applied')
     .endAsync(['outcome', 'applied']) as (
     parentId: string,

@@ -318,10 +318,10 @@ export function NeoLive() {
       return null;
     }
   });
-  const topic = sceneEntries.some((entry) => entry.ask.topic === savedTopic) ? savedTopic : null;
+  const topic = sceneEntries.some((entry) => entry.ask.topicKey === savedTopic) ? savedTopic : null;
   const openCards = neoOpenCards(
     sceneGroups[0].entries
-      .filter((entry) => !topic || entry.ask.topic === topic)
+      .filter((entry) => !topic || entry.ask.topicKey === topic)
       .map((entry) => {
         const read = cardDetails[entry.ask.id];
         return read && read.ask.updatedAt >= entry.ask.updatedAt
@@ -1101,7 +1101,7 @@ export function NeoLive() {
             : sceneGroups.map((group) => ({
                 ...group,
                 entries: topic
-                  ? group.entries.filter((entry) => entry.ask.topic === topic)
+                  ? group.entries.filter((entry) => entry.ask.topicKey === topic)
                   : group.entries,
               }))
           ).map((group) =>
@@ -1144,7 +1144,7 @@ export function NeoLive() {
                     onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
                     onTopic={
                       workQuery.trim() &&
-                      !sceneEntries.some((loaded) => loaded.ask.topic === entry.ask.topic)
+                      !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey)
                         ? undefined
                         : (next) => {
                             if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);

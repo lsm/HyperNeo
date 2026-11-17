@@ -31,13 +31,20 @@ describe('goal work wakes', () => {
       goals,
       new NeoAskTodoRepository(db),
       scheduler,
-      () => []
+      () => [],
+      () => false
     );
     scheduler.registerSource(schedules);
     const ops = createSessionGoalOperations({
       goals,
       schedules,
       sessionExists: (sessionId) => sessionId === 'neo:root',
+      parentProblem: async () => null,
+      canReturn: () => false,
+      releaseSession: async () => {},
+      startSession: () => {
+        throw new Error('work-wake tests never start a goal session');
+      },
       audit: () => {},
     });
     call = (name, input) => {

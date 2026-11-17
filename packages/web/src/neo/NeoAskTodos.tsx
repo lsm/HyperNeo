@@ -976,8 +976,8 @@ export function NeoAskTodos({
           {ask.topic && (
             <button
               type="button"
-              disabled={!onTopic}
-              onClick={() => onTopic?.(ask.topic!)}
+              disabled={!onTopic || !ask.topicKey}
+              onClick={() => ask.topicKey && onTopic?.(ask.topicKey)}
               data-topic-swatch
               class="mt-0.5 max-w-[40%] shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium enabled:hover:opacity-80"
               style={{ borderColor: neoTopicColor(ask.topic), color: neoTopicColor(ask.topic) }}

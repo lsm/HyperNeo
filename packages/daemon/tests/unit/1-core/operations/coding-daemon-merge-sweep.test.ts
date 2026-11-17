@@ -1739,6 +1739,41 @@ describe('shared GitHub budget', () => {
     expect(merges()).toHaveLength(1);
     expect(info).toContainEqual(['Daemon merge confirmed', { url, head, commit: 'c'.repeat(40) }]);
   });
+
+  test('a rate-limited merge waits for the reset, then merges without spending an attempt', async () => {
+    let clock = 1_800_000_000_000;
+    const reset = clock / 1000 + 600;
+    const time = spyOn(Date, 'now').mockImplementation(() => clock);
+    const reply = (stdout: string, stderr: string, code: number) => ({
+      stdout: new Response(stdout).body,
+      stderr: new Response(stderr).body,
+      exited: Promise.resolve(code),
+      exitCode: code,
+      kill() {},
+    });
+    const limited: SpawnFn = (args) => {
+      if (args.includes('/rate_limit'))
+        return reply(JSON.stringify({ resources: { graphql: { remaining: 0, reset } } }), '', 0);
+      if (args[2] === 'merge' && clock < reset * 1000) {
+        calls.push(args);
+        return reply('', 'GraphQL: API rate limit exceeded for user ID 1.', 1);
+      }
+      return spawn(args);
+    };
+    try {
+      const run = sweep(limited);
+      await run(10);
+      await run(11);
+      expect(merges()).toHaveLength(1);
+      clock = reset * 1000 + 1;
+      await run(12);
+      expect(merges()).toHaveLength(2);
+      expect(state).toBe('MERGED');
+      expect(await ledger.write('daemonMerge', { kind: 'failures', url, head })).toEqual([]);
+    } finally {
+      time.mockRestore();
+    }
+  });
 });
 
 test('a later review page keeps blocking the merge, from the cached read and after a 304 re-probe', async () => {

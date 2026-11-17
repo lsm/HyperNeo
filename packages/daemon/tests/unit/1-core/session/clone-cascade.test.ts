@@ -46,6 +46,7 @@ const OWNER = {
 
 interface Harness {
   children: Session[];
+  goalOwners: string[];
   owner: SpaceLongHorizonAgent | null;
   agents: SpaceLongHorizonAgent[];
   detached: string[];
@@ -59,6 +60,7 @@ interface Harness {
 function makeHarness(overrides: Partial<Harness> = {}): Harness {
   const h: Harness = {
     children: [child('c1', 'First clone'), child('c2', 'Second clone')],
+    goalOwners: [],
     owner: null,
     agents: [],
     detached: [],
@@ -71,6 +73,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
   };
   h.deps = {
     listChildren: (parentId) => (parentId === 'parent' ? h.children : []),
+    ownsActiveGoal: (id) => h.goalOwners.includes(id),
     detach: async (id) => {
       h.detached.push(id);
     },
@@ -117,6 +120,21 @@ describe('resolveClones', () => {
     expect(h.archived).toEqual([]);
     expect(h.deleted).toEqual([]);
   });
+
+  test.each(['archive', 'delete'] as const)(
+    'flatten refuses to %s a parent whose child runs a goal, before detaching any child',
+    async (action) => {
+      const h = makeHarness({ goalOwners: ['c2'] });
+      expect(await createResolveClones(h.deps)('parent', 'flatten', action)).toEqual({
+        accepted: false,
+        reason: 'owns_goals',
+        clones: [{ id: 'c2', title: 'Second clone' }],
+      });
+      expect(h.detached).toEqual([]);
+      expect(h.archived).toEqual([]);
+      expect(h.deleted).toEqual([]);
+    }
+  );
 
   test('cascade archives or deletes every clone to match the parent action', async () => {
     const a = makeHarness();

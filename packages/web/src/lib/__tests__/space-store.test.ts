@@ -2398,6 +2398,19 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
   });
 
+  it('deleteAgent reports a child that runs a goal and keeps the agent', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agents.value = [makeLongHorizonAgent('a1')];
+    mockHub.request.mockImplementationOnce(async () => ({
+      accepted: false,
+      reason: 'owns_goals',
+      clones: [{ id: 'g1', title: 'Goal: Grow' }],
+    }));
+
+    await expect(spaceStore.deleteAgent('a1', 'flatten')).rejects.toThrow('Goal: Grow');
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
+  });
+
   it('deleteAgent surfaces a commit confirmation and forwards confirmed', async () => {
     await spaceStore.selectSpace('space-1');
     spaceStore.agents.value = [makeLongHorizonAgent('a1')];

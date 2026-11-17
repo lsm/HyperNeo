@@ -295,6 +295,7 @@ export const NeoAskEntrySchema = z.object({
     originMessageId: Nullable,
     title: z.string(),
     topic: Nullable,
+    topicKey: z.string().optional(),
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,

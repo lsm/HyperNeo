@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { codingRepoWatched } from './watched-repos.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
@@ -7,6 +8,7 @@ import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
+import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-facts.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -26,12 +28,19 @@ export type CodingSweepRow = {
   nudges: number;
   owner: WorkRef | null;
   mergeBy?: 'owner' | 'daemon';
+  findings?: string[];
 };
 
 export type CodingSweepDeps = {
   host: string;
   human?(key: string, text: string): Promise<boolean>;
-  tell(ref: WorkRef, key: string, text: string, pr?: string): Promise<boolean>;
+  tell(
+    ref: WorkRef,
+    key: string,
+    text: string,
+    pr?: string,
+    findings?: readonly string[]
+  ): Promise<boolean>;
   wake(key: string, text: string): Promise<boolean>;
 };
 
@@ -71,6 +80,24 @@ const minutesSince = (row: CodingSweepRow, now: number) =>
 
 const owned = (ref: WorkRef) => `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
 
+const TRUNCATED = ' … (truncated; ask Neo for the full cross-model review of this head)';
+
+export function codingFindingsText(findings: readonly string[] = [], budget = Infinity): string {
+  const text = findings.length ? ` Review findings: ${findings.join(' ')}` : '';
+  if (text.length <= budget) return text;
+  if (budget <= TRUNCATED.length) return '';
+  const kept = text.slice(0, budget - TRUNCATED.length);
+  return `${kept.isWellFormed() ? kept : kept.slice(0, -1)}${TRUNCATED}`;
+}
+
+export const codingReviewKey = (findings: readonly string[] = []) =>
+  findings.length ? ':review' : '';
+
+export const codingDeliveryKey = (key: string) =>
+  key.length <= 200
+    ? key
+    : `${key.slice(0, 100)}:${createHash('sha256').update(key).digest('hex')}`;
+
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
   return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
@@ -104,6 +131,15 @@ export class CodingPrSweepRepository {
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
         owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
+        findings:
+          row.state === 'changes_requested'
+            ? codingCrossModelFindings(
+                row.head,
+                new CodingStageFactsRepository(this.db).read(
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+                )
+              )
+            : [],
       }));
   }
 
@@ -115,9 +151,9 @@ export class CodingPrSweepRepository {
     this.db
       .prepare(
         `UPDATE pack_coding_pr_ledger SET nudges = ?, told_at = ?
-          WHERE repo = ? AND number = ? AND head = ? AND state = ?`
+          WHERE repo = ? AND number = ? AND head = ? AND state = ? AND state_since = ?`
       )
-      .run(nudges, now, row.repo, row.number, row.head, row.state);
+      .run(nudges, now, row.repo, row.number, row.head, row.state, row.stateSince);
   }
 }
 
@@ -132,12 +168,20 @@ export async function sweepCodingPrs(
   for (const row of await repo.rowsAsync()) {
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
-    const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
+    const key = codingDeliveryKey(
+      `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(row.findings)}:${nudge.nudges}`
+    );
     const told =
       nudge.kind === 'remind' &&
       row.state !== 'waiting_cross_review' &&
       (await deps
-        .tell(row.owner!, key, codingPrNudgeText(row, now), codingPrUrl(deps.host, row))
+        .tell(
+          row.owner!,
+          key,
+          codingPrNudgeText(row, now),
+          codingPrUrl(deps.host, row),
+          row.findings
+        )
         .catch(() => false));
     if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);

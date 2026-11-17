@@ -15658,7 +15658,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16031,7 +16031,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -16198,7 +16198,7 @@
             "type": "integer"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -17798,8 +17798,13 @@
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "ownSession": {
+            "default": false,
+            "description": "Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.",
+            "type": "boolean"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -18020,7 +18025,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18212,7 +18217,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18460,7 +18465,7 @@
             "type": "array"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -21573,6 +21578,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -23025,6 +23033,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23559,6 +23570,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -24096,6 +24110,9 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "topicKey": {
+                        "type": "string"
                       },
                       "updatedAt": {
                         "type": "number"
@@ -25333,6 +25350,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -25867,6 +25887,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -31059,6 +31082,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -39421,6 +39447,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -47964,7 +47993,8 @@
                   "self_parent",
                   "parent_is_child",
                   "has_children",
-                  "unsupported_session"
+                  "unsupported_session",
+                  "owns_goals"
                 ],
                 "type": "string"
               }

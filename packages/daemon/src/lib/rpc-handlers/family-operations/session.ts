@@ -49,6 +49,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     getSession,
     listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
     sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
+    ownsActiveGoal: (sessionId) => context.deps.db.ownsActiveGoal(sessionId),
     setParent: async (sessionId, parentId) => {
       const current = context.deps.db.getSession(sessionId);
       if (current)

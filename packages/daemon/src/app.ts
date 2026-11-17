@@ -18,6 +18,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createSetupRoute, mintSetupToken, type SetupLink } from './lib/pairing/setup-token.ts';
 import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
@@ -365,6 +366,7 @@ export interface DaemonAppContext {
   oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handleSetup: (req: Request) => Promise<Response>;
   handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
@@ -1239,6 +1241,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
       waits: daemonPairWaits,
     });
+    let setupLink: SetupLink | null = null;
+    const handleSetup = createSetupRoute({
+      db: db.gateway,
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+      link: () => setupLink,
+    });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
       now: Date.now,
@@ -1383,6 +1392,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/setup' && req.method === 'POST') return handleSetup(req);
         if (handlePair2 && url.pathname.startsWith('/pair2/'))
           return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
@@ -1431,12 +1441,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       await ensureLocalCredential(
         db.gateway,
         'agent',
         new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
       );
+      setupLink = await mintSetupToken(db.gateway);
+    }
 
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {
@@ -1817,6 +1829,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       oapEngine,
       server,
       handlePair,
+      handleSetup,
       handlePair2,
       handleAskMarkdown,
       handleMessageImage,

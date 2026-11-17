@@ -386,6 +386,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         space?.resolveClones ??
         createResolveClones({
           listChildren: (parentId) => deps.db.listChildSessions(parentId),
+          ownsActiveGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
           detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
           ...createCloneLifecycleEffects(
             deps.sessionManager,
@@ -396,6 +397,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         }),
       listClones: (parentId) => deps.db.listChildSessions(parentId),
       primaryAgentFor: (sessionId) => space?.primaryAgentFor(sessionId) ?? null,
+      runsGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
     }
   );
 
@@ -461,6 +463,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
     workCleanupAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
+    },
+    workAdapters: (read) => {
+      neoService.workAdapters = read;
     },
     goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
     executionPreparations: () => neoService.packs(),
