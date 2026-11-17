@@ -9,7 +9,10 @@ export const DesktopDispatchReply = z.object({
   decision: z.enum(['allowed', 'refused']),
   reason: z.string().nullable(),
   dispatched: z.boolean(),
-  content: z.array(z.looseObject({ type: z.string() })).optional(),
+  content: z
+    .array(z.looseObject({ type: z.string() }))
+    .optional()
+    .catch(undefined),
   structuredContent: z.unknown().optional(),
 });
 const Envelope = z.object({ ok: z.literal(true), result: DesktopDispatchReply });
