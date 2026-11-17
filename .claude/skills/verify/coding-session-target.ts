@@ -99,15 +99,18 @@ try {
   for (const state of ['done', 'removed']) {
     const askId = `terminal-${state}`;
     store.openAsk({ id: askId, projectId: null, sessionId: 'neo', originMessageId: null, title: askId, request: 'Synthetic', createdAt: 1 });
+    const available = await session(`available-${state}`);
+    worked('earlier', available, 'backend');
     const owner = worked(askId, missing);
     db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, owner.id);
     reserve(askId, owner.id);
     const successor = ready(askId);
     const result = await dispatched(`${state} owner with an unreachable session releases the next slice`, successor);
     assert.equal(result.todo?.state, 'doing');
-    assert.deepEqual(result.target, { verb: 'send', ref: back });
-    assert.deepEqual(result.ref, back);
+    assert.deepEqual(result.target, { verb: 'send', ref: available });
+    assert.deepEqual(result.ref, available);
     assert.deepEqual(reserved(askId), [{ todoId: successor.id }]);
+    await rpc('session.archive', { sessionId: available.id, confirmed: true });
   }
   for (const id of ['failed', 'refused'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
