@@ -11,6 +11,9 @@ import { toast } from '../lib/toast';
 import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 
+export const GOAL_CHILD_MESSAGE =
+  'A child chat runs a goal. Close the goal first, or archive its chats with the parent.';
+
 function agentPrimarySessionMessage(
   agentName: string | undefined,
   action: 'archive' | 'delete'
@@ -84,6 +87,10 @@ export function useSessionActions({
           setCloneChoiceDialog({ action: 'delete', clones: result.clones });
           return;
         }
+        if (result.reason === 'owns_goals') {
+          toast.error(GOAL_CHILD_MESSAGE);
+          return;
+        }
         setCloneChoiceDialog(null);
         onDeleteModalClose();
         const response = await listSessions();
@@ -108,6 +115,8 @@ export function useSessionActions({
         const result = await archiveSession(sessionId, false, children);
         if (result.reason === 'agent_primary_session') {
           toast.error(agentPrimarySessionMessage(result.agentName, 'archive'));
+        } else if (result.reason === 'owns_goals') {
+          toast.error(GOAL_CHILD_MESSAGE);
         } else if (result.reason === 'has_clones' && result.clones) {
           setCloneChoiceDialog({ action: 'archive', clones: result.clones });
         } else if (result.requiresConfirmation && result.commitStatus) {
