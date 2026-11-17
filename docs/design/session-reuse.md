@@ -33,11 +33,14 @@ the daemon started. The setting picks which of them may take the work:
 | Value | Who may take the next todo | Label shown to people |
 |---|---|---|
 | `long_lived` (default) | any free worker in the same folder; one that worked on the same ask first (today's core rule) | Long-lived sessions |
-| `per_ask` | only a free worker that already worked on this todo's ask; else a new one | One session per matter |
+| `per_ask` | only the worker that already worked on this todo's ask; if it is busy, the todo waits for it; a new one only when the ask has none | One session per matter |
 | `per_todo` | none; every todo starts a new worker | One session per step |
 
 `per_ask` uses the `sameAskAt` fact core already reads (`packages/daemon/src/storage/work-started-sessions.ts`
-`readStartedWork`): a candidate is allowed only when it is set. `per_todo` skips reuse.
+`readStartedWork`): a candidate is allowed only when it is set. That query leaves out
+workers with unfinished work, so `per_ask` also reads the ask's busy daemon worker and
+queues the todo on it (the existing `queueOn` path in `neo/todo-runner.ts`) instead of
+starting a second session for the ask. `per_todo` skips reuse.
 Neo's explicit `send` to a named session is unchanged; this setting only decides what a
 `start` may reuse.
 
@@ -51,13 +54,15 @@ before first use.
 and stage model/effort (the second half of `session-target.ts`) and drops the session part:
 the strategy preference and its question, the feature reservation
 (`pack_coding_feature_sessions`), PR-holder routing, takeover and work-type session names.
-A todo for an existing PR that lands on a new worker gets that PR's link (the coding
-check's `urls`) in its start brief. In practice a PR's todos almost always share one ask, so `per_ask` covers what
-`per_pr` was for.
+A PR's review and CI follow-ups are not dispatch: the PR sweep tells the PR's owner
+session directly (`neo/packs/coding/pr-sweep.ts`, `deps.tell(row.owner, …)`), whatever
+the setting. Most PRs belong to a single todo, so `per_todo` is what `per_pr` was for. A
+later todo for an existing PR that lands on a new worker gets that PR's link (the coding
+check's `urls`) in its start brief.
 
 **Upgrade.** Saved coding `sessionStrategy` values move once to `sessionReuse` on each
 project that owns the repo: `long_lived` → `long_lived`, `per_task` → `per_todo`,
-`per_pr` → `per_ask`, keeping `set_by`. The old rows and the feature table are then
+`per_pr` → `per_todo`, keeping `set_by`. The old rows and the feature table are then
 dropped.
 
 ## Change plan
@@ -77,7 +82,8 @@ Acceptance, one integration case per row:
 |---|---|
 | `long_lived`, a free daemon worker that worked on the same ask | reused |
 | `per_ask`, a free daemon worker that only worked on another ask | new worker started |
+| `per_ask`, the ask's daemon worker is busy | the todo waits and is queued on it; no second session |
 | `per_todo`, any free worker | new worker started |
 | any value, a free session the daemon did not start | never reused |
 | coding todo whose PR is held by a session the daemon did not start | new worker started, PR link in the brief |
-| saved `per_pr` on a repo | the owning project reads `per_ask` |
+| saved `per_pr` on a repo | the owning project reads `per_todo` |
