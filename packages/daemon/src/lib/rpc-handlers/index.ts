@@ -468,6 +468,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
       neoService.workAdapters = read;
     },
     goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
+    defaultNeoSession: () => neoService.defaultSessionId(),
     executionPreparations: () => neoService.packs(),
   };
   const familyOperations = [

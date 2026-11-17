@@ -17,6 +17,8 @@ scripted model, and registers the dev-proxy provider. It then runs
 The scripted work turn remains active when the review is due. The review fires
 into the mailbox, contains the earlier work entry and asks the session to record
 its summary and effect.
+The runner also creates an independently owned goal and checks that its review
+is journaled and delivered directly to Neo.
 
 The scripted model loads the deferred operations door with ToolSearch. It then
 acts as the goal session through the real MCP door. On a work wake it calls only
