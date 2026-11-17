@@ -43,9 +43,10 @@ try {
   assert.equal(result.chips.filter((chip) => /^kids 2$/i.test(chip)).length, 1, 'kids and Kids fold into one chip');
   assert(result.chips.includes('家长控制 2'));
   assert.equal(result.chips.at(-1), '其他 2', 'an ask with no topic joins the 其他 chip, last');
-  const header = await page.locator('article[data-ask="screen-time"] [data-ask-status]').innerText();
+  const header = await page.locator('article[data-ask="screen-time"] [data-ask-status] > span').first().innerText();
   assert.equal(header.trim(), '在做');
-  assert.equal(await page.locator('article[data-ask] .rounded-full.px-2\\.5').count(), 0);
+  const tags = page.locator('article[data-ask] [data-topic-swatch]');
+  assert.equal(await tags.count(), await page.locator('article[data-ask]').count(), 'every card shows one topic tag');
   assert.equal((await page.locator('article[data-ask="plain"]').getByRole('button', { name: '其他' }).count()), 1);
   const shopChips = page.locator('[data-topic-chips] button', { hasText: 'Shop' });
   const shopSets = [];

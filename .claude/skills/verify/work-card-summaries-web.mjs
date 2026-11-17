@@ -10,6 +10,8 @@ const observed = [];
 try {
   for (const width of [390, 1280]) {
     const page = await browser.newPage({ viewport: { width, height: 874 } });
+    if (process.env.VERIFY_DEVICE_CREDENTIAL)
+      await page.context().addCookies([{ name: 'hyperneo_device', value: process.env.VERIFY_DEVICE_CREDENTIAL, url: `http://127.0.0.1:${port}` }]);
     await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
     const reads = [];
     const detailIds = new Set();
@@ -41,8 +43,9 @@ try {
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
     const card = page.locator('[data-ask="a-api"]:visible');
     await card.getByText('Draft the iOS API client').waitFor();
-    await card.getByText('Todos · 22 · Waiting on you · 1', { exact: true }).waitFor();
-    await card.getByRole('button', { name: '21 done — show more', exact: true }).waitFor();
+    const status = card.locator('[data-ask-status]');
+    await status.getByText('· 22 todos', { exact: true }).waitFor();
+    await status.getByText('· 1 waiting on you', { exact: true }).waitFor();
     assert.equal(await card.getByText('Which synthetic option?').count(), 0);
     assert.equal(reads.length, 0);
     assert.equal(await card.getByText('Full synthetic worker report', { exact: true }).count(), 0);
@@ -80,6 +83,11 @@ try {
       assert.equal(reads.length, failedReads, 'draft edits must not retry a failed read');
       await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
       await page.screenshot({ path: `${run}/evidence/failed-read-${width}.png` });
+    }
+    if (width === 390) {
+      await card.getByRole('button', { name: /^All · / }).click();
+      await page.getByRole('dialog').getByRole('button', { name: '21 done — show more', exact: true }).waitFor();
+      await page.keyboard.press('Escape');
     }
     observed.push({ width, detailReads: reads.length, todoCount: 22, questionAnswered: width === 1280, pendingAndFailedReadsStable: width === 1280 });
     await page.close();

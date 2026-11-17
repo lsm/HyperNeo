@@ -6,6 +6,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { enrollLocalDevice } from '../../../packages/daemon/src/storage/repositories/device-pairing-repository.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -95,9 +96,11 @@ try {
     assert(existsSync(join(run, 'release')), 'manual web proof release');
     assert(existsSync(join(run, 'evidence/browser.json')), 'manual browser evidence required');
   } else {
+  const credential = crypto.randomUUID();
+  await app.db.gateway.run(enrollLocalDevice, { credential, now: Date.now() });
   const child = Bun.spawn(
     ['node', '.claude/skills/verify/work-card-summaries-web.mjs', String(front.port), run],
-    { stdout: 'inherit', stderr: 'inherit' }
+    { stdout: 'inherit', stderr: 'inherit', env: { ...process.env, VERIFY_DEVICE_CREDENTIAL: credential } }
   );
   assert.equal(await child.exited, 0, 'headless ask Reply journey');
   }
