@@ -41,7 +41,7 @@ A missing path is refused. The daemon no longer fills in a path.
 
 The worker sandbox does not change. It applies only to workers in a Git checkout (its marker lives in `.git`, `drivers/worker-sandbox.ts`), and those are coding todos, which never use `evidence` under rule 1. A sandboxed worker that must write outside its checkout needs the human's filesystem grant, as `docs/design/worker-sandbox.md` already says.
 
-**3. Existing open todos keep working.** A todo that already has a check keeps it and is evaluated as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
+**3. Existing open todos keep working.** A todo that already has a check keeps it and is evaluated as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path. On an edit, `evidence {}` counts as identical when the previous check is that todo's assigned hidden path, so today's edit flow keeps working. Changing the check applies the new rule. No data is rewritten.
 
 **4. Stop assigning hidden paths.** Remove:
 
@@ -82,7 +82,7 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 - A todo with no repository and a path inside the human's folder is accepted.
 - A new todo with no repository and a path under the daemon's data directory (for example `<data>/work/...`) is refused. It is accepted today.
 - A todo with no repository retains an existing registered artifact check; a new artifact check remains subject to the existing admission policy.
-- An open todo whose existing check names a hidden path still completes when the file exists; editing its title or resubmitting that unchanged check succeeds, while changing its check applies the new rule.
+- An open todo whose existing check names a hidden path still completes when the file exists; editing its title, resubmitting that unchanged check, or resubmitting `evidence {}` succeeds, while changing its check applies the new rule.
 - A data-directory path in different letter case is still refused.
 - A new worker brief gives the actual outcome check without a separate hidden-evidence instruction; a legacy hidden-path check gives the compatible private instruction.
 - Open and completed legacy todos hide their assigned paths in projected done conditions and completion evidence after every slice.
