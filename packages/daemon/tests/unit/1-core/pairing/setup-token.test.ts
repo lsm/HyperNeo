@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
@@ -87,6 +87,7 @@ describe('first-run setup link', () => {
     expect(await granted.json()).toMatchObject({ kind: 'human' });
     expect(granted.headers.get('set-cookie')).toContain('hyperneo_device=');
     expect(owners()).toHaveLength(1);
+    expect(existsSync(path)).toBe(false);
 
     const again = await open(minted);
     expect(again.status).toBe(409);
@@ -124,9 +125,10 @@ describe('first-run setup link', () => {
     expect(owners()).toHaveLength(1);
   });
 
-  test('no token while a human device has paired', async () => {
+  test('no token, and no token file, while a human device has paired', async () => {
     await mint();
     pairByCode();
     expect(await mint()).toBeNull();
+    expect(existsSync(join(dir, 'setup-token'))).toBe(false);
   });
 });
