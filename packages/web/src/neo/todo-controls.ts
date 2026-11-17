@@ -1,5 +1,6 @@
 import type { NeoTodo, NeoTodoEntry, NeoTodoPriority } from '@hyperneo/shared/types/neo-ask';
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
+import { t } from '../lib/i18n/index.ts';
 
 export type NeoTodoControl =
   | { kind: 'done' }
@@ -10,7 +11,7 @@ export type NeoTodoControl =
 export const NEO_TODO_PRIORITIES: readonly NeoTodoPriority[] = ['urgent', 'high', 'normal', 'low'];
 
 export const neoTodoControllable = (todo: Pick<NeoTodo, 'state'>) =>
-  ['todo', 'doing', 'blocked', 'failed'].includes(todo.state);
+  ['todo', 'doing', 'blocked'].includes(todo.state);
 
 export const neoTodoHoldable = (
   todo: Pick<NeoTodoEntry, 'state' | 'blockedBy' | 'startedAt' | 'statusCodes'>
@@ -35,7 +36,7 @@ export function neoTodoControlCall(
       name: 'neo.todo.hold',
       input: {
         todoId,
-        reason: todo.startedAt === null ? 'The human put it on hold.' : 'The human paused it.',
+        reason: t(todo.startedAt === null ? 'todo.holdQuestion' : 'todo.pauseQuestion'),
       },
     };
   return { name: 'neo.todo.edit', input: { todoId, priority: control.priority } };

@@ -6,7 +6,11 @@ import { requireNeoOpenAsk } from '../../lib/neo/todo-operations.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NEO_ANSWER_NOTE, NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import {
+  NEO_ADVISORY_QUESTION,
+  NEO_ANSWER_NOTE,
+  NeoAskTodoRepository,
+} from './neo-ask-todo-repository.ts';
 import { NeoRepository } from './neo-repository.ts';
 import { NeoTodoSessionRepository } from './neo-todo-session-repository.ts';
 import { neoNoteBatches } from './neo-wake-queue-repository.ts';
@@ -278,7 +282,8 @@ const settleReadyAsks = (db: Database): string[] => {
       AND EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id)
       AND NOT EXISTS (SELECT 1 FROM neo_todos t WHERE t.ask_id = neo_asks.id
         AND t.state IN ('todo', 'doing', 'blocked'))
-      AND NOT EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open')
+      AND NOT EXISTS (SELECT 1 FROM neo_questions q WHERE q.ask_id = neo_asks.id AND q.state = 'open'
+        AND NOT ${NEO_ADVISORY_QUESTION('q')})
       AND NOT EXISTS (SELECT 1 FROM neo_asks child WHERE child.parent_id = neo_asks.id
         AND child.status = 'open')`)
       .all() as Parameters<typeof candidate>[0][]
@@ -296,7 +301,7 @@ const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
       .map((todo) => todo.title)
       .join(', ');
   const finished = names(['done']);
-  const dropped = names(['removed', 'failed']);
+  const dropped = names(['removed']);
   const sentence = [
     ...(finished ? [`Finished ${finished}`] : []),
     ...(dropped ? [`cancelled or removed ${dropped}`] : []),
@@ -329,7 +334,7 @@ const turnedSettle = (superpipe({})('neo.ask.turned-settle') as PipelineAPI)
         ? current
         : requireNeoAskTurnedSettle({
             ...current,
-            questions: store.listQuestions(id),
+            questions: store.listBlockingQuestions(id),
             children: store.listChildAsks(id),
           });
     },

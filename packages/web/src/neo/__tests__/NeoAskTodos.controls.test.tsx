@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos } from '../NeoAskTodos.tsx';
 import { neoTodoControlCall, neoTodoHoldable } from '../todo-controls.ts';
+import { locale } from '../../lib/i18n/index.ts';
 
 afterEach(() => {
   cleanup();
@@ -131,7 +132,14 @@ describe('NeoAskTodos step controls', () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
-          todos: [todo('failed', { state: 'failed', startedAt: 2, status: 'Not done' })],
+          todos: [
+            todo('failed', {
+              state: 'blocked',
+              blockedBy: 'failure',
+              startedAt: 2,
+              status: 'Not done',
+            }),
+          ],
         })}
         onAnswer={vi.fn()}
         onControl={vi.fn(async () => {})}
@@ -162,6 +170,20 @@ describe('NeoAskTodos step controls', () => {
 });
 
 describe('neoTodoControlCall', () => {
+  it('asks a hold or pause question in the language the human uses', () => {
+    locale.value = 'zh-Hans';
+    try {
+      expect(neoTodoControlCall({ id: 't', startedAt: null }, { kind: 'hold' }).input.reason).toBe(
+        '你暂缓了这一步。开始，还是移除？'
+      );
+      expect(neoTodoControlCall({ id: 't', startedAt: 1 }, { kind: 'hold' }).input.reason).toBe(
+        '你暂停了这一步。继续，还是移除？'
+      );
+    } finally {
+      locale.value = 'en';
+    }
+  });
+
   it('maps each control to the operation the daemon runs', () => {
     const waiting = { id: 't', startedAt: null };
     expect(neoTodoControlCall(waiting, { kind: 'done' })).toEqual({
@@ -170,10 +192,10 @@ describe('neoTodoControlCall', () => {
     });
     expect(neoTodoControlCall(waiting, { kind: 'cancel' }).name).toBe('neo.todo.remove');
     expect(neoTodoControlCall(waiting, { kind: 'hold' }).input.reason).toBe(
-      'The human put it on hold.'
+      'You put this on hold. Start it, or remove it?'
     );
     expect(neoTodoControlCall({ id: 't', startedAt: 1 }, { kind: 'hold' }).input.reason).toBe(
-      'The human paused it.'
+      'You paused this. Resume it, or remove it?'
     );
     expect(neoTodoControlCall(waiting, { kind: 'priority', priority: 'low' })).toEqual({
       name: 'neo.todo.edit',
@@ -189,7 +211,7 @@ describe('neoTodoHoldable', () => {
     expect(at({ state: 'blocked', blockedBy: 'question' })).toBe(true);
     expect(at({ state: 'doing', startedAt: 2 })).toBe(true);
     expect(at({ state: 'blocked', blockedBy: 'needs-human', startedAt: 2 })).toBe(true);
-    expect(at({ state: 'failed', startedAt: 2 })).toBe(false);
+    expect(at({ state: 'blocked', blockedBy: 'failure', startedAt: 2 })).toBe(false);
     expect(at({ state: 'blocked', blockedBy: 'worker', startedAt: 2 })).toBe(false);
     expect(at({ state: 'blocked', blockedBy: 'check' })).toBe(false);
     expect(at({ statusCodes: [{ code: 'todo.held', params: {} }] })).toBe(false);

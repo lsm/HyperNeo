@@ -5,9 +5,15 @@ type LineFilter = { kinds?: string[]; repos?: string[]; projects?: string[] };
 export type RouteLine = NeoLine & { stopAtPercent?: number };
 export type Route = { kind: string; repos?: string[]; lines: RouteLine[] };
 export type LineRule = { line: NeoLine; only?: LineFilter; never?: LineFilter };
-export type LineHold = { provider: string; model: string; reason?: string; retryAt: number };
+export type LineHold = {
+  provider: string;
+  model: string;
+  reason?: string;
+  retryAt?: number;
+  waiting?: boolean;
+};
 export type UsageReading = { result: ProviderUsageResult; readAt: number };
-export type Availability = 'ready' | 'not configured' | 'not signed in';
+export type Availability = 'ready' | 'not configured' | 'not signed in' | 'availability unknown';
 
 export const USAGE_STALE_MS = 15 * 60 * 1000;
 
@@ -28,9 +34,12 @@ export const names = (route: NeoLine, line: NeoLine) =>
   (route.harness === undefined || route.harness === line.harness) &&
   (route.effort === undefined || route.effort === line.effort);
 
+const hasRepo = (repos: readonly string[], repo: string | undefined) =>
+  repo !== undefined && repos.some((entry) => entry.toLowerCase() === repo.toLowerCase());
+
 const matches = (filter: LineFilter, kind: string, scope: NeoLineScope) =>
   (!filter.kinds || filter.kinds.includes(kind)) &&
-  (!filter.repos || (scope.repo !== undefined && filter.repos.includes(scope.repo))) &&
+  (!filter.repos || hasRepo(filter.repos, scope.repo)) &&
   (!filter.projects ||
     (scope.projectId !== undefined && filter.projects.includes(scope.projectId)));
 
@@ -42,9 +51,22 @@ function allowed(line: NeoLine, input: RankInput): boolean {
   return only.length === 0 || only.some((filter) => matches(filter, input.kind, input.scope));
 }
 
+const current = (window: { resetAt: string | null }, now: number) =>
+  !window.resetAt || !(Date.parse(window.resetAt) <= now);
+
+export function usageCurrent(reading: UsageReading | undefined, now: number): boolean {
+  return (
+    !!reading &&
+    now - reading.readAt <= USAGE_STALE_MS &&
+    (!reading.result.supported || reading.result.windows.every((window) => current(window, now)))
+  );
+}
+
 function usedPercent(reading: UsageReading | undefined, now: number): number | null {
   if (!reading?.result.supported || now - reading.readAt > USAGE_STALE_MS) return null;
-  const windows = reading.result.windows.filter((window) => window.limit > 0);
+  const windows = reading.result.windows.filter(
+    (window) => window.limit > 0 && current(window, now)
+  );
   return windows.length
     ? Math.max(...windows.map((window) => (window.used / window.limit) * 100))
     : null;
@@ -56,10 +78,16 @@ function skipReason(line: NeoLine, stopAt: number | undefined, input: RankInput)
   if (!allowed(line, input)) return 'excluded by a rule';
   const hold = input.holds.find(
     (held) =>
-      held.provider === line.provider && held.model === line.model && held.retryAt > input.now
+      held.provider === line.provider &&
+      held.model === line.model &&
+      (held.waiting || (held.retryAt ?? 0) > input.now)
   );
   if (hold)
-    return `held${hold.reason ? ` (${hold.reason})` : ''} until ${new Date(hold.retryAt).toISOString()}`;
+    return `held${hold.reason ? ` (${hold.reason})` : ''} until ${
+      hold.waiting || hold.retryAt === undefined
+        ? 'the session is retried'
+        : new Date(hold.retryAt).toISOString()
+    }`;
   const percent = usedPercent(input.usage[line.provider], input.now);
   if (percent !== null && percent >= 100) return 'usage exhausted';
   if (percent !== null && stopAt !== undefined && percent > stopAt)
@@ -74,7 +102,7 @@ export function routeFor(
 ): Route | undefined {
   const routes = all.filter((route) => route.kind === kind);
   return (
-    routes.find((entry) => entry.repos && scope.repo && entry.repos.includes(scope.repo)) ??
+    routes.find((entry) => entry.repos && hasRepo(entry.repos, scope.repo)) ??
     routes.find((entry) => !entry.repos)
   );
 }

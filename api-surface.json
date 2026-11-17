@@ -5820,7 +5820,10 @@
                   "type": "string"
                 },
                 "provider": {
-                  "const": "google",
+                  "enum": [
+                    "google",
+                    "microsoft"
+                  ],
                   "type": "string"
                 },
                 "scopes": {
@@ -15655,7 +15658,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16028,7 +16031,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -16195,7 +16198,7 @@
             "type": "integer"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -17732,6 +17735,12 @@
               }
             ]
           },
+          "dailyRunLimit": {
+            "description": "Work wakes allowed in any 24 hours; further due times are skipped. Default 24.",
+            "maximum": 1440,
+            "minimum": 1,
+            "type": "integer"
+          },
           "description": {
             "type": "string"
           },
@@ -17784,13 +17793,18 @@
           },
           "nudgeEvery": {
             "default": 4,
-            "description": "Legacy compatibility only; never forces a turn when facts are unchanged.",
+            "description": "Legacy compatibility only; ignored.",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "ownSession": {
+            "default": false,
+            "description": "Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.",
+            "type": "boolean"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -17852,6 +17866,9 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "dailyRunLimit": {
+                    "type": "number"
+                  },
                   "description": {
                     "type": "string"
                   },
@@ -17963,6 +17980,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18007,7 +18025,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18038,6 +18056,9 @@
                     ]
                   },
                   "createdAt": {
+                    "type": "number"
+                  },
+                  "dailyRunLimit": {
                     "type": "number"
                   },
                   "description": {
@@ -18151,6 +18172,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18195,7 +18217,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18224,6 +18246,9 @@
                       ]
                     },
                     "createdAt": {
+                      "type": "number"
+                    },
+                    "dailyRunLimit": {
                       "type": "number"
                     },
                     "description": {
@@ -18337,6 +18362,7 @@
                     "nextSteps",
                     "mandateRef",
                     "mandateRev",
+                    "dailyRunLimit",
                     "createdAt",
                     "updatedAt",
                     "completedAt",
@@ -18378,6 +18404,12 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "dailyRunLimit": {
+            "description": "Work wakes allowed in any 24 hours; further due times are skipped. Default 24.",
+            "maximum": 1440,
+            "minimum": 1,
+            "type": "integer"
+          },
           "description": {
             "type": "string"
           },
@@ -18433,7 +18465,7 @@
             "type": "array"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -18506,6 +18538,9 @@
                     ]
                   },
                   "createdAt": {
+                    "type": "number"
+                  },
+                  "dailyRunLimit": {
                     "type": "number"
                   },
                   "description": {
@@ -18619,6 +18654,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -21254,7 +21290,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -21542,6 +21577,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -22337,7 +22375,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -22996,6 +23033,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23263,7 +23303,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -23532,6 +23571,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23799,7 +23841,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -24069,6 +24110,9 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "topicKey": {
+                        "type": "string"
                       },
                       "updatedAt": {
                         "type": "number"
@@ -24866,7 +24910,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -24987,7 +25030,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25308,6 +25350,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -25575,7 +25620,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -25844,6 +25888,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -26111,7 +26158,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -31037,6 +31083,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -31831,7 +31880,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -33053,6 +33101,54 @@
             "type": "object"
           }
         ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "neo.projects.list",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "projects": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "folders": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "folders",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "type": "object"
       }
     },
     {
@@ -35239,7 +35335,7 @@
                     "type": "array"
                   },
                   "askId": {
-                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
                     "minLength": 1,
                     "type": "string"
                   },
@@ -35482,7 +35578,7 @@
                     "type": "array"
                   },
                   "askId": {
-                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+                    "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
                     "minLength": 1,
                     "type": "string"
                   },
@@ -39352,6 +39448,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -40146,7 +40245,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -40789,7 +40887,7 @@
             "type": "array"
           },
           "askId": {
-            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask.",
+            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
             "minLength": 1,
             "type": "string"
           },
@@ -41325,7 +41423,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -41699,7 +41796,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42073,7 +42169,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42748,7 +42843,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42849,7 +42943,7 @@
                 "type": "null"
               }
             ],
-            "description": "Why it must wait; null releases it."
+            "description": "The card’s whole text: your question to the human; null releases it."
           },
           "todoId": {
             "minLength": 1,
@@ -43131,7 +43225,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43495,7 +43588,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43588,7 +43680,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "dependents": {
-            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; the daemon then asks them.",
+            "description": "What the unstarted todos that wait for this one do: continue without it, or be removed too. Leave it out when the human has not said; they then wait, and deciding is your next step.",
             "enum": [
               "continue",
               "remove"
@@ -43883,7 +43975,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44275,7 +44366,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44663,6 +44753,10 @@
           "askId": {
             "minLength": 1,
             "type": "string"
+          },
+          "hold": {
+            "const": false,
+            "type": "boolean"
           },
           "requestId": {
             "minLength": 1,
@@ -45888,6 +45982,25 @@
                   "cron"
                 ],
                 "type": "object"
+              },
+              {
+                "properties": {
+                  "at": {
+                    "description": "Epoch milliseconds",
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "once",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "at"
+                ],
+                "type": "object"
               }
             ]
           },
@@ -46276,6 +46389,104 @@
             "required": [
               "ok",
               "schedule"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "limit": {
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scheduleId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId"
+        ],
+        "type": "object"
+      },
+      "name": "schedule.session.runs",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              },
+              "runs": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dueAt": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "firedAt": {
+                      "type": "number"
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "skipReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dueAt",
+                    "firedAt",
+                    "outcome",
+                    "skipReason",
+                    "messageId"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ok",
+              "runs"
             ],
             "type": "object"
           }
@@ -47782,7 +47993,8 @@
                   "self_parent",
                   "parent_is_child",
                   "has_children",
-                  "unsupported_session"
+                  "unsupported_session",
+                  "owns_goals"
                 ],
                 "type": "string"
               }
@@ -54471,6 +54683,78 @@
               "ok",
               "reason",
               "detail"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "work.cleanup.sweep",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kept": {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "removed": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "directory": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "directory",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "removed",
+              "kept"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "const": "human_or_neo_only",
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
             ],
             "type": "object"
           }

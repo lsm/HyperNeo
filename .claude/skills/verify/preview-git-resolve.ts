@@ -10,7 +10,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { legacyAttachmentFixture } from './legacy-attachment-fixture.ts';
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
-import { readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/git-blob.ts';
+import { resolveGitBlob as readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 const root = realpathSync(process.argv[2]); const phase = process.argv[3] ?? 'native';

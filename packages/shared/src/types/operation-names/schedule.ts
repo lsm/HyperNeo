@@ -8,5 +8,6 @@ export const SCHEDULE_OPERATION_NAMES = [
   'schedule.session.list',
   'schedule.session.pause',
   'schedule.session.resume',
+  'schedule.session.runs',
   'schedule.update',
 ] as const;

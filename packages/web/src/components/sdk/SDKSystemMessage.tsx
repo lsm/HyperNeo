@@ -14,6 +14,7 @@ import type {
   SDKPermissionDeniedMessage,
   SDKFilesPersistedEvent,
   SDKPluginInstallMessage,
+  SDKSessionWritesLostMessage,
   SDKTaskNotificationMessage,
   SDKMemoryRecallMessage,
   SDKLocalCommandOutputMessage,
@@ -124,6 +125,18 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
     const pluginMsg = message as SDKPluginInstallMessage;
     if (pluginMsg.status === 'started' || pluginMsg.status === 'installed') return null;
     return <PluginInstallMessage message={pluginMsg} />;
+  }
+
+  if (message.subtype === 'session_writes_lost') {
+    const lostMsg = message as SDKSessionWritesLostMessage;
+    return (
+      <div class="my-2 rounded-lg border border-danger/40 bg-danger/15 p-3 text-sm text-danger-soft">
+        <div class="mb-1 font-semibold">Session not saved</div>
+        <div class="text-xs">
+          The disk is full or over quota ({lostMsg.error_code}); lost: {lostMsg.lost.join(', ')}
+        </div>
+      </div>
+    );
   }
 
   return null;

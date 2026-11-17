@@ -60,6 +60,8 @@ export declare type AnyZodRawShape = ZodRawShape | ZodRawShape_2;
 
 export declare type ApiKeySource = 'ANTHROPIC_API_KEY' | 'apiKeyHelper' | '/login managed key' | 'none' | 'user' | 'project' | 'org' | 'temporary' | 'oauth';
 
+export declare function archiveSession(_sessionId: string, _options?: SessionMutationOptions): Promise<void>;
+
 export declare type AsyncHookJSONOutput = {
     async: true;
     asyncTimeout?: number;
@@ -295,6 +297,7 @@ declare namespace coreTypes {
         SDKResultSuccess,
         SDKSessionInfo,
         SDKSessionStateChangedMessage,
+        SDKSessionWritesLostMessage,
         SDKSettingsParseError,
         SDKStartupFailureReason,
         SDKStatusMessage,
@@ -370,6 +373,11 @@ export declare type CwdChangedHookSpecificOutput = {
 };
 
 export declare function deleteSession(_sessionId: string, _options?: SessionMutationOptions): Promise<void>;
+
+export declare type DeniedModelsMatch = {
+    denied: boolean[];
+    warnings: string[];
+};
 
 export declare type DirectoryAddedHookInput = BaseHookInput & {
     hook_event_name: 'DirectoryAdded';
@@ -496,6 +504,7 @@ export declare interface HookCallbackMatcher {
     matcher?: string;
     hooks: HookCallback[];
     timeout?: number;
+    onFailure?: 'continue' | 'block';
 }
 
 export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PreModelSwitch' | 'PostModelSwitch' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'DirectoryAdded' | 'MessageDisplay';
@@ -578,6 +587,8 @@ export declare type ListSubagentsOptions = {
     sessionStore?: SessionStore;
 };
 
+export declare function matchDeniedModels(_models: readonly string[], _deniedModels: readonly string[] | undefined): Promise<DeniedModelsMatch>;
+
 export declare type McpClaudeAIProxyServerConfig = {
     type: 'claudeai-proxy';
     url: string;
@@ -592,6 +603,7 @@ export declare type McpHttpServerConfig = {
     tools?: McpServerToolPolicy[];
     timeout?: number;
 
+
     alwaysLoad?: boolean;
 
 };
@@ -600,6 +612,8 @@ export declare type McpSdkServerConfig = {
     type: 'sdk';
     name: string;
     timeout?: number;
+
+
 
 
     tools?: McpServerToolPolicy[];
@@ -645,6 +659,7 @@ export declare type McpServerStatus = {
         _meta?: Record<string, unknown>;
     }[];
 
+
 };
 
 export declare type McpServerStatusConfig = McpServerConfigForProcessTransport | McpClaudeAIProxyServerConfig;
@@ -667,6 +682,7 @@ export declare type McpSSEServerConfig = {
     headers?: Record<string, string>;
     tools?: McpServerToolPolicy[];
     timeout?: number;
+
 
     alwaysLoad?: boolean;
 
@@ -774,7 +790,7 @@ export declare type Options = {
     env?: {
         [envVar: string]: string | undefined;
     };
-    executable?: 'bun' | 'node';
+    executable?: 'bun' | 'deno' | 'node';
     executableArgs?: string[];
     extraArgs?: Record<string, string | null>;
     fallbackModel?: string;
@@ -831,6 +847,7 @@ export declare type Options = {
     sandbox?: SandboxSettings;
     settings?: string | Settings;
     managedSettings?: Settings;
+
     settingSources?: SettingSource[];
     skills?: string[] | 'all';
     debug?: boolean;
@@ -886,6 +903,8 @@ export declare type PermissionRequestHookInput = BaseHookInput & {
     tool_input: unknown;
     permission_suggestions?: PermissionUpdate[];
     mcp_server?: McpServerProvenance;
+
+
 };
 
 export declare type PermissionRequestHookSpecificOutput = {
@@ -1100,6 +1119,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     updateSettings(source: 'localSettings' | 'userSettings', settings: Record<string, unknown>): Promise<void>;
     initializationResult(): Promise<SDKControlInitializeResponse>;
     reinitialize(): Promise<SDKControlInitializeResponse>;
+
     supportedCommands(): Promise<SlashCommand[]>;
     supportedModels(): Promise<ModelInfo[]>;
     supportedAgents(): Promise<AgentInfo[]>;
@@ -1127,6 +1147,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     reloadPlugins(options?: {
         holdOnCacheImpact?: boolean;
         addPlugins?: SdkPluginConfig[];
+        refuseIfBusy?: boolean;
     }): Promise<SDKControlReloadPluginsResponse>;
     reloadSkills(): Promise<SDKControlReloadSkillsResponse>;
     reloadOutputStyles(): Promise<SDKControlReloadOutputStylesResponse>;
@@ -1176,6 +1197,9 @@ export declare type ResolvedSettings = {
         path?: string;
         policyOrigin?: PolicySettingsOrigin;
     }>;
+    machinePolicy?: {
+        didNotLoad: false | Array<'profile' | 'registry' | 'file'>;
+    };
 };
 
 export declare type ResolvedSettingSource = SettingSource | 'managed' | 'flag';
@@ -1473,6 +1497,7 @@ export declare type SDKAssistantMessage = {
 
 
 
+
 };
 
 export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'account_on_hold' | 'verification_required' | 'billing_error' | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error' | 'unknown' | 'max_output_tokens' | 'cloud_credential_error';
@@ -1497,6 +1522,7 @@ export declare type SDKBackgroundTasksChangedMessage = {
         description: string;
         parent_task_id?: string;
         ambient?: boolean;
+
 
     }[];
     uuid: UUID;
@@ -1732,6 +1758,7 @@ export declare type SDKControlGetContextUsageResponse = {
         cache_creation_input_tokens: number;
         cache_read_input_tokens: number;
     } | null;
+
 };
 
 declare type SDKControlGetHooksListingRequest = {
@@ -1941,6 +1968,8 @@ declare type SDKControlInitializeRequest = {
         timeout?: number;
 
 
+
+
         tools?: coreTypes.McpServerToolPolicy[];
     }>;
     sdkMcpServerManifests?: Record<string, {
@@ -1973,6 +2002,7 @@ declare type SDKControlInitializeRequest = {
 
 
 
+
 };
 
 export declare type SDKControlInitializeResponse = {
@@ -1988,9 +2018,13 @@ export declare type SDKControlInitializeResponse = {
 
 
 
+
     hooks_applied?: boolean;
+    hook_on_failure_supported?: boolean;
+
 
     plugins_applied?: boolean;
+
 
 
     sdk_mcp_manifests_parked?: Record<string, 'parked' | 'already_connected' | 'protocol_version_mismatch' | 'malformed' | 'not_honoured'>;
@@ -2024,6 +2058,7 @@ declare type SDKControlInterruptRequest = {
 
 
 
+
 };
 
 export declare type SDKControlInterruptResponse = {
@@ -2052,7 +2087,9 @@ declare type SDKControlMcpCallRequest = {
     arguments?: Record<string, unknown>;
     expires_at?: string;
     timeout_ms?: number;
+
     result_not_for_model?: boolean;
+    check_permissions?: boolean;
     input_files?: {
         name: string;
         lane_path: string;
@@ -2094,6 +2131,7 @@ declare type SDKControlMcpReconnectRequest = {
 declare type SDKControlMcpSetServersRequest = {
     subtype: 'mcp_set_servers';
     servers: Record<string, coreTypes.McpServerConfigForProcessTransport>;
+
 
 
 
@@ -2152,7 +2190,9 @@ export declare type SDKControlPermissionRulesState = {
     workspaceDirectories: SDKPermissionWorkspaceDirectory[];
     originalCwd: string;
     managedOnly: boolean;
+
     errors?: coreTypes.SDKSettingsParseError[];
+    withheld?: boolean;
 };
 
 declare type SDKControlReadFileRequest = {
@@ -2161,6 +2201,9 @@ declare type SDKControlReadFileRequest = {
     max_bytes?: number;
     encoding?: 'utf-8' | 'base64';
 
+
+
+
 };
 
 export declare type SDKControlReadFileResponse = {
@@ -2168,6 +2211,13 @@ export declare type SDKControlReadFileResponse = {
     absPath: string;
     truncated?: boolean;
     encoding?: 'base64';
+    lossy?: boolean;
+
+
+
+
+
+
 
 };
 
@@ -2191,6 +2241,7 @@ declare type SDKControlReloadPluginsRequest = {
     subtype: 'reload_plugins';
     hold_on_cache_impact?: boolean;
     add_plugins?: coreTypes.SdkPluginConfig[];
+    refuse_if_busy?: boolean;
 };
 
 export declare type SDKControlReloadPluginsResponse = {
@@ -2225,6 +2276,7 @@ declare type SDKControlRenameSessionRequest = {
     title: string;
     source?: 'remote' | 'host';
     session_id?: string;
+
 };
 
 export declare type SDKControlRequest = {
@@ -2235,7 +2287,7 @@ export declare type SDKControlRequest = {
 
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlListModelsRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlReloadOutputStylesRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlGetTaskOutputRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlGetHooksListingRequest | SDKControlUpdateSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlListPermissionRulesRequest | SDKControlMcpReadResourceRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlListModelsRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlReloadOutputStylesRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlSetHasSubscribersRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlGetTaskOutputRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlGetHooksListingRequest | SDKControlUpdateSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlListPermissionRulesRequest | SDKControlMcpReadResourceRequest;
 
 export declare type SDKControlRequestProgressMessage = {
     type: 'system';
@@ -2280,6 +2332,11 @@ declare type SDKControlSeedReadStateRequest = {
 declare type SDKControlSetColorRequest = {
     subtype: 'set_color';
     color: string;
+};
+
+declare type SDKControlSetHasSubscribersRequest = {
+    subtype: 'set_has_subscribers';
+    has_subscribers: boolean | null;
 };
 
 declare type SDKControlSetMaxThinkingTokensRequest = {
@@ -2358,6 +2415,7 @@ declare type SDKHookCallbackMatcher = {
     matcher?: string;
     hookCallbackIds: string[];
     timeout?: number;
+    onFailure?: 'continue' | 'block';
 };
 
 declare type SDKHookCallbackRequest = {
@@ -2416,6 +2474,8 @@ export declare type SDKInformationalMessage = {
     prevent_continuation?: boolean;
     tag?: string;
 
+
+
     uuid: UUID;
     session_id: string;
 };
@@ -2464,7 +2524,7 @@ export declare type SDKMemoryRecallMessage = {
     session_id: string;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKControlRequestProgressMessage | SDKModelRefusalFallbackMessage | SDKModelRefusalNoFallbackMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKBackgroundTasksChangedMessage | SDKThinkingTokensMessage | SDKSessionStateChangedMessage | SDKWorkerShuttingDownMessage | SDKCommandsChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage | SDKInformationalMessage | SDKConversationResetMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKControlRequestProgressMessage | SDKModelRefusalFallbackMessage | SDKModelRefusalNoFallbackMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKBackgroundTasksChangedMessage | SDKThinkingTokensMessage | SDKSessionStateChangedMessage | SDKWorkerShuttingDownMessage | SDKCommandsChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage | SDKInformationalMessage | SDKConversationResetMessage | SDKSessionWritesLostMessage;
 
 export declare type SDKMessageOrigin = {
     kind: 'human';
@@ -2532,6 +2592,7 @@ export declare type SDKModelRefusalFallbackMessage = {
     api_refusal_category?: string | null;
 
     api_refusal_explanation?: string | null;
+
     retracted_message_uuids?: string[];
     refused_user_message_uuid?: string | null;
     content: string;
@@ -2578,6 +2639,7 @@ export declare type SDKPartialAssistantMessage = {
     user_message_uuid?: string;
     user_message_uuids?: string[];
     resume_reason?: string;
+
 };
 
 export declare type SDKPermissionDenial = {
@@ -2666,6 +2728,7 @@ export declare type SDKRateLimitInfo = {
 
 
 
+
     limitScope?: 'service' | 'channel' | 'group_pool';
     errorCode?: 'credits_required';
     canUserPurchaseCredits?: boolean;
@@ -2693,6 +2756,12 @@ export declare type SDKResultError = {
     errors: string[];
 
     startup_failure_reason?: SDKStartupFailureReason;
+    invalid_config_file?: {
+        path: string;
+        is_global: boolean;
+        backup_searched: boolean;
+        backup_path?: string;
+    };
     user_message_uuid?: string;
     user_message_uuids?: string[];
     resume_reason?: string;
@@ -2701,7 +2770,11 @@ export declare type SDKResultError = {
 
     terminal_reason?: TerminalReason;
 
+
+
+
     result_index?: number;
+    credential_expires_at?: string;
     fast_mode_state?: FastModeState;
     fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
@@ -2745,11 +2818,21 @@ export declare type SDKResultSuccess = {
 
 
 
+
+
+
+
+
+
+
+
+
     user_message_uuid?: string;
     user_message_uuids?: string[];
     resume_reason?: string;
     local_command?: string;
     request_sent_wall_ms?: number;
+
 
 
     first_content_frame_ms?: number;
@@ -2783,6 +2866,7 @@ export declare type SDKResultSuccess = {
 
 
 
+
     num_turns: number;
     result: string;
     stop_reason: string | null;
@@ -2798,7 +2882,10 @@ export declare type SDKResultSuccess = {
     deferred_tool_use?: SDKDeferredToolUse;
     terminal_reason?: TerminalReason;
 
+
+
     result_index?: number;
+    credential_expires_at?: string;
     fast_mode_state?: FastModeState;
     fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
@@ -2817,6 +2904,7 @@ export declare type SDKSessionInfo = {
     cwd?: string;
     tag?: string;
     createdAt?: number;
+    archived?: boolean;
 };
 
 export declare type SDKSessionStateChangedMessage = {
@@ -2827,13 +2915,23 @@ export declare type SDKSessionStateChangedMessage = {
     session_id: string;
 };
 
+export declare type SDKSessionWritesLostMessage = {
+    type: 'system';
+    subtype: 'session_writes_lost';
+    error_code: 'ENOSPC' | 'EDQUOT';
+    lost: ('transcript' | 'global_config')[];
+    transcript_session_ids?: string[];
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SDKSettingsParseError = {
     file?: string;
     path: string;
     message: string;
 };
 
-export declare type SDKStartupFailureReason = 'org_pin_api_key_conflict' | 'provider_not_allowed' | 'org_verify_failed' | 'org_pin_mismatch' | 'managed_settings_invalid' | 'remote_settings_required_unavailable' | 'gateway_signin_required' | 'gateway_access_denied' | 'proxy_invalid' | 'temp_dir_unusable' | 'cwd_unavailable' | 'shell_tool_missing' | 'session_held_by_background' | 'worktree_resume_refused' | 'worktree_unverified' | 'cli_version_too_old' | 'bypass_root' | 'org_config_required_unavailable' | 'org_config_refused' | 'sandbox_required_unavailable';
+export declare type SDKStartupFailureReason = 'org_pin_api_key_conflict' | 'provider_not_allowed' | 'org_verify_failed' | 'org_pin_mismatch' | 'managed_settings_invalid' | 'remote_settings_required_unavailable' | 'gateway_signin_required' | 'gateway_access_denied' | 'proxy_invalid' | 'temp_dir_unusable' | 'cwd_unavailable' | 'shell_tool_missing' | 'session_held_by_background' | 'worktree_resume_refused' | 'worktree_unverified' | 'cli_version_too_old' | 'bypass_root' | 'org_config_required_unavailable' | 'org_config_refused' | 'sandbox_required_unavailable' | 'initialize_not_first' | 'config_file_invalid' | 'managed_settings_not_delivered';
 
 export declare type SDKStatus = 'compacting' | 'requesting' | null;
 
@@ -2844,6 +2942,7 @@ export declare type SDKStatusMessage = {
     permissionMode?: PermissionMode;
     compact_result?: 'success' | 'failed';
     compact_error?: string;
+
 
 
 
@@ -2883,6 +2982,11 @@ export declare type SDKSystemMessage = {
         type: string;
         message: string;
         path?: string;
+        managed_lock?: {
+            plugin_enabled: boolean;
+            name: string;
+            marketplace?: string;
+        };
     }[];
 
 
@@ -2892,8 +2996,12 @@ export declare type SDKSystemMessage = {
     effort?: ('low' | 'medium' | 'high' | 'xhigh' | 'max') | null;
 
 
+
     view_mode?: 'focus' | 'default';
     capabilities?: string[];
+
+
+
 
 
 
@@ -2927,6 +3035,9 @@ export declare type SDKTaskNotificationMessage = {
     resource_links?: SDKMcpResourceLink[];
 
 
+
+
+
     skip_transcript?: boolean;
     ambient?: boolean;
     uuid: UUID;
@@ -2948,6 +3059,8 @@ export declare type SDKTaskProgressMessage = {
     };
     last_tool_name?: string;
     summary?: string;
+
+
 
     uuid: UUID;
     session_id: string;
@@ -3103,6 +3216,8 @@ export declare type SDKUserMessage = {
 
 
 
+
+
     shouldQuery?: boolean;
     timestamp?: string;
 
@@ -3124,13 +3239,17 @@ export declare type SDKUserMessage = {
 
 
 
+
+
     uuid?: UUID;
     pasted_content?: MessageParam['content'][];
     inline_pastes?: string[];
+
     session_id?: string;
     agent_id?: string;
     subagent_type?: string;
     task_description?: string;
+
 
 };
 
@@ -3170,11 +3289,15 @@ export declare type SDKUserMessageReplay = {
 
 
 
+
+
     shouldQuery?: boolean;
     timestamp?: string;
 
 
     client_composed?: true;
+
+
 
 
 
@@ -3338,9 +3461,12 @@ export declare interface Settings {
         defaultMode?: 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
         disableBypassPermissionsMode?: 'disable';
         blockReadsOutsideWorkingDirectories?: boolean;
+
         blockWritesOutsideWorkingDirectories?: boolean;
         blockReadsExemptPaths?: string[];
+        workingDirectoriesAsGiven?: string[];
         disableAutoMode?: 'disable';
+        denyInsteadOfPrompting?: boolean;
         additionalDirectories?: string[];
         [k: string]: unknown;
     };
@@ -3466,6 +3592,7 @@ export declare interface Settings {
         location?: string;
     };
     disableAllHooks?: boolean;
+    disableReplyCheck?: boolean;
     disableAgentView?: boolean;
     disableRemoteControl?: boolean;
     disableWorkflows?: boolean;
@@ -3475,6 +3602,7 @@ export declare interface Settings {
     workflowSizeGuideline?: 'unrestricted' | 'small' | 'medium' | 'large';
     workflowKeywordTriggerEnabled?: boolean;
     disableSkillShellExecution?: boolean;
+    disableWindowsBashCommandSplit?: boolean;
     defaultShell?: 'bash' | 'powershell';
     bashEditDiffEnabled?: boolean;
     bashOutputMaxChars?: number;
@@ -3601,6 +3729,9 @@ export declare interface Settings {
                     description?: string;
                     version?: string;
                     strict?: boolean;
+                    engines?: {
+                        [k: string]: unknown;
+                    };
                     headers?: {
                         [k: string]: string;
                     };
@@ -3703,6 +3834,9 @@ export declare interface Settings {
                     description?: string;
                     version?: string;
                     strict?: boolean;
+                    engines?: {
+                        [k: string]: unknown;
+                    };
                     headers?: {
                         [k: string]: string;
                     };
@@ -3803,6 +3937,9 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            engines?: {
+                [k: string]: unknown;
+            };
             headers?: {
                 [k: string]: string;
             };
@@ -3896,6 +4033,9 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            engines?: {
+                [k: string]: unknown;
+            };
             headers?: {
                 [k: string]: string;
             };
@@ -3989,6 +4129,9 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            engines?: {
+                [k: string]: unknown;
+            };
             headers?: {
                 [k: string]: string;
             };
@@ -4096,6 +4239,7 @@ export declare interface Settings {
     feedbackSurveyRate?: number;
     feedbackDrafts?: 'notify' | 'quiet' | 'off';
     spinnerTipsEnabled?: boolean;
+
     spinnerVerbs?: {
         mode: 'append' | 'replace';
         verbs: string[];
@@ -4217,6 +4361,7 @@ export declare interface Settings {
     preferredNotifChannel?: 'auto' | 'iterm2' | 'terminal_bell' | 'iterm2_with_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
     autoCompactEnabled?: boolean;
     precomputeCompactionEnabled?: boolean;
+
     idleCompaction?: boolean;
     switchModelsOnFlag?: boolean;
     autoContinueAtUsageLimit?: boolean;
@@ -4455,6 +4600,8 @@ export declare interface Transport {
     waitForExit?(): Promise<void>;
     [Symbol.dispose]?(): void;
 }
+
+export declare function unarchiveSession(_sessionId: string, _options?: SessionMutationOptions): Promise<void>;
 
 export declare const USAGE_LIMIT_ERROR_PREFIXES: readonly ["You've hit your", "You've reached your", "You're out of usage credits", 'Your org is out of usage · add funds to continue', 'Your org is out of usage · contact your admin', "Your seat type doesn't include usage credits", "Your seat type doesn't include usage", 'Your usage allocation has been disabled by your admin', "Your group's usage limit is set to $0", 'Fable 5 requires usage credits', "You're out of extra usage", "Your seat type doesn't include extra usage"];
 

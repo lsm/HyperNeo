@@ -45,20 +45,33 @@ function world(coding = false) {
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: { id: string; note: string; key?: string }[] = [];
   const asked: { todo: string; target: NeoTodoTarget; status: unknown }[] = [];
+  let setting: Parameters<NonNullable<NeoPack['workerTarget']>>[3] | undefined;
   let decide: (target: NeoTodoTarget) => NeoWorkerTargetDecision = (target) => ({
     value: target,
   });
   const failing = {
     refuse: null as string | null,
     start: false,
+    setting: false,
+    askInTarget: false,
+    attend: false,
     status: null as (() => unknown) | null,
+    closeOnStart: false,
   };
   const pack = {
     id: 'synthetic',
     describe: 'synthetic',
     instructions: () => null,
-    workerTarget: async (todo, target, status) => {
+    workerTarget: async (todo, target, status, askSetting) => {
       asked.push({ todo: todo.id, target, status: await status(backend) });
+      setting = askSetting;
+      if (failing.askInTarget)
+        await askSetting({
+          requestId: `synthetic-${todo.id}`,
+          alternatives: [
+            [{ pack: 'synthetic', scope: { kind: 'global', key: '' }, key: 'k', value: 1 }],
+          ],
+        });
       return decide(target);
     },
   } satisfies NeoPack;
@@ -66,7 +79,8 @@ function world(coding = false) {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
-    workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
+    workerTarget: (todo, target, status, askSetting) =>
+      decideCodingSessionTarget(db, todo, target, status, askSetting),
     workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
     workerTargetRefused: (todo) =>
       gatewayFor(db).call(codingSessionAssignmentWrites, 'releaseFeature', { todoId: todo.id }),
@@ -77,10 +91,16 @@ function world(coding = false) {
     sessions,
     invoke: async (_caller, name, input) => {
       calls.push({ name, input });
+      if (name === 'pack.preferences.ask' && failing.setting)
+        return { kind: 'failed', code: 'execution_failed', message: 'synthetic_failure' };
       if (name === 'work.status' && failing.status)
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
         return completed({ ok: false, reason: 'start_failed', detail: 'driver down' });
+      if (name === 'work.start' && failing.closeOnStart) {
+        const open = store.getAsk('ask');
+        if (open) store.settleAsk(open, 'dropped', 'Dropped', 2);
+      }
       if (name === 'work.start')
         return completed({ ok: true, value: { ref: { adapter: 'hyperneo', id: 'fresh' } } });
       if (name === 'work.send') return completed({ ok: true, value: { delivered: true } });
@@ -89,6 +109,7 @@ function world(coding = false) {
     packs: () => [coding ? real : pack],
     tell: async () => {},
     attend: async (event) => {
+      if (failing.attend) throw new Error('synthetic_attention_failure');
       told.push({ id: event.subject.id, note: String(event.facts.text), key: event.kind });
     },
     changed: () => {},
@@ -133,6 +154,7 @@ function world(coding = false) {
     calls,
     told,
     asked,
+    setting: () => setting,
     runner,
     add,
     failing,
@@ -166,6 +188,51 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
   });
 
+  test('the pack can ask a settings question on the todo ask through the preferences operation', async () => {
+    const w = (current = world());
+    await w.runner.start(w.add());
+    const alternatives = [
+      [{ pack: 'synthetic', scope: { kind: 'global' as const, key: '' }, key: 'k', value: 1 }],
+    ];
+    await w.setting()!({ requestId: 'synthetic-request', alternatives });
+    expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toEqual([
+      {
+        name: 'pack.preferences.ask',
+        input: { askId: 'ask', requestId: 'synthetic-request', alternatives },
+      },
+    ]);
+  });
+
+  test('a settings question that cannot be opened is told to Neo instead of dropped', async () => {
+    const w = (current = world());
+    const id = w.add();
+    await w.runner.start(id);
+    w.failing.setting = true;
+    const alternatives = [
+      [{ pack: 'synthetic', scope: { kind: 'global' as const, key: '' }, key: 'k', value: 1 }],
+    ];
+    expect(await w.setting()!({ requestId: 'synthetic-request', alternatives })).toMatchObject({
+      kind: 'failed',
+    });
+    expect(w.told.filter((told) => told.note.includes('settings question'))).toEqual([
+      { id, key: 'todo.unworked', note: expect.stringContaining('synthetic_failure') },
+    ]);
+  });
+
+  test('a failed settings question whose note cannot be delivered still dispatches every todo', async () => {
+    const w = (current = world());
+    w.failing.setting = true;
+    w.failing.askInTarget = true;
+    w.failing.attend = true;
+    const first = w.add(undefined, 'first');
+    const second = w.add(undefined, 'second');
+    await w.runner.start(first);
+    await w.runner.start(second);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start', 'work.start']);
+    expect([first, second].map((id) => w.store.getTodo(id)?.state)).toEqual(['doing', 'doing']);
+    expect(w.calls.filter((call) => call.name === 'pack.preferences.ask')).toHaveLength(2);
+  });
+
   test('a reuse decision sends to the chosen session and records that send target', async () => {
     const w = (current = world());
     w.decideWith(() => ({ value: { verb: 'send', ref: backend } }));
@@ -188,6 +255,37 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       { name: 'work.start', input: expect.objectContaining({ title: 'backend-2' }) },
     ]);
     expect(w.sessions.get(id)).toEqual({ ...start, name: 'backend-2' });
+  });
+
+  test('a start that moved to another model line tells Neo why', async () => {
+    const w = (current = world());
+    const why = 'Started on another model line: glm/glm-6 via hyperneo: held.';
+    w.decideWith((target) => ({ value: target, note: why }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.told).toContainEqual({ id, note: why, key: 'todo.line_moved' });
+  });
+
+  test('a moved start whose ask closes during the start is stopped even when the note fails', async () => {
+    const w = (current = world());
+    w.failing.closeOnStart = true;
+    w.failing.attend = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.calls.map((call) => call.name)).toContain('work.stop');
+  });
+
+  test('a moved start that fails to start tells Neo nothing about the move', async () => {
+    const w = (current = world());
+    w.failing.start = true;
+    w.decideWith((target) => ({ value: target, note: 'Started on another line.' }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().length).toBeGreaterThan(0);
+    expect(w.dispatched().every((call) => call.name === 'work.start')).toBe(true);
+    expect(w.told.filter((entry) => entry.key === 'todo.line_moved')).toEqual([]);
   });
 
   test('a wait decision dispatches nothing, keeps the todo and its target, and tells Neo once', async () => {

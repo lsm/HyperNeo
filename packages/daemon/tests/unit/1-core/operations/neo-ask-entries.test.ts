@@ -200,15 +200,6 @@ describe('neoTodoStatusLine', () => {
     );
   });
 
-  test('a failed todo keeps its reason, or says not done', () => {
-    expect(
-      neoTodoStatusLine(todo({ state: 'failed', reason: '会话停了：测试没过' }), [], packLine)
-    ).toEqual(text('会话停了：测试没过'));
-    expect(neoTodoStatusLine(todo({ state: 'failed' }), [], null)).toEqual(
-      coded('Not done', 'todo.failed')
-    );
-  });
-
   test('a replaced todo names its replacement, with the reason when there is one', () => {
     expect(
       neoTodoStatusLine(
@@ -407,18 +398,17 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     return { store, sessions, opened };
   }
 
-  test('lists blocked, failed, doing, not started, done, then removed, and counts done todos', () => {
+  test('lists blocked, doing, not started, done, then removed, and counts done todos', () => {
     const { store, sessions, opened } = seed([
       'done',
       'todo',
       'removed',
       'doing',
-      'failed',
       'blocked',
       'done',
     ]);
     const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
-    expect(entry.todos.map((todo) => todo.id)).toEqual(['t5', 't4', 't3', 't1', 't0', 't6', 't2']);
+    expect(entry.todos.map((todo) => todo.id)).toEqual(['t4', 't3', 't1', 't0', 't5', 't2']);
     expect(entry.doneCount).toBe(2);
     expect(entry.state).toBe('doing');
   });
@@ -476,7 +466,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   });
 
   test('neo.ask.read returns an exact card and refuses missing or denied reads', async () => {
-    const { store } = seed(['failed', 'done']);
+    const { store } = seed(['doing', 'done']);
     let allowed = true;
     const op = createNeoAskReadOperation(
       store,
@@ -489,7 +479,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(result).toMatchObject({ ok: true, entry: { ask: { id: 'ask' }, doneCount: 1 } });
     if (!result.ok) throw new Error(result.reason);
     expect(result.entry.todos.map((todo) => [todo.id, todo.state])).toEqual([
-      ['t0', 'failed'],
+      ['t0', 'doing'],
       ['t1', 'done'],
     ]);
     expect(await read('missing')).toEqual({ ok: false, reason: 'not_found: no such ask.' });

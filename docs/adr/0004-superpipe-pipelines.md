@@ -247,8 +247,8 @@ pinned by that slice's characterization tests. The full design record is
 - Recovery handlers as one direct pipeline each: `repairQueuedWorkflowNodeHandoffs`
   first, then the four `handle*Executions` handlers, then top-level
   `processRunTick` composition.
-- Provider-concurrency admission gate (design:
-  `docs/design/provider-concurrency-admission-gate.md`).
+- ~~Provider-concurrency admission gate~~ — closed 2026-11-16, not planned
+  (design: `docs/design/provider-concurrency-admission-gate.md`).
 - Web direct pipelines: generation-guarded fetch machines (SpaceForge,
   ScopeDetail, GitHubHealthPanel); store delta application.
 - External-event ingestion gates (self-event suppression, type/field filters) —

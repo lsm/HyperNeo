@@ -9,15 +9,23 @@ import { PACKAGE_DOWNLOAD_WAIT_MS } from '../../agent/npm-package-download.ts';
 import { findExecutable } from '../../drivers/find-executable.ts';
 import { gitWorktreeProject } from '../../drivers/worktree-project.ts';
 import { resolveNewSessionModel } from '../../session/new-session-model.ts';
-import { workerWorktreeHasSubmodules } from '../../drivers/work-placement.ts';
+import {
+  cleanupOwnedWorktree,
+  workerWorktreeHasSubmodules,
+  WORKTREE_SUBMODULES,
+  WORKTREE_UNSAVED,
+  worktreeUnverified,
+} from '../../drivers/work-placement.ts';
+import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { releaseWorkerSandbox } from '../../drivers/worker-sandbox.ts';
 import { sessionSdkPath } from '../../session/sdk-path.ts';
 import { sdkPendingRemoval } from '../../../storage/repositories/sdk-message-transactions.ts';
 import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createDriverHealthRuntime } from '../../drivers/driver-health-runtime.ts';
+import { createWorkCleanupRuntime } from '../../work-cleanup/runtime.ts';
 import { startCuChecker } from '../../drivers/codex-cu-reaper.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
-import { dirname, resolve } from 'node:path';
+import { codexWorkerHome, copilotWorkerDirectory } from '../../drivers/worker-directories.ts';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -126,7 +134,7 @@ async function readAvailableModels(): Promise<readonly ModelInfo[]> {
   return getAvailableModels('global');
 }
 
-async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
+export async function resolveDriverModel(models: readonly ModelInfo[], requested: string) {
   const { findInModels } = await import('../../model-service.ts');
   const available = usableModels(models);
   const exact = available.find((entry) => entry.id === requested);
@@ -230,31 +238,36 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
       if (context.deps.db.listChildSessions(ref.id).length)
         return reject('unsupported', 'Archive sessions with clones in the session UI.');
       if (session.worktree) {
-        const manager = sessionManager.getWorktreeManager();
-        const commits = await manager.getCommitsAhead(session.worktree);
-        const directory = session.worktree.worktreePath ?? session.workspacePath!;
-        if (await workerWorktreeHasSubmodules(directory))
-          return reject('unsupported', 'Submodule worktrees require manual verification; kept.');
-        const git = await simpleGit(directory).status(['--ignore-submodules=none']);
-        if (commits.hasCommitsAhead || !git.isClean())
-          return reject(
-            'unsupported',
-            'The worktree has changes, unpushed commits or cannot be verified; kept. Manage its archive in the session UI.'
-          );
+        const worktree = session.worktree;
+        const directory = worktree.worktreePath ?? session.workspacePath!;
+        const kept = await (async () => {
+          const commits = await sessionManager.getWorktreeManager().getCommitsAhead(worktree);
+          if (await workerWorktreeHasSubmodules(directory)) return WORKTREE_SUBMODULES;
+          const git = await simpleGit(directory).status(['--ignore-submodules=none']);
+          return commits.hasCommitsAhead || !git.isClean() ? WORKTREE_UNSAVED[3] : null;
+        })().catch(worktreeUnverified);
+        if (kept) return reject('unsupported', kept);
       }
       const refused = admit();
       if (refused) return refused;
       const processing = sessionManager.getCachedSession(ref.id)?.getProcessingState().status;
       if (processing && !['idle', 'interrupted'].includes(processing))
         return reject('busy', 'The HyperNeo session still has a live turn.');
+      const project = session.worktree ? undefined : session.metadata?.executionProjectPath;
+      const cleanupPrepared = async () =>
+        project && session.workspacePath
+          ? cleanupOwnedWorktree(session.workspacePath, [getWorktreeBaseDir(project)])
+          : undefined;
       if (session.status === 'archived') {
         await releaseWorkerSandbox(sessionSdkPath(session));
         const worktree = session.worktree
           ? await sessionManager.cleanupArchivedWorktree(ref.id)
-          : undefined;
+          : await cleanupPrepared();
         return { ok: true, value: { archived: false, ...(worktree ? { worktree } : {}) } };
       }
-      const worktree = await sessionManager.archiveSessionResources(ref.id, 'work_archive');
+      const worktree =
+        (await sessionManager.archiveSessionResources(ref.id, 'work_archive')) ??
+        (await cleanupPrepared());
       return { ok: true, value: { archived: true, ...(worktree ? { worktree } : {}) } };
     },
     create: (workspacePath, title, model, provider, effort, inPlace, prepared) =>
@@ -409,7 +422,7 @@ function copilotAdapters(
   context: FamilyOperationContext
 ): WorkAdapter[] {
   if (!findExecutable(COPILOT_CLIENT.bin)) return [];
-  const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+  const directory = copilotWorkerDirectory(context.deps.config.dbPath);
   const resolveCliPath = async (waitMs?: number) =>
     (await resolveCopilotRuntime(process.env, waitMs)).path;
   const discovery = createCopilotDiscovery({
@@ -453,7 +466,7 @@ function codexDesktopAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
-  const codexHome = join(homedir(), '.codex');
+  const codexHome = codexWorkerHome();
   const statePath = codexStatePath(homedir());
   if (!existsSync(statePath)) return [];
   return [
@@ -632,6 +645,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   context.workerNameSource?.(
     createWorkerNameSource(currentAdapters, { machine, folder, name: folder })
   );
+  context.workAdapters?.(currentAdapters);
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
   const deps = {
@@ -774,6 +788,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   };
   return [
     createFindWorkOperation(deps),
+    createWorkCleanupRuntime(context),
     health.operation,
     ...createWorkVerbOperations({ ...deps, queueInput: workerInputs.accept }),
     createNeoSessionArchiveOperation({ ...deps, db: context.deps.db }),

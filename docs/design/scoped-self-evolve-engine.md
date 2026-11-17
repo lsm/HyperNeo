@@ -1,5 +1,7 @@
 # Scoped Self-Evolve Engine
 
+> Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs through Neo.
+
 ## Purpose
 
 HyperNeo Forge should not be limited to improving workflows or codebases. It should be a general self-evolution engine that can attach to any long-horizon objective.

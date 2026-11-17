@@ -10,6 +10,7 @@ import {
   defineOperation,
   isAgentSessionCaller,
   type OperationCaller,
+  type OperationPolicy,
 } from '../operations/registry.ts';
 import {
   GOAL_READ_POLICY,
@@ -24,6 +25,21 @@ import { requireValidCadence } from '../scheduler/session-schedules.ts';
 import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 
 type Rejection = { accepted: false; reason: string };
+
+const PARENT_REFUSALS = {
+  child: 'parent_is_child: a goal session must start under a top-level session.',
+  inactive:
+    'parent_unavailable: a goal session must start under an active session that may be cloned.',
+} as const;
+
+const OWNER_READ_POLICY = {
+  ...GOAL_READ_POLICY,
+  roles: [...GOAL_READ_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
+const OWNER_WRITE_POLICY = {
+  ...GOAL_WRITE_POLICY,
+  roles: [...GOAL_WRITE_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
 type Gate<T> = { value: T } | { reason: Rejection };
 
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
@@ -34,7 +50,7 @@ const Owner = {
     .min(1)
     .optional()
     .describe(
-      'Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.'
+      'Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.'
     ),
 };
 
@@ -58,6 +74,13 @@ const Fields = {
     .optional()
     .describe('Mandate section that defines the goal, e.g. "mandate.md#adoption"'),
   mandateRev: z.string().nullable().optional().describe('Home repo commit the goal matches'),
+  dailyRunLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1440)
+    .optional()
+    .describe('Work wakes allowed in any 24 hours; further due times are skipped. Default 24.'),
 };
 
 const Create = z
@@ -71,7 +94,13 @@ const Create = z
       .int()
       .positive()
       .default(4)
-      .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
+      .describe('Legacy compatibility only; ignored.'),
+    ownSession: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.'
+      ),
   })
   .strict();
 const Get = z.object({ ...Owner, goalId: z.string().min(1) }).strict();
@@ -156,6 +185,7 @@ const GoalSchema = z.object({
   nextSteps: z.array(z.string()),
   mandateRef: z.string().nullable(),
   mandateRev: z.string().nullable(),
+  dailyRunLimit: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
   completedAt: z.number().nullable(),
@@ -169,15 +199,20 @@ const GoalResult = z.discriminatedUnion('accepted', [
 
 export function resolveGoalOwner(
   caller: OperationCaller,
-  input: { ownerSessionId?: string }
+  input: { ownerSessionId?: string },
+  canOwn: (sessionId: string) => boolean
 ): Gate<string> {
   if (caller.source !== 'mcp')
     return input.ownerSessionId
       ? { value: input.ownerSessionId }
       : refuse('owner_unresolved: ownerSessionId is required for this caller.');
-  if (!isAgentSessionCaller(caller) || !caller.sessionId)
+  if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
-  return { value: input.ownerSessionId ?? caller.sessionId };
+  if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
+  return canOwn(caller.sessionId) &&
+    (!input.ownerSessionId || input.ownerSessionId === caller.sessionId)
+    ? { value: caller.sessionId }
+    : refuse('owner_denied: this session may only use goals it owns.');
 }
 
 export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): Gate<SessionGoal> {
@@ -200,6 +235,14 @@ export function requireExistingGoal(goal: SessionGoal | null): Gate<SessionGoal>
   return goal ? { value: goal } : refuse('goal_not_found');
 }
 
+export function requireGoalAccess(goal: SessionGoal, caller: OperationCaller): Gate<SessionGoal> {
+  return caller.source !== 'mcp' ||
+    isAgentSessionCaller(caller) ||
+    goal.ownerSessionId === caller.sessionId
+    ? { value: goal }
+    : refuse('owner_denied: this session may only use goals it owns.');
+}
+
 export function requireGoalDoneTest<T>(
   value: T,
   goal: { metrics?: Record<string, unknown>; doneTest?: string | null }
@@ -220,6 +263,10 @@ export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
+  readonly parentProblem: (sessionId: string) => Promise<'child' | 'inactive' | null>;
+  readonly canReturn: (sessionId: string) => boolean;
+  readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
+  readonly releaseSession: (sessionId: string) => Promise<void>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -227,12 +274,23 @@ export function createSessionGoalOperations({
   goals,
   schedules,
   sessionExists,
+  parentProblem,
+  canReturn,
+  startSession,
+  releaseSession,
   audit,
 }: SessionGoalDependencies) {
+  const canOwn = (sessionId: string) =>
+    canReturn(sessionId) && goals.list(sessionId, true).length > 0;
   const owner = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
-      .pipe(resolveGoalOwner, ['caller', 'input'], 'result:outcome')
+      .pipe(
+        (caller: OperationCaller, input: { ownerSessionId?: string }) =>
+          resolveGoalOwner(caller, input, canOwn),
+        ['caller', 'input'],
+        'result:outcome'
+      )
       .pipe(
         (owned: string) => requireKnownOwner(owned, sessionExists(owned)),
         'outcome',
@@ -241,7 +299,8 @@ export function createSessionGoalOperations({
   const owned = (pipeline: PipelineAPI) =>
     owner(pipeline)
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
-      .pipe(requireExistingGoal, 'goal', 'result:outcome');
+      .pipe(requireExistingGoal, 'goal', 'result:outcome')
+      .pipe(requireGoalAccess, ['outcome', 'caller'], 'result:outcome');
   const done = (result: SessionGoal) => ({ accepted: true as const, goal: result });
 
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)
@@ -255,11 +314,26 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
-        const { ownerSessionId: _owner, cadence, nudgeEvery, ...draft } = input;
-        const goal = goals.create(owned, draft, Date.now(), (created) =>
-          schedules.sync(created, cadence, nudgeEvery)
-        );
+      async (parent: string, input: z.infer<typeof Create>) => {
+        const problem = input.ownSession ? await parentProblem(parent) : null;
+        return problem ? refuse(PARENT_REFUSALS[problem]) : { value: parent };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async (parent: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
+        const { ownerSessionId: _owner, cadence, nudgeEvery, ownSession, ...draft } = input;
+        const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
+        let goal: SessionGoal;
+        try {
+          goal = goals.create(owned, draft, Date.now(), (created) =>
+            schedules.sync(created, cadence, nudgeEvery)
+          );
+        } catch (error) {
+          if (ownSession) await releaseSession(owned);
+          throw error;
+        }
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
         return done(goal);
       },
@@ -369,8 +443,8 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
-      policy: GOAL_WRITE_POLICY,
+        'Create a goal owned by a session, with one work wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Every due time wakes the owner to work, even when facts are unchanged, up to dailyRunLimit wakes in any 24 hours (default 24); later due times are skipped and the owner is told once. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. nudgeEvery is accepted for legacy compatibility only. Returns { accepted, goal } or { accepted: false, reason }.',
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
       execute: async (input, caller) => (create as Run)(input, caller) as never,
@@ -378,7 +452,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.get',
       description: 'Read one goal owned by a session.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: GoalResult,
       execute: async (input, caller) => (get as Run)(input, caller) as never,
@@ -386,7 +460,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.list',
       description: 'List a session’s goals, active and paused unless includeClosed.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: List,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), goals: z.array(GoalSchema) }),
@@ -398,7 +472,7 @@ export function createSessionGoalOperations({
       name: 'goal.session.update',
       description:
         'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. worksNote summarizes the journal, advances its cursor and records journal_compacted without deleting entries. Each change is recorded as a goal event.',
-      policy: GOAL_WRITE_POLICY,
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
       execute: async (input, caller) => (update as Run)(input, caller) as never,
@@ -407,7 +481,7 @@ export function createSessionGoalOperations({
       name: 'goal.facts',
       description:
         'Read the same goal facts and changed-line summary as its scheduler, without consuming the changes. Closed goals return null facts.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({
@@ -424,7 +498,7 @@ export function createSessionGoalOperations({
       name: 'goal.journal.append',
       description:
         'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message.',
-      policy: GOAL_WRITE_POLICY,
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Append,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), entry: EntrySchema }),
@@ -435,7 +509,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.list',
       description: 'Read a session goal’s journal, newest first.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Journal,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), entries: z.array(EntrySchema) }),

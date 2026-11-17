@@ -1,5 +1,5 @@
 import type { SpaceLongHorizonAgentEventSubscription } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import type { McpAuditLogRepository } from '../../../daemon/src/storage/repositories/mcp-audit-log-repository.ts';
 import type { SpaceAgentSubscriptionRepository } from '../../../daemon/src/storage/repositories/space-agent-subscription-repository.ts';
@@ -234,8 +234,7 @@ type ApplyStage<Input, Result> = (
 ) => Result;
 
 function agentPipeline<Input, Result>(
-  name: string,
-  deps: AgentSubscriptionDependencies,
+  pipeline: ReturnType<SuperPipeFactory>,
   admit: (
     input: { spaceId?: string },
     caller: OperationCaller,
@@ -243,7 +242,7 @@ function agentPipeline<Input, Result>(
   ) => { value: string } | { reason: Rejection },
   apply: ApplyStage<Input, Result>
 ) {
-  return (superpipe({ deps })(name) as PipelineAPI)
+  return (pipeline as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(gateAgentSubscription, ['outcome', 'input', 'deps'], 'result:outcome')
@@ -263,8 +262,7 @@ export function createAgentSubscriptionOperations(
       inputSchema: ListInput,
       resultSchema: ListResultSchema,
       execute: agentPipeline(
-        'list-agent-external-event-subscriptions',
-        deps,
+        superpipe({ deps })('list-agent-external-event-subscriptions'),
         admitAgentSubscriptionReader,
         listAgentSubscriptionTopics
       ),

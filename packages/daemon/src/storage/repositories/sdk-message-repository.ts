@@ -122,6 +122,7 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   ...[...HIDDEN_SYSTEM_SUBTYPES].filter((subtype) => !LAST_MESSAGE_PROGRESS_SUBTYPES.has(subtype)),
   'thinking_tokens',
   'model_refusal_fallback',
+  'session_writes_lost',
 ]);
 
 export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1

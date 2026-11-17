@@ -1,5 +1,5 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
-import type { NeoStepRow } from '../../lib/neo/attention/sweep.ts';
+import type { NeoStepRead } from '../../lib/neo/attention/sweep.ts';
 import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
@@ -65,7 +65,7 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
   ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
 
-const LIVE_TODO_STATES = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE_TODO_STATES = ['todo', 'doing', 'blocked'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
@@ -347,7 +347,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       family: open.family(ask),
       cards: open.cards(ask),
     }));
-    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRow => {
+    const step = (todo: NeoTodo, family: NeoTodo[], cards: NeoQuestion[]): NeoStepRead => {
       const nudge = open.nudge(todo.id);
       const answered = cards.flatMap((card) =>
         card.state === 'answered' && card.todos.includes(todo.id) ? (card.answeredAt ?? []) : []
@@ -701,6 +701,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     target: NeoDriverTarget;
     ref: WorkRef;
     shared: boolean;
+    humanNamed: boolean;
     releasedBy: string | null;
   }[] {
     const match = (column: string, key: string) =>
@@ -710,7 +711,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
+                WHERE json_extract(ot.named, '$.session') IS NOT NULL
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS humanNamed,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS shared,
               (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
@@ -730,6 +735,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         target: string;
         ref: string;
         shared: number;
+        humanNamed: number;
         releasedBy: string | null;
       }[]
     ).map((row) => ({
@@ -737,6 +743,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       target: JSON.parse(row.target) as NeoDriverTarget,
       ref: JSON.parse(row.ref) as WorkRef,
       shared: row.shared === 1,
+      humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
     }));
   }

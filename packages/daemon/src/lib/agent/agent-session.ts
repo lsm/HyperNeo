@@ -37,6 +37,7 @@ import type {
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
@@ -1470,7 +1471,7 @@ export class AgentSession
 
   async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
     const clear = () =>
-      this.session.config.harness === 'codex'
+      isOxapHarness(this.session.config.harness)
         ? this.clearCodexContext()
         : this.runClearConversationFlow();
     if (boundaryOwner) {
@@ -1486,7 +1487,7 @@ export class AgentSession
   }
 
   async startFreshContext(): Promise<void> {
-    if (this.session.config.harness === 'codex') {
+    if (isOxapHarness(this.session.config.harness)) {
       const owner = await acquireContextClearBoundary(this.session.id);
       try {
         await this.clearCodexContext();
@@ -3291,7 +3292,7 @@ export class AgentSession
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
-          if (this.session.config.harness === 'codex') {
+          if (isOxapHarness(this.session.config.harness)) {
             const delivery = this.db
               .getSDKMessageRepo()
               .getDeliveryContent(this.session.id, messageUuid);
@@ -3334,7 +3335,10 @@ export class AgentSession
             throw new MessageDeliveryTerminalTurnError(message, 'provider_retired');
           }
           const registry = initializeProviders();
-          if (this.session.config.harness !== 'codex' && (pinned || !registry.has('anthropic'))) {
+          if (
+            !isOxapHarness(this.session.config.harness) &&
+            (pinned || !registry.has('anthropic'))
+          ) {
             await waitForOptionalProviderRegistration(registry, pinned !== undefined);
             const { provider } = await resolveAvailableQueryProvider(
               registry,

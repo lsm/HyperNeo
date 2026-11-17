@@ -9,7 +9,8 @@ import { NeoWakeQueueRepository } from '../../../../src/storage/repositories/neo
 import type { DbOp } from '../../../../src/storage/db-gateway/db-op.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops.ts';
-import { neoFinishedAskUuids } from '../../../../src/lib/neo/stalled-asks.ts';
+import { choiceCard } from '../../../../src/lib/neo/human-card.ts';
+import { neoFinishedAskUuids, wakeStalledAsks } from '../../../../src/lib/neo/stalled-asks.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { neoAskTodosVersion } from '../../../../src/storage/repositories/neo-ask-settlement.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -165,10 +166,63 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: fresh })).toEqual(['ask']);
   });
 
+  test('a request ask the sweep settles tells its sender each final state once; a lone request tells nothing more', async () => {
+    const replies = () =>
+      (
+        db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo.request.reply'").all() as {
+          payload: string;
+        }[]
+      ).map((row) => JSON.parse(row.payload));
+    add('request', 'done');
+    db.prepare(
+      `UPDATE neo_todos SET named = '{"requestFrom":"stranger"}' WHERE id = 'request'`
+    ).run();
+    add('label', 'done', { reason: 'Labelled' });
+    add('review', 'removed', { reason: 'Already reviewed' });
+    consumedWake('ask');
+    expect(await sweep()).toEqual(['ask']);
+    expect(replies()).toEqual([
+      {
+        todoId: 'request',
+        key: 'neo-request-settled:ask',
+        to: 'stranger',
+        from: 'neo',
+        text: 'Your request "Step request" is finished:\n"Step label" (label) done: Labelled\n"Step review" (review) removed: Already reviewed',
+      },
+    ]);
+    await sweep();
+    expect(replies()).toHaveLength(1);
+    store.openAsk({
+      id: 'lone',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Lone',
+      request: 'Lone request',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'lone-request',
+      'lone',
+      {
+        title: 'Lone',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: 'stranger' },
+      },
+      1
+    );
+    db.prepare(`UPDATE neo_todos SET state = 'done' WHERE id = 'lone-request'`).run();
+    consumedWake('lone');
+    expect(await sweep()).toEqual(['lone']);
+    expect(replies()).toHaveLength(1);
+  });
+
   test('generates the outcome from the step list when Neo wrote none', async () => {
     add('alpha', 'done');
     add('gamma', 'removed', { reason: 'Superseded' });
-    add('delta', 'failed');
+    add('delta', 'removed', { reason: 'Failed' });
     consumedWake('ask');
     await sweep();
     const ask = store.getAsk('ask')!;
@@ -180,7 +234,7 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
 
   test('drops the ask when no step finished', async () => {
     add('gone', 'removed', { reason: 'No longer needed' });
-    add('broken', 'failed');
+    add('broken', 'removed', { reason: 'Failed' });
     consumedWake('ask');
     await sweep();
     expect(store.getAsk('ask')).toMatchObject({ status: 'dropped' });
@@ -230,6 +284,48 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(store.getAsk('ask')).toMatchObject({ status: 'open' });
     expect(changes).toEqual([]);
   });
+
+  for (const hold of [false, true])
+    test(`an unanswered ${hold ? 'holding' : 'advisory'} settings question ${hold ? 'keeps the ask open' : 'does not keep the ask open'}`, async () => {
+      add('finished', 'done');
+      store.askQuestion(
+        'settings',
+        'ask',
+        {
+          ...choiceCard('Choose one of these settings?', ['One', 'Two', 'Keep current settings']),
+          todos: [],
+        },
+        2
+      );
+      const value = {
+        pack: 'coding',
+        scope: { kind: 'repo', key: 'synthetic/repo' },
+        key: 'k',
+        value: 1,
+      };
+      const alternatives = [[value], [{ ...value, value: 2 }]];
+      db.prepare(
+        'INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text) VALUES (?, ?, ?, ?)'
+      ).run(
+        'settings',
+        'synthetic-request',
+        JSON.stringify(hold ? { alternatives } : { alternatives, hold: false }),
+        'Choose one of these settings?'
+      );
+      const told: string[] = [];
+      await wakeStalledAsks(
+        store,
+        async (event) => {
+          told.push(event.kind);
+        },
+        100
+      );
+      expect(told).toEqual(hold ? [] : ['ask.finished']);
+      sdk('user', wakeUuid('ask'), 10);
+      sdk('result', 'wake-result', 11);
+      expect(await sweep()).toEqual(hold ? [] : ['ask']);
+      expect(store.getAsk('ask')?.status).toBe(hold ? 'open' : 'done');
+    });
 
   test('a card answered after the wake turn settles the ask once the turn that reads the answer ends', async () => {
     add('finished', 'done');

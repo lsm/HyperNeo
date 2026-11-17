@@ -9,6 +9,7 @@ const {
   mockNavigateToSession,
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
+  mockListSystemProjects,
   mockAddWorkspaceToHistory,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
@@ -22,6 +23,7 @@ const {
   mockNavigateToSession: vi.fn(),
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
+  mockListSystemProjects: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock('../../lib/router.ts', () => ({
 
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
+  listSystemProjects: mockListSystemProjects,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
@@ -128,6 +131,7 @@ describe('SessionsSidebar', () => {
     mockSessionsSignal.value = [];
     mockSessionStatusesSignal.value = new Map();
     mockGetWorkspaceHistory.mockResolvedValue([]);
+    mockListSystemProjects.mockResolvedValue([]);
     mockAddWorkspaceToHistory.mockImplementation(async (path: string) => createHistory(path, 2));
     mockRemoveWorkspaceFromHistory.mockResolvedValue({ success: true });
     mockArchiveSession.mockResolvedValue({ success: true });
@@ -204,6 +208,96 @@ describe('SessionsSidebar', () => {
       expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
     );
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
+  it('archives every open chat after confirmation and then removes the project', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('open-1', 'Review one', '/workspace/neo-read'),
+      createMockSession('open-2', 'Review two', '/workspace/neo-read'),
+      createMockSession('old', 'Old review', '/workspace/neo-read', 'archived'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/workspace/neo-read')]);
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    expect(screen.getByText(/This archives 2 chats in this project/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+    expect(mockArchiveSession).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockRemoveWorkspaceFromHistory).toHaveBeenCalledWith('/workspace/neo-read')
+    );
+    expect(mockArchiveSession.mock.calls).toEqual([['open-1'], ['open-2']]);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the project when a chat needs its own archive decision', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('clean', 'Clean', '/workspace/neo-read'),
+      createMockSession('dirty', 'Dirty', '/workspace/neo-read'),
+    ];
+    mockArchiveSession
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, requiresConfirmation: true, commitStatus: {} });
+    render(<SessionsSidebar />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith(
+        '1 chat still needs to be archived one by one before the project can be removed'
+      )
+    );
+    expect(mockArchiveSession).toHaveBeenCalledTimes(2);
+    expect(mockRemoveWorkspaceFromHistory).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+  });
+
+  it('shows every system project, including ones without chats', async () => {
+    mockSessionsSignal.value = [createMockSession('chat', 'Review', '/code/neo-read')];
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'p-read',
+        name: 'Neo Read',
+        folders: ['/code/neo-read', '/code/neo-read-2'],
+        updatedAt: 1,
+      },
+      { id: 'p-idle', name: 'Idle', folders: ['/code/idle'], updatedAt: 2 },
+      { id: 'p-section', name: 'Section', folders: [], updatedAt: 3 },
+    ]);
+    render(<SessionsSidebar />);
+
+    await waitFor(() => expect(screen.getAllByTestId('project-group-header')).toHaveLength(3));
+    const names = screen.getAllByTestId('project-group-header').map((row) => row.textContent);
+    expect(names).toEqual(['Neo Read', 'Section', 'Idle']);
+    expect(screen.getByText('Review')).toBeTruthy();
+    expect(screen.queryByText('neo-read')).toBeNull();
+    expect(screen.getAllByText('No chats')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /^Remove project/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
+  });
+
+  it('adds no empty duplicate when a sidebar project already owns the folders', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code'] };
+    mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/code'), project }]);
+    mockListSystemProjects.mockResolvedValue([
+      { id: 'n1', name: 'Product mirror', folders: ['/code'], updatedAt: 5 },
+    ]);
+    mockSessionsSignal.value = [createMockSession('chat', 'Code chat', '/code')];
+    render(<SessionsSidebar />);
+
+    await waitFor(() => expect(mockListSystemProjects).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Product')).toBeTruthy());
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
+    expect(screen.queryByText('Product mirror')).toBeNull();
+    expect(screen.queryByText('No chats')).toBeNull();
   });
 
   it('renders the empty chats state', () => {

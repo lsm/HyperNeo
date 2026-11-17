@@ -40,7 +40,7 @@ export function neoTodoPlace(
   todo: Pick<NeoTodo, 'id' | 'state' | 'blockedBy' | 'startedAt'>,
   cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[]
 ): NeoTodoPlace | null {
-  if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state)) return null;
+  if (!['todo', 'doing', 'blocked'].includes(todo.state)) return null;
   if (neoTodoCovered(todo, cards)) return 'waiting';
   const unheld = todo.state === 'blocked' && todo.blockedBy === 'question';
   if (todo.state === 'todo' || (unheld && todo.startedAt === null)) return 'queued';
@@ -129,7 +129,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
       };
     else if (
       !Object.keys(change).length &&
-      !['done', 'failed'].includes(todo.state) &&
+      todo.state !== 'done' &&
       !(
         todo.state === 'blocked' &&
         ['failure', 'stalled', 'held', 'check', 'environment'].includes(todo.blockedBy ?? '')

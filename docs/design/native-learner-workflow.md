@@ -1,5 +1,7 @@
 # Native Learner worker and learning workflow
 
+> Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs through Neo.
+
 **Status:** Proposed implementation specification  
 **Scope:** Continuous-learning gap #1, with the minimum PR-agnostic terminal contract needed by gap #2 and the proposal-validation data needed by gap #3  
 **Parent:** Goal `#951beac9`; originating task `#895`; design task `#917`

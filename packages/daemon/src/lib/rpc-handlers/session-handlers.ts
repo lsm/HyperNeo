@@ -110,6 +110,20 @@ export interface SessionHandlerDeps {
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Session[];
   primaryAgentFor?: (sessionId: string) => { id: string; displayName: string } | null;
+  runsGoal?: (sessionId: string) => boolean;
+}
+
+function goalSessionRefusal(
+  deps: SessionHandlerDeps | undefined,
+  session: { id: string; title?: string } | null
+): { success: false; reason: 'owns_goals'; clones: { id: string; title: string }[] } | null {
+  return session && deps?.runsGoal?.(session.id)
+    ? {
+        success: false,
+        reason: 'owns_goals',
+        clones: [{ id: session.id, title: session.title ?? '' }],
+      }
+    : null;
 }
 
 function agentPrimarySessionRefusal(
@@ -466,6 +480,9 @@ export function setupSessionHandlers(
     };
     const owned = agentPrimarySessionRefusal(deps, targetSessionId);
     if (owned) return owned;
+    const runsGoal =
+      deps?.runsGoal && goalSessionRefusal(deps, sessionManager.getSessionFromDB(targetSessionId));
+    if (runsGoal) return runsGoal;
     const clones = await deps?.resolveClones?.(
       targetSessionId,
       isCloneChoice(children) ? children : undefined,
@@ -512,6 +529,8 @@ export function setupSessionHandlers(
     }
     const owned = agentPrimarySessionRefusal(deps, targetSessionId);
     if (owned) return owned;
+    const runsGoal = goalSessionRefusal(deps, session);
+    if (runsGoal) return runsGoal;
 
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;

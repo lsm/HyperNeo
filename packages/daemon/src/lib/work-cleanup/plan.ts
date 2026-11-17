@@ -2,7 +2,8 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 
 export type WorkOwner =
   | { kind: 'todo'; state: NeoTodo['state']; boundToLiveTodo: boolean }
-  | { kind: 'session'; archived: boolean };
+  | { kind: 'session'; archived: boolean }
+  | { kind: 'worktree'; present: boolean };
 
 export type WorkFolderFacts = {
   owner: WorkOwner | null | 'unreadable';
@@ -12,11 +13,11 @@ export type WorkFolderFacts = {
 };
 
 export type WorkRelease =
-  | { remove: 'todo done' | 'todo removed' | 'session archived' }
+  | { remove: 'todo done' | 'todo removed' | 'session archived' | 'worktree gone' }
   | { keep: 'unknown' | 'live' | 'in_use' | 'unsaved' | 'evidence' };
 
 const DAY = 24 * 60 * 60 * 1000;
-const LIVE: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
 
 export function planWorkRelease(
   facts: WorkFolderFacts,
@@ -28,7 +29,8 @@ export function planWorkRelease(
   if (
     owner === 'unreadable' ||
     (owner.kind === 'todo' && (LIVE.includes(owner.state) || owner.boundToLiveTodo)) ||
-    (owner.kind === 'session' && !owner.archived)
+    (owner.kind === 'session' && !owner.archived) ||
+    (owner.kind === 'worktree' && owner.present)
   )
     return { keep: 'live' };
   if (facts.inUse !== false) return { keep: 'in_use' };
@@ -41,5 +43,6 @@ export function planWorkRelease(
   )
     return { keep: 'evidence' };
   if (owner.kind === 'session') return { remove: 'session archived' };
+  if (owner.kind === 'worktree') return { remove: 'worktree gone' };
   return owner.state === 'done' ? { remove: 'todo done' } : { remove: 'todo removed' };
 }

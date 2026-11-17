@@ -8,12 +8,14 @@ import { codingCanonicalRepo, codingRepoWatched, codingWatchedRepos } from './wa
 import { codingHumanSignoff } from './human-signoff.ts';
 import {
   CodingStageFactsRepository,
+  codingCrossModelFindings,
   codingCrossModelReviewed,
   codingHasAuthorLine,
   codingReviewerPolicy,
   type CodingStageFact,
   type CodingActor,
 } from './stage-facts.ts';
+import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import { CodingPollFactsRepository } from './poll-facts.ts';
@@ -109,6 +111,7 @@ export const Node = z.object({
     .default({ nodes: [] }),
   closedAt: z.string().nullable(),
   createdAt: z.string().nullable().default(null),
+  updatedAt: z.string().nullable().default(null),
   author: z
     .object({ login: z.string(), __typename: z.string().optional() })
     .nullable()
@@ -188,6 +191,7 @@ export function codingPrState(
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
   if (pr.isDraft) return 'draft';
+  if (codingCrossModelFindings(pr.headRefOid, stageFacts).length) return 'changes_requested';
   if (pr.mergeable === 'CONFLICTING') return 'dirty';
   const head = pr.commits.nodes[0]?.commit;
   const ci = head?.statusCheckRollup?.state ?? null;
@@ -243,7 +247,9 @@ export type CodingLedgerRow = {
   ci?: string | null;
   replyAt?: number | null;
   createdAt?: number | null;
+  updatedAt?: string | null;
   authorIsBot?: boolean;
+  findings?: string[];
 };
 
 export function planCodingLedgerRead(
@@ -264,24 +270,25 @@ export function planCodingLedgerRead(
   );
   const policy = readPolicy(canonical);
   const rows = [...open.nodes, ...done.nodes]
-    .map((pr) => ({
-      repo: canonical,
-      number: pr.number,
-      title: pr.title,
-      branch: pr.headRefName,
-      head: pr.headRefOid,
-      state: codingPrState(
-        pr,
-        repoHasCi,
-        policy,
-        policy.crossModelReview ? readStageFacts(canonical, pr.number) : []
-      ),
-      ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
-      replyAt: codingPrReplyAt(pr),
-      closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
-      createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
-      authorIsBot: pr.author?.__typename !== 'User',
-    }))
+    .map((pr) => {
+      const facts = policy.crossModelReview ? readStageFacts(canonical, pr.number) : [];
+      const findings = codingCrossModelFindings(pr.headRefOid, facts);
+      return {
+        repo: canonical,
+        number: pr.number,
+        title: pr.title,
+        branch: pr.headRefName,
+        head: pr.headRefOid,
+        state: codingPrState(pr, repoHasCi, policy, facts),
+        ...(findings.length ? { findings } : {}),
+        ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
+        replyAt: codingPrReplyAt(pr),
+        closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
+        createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
+        updatedAt: pr.updatedAt,
+        authorIsBot: pr.author?.__typename !== 'User',
+      };
+    })
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
   return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
 }
@@ -521,8 +528,29 @@ export class CodingPrLedgerRepository {
     return gatewayFor(this.db).call(codingLedgerReads, method);
   }
 
-  recordStage(fact: CodingStageFact): boolean {
-    return this.stageFacts.record(fact);
+  recordStage(fact: CodingStageFact, at = Date.now()): boolean {
+    return this.db.transaction(() => this.recordStageOnce(fact, at))();
+  }
+
+  private recordStageOnce(fact: CodingStageFact, at: number): boolean {
+    const recorded = this.stageFacts.record(fact);
+    const pr = parsePrUrl(fact.url);
+    if (recorded && fact.stage === 'review' && fact.verdict === 'fail' && pr)
+      this.db.run(
+        `UPDATE pack_coding_pr_ledger SET nudges = 0, state_since = ?, told_at = NULL,
+           terminal_event_json = json_object('repo', repo, 'number', number, 'title', title,
+             'branch', branch, 'head', head, 'state', state, 'closedAt', closed_at, 'ci', NULL,
+             'replyAt', reply_at, 'createdAt', created_at, 'updatedAt', updated_at,
+             'authorIsBot', json(CASE WHEN author_is_bot THEN 'true' ELSE 'false' END),
+             'findings', json(?), 'from', state)
+         WHERE repo = ? AND number = ? AND head = ? AND state = 'changes_requested' AND closed_at IS NULL`,
+        at,
+        JSON.stringify(codingCrossModelFindings(fact.head, this.stageFacts.read(fact.url))),
+        `${pr.owner}/${pr.repo}`.toLowerCase(),
+        Number(pr.number),
+        fact.head
+      );
+    return recorded;
   }
 
   readHealthDelivery(repos: readonly string[], staleBefore: number) {
@@ -563,6 +591,22 @@ export class CodingPrLedgerRepository {
 
   readStageFacts(url: string) {
     return this.stageFacts.read(url);
+  }
+
+  readPostedReview(url: string) {
+    return this.stageFacts.postedMarker(url);
+  }
+
+  recordPostedReview(url: string, marker: string) {
+    this.stageFacts.markPosted(url, marker);
+  }
+
+  readReviewCommentHold(host: string) {
+    return this.stageFacts.commentHoldUntil(host);
+  }
+
+  recordReviewCommentHold(host: string, until: number) {
+    this.stageFacts.holdComments(host, until);
   }
 
   reviewerProvenance(repo: string, body: string) {
@@ -692,8 +736,8 @@ export class CodingPrLedgerRepository {
   private upsert(rows: readonly CodingLedgerRow[], now: number, observedAt: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
-         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = excluded.title, branch = excluded.branch, closed_at = excluded.closed_at,
          read_at = excluded.read_at,
@@ -707,6 +751,7 @@ export class CodingPrLedgerRepository {
            ELSE state_since END,
          reply_at = COALESCE(excluded.reply_at, reply_at),
          created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
+         updated_at = excluded.updated_at,
          terminal_event_json = CASE WHEN head = excluded.head AND state = excluded.state
            THEN terminal_event_json ELSE NULL END,
          head = excluded.head, state = excluded.state`
@@ -729,7 +774,8 @@ export class CodingPrLedgerRepository {
         now,
         row.replyAt ?? null,
         row.createdAt ?? null,
-        row.authorIsBot === false ? 0 : 1
+        row.authorIsBot === false ? 0 : 1,
+        row.updatedAt ?? null
       );
     }
   }
@@ -911,7 +957,7 @@ export class CodingPrLedgerRepository {
     const rows = this.db
       .prepare(
         `SELECT repo, number, title, branch, head, state, closed_at AS closedAt,
-                state_since AS stateSince, read_at AS readAt
+                state_since AS stateSince, read_at AS readAt, updated_at AS updatedAt
            FROM pack_coding_pr_ledger ORDER BY repo, number`
       )
       .all() as (CodingLedgerRow & { stateSince: number; readAt: number })[];
@@ -994,6 +1040,8 @@ type CodingLedgerWrite =
   | 'recordHealth'
   | 'readHealth'
   | 'recordStage'
+  | 'recordPostedReview'
+  | 'recordReviewCommentHold'
   | 'recordAlias'
   | 'dropRepo'
   | 'replace'
@@ -1012,6 +1060,8 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'recordHealth',
     'readHealth',
     'recordStage',
+    'recordPostedReview',
+    'recordReviewCommentHold',
     'recordAlias',
     'dropRepo',
     'replace',
@@ -1033,5 +1083,7 @@ export const codingLedgerReads = defineRepositoryOp(
     'healthDelivery',
     'policyContext',
     'readStageFacts',
+    'readPostedReview',
+    'readReviewCommentHold',
   ] as const
 );

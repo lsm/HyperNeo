@@ -49,9 +49,9 @@ const cases = [
   { id: 'merged-worker', kind: 'pr_merged', state: 'blocked', blocker: 'worker', done: true },
   { id: 'open-human', kind: 'pr_merged', state: 'blocked', blocker: 'needs-human', done: false },
   { id: 'removed', kind: 'pr_merged', state: 'removed', done: false },
-  { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'failed', done: false },
-  { id: 'failed-preserved', kind: 'pr_merged', state: 'failed', done: false },
-  { id: 'merged-failed', kind: 'pr_merged', state: 'failed', done: true },
+  { id: 'legacy-conflict', kind: 'conflicting', state: 'doing', expected: 'blocked', done: false },
+  { id: 'failed-preserved', kind: 'pr_merged', state: 'blocked', blocker: 'failure', done: false },
+  { id: 'merged-failed', kind: 'pr_merged', state: 'blocked', blocker: 'failure', done: true },
   { id: 'named-replacement', kind: 'pr_merged', state: 'doing', done: true },
 ].filter(item => !process.argv.includes('named') || ['merged-delivery', 'named-replacement'].includes(item.id));
 const evidence: unknown[] = [];
@@ -141,7 +141,7 @@ try {
   for (const item of cases) {
     const todo = store.getTodo(item.id)!;
     assert.equal(todo.state, item.expected ?? (item.done ? 'done' : item.state), item.id);
-    if (item.expected === 'failed') assert.equal(todo.reason, 'Observed failure');
+    if (item.expected === 'blocked') assert.equal(todo.blockedReason, 'Observed failure');
     assert.equal(todo.report, 'Preserve the complete worker report');
     if (item.done) assert.equal(todo.blockedBy, null, item.id);
     if (item.blocker === 'needs-human') {

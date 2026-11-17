@@ -222,13 +222,6 @@ export type FileReadOutput =
         mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
         error?: string;
       }[];
-    }
-  | {
-      type: "file_unchanged";
-      file: {
-        filePath: string;
-      };
-      source?: "seeded";
     };
 export type ListMcpResourcesOutput = {
   uri: string;
@@ -301,6 +294,7 @@ export type ArtifactOutput =
       truncated?: boolean;
       total?: number;
       total_at_least?: true;
+      next_page_token?: string;
       pins_enabled?: boolean;
       scope?: "shared" | "all";
       external_listed?: true;
@@ -553,6 +547,8 @@ export type ProjectsOutput =
         name?: string;
         doc_uuid?: string;
         text?: string;
+        image_attached?: boolean;
+        page?: number;
       }[];
       docs?: string[];
     }
@@ -1440,7 +1436,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         }
       ]
     | [
@@ -1450,7 +1456,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         },
         {
           name: string;
@@ -1458,7 +1474,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         }
       ]
     | [
@@ -1468,7 +1494,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         },
         {
           name: string;
@@ -1476,7 +1512,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         },
         {
           name: string;
@@ -1484,7 +1530,17 @@ export interface ProposeSkillsInput {
           target?: string;
           description: string;
           evidence?: string[];
-          skillMd: string;
+          edits?: [
+            {
+              old_string: string;
+              new_string: string;
+            },
+            ...{
+              old_string: string;
+              new_string: string;
+            }[]
+          ];
+          skillMd?: string;
         }
       ];
 }
@@ -1511,6 +1567,7 @@ export interface ArtifactInput {
   favicon?: string;
   icon?: string;
   limit?: number;
+  page_token?: string;
   scope?: "mine" | "shared" | "all";
   title?: string;
   description?: string;
@@ -1530,7 +1587,7 @@ export interface ArtifactInput {
 }
 export interface PushNotificationInput {
   message: string;
-  status: "proactive";
+  status?: "proactive";
 }
 export interface EnterWorktreeInput {
   name?: string;
@@ -1655,6 +1712,7 @@ export interface GlobOutput {
   truncated: boolean;
   totalMatches?: number;
   countIsComplete?: boolean;
+  timedOut?: boolean;
 }
 export interface GrepOutput {
   mode?: "content" | "files_with_matches" | "count";
@@ -1667,6 +1725,7 @@ export interface GrepOutput {
   totalLines?: number;
   appliedLimit?: number;
   appliedOffset?: number;
+  timedOut?: boolean;
 }
 export interface TaskStopOutput {
   message: string;
@@ -1852,6 +1911,7 @@ export interface TaskCreateOutput {
   task: {
     id: string;
     subject: string;
+    description?: string;
   };
 }
 export interface TaskGetOutput {
@@ -1950,6 +2010,7 @@ export interface CronCreateOutput {
 }
 export interface CronDeleteOutput {
   id: string;
+  endedLoopWakeup?: true;
 }
 export interface CronListOutput {
   jobs: {

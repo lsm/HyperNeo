@@ -41,7 +41,6 @@ const NEO_TODO_STATUS_EN = {
   'todo.replaced': 'Replaced by "{title}"',
   'todo.replaced.reason': 'Replaced by "{title}": {reason}',
   'todo.removed': 'Removed',
-  'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
   'todo.held': 'On hold',
@@ -71,8 +70,6 @@ export function neoTodoStatusLine(
         : coded('todo.replaced', { title });
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.removed');
   }
-  if (todo.state === 'failed')
-    return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
   const held = neoTodoHeldBy(todo, cards);
   if (held) return coded(held === 'hold' ? 'todo.held' : 'todo.paused');
   if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
@@ -180,11 +177,10 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
 
 const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   blocked: 0,
-  failed: 1,
-  doing: 2,
-  todo: 3,
-  done: 4,
-  removed: 5,
+  doing: 1,
+  todo: 2,
+  done: 3,
+  removed: 4,
 };
 
 function neoTodoListOrder<T extends NeoTodo>(todos: readonly T[]): T[] {
@@ -294,6 +290,7 @@ export const NeoAskEntrySchema = z.object({
     originMessageId: Nullable,
     title: z.string(),
     topic: Nullable,
+    topicKey: z.string().optional(),
     request: z.string(),
     status: z.enum(['open', 'done', 'dropped']),
     outcome: Nullable,

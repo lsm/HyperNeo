@@ -1761,7 +1761,7 @@ describe('QueryLifecycleManager', () => {
       'does not validate a Codex native thread as a Claude transcript during %s',
       async (operation) => {
         mockContext.session.sdkSessionId = 'synthetic-native-thread';
-        mockContext.session.config.harness = 'codex';
+        mockContext.session.config.harness = 'oxap-codex';
         if (operation === 'reset') {
           mockContext.queryObject = {
             interrupt: mock(async () => {}),

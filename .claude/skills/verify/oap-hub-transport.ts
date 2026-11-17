@@ -77,7 +77,7 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP transport', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP transport', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   client = new OapHubClient({ command: binary, args: ['serve', '--stdio', '--config', config, '--session-history', join(run, 'hub/history.jsonl')], cwd: join(run, 'hub'), env: { HOME: join(run, 'hub'), CODEX_HOME: join(run, 'codex-home') } });
   await client.connect();
   const opened = await client.request('open', { adapter: 'codex', directory: join(run, 'workspace'), request: { protocol: 'open-agent-protocol', version: '0.1', profile: 'open-agent-protocol.agent-control-core', type: 'session.open.request', id: 'synthetic-open', payload: { session_id: sessionId } } }) as { payload?: { session_id?: string } };

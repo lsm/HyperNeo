@@ -40,6 +40,8 @@ const NEO_STEP: Record<NeoStepReason, (detail: string) => string> = {
     'it waits on an answer and no card is open. Answer its worker, or ask the human with neo.question.ask.',
   no_worker: () =>
     'its prerequisites are done and it has no instruction or worker. Write the instruction and start it, or remove it.',
+  check_overdue: () =>
+    'its check has not passed for 24 hours. Ask whoever it waits on, mark it done, or remove it.',
   idle_worker: () =>
     'its worker is idle and nothing is pending. Continue it, mark it done, or remove it.',
 };
@@ -82,11 +84,18 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
         ? `Todo "${facts.title}" (${subject.id}) is a request from session ${facts.requestFrom} waiting for your answer. Answer it by closing this todo with neo.todo.done or neo.todo.remove and a reason; the daemon sends that reason to the requester.`
         : `Todo "${facts.title}" (${subject.id}) needs your next step: ${NEO_STEP[facts.reason as NeoStepReason](String(facts.detail ?? ''))}`,
   },
+  { id: 'todo.line_moved', render: carried, decide: always('digest') },
   { id: 'todo.stalled', render: carried, decide: always('wake'), ladder: [4 * HOUR] },
   { id: 'ask.idle', render: carried, decide: always('digest'), ladder: [DAY] },
   { id: 'worker.session_error', render: carried, decide: always('wake') },
   { id: 'request.reply_failed', render: carried, decide: always('wake') },
   { id: 'driver.health', render: carried, decide: always('digest'), ladder: [DAY] },
+  { id: 'work.cleanup', render: carried, decide: always('digest') },
+  {
+    id: 'work.disk',
+    render: carried,
+    decide: ({ facts }) => (facts.level === 'floor' ? 'wake' : 'digest'),
+  },
   {
     id: 'todo.follow_up_missing',
     decide: always('wake'),

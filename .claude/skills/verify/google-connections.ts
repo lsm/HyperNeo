@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -70,7 +71,7 @@ try {
       assert.notEqual(app.server.port, 8399);
       await app.jobProcessor.stop();
       const registry = app.sessionManager.getOperationRegistry();
-      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+      ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
       await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('WebSocket unavailable')); });
       const call = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {
         const id = crypto.randomUUID();

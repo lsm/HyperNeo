@@ -1,4 +1,5 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
+import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
 import { useEffect, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
@@ -12,6 +13,8 @@ import { sessions } from '../lib/state.ts';
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
+  listSystemProjects,
+  type SystemProject,
   addWorkspaceToHistory,
   removeWorkspaceFromHistory,
   archiveSession,
@@ -30,6 +33,7 @@ import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
 
 interface SessionsSidebarProps {
   onSessionSelect?: () => void;
@@ -41,17 +45,27 @@ function lastActive(session: Session): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function unarchived(sessionsList: Session[]): Session[] {
+  return sessionsList.filter((session) => session.status !== 'archived');
+}
+
+function chatCount(count: number): string {
+  return `${count} ${count === 1 ? 'chat' : 'chats'}`;
+}
+
 interface ProjectGroup {
   path: string;
   name: string;
   sessions: Session[];
   sortTime: number;
   folders: string[];
+  system: boolean;
 }
 
 function buildView(
   sessionsList: Session[],
-  history: WorkspaceHistoryEntry[]
+  history: WorkspaceHistoryEntry[],
+  systemProjects: SystemProject[] = []
 ): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
   const memberships = new Map(
@@ -59,8 +73,23 @@ function buildView(
       entry.project ? entry.project.folders.map((folder) => [folder, entry.project!] as const) : []
     )
   );
+  const systemTime = new Map<string, number>();
+  const systemDefinitions = systemProjects.flatMap((project) => {
+    const free = project.folders.filter((folder) => !memberships.has(folder));
+    if (project.folders.length > 0 && free.length === 0) return [];
+    const definition = {
+      id: `neo:${project.id}`,
+      name: project.name,
+      folders: free.slice(0, 1),
+    };
+    for (const folder of free) memberships.set(folder, definition);
+    systemTime.set(definition.id, project.updatedAt);
+    return [definition];
+  });
   const projectKey = (path: string) => memberships.get(path)?.id ?? path;
-  const definitions = new Map([...memberships.values()].map((project) => [project.id, project]));
+  const definitions = new Map(
+    [...memberships.values(), ...systemDefinitions].map((project) => [project.id, project])
+  );
   const ungrouped: Session[] = [];
   const ids = new Set(sessionsList.map((session) => session.id));
   const childrenByParent = new Map<string, Session[]>();
@@ -90,6 +119,10 @@ function buildView(
     historyTime.set(key, Math.max(historyTime.get(key) ?? 0, entry.lastUsedAt));
     if (!byRoot.has(key)) byRoot.set(key, []);
   }
+  for (const [key, updatedAt] of systemTime) {
+    historyTime.set(key, Math.max(historyTime.get(key) ?? 0, updatedAt));
+    if (!byRoot.has(key)) byRoot.set(key, []);
+  }
 
   const projects: ProjectGroup[] = [...byRoot.entries()]
     .map(([path, grouped]) => {
@@ -100,6 +133,7 @@ function buildView(
         path,
         name: project?.name ?? projectName(path),
         folders: project?.folders ?? [path],
+        system: systemTime.has(path),
         sessions: sorted,
         sortTime,
       };
@@ -116,6 +150,7 @@ function buildView(
 
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+  const [systemProjects, setSystemProjects] = useState<SystemProject[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
@@ -127,6 +162,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     sessionId: string;
     clones: CloneSummary[];
   } | null>(null);
+  const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
+  const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -138,12 +175,20 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     getWorkspaceHistory()
       .then(setHistory)
       .catch(() => {});
+    listSystemProjects()
+      .then(setSystemProjects)
+      .catch(() => {});
   }, [historyVersion]);
 
   const sessionsList = sessions.value.filter(isUserSession);
-  const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
+  const { projects, ungrouped, childrenByParent } = buildView(
+    sessionsList,
+    history,
+    systemProjects
+  );
   const hasContent = sessionsList.length > 0 || projects.length > 0;
   const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
+  const removeProjectTarget = projects.find((project) => project.path === removeProjectPath);
 
   const handleSessionClick = (sessionId: string) => {
     navigateToSession(sessionId);
@@ -220,11 +265,37 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     }
   };
 
+  const handleConfirmRemoveProject = async () => {
+    if (!removeProjectTarget) return;
+    setRemoveProjectBusy(true);
+    let kept = 0;
+    for (const session of unarchived(removeProjectTarget.sessions)) {
+      try {
+        const result = await archiveSession(session.id);
+        if (!result.success) kept += 1;
+      } catch {
+        kept += 1;
+      }
+    }
+    setRemoveProjectBusy(false);
+    setRemoveProjectPath(null);
+    if (kept > 0) {
+      toast.error(
+        `${chatCount(kept)} still ${kept === 1 ? 'needs' : 'need'} to be archived one by one before the project can be removed`
+      );
+      return;
+    }
+    await handleRemoveProject(removeProjectTarget.folders);
+  };
+
   const handleArchive = async (sessionId: string, children?: CloneChildrenChoice) => {
     setArchiveBusy(true);
     try {
       const result = await archiveSession(sessionId, false, children);
-      if (result.reason === 'has_clones' && result.clones) {
+      if (result.reason === 'owns_goals') {
+        setCloneChoice(null);
+        toast.error(GOAL_CHILD_MESSAGE);
+      } else if (result.reason === 'has_clones' && result.clones) {
         setCloneChoice({ sessionId, clones: result.clones });
       } else if (result.requiresConfirmation && result.commitStatus) {
         setCloneChoice(null);
@@ -245,7 +316,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirm(null);
+      } else if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
       }
@@ -369,10 +443,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   name={project.name}
                   path={project.path}
                   folders={project.folders}
-                  onNewSession={() => {
-                    newChatProjectSignal.value = project.folders[0];
-                    handleNewChat();
-                  }}
+                  onNewSession={
+                    project.folders.length > 0
+                      ? () => {
+                          newChatProjectSignal.value = project.folders[0];
+                          handleNewChat();
+                        }
+                      : undefined
+                  }
                   sessions={project.sessions}
                   collapsed={collapsed.has(project.path)}
                   onToggle={() => toggleProject(project.path)}
@@ -380,9 +458,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
                   onRemove={
-                    project.sessions.length === 0
-                      ? () => handleRemoveProject(project.folders)
-                      : undefined
+                    project.system
+                      ? undefined
+                      : () =>
+                          unarchived(project.sessions).length === 0
+                            ? handleRemoveProject(project.folders)
+                            : setRemoveProjectPath(project.path)
                   }
                 />
               ))}
@@ -420,6 +501,19 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           busy={archiveBusy}
           onChoose={(choice) => handleArchive(cloneChoice.sessionId, choice)}
           onCancel={() => setCloneChoice(null)}
+        />
+      )}
+
+      {removeProjectTarget && (
+        <ConfirmModal
+          isOpen
+          onClose={() => setRemoveProjectPath(null)}
+          onConfirm={handleConfirmRemoveProject}
+          title={`Remove ${removeProjectTarget.name}?`}
+          message={`This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`}
+          confirmText="Archive chats and remove"
+          confirmTestId="project-remove-confirm"
+          isLoading={removeProjectBusy}
         />
       )}
 

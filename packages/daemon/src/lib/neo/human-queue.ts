@@ -3,7 +3,7 @@ import type { NeoHumanQueue, NeoHumanQueueItem } from '@hyperneo/shared/types/ne
 import type { NeoStepOwner } from './attention/owner.ts';
 import { neoTodoCovered } from './todo-state.ts';
 
-const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked', 'failed'];
+const UNFINISHED: readonly NeoTodo['state'][] = ['todo', 'doing', 'blocked'];
 
 export function neoHumanQueue(input: {
   questions: readonly Pick<

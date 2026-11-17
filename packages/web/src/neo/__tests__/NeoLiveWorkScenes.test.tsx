@@ -111,8 +111,10 @@ describe('Work search input and retry', () => {
     vi.spyOn(connectionManager, 'getHub').mockResolvedValue({ request } as never);
     const protocol = testAskEntry('protocol', 'to do protocol');
     protocol.ask.topic = 'OAP';
+    protocol.ask.topicKey = 'pick:oap';
     const inbox = testAskEntry('inbox', 'to do inbox');
     inbox.ask.topic = '邮件';
+    inbox.ask.topicKey = 'pick:邮件';
     const { model, container } = mount();
     act(() => {
       model.value = {
@@ -137,6 +139,7 @@ describe('Work search input and retry', () => {
     locale.value = 'en';
     const remote = testAskEntry('remote', 'remote protocol', { state: 'done' });
     remote.ask.topic = 'OAP';
+    remote.ask.topicKey = 'pick:oap';
     const request = vi.fn(async (_method: string, params: { name: string }) => {
       if (params.name === 'neo.ask.search')
         return { ok: true, results: [{ askId: remote.ask.id }], nextCursor: null };
@@ -313,6 +316,73 @@ function mount(publicMode = true, empty = false) {
   if (sheet) fireEvent.click(sheet);
   return { ...view, model };
 }
+
+describe('Topic chips by topic key', () => {
+  const topical = () =>
+    (
+      [
+        ['shop-p', 'Shop', 'p'],
+        ['shop-q', 'Shop', 'q'],
+        ['lower', 'kids', 'pick:kids'],
+        ['upper', 'Kids', 'pick:kids'],
+      ] as const
+    ).map(([id, topic, topicKey]) => {
+      const entry = testAskEntry(id, `Work ${id}`);
+      entry.ask.topic = topic;
+      entry.ask.topicKey = topicKey;
+      return entry;
+    });
+  const show = () => {
+    const view = mount();
+    act(() => {
+      view.model.value = {
+        ...view.model.value,
+        snapshot: { ...view.model.value.snapshot, todoAsks: topical() },
+      };
+    });
+    return view;
+  };
+  const listed = (container: Element) =>
+    [...container.querySelectorAll('[data-ask]')].map((node) => node.getAttribute('data-ask'));
+
+  it('keeps same-titled projects apart, folds picks, and agrees across reload and the card button', () => {
+    locale.value = 'en';
+    const { container } = show();
+    expect(
+      within(container.querySelector('[data-topic-chips]') as HTMLElement)
+        .getAllByRole('button')
+        .map((chip) => chip.textContent)
+    ).toEqual(['All 4', 'kids 2', 'Shop 1', 'Shop 1']);
+    const [first, second] = screen.getAllByRole('button', { name: 'Shop 1' });
+    fireEvent.click(first);
+    expect(listed(container)).toEqual(['shop-p']);
+    fireEvent.click(second);
+    expect(listed(container)).toEqual(['shop-q']);
+    fireEvent.click(screen.getByRole('button', { name: 'kids 2' }));
+    expect(listed(container).sort()).toEqual(['lower', 'upper']);
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('neo:topic-filter', 'pick:kids');
+
+    cleanup();
+    vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+      key === 'neo:topic-filter' ? 'pick:kids' : null
+    );
+    const reloaded = show().container;
+    expect(screen.getByRole('button', { name: 'kids 2' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(listed(reloaded).sort()).toEqual(['lower', 'upper']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'All 4' }));
+    const card = reloaded.querySelector('[data-ask="shop-q"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: 'Shop' }));
+    expect(listed(reloaded)).toEqual(['shop-q']);
+    expect(
+      screen
+        .getAllByRole('button', { name: 'Shop 1' })
+        .map((chip) => chip.getAttribute('aria-pressed'))
+    ).toEqual(['false', 'true']);
+  });
+});
 
 describe('Neo public work scenes', () => {
   it('loads older outcomes only on request and allows retry without dropping current work', async () => {
@@ -1029,11 +1099,13 @@ describe('card reply notice navigation', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
     trip.ask.topic = 'Travel';
+    trip.ask.topicKey = 'Travel';
     const tax = testAskEntry('tax', 'Fictional tax', {
       state: 'doing',
       todos: [testTodo('tax-step', { title: 'tax step', state: 'doing' })],
     });
     tax.ask.topic = 'Money';
+    tax.ask.topicKey = 'Money';
     const progress = (askId: string) => ({
       state: 'progress' as const,
       askId,
@@ -1122,7 +1194,11 @@ describe('card reply notice navigation', () => {
                   state: 'waiting',
                   questions: [card as never],
                 }),
-                ask: { ...testAskEntry('trip', 'Fictional trip').ask, topic: 'Travel' },
+                ask: {
+                  ...testAskEntry('trip', 'Fictional trip').ask,
+                  topic: 'Travel',
+                  topicKey: 'Travel',
+                },
               },
               {
                 ...testAskEntry('hotel-ask', 'Fictional hotel booking', {
@@ -1132,6 +1208,7 @@ describe('card reply notice navigation', () => {
                 ask: {
                   ...testAskEntry('hotel-ask', 'Fictional hotel booking').ask,
                   topic: 'Money',
+                  topicKey: 'Money',
                 },
               },
             ],
@@ -1404,8 +1481,10 @@ describe('card reply notice navigation', () => {
     const { model } = mount();
     const trip = testAskEntry('trip', 'Fictional trip', { state: 'doing' });
     trip.ask.topic = 'Travel';
+    trip.ask.topicKey = 'Travel';
     const tax = testAskEntry('tax', 'Fictional tax', { state: 'doing' });
     tax.ask.topic = 'Money';
+    tax.ask.topicKey = 'Money';
     const progress = (askId: string) => ({
       state: 'progress' as const,
       askId,

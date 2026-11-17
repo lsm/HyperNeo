@@ -1,4 +1,4 @@
-import { queueNeoRequestReply } from '../../lib/neo/request-todo.ts';
+import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
   NeoAsk,
@@ -39,6 +39,7 @@ import {
   neoAskInputReads,
   neoAskInputWrites,
 } from './neo-ask-input-worker.ts';
+import { readNeoAskTopics } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
@@ -161,6 +162,10 @@ export type NeoQuestionDraft = Pick<
   | 'sourceSession'
 > &
   Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
+
+export const NEO_ADVISORY_QUESTION = (question: string) =>
+  `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
+    AND json_extract(p.values_json, '$.hold') = 0)`;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
@@ -324,7 +329,7 @@ export class NeoAskTodoRepository {
     work = false,
     before?: { updatedAt: number; id: string }
   ) {
-    const asks = this.listAsks(projectId, limit, work, before);
+    const asks = this.withTopics(this.listAsks(projectId, limit, work, before));
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
     const questions = this.listQuestionsForAsks(ids);
@@ -393,7 +398,7 @@ export class NeoAskTodoRepository {
       .prepare(
         `SELECT t.id, t.ask_id AS askId, t.state, t.blocked_by AS blockedBy, t.started_at AS startedAt
          FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id
-         WHERE t.state IN ('todo', 'doing', 'blocked', 'failed') AND a.status = 'open'`
+         WHERE t.state IN ('todo', 'doing', 'blocked') AND a.status = 'open'`
       )
       .all() as Pick<NeoTodo, 'id' | 'askId' | 'state' | 'blockedBy' | 'startedAt'>[];
     const questions = (
@@ -420,8 +425,9 @@ export class NeoAskTodoRepository {
 
   doneTodoFacts(askId: string) {
     const todos = this.listTodos(askId);
+    const ask = this.getAsk(askId);
     return {
-      ask: this.getAsk(askId),
+      ask: ask && this.withTopics([ask])[0]!,
       todos,
       links: new NeoTodoSessionRepository(this.db).readLinksForTodos(todos.map((todo) => todo.id)),
     };
@@ -612,8 +618,13 @@ export class NeoAskTodoRepository {
           outcome,
           ask.sessionId
         );
+    queueNeoRequestSettledReply(this.db, ask.id, ask.sessionId);
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
+  }
+
+  private withTopics(asks: readonly NeoAsk[]): NeoAsk[] {
+    return readNeoAskTopics(this.db, asks, this.getAsks(asks.flatMap((ask) => ask.parentId ?? [])));
   }
 
   getAsk(id: string): NeoAsk | null {
@@ -678,8 +689,9 @@ export class NeoAskTodoRepository {
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
-      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
-      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('blocked', 'failed')))
+      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
+        AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})
+      AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
       .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
       NeoAskTodoRepository['listStalledAsks']
@@ -927,7 +939,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked', 'failed')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')
              AND (?1 IS NULL OR (((state = 'blocked' AND blocked_by IN ('stalled', 'environment') AND updated_at <= ?1)
                OR (state = 'todo' AND created_at <= ?2 AND check_json IS NOT NULL AND COALESCE(TRIM(instruction), '') = ''))
@@ -940,7 +952,7 @@ export class NeoAskTodoRepository {
   getCheckable(id: string): NeoTodo | null {
     const row = this.db
       .prepare(
-        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked', 'failed')
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
            AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
       )
       .get(id) as TodoRow | null;
@@ -1032,10 +1044,15 @@ export class NeoAskTodoRepository {
     this.changeQuestion(id, { actions_applied_at: now }, 'answered');
   }
 
-  listQuestions(askId: string): NeoQuestion[] {
+  listBlockingQuestions(askId: string): NeoQuestion[] {
+    return this.listQuestions(askId, true);
+  }
+
+  listQuestions(askId: string, blockingOnly = false): NeoQuestion[] {
+    const advisory = blockingOnly ? `AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')}` : '';
     return (
       this.db
-        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
+        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ${advisory} ORDER BY created_at, rowid`)
         .all(askId) as QuestionRow[]
     ).map(toQuestion);
   }
