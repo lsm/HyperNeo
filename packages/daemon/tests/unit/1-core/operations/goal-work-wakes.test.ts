@@ -38,6 +38,10 @@ describe('goal work wakes', () => {
       goals,
       schedules,
       sessionExists: (sessionId) => sessionId === 'neo:root',
+      isChildSession: () => false,
+      startSession: () => {
+        throw new Error('work-wake tests never start a goal session');
+      },
       audit: () => {},
     });
     call = (name, input) => {
