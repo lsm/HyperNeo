@@ -36,7 +36,7 @@ the daemon started. The setting picks which of them may take the work:
 | `per_ask` | only a free worker that already worked on this todo's ask; else a new one | One session per matter |
 | `per_todo` | none; every todo starts a new worker | One session per step |
 
-`per_ask` uses the `sameAskAt` fact core already reads (`storage/work-started-sessions.ts`
+`per_ask` uses the `sameAskAt` fact core already reads (`packages/daemon/src/storage/work-started-sessions.ts`
 `readStartedWork`): a candidate is allowed only when it is set. `per_todo` skips reuse.
 Neo's explicit `send` to a named session is unchanged; this setting only decides what a
 `start` may reuse.
