@@ -287,7 +287,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     return { value: { ...base, ref, actor, effort, fallback: plan.fallback } };
   }
 
-  const assign = (superpipe({})('coding.assign-actor') as PipelineAPI)
+  const assign = (superpipe({})('neo.coding.assign') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((input: Input) => admit(input, deps), 'input', 'result:assignment')
     .pipe(
