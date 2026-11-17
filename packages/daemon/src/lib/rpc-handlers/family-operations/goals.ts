@@ -3,7 +3,7 @@ import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo
 import { SessionGoalRepository } from '../../../storage/repositories/session-goal-repository.ts';
 import { createSessionGoalOperations } from '../../goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../goals/session-goal-schedules.ts';
-import { startGoalSession } from '../../goals/goal-session-start.ts';
+import { goalParentProblem, startGoalSession } from '../../goals/goal-session-start.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
 
@@ -12,11 +12,12 @@ export function registerSessionGoalOperations(
 ): OperationDefinition[] {
   const audit = new McpAuditLogRepository(context.deps.db.getDatabase());
   const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
-  const parentProblem = (sessionId: string) => {
-    const session = context.deps.db.getSession(sessionId);
-    if (session?.parentSessionId) return 'child' as const;
-    return session?.status === 'active' ? null : ('inactive' as const);
-  };
+  const parentProblem = (sessionId: string) =>
+    goalParentProblem(sessionId, {
+      getSession: (id) => context.deps.db.getSession(id),
+      getSpace: async (spaceId) => (await context.sessionSpace?.getSpace(spaceId)) ?? null,
+      resolveRole: (session) => context.sessionSpace?.resolveRole(session) ?? 'universal_read',
+    });
   const canReturn = (sessionId: string) => {
     const session = context.deps.db.getSession(sessionId);
     return (

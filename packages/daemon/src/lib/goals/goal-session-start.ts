@@ -1,6 +1,8 @@
 import type { Session } from '@hyperneo/shared';
 import {
+  admitSpaceParent,
   buildCloneParams,
+  loadParent,
   type SpawnSessionCloneDependencies,
 } from '../session/clone-operations.ts';
 
@@ -30,4 +32,13 @@ export async function startGoalSession(parent: Session, title: string, deps: Dep
     }
   }
   return sessionId;
+}
+
+export async function goalParentProblem(
+  parentId: string,
+  deps: Pick<SpawnSessionCloneDependencies, 'getSession' | 'getSpace' | 'resolveRole'>
+): Promise<'child' | 'inactive' | null> {
+  const parent = loadParent(parentId, deps);
+  if ('reason' in parent) return parent.reason.reason === 'nested_clone' ? 'child' : 'inactive';
+  return 'reason' in (await admitSpaceParent(parent.value, deps)) ? 'inactive' : null;
 }

@@ -52,7 +52,7 @@ function setup(
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
   const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
-  const parentProblem = (sessionId: string) =>
+  const parentProblem = async (sessionId: string) =>
     canReturn(sessionId) || sessionId === 'moved'
       ? ('child' as const)
       : sessionId === 'archived'
@@ -866,7 +866,8 @@ describe('a goal in its own session', () => {
         )
       ).toEqual({
         accepted: false,
-        reason: 'parent_unavailable: a goal session must start under an active session.',
+        reason:
+          'parent_unavailable: a goal session must start under an active session that may be cloned.',
       });
       expect(started).toEqual([]);
       expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });

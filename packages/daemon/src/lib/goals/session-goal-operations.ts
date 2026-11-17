@@ -28,7 +28,8 @@ type Rejection = { accepted: false; reason: string };
 
 const PARENT_REFUSALS = {
   child: 'parent_is_child: a goal session must start under a top-level session.',
-  inactive: 'parent_unavailable: a goal session must start under an active session.',
+  inactive:
+    'parent_unavailable: a goal session must start under an active session that may be cloned.',
 } as const;
 
 const OWNER_READ_POLICY = {
@@ -199,7 +200,7 @@ const GoalResult = z.discriminatedUnion('accepted', [
 export function resolveGoalOwner(
   caller: OperationCaller,
   input: { ownerSessionId?: string },
-  canReturn: (sessionId: string) => boolean
+  canOwn: (sessionId: string) => boolean
 ): Gate<string> {
   if (caller.source !== 'mcp')
     return input.ownerSessionId
@@ -208,7 +209,7 @@ export function resolveGoalOwner(
   if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
   if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
-  return canReturn(caller.sessionId) &&
+  return canOwn(caller.sessionId) &&
     (!input.ownerSessionId || input.ownerSessionId === caller.sessionId)
     ? { value: caller.sessionId }
     : refuse('owner_denied: this session may only use goals it owns.');
@@ -262,7 +263,7 @@ export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
-  readonly parentProblem: (sessionId: string) => 'child' | 'inactive' | null;
+  readonly parentProblem: (sessionId: string) => Promise<'child' | 'inactive' | null>;
   readonly canReturn: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly releaseSession: (sessionId: string) => Promise<void>;
@@ -279,12 +280,14 @@ export function createSessionGoalOperations({
   releaseSession,
   audit,
 }: SessionGoalDependencies) {
+  const canOwn = (sessionId: string) =>
+    canReturn(sessionId) && goals.list(sessionId, true).length > 0;
   const owner = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
       .pipe(
         (caller: OperationCaller, input: { ownerSessionId?: string }) =>
-          resolveGoalOwner(caller, input, canReturn),
+          resolveGoalOwner(caller, input, canOwn),
         ['caller', 'input'],
         'result:outcome'
       )
@@ -311,8 +314,8 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (parent: string, input: z.infer<typeof Create>) => {
-        const problem = input.ownSession ? parentProblem(parent) : null;
+      async (parent: string, input: z.infer<typeof Create>) => {
+        const problem = input.ownSession ? await parentProblem(parent) : null;
         return problem ? refuse(PARENT_REFUSALS[problem]) : { value: parent };
       },
       ['outcome', 'input'],

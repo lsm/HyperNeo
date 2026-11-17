@@ -12,7 +12,7 @@ import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 
 export const GOAL_CHILD_MESSAGE =
-  'A child chat runs a goal. Close the goal first, or archive its chats with the parent.';
+  'A chat here runs a goal. Close the goal first, or archive it with its parent chat.';
 
 function agentPrimarySessionMessage(
   agentName: string | undefined,
@@ -88,6 +88,8 @@ export function useSessionActions({
           return;
         }
         if (result.reason === 'owns_goals') {
+          setCloneChoiceDialog(null);
+          onDeleteModalClose();
           toast.error(GOAL_CHILD_MESSAGE);
           return;
         }
@@ -116,6 +118,7 @@ export function useSessionActions({
         if (result.reason === 'agent_primary_session') {
           toast.error(agentPrimarySessionMessage(result.agentName, 'archive'));
         } else if (result.reason === 'owns_goals') {
+          setCloneChoiceDialog(null);
           toast.error(GOAL_CHILD_MESSAGE);
         } else if (result.reason === 'has_clones' && result.clones) {
           setCloneChoiceDialog({ action: 'archive', clones: result.clones });

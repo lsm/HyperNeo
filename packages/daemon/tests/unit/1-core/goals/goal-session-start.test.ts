@@ -117,10 +117,7 @@ describe('starting a goal session', () => {
 describe('choosing a parent for a goal session', () => {
   const problem = (
     session: Session | null,
-    {
-      role = 'long_term_agent',
-      paused = false,
-    }: { role?: string; paused?: boolean } = {}
+    { role = 'long_term_agent', paused = false }: { role?: string; paused?: boolean } = {}
   ) =>
     goalParentProblem('parent', {
       getSession: () => session,
@@ -130,7 +127,9 @@ describe('choosing a parent for a goal session', () => {
 
   test('takes the same parents a clone takes', async () => {
     expect(await problem(parent())).toBeNull();
-    expect(await problem(parent({ context: { spaceId: 'space-1' } } as Partial<Session>))).toBeNull();
+    expect(
+      await problem(parent({ context: { spaceId: 'space-1' } } as Partial<Session>))
+    ).toBeNull();
   });
 
   test('refuses a child, a missing or archived session, and task, room or lobby workers', async () => {

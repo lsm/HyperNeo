@@ -39,7 +39,7 @@ describe('goal work wakes', () => {
       goals,
       schedules,
       sessionExists: (sessionId) => sessionId === 'neo:root',
-      parentProblem: () => null,
+      parentProblem: async () => null,
       canReturn: () => false,
       releaseSession: async () => {},
       startSession: () => {

@@ -397,6 +397,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         }),
       listClones: (parentId) => deps.db.listChildSessions(parentId),
       primaryAgentFor: (sessionId) => space?.primaryAgentFor(sessionId) ?? null,
+      runsGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
     }
   );
 

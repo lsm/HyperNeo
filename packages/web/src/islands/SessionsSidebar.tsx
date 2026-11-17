@@ -261,6 +261,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     try {
       const result = await archiveSession(sessionId, false, children);
       if (result.reason === 'owns_goals') {
+        setCloneChoice(null);
         toast.error(GOAL_CHILD_MESSAGE);
       } else if (result.reason === 'has_clones' && result.clones) {
         setCloneChoice({ sessionId, clones: result.clones });

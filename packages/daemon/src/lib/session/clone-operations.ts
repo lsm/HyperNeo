@@ -83,7 +83,7 @@ export function resolveParentId(
 
 export function loadParent(
   parentId: string,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSession'>
 ): { value: Session } | { reason: SpawnRejection } {
   const parent = deps.getSession(parentId);
   if (!parent) return { reason: reject('parent_not_found', `Session not found: ${parentId}`) };
@@ -105,7 +105,7 @@ export function loadParent(
 
 export async function admitSpaceParent(
   parent: Session,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSpace' | 'resolveRole'>
 ): Promise<{ value: Session } | { reason: SpawnRejection }> {
   const spaceId = parent.context?.spaceId;
   if (!spaceId) return { value: parent };
