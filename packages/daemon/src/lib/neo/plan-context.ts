@@ -1,9 +1,10 @@
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { neoTopicPickKey } from './ask-topic.ts';
 import { neoTodoDependencyNodes, neoTodoFinished, neoTodoReady } from './todo-dependencies.ts';
 import { neoTodoWaitReason } from './todo-start-gate.ts';
 
 export type NeoPlanLine = {
-  kind: 'ask' | 'todo';
+  kind: 'topics' | 'ask' | 'todo';
   id: string;
   askId: string;
   text: string;
@@ -29,60 +30,91 @@ export function neoInputText(ask: { content?: unknown }): string {
     .join(' ');
 }
 
+export type NeoTopicCount = { topic: string; count: number };
+
+export function neoTopicList(topics: readonly NeoTopicCount[]): string[] {
+  const folded = new Map<string, { label: string; best: number; count: number }>();
+  for (const { topic, count } of topics) {
+    const key = neoTopicPickKey(topic);
+    const known = folded.get(key) ?? { label: topic, best: 0, count: 0 };
+    folded.set(key, {
+      label: count > known.best ? topic : known.label,
+      best: Math.max(count, known.best),
+      count: known.count + count,
+    });
+  }
+  return [...folded.values()]
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .map((entry) => `${entry.label} ${entry.count}`);
+}
+
+function neoTopicListLine(topics: readonly NeoTopicCount[]): NeoPlanLine {
+  return {
+    kind: 'topics',
+    id: 'topics',
+    askId: '',
+    text: `Topics used in the last 30 days (asks open or settled): ${neoTopicList(topics).join(', ') || 'none'}`,
+  };
+}
+
 export function neoPlanLines(
   asks: readonly NeoAsk[],
   todos: readonly NeoTodo[],
-  questions: readonly NeoQuestion[]
+  questions: readonly NeoQuestion[],
+  topics: readonly NeoTopicCount[] = []
 ): NeoPlanLine[] {
   const nodes = neoTodoDependencyNodes(todos);
-  return asks
-    .filter((ask) => ask.status === 'open')
-    .flatMap((ask) => {
-      const open = questions.filter((q) => q.askId === ask.id && q.state === 'open');
-      return [
-        {
-          kind: 'ask' as const,
-          id: ask.id,
-          askId: ask.id,
-          text: `Ask ${ask.id} [${ask.status}] topic=${ask.topic ?? 'none'} ${ask.title} questions=${open.length}`.replace(
-            /\s+/g,
-            ' '
-          ),
-        },
-        ...todos
-          .filter((todo) => todo.askId === ask.id && !['done', 'removed'].includes(todo.state))
-          .map((todo) => {
-            const waits =
-              nodes
-                .find((node) => node.id === todo.id)
-                ?.dependsOn?.filter(
-                  (id) => !neoTodoFinished(todos.find((other) => other.id === id))
-                ) ?? [];
-            const wait = neoTodoWaitReason(todo, todos, open);
-            const ready =
-              todo.state === 'todo' &&
-              todo.approvedAt !== null &&
-              neoTodoReady(todos, todo.id) &&
-              !wait;
-            return {
-              kind: 'todo' as const,
-              id: todo.id,
-              askId: ask.id,
-              text: `  Todo ${todo.id} [${todo.state}] ${todo.title}; waits=${waits.join(',') || 'none'}; reason=${todo.blockedReason ?? wait ?? todo.reason ?? 'not recorded'}; ready=${ready}; questions=${open.filter((q) => q.todos.includes(todo.id)).length}`.replace(
-                /\s+/g,
-                ' '
-              ),
-            };
-          }),
-      ];
-    });
+  return [
+    neoTopicListLine(topics),
+    ...asks
+      .filter((ask) => ask.status === 'open')
+      .flatMap((ask) => {
+        const open = questions.filter((q) => q.askId === ask.id && q.state === 'open');
+        return [
+          {
+            kind: 'ask' as const,
+            id: ask.id,
+            askId: ask.id,
+            text: `Ask ${ask.id} [${ask.status}] topic=${ask.topic ?? 'none'} ${ask.title} questions=${open.length}`.replace(
+              /\s+/g,
+              ' '
+            ),
+          },
+          ...todos
+            .filter((todo) => todo.askId === ask.id && !['done', 'removed'].includes(todo.state))
+            .map((todo) => {
+              const waits =
+                nodes
+                  .find((node) => node.id === todo.id)
+                  ?.dependsOn?.filter(
+                    (id) => !neoTodoFinished(todos.find((other) => other.id === id))
+                  ) ?? [];
+              const wait = neoTodoWaitReason(todo, todos, open);
+              const ready =
+                todo.state === 'todo' &&
+                todo.approvedAt !== null &&
+                neoTodoReady(todos, todo.id) &&
+                !wait;
+              return {
+                kind: 'todo' as const,
+                id: todo.id,
+                askId: ask.id,
+                text: `  Todo ${todo.id} [${todo.state}] ${todo.title}; waits=${waits.join(',') || 'none'}; reason=${todo.blockedReason ?? wait ?? todo.reason ?? 'not recorded'}; ready=${ready}; questions=${open.filter((q) => q.todos.includes(todo.id)).length}`.replace(
+                  /\s+/g,
+                  ' '
+                ),
+              };
+            }),
+        ];
+      }),
+  ];
 }
 
 export function fitNeoPlanLines(lines: readonly NeoPlanLine[], budget: number): NeoPlanLine[] {
   if (Buffer.byteLength(lines.map((line) => line.text).join('\n'), 'utf8') <= budget)
     return [...lines];
   return lines
-    .filter((line) => line.kind === 'ask')
+    .filter((line) => line.kind !== 'todo')
     .map((line) => {
       const omitted = lines.some((detail) => detail.kind === 'todo' && detail.askId === line.askId);
       return {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { MessageHub } from '@hyperneo/shared';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { WorkAdapter } from '../drivers/types.ts';
@@ -86,6 +87,10 @@ const DaemonExtensionsResultSchema = z.object({
 });
 
 export function createDaemonExtensionsOperation(extensions: DaemonExtensions) {
+  const list = (superpipe({})('daemon.extensions') as PipelineAPI)
+    .input('input')
+    .pipe(() => extensions.manifest(), 'input', 'manifest')
+    .endAsync('manifest') as () => Promise<ReturnType<DaemonExtensions['manifest']>>;
   return defineOperation({
     name: 'daemon.extensions',
     description:
@@ -93,6 +98,6 @@ export function createDaemonExtensionsOperation(extensions: DaemonExtensions) {
     inputSchema: z.object({}).default({}),
     resultSchema: DaemonExtensionsResultSchema,
     policy: { safetyClass: 'read' },
-    execute: async () => extensions.manifest(),
+    execute: list,
   });
 }
