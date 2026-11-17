@@ -27,8 +27,8 @@ apply to other packs' work.
 
 ## The design
 
-Core decides which session takes the work. Packs only say who must not take it and which
-model to ask for. Core knows todos and sessions, not authors, reviewers or PRs.
+Core decides which session takes the work. Packs only say who must not take it, which
+model to ask for and which lane the work is in. Core knows todos and sessions, not authors, reviewers or PRs.
 
 ### Core
 
@@ -84,7 +84,7 @@ is asked before first use.
 
 ### Packs
 
-A pack does not pick sessions. When it starts work for a todo it passes two things it
+A pack does not pick sessions. When it starts work for a todo it passes three things it
 already knows:
 
 - **Who must not take it:** `excludeRefs`, as the coding pack already does for review
@@ -92,8 +92,9 @@ already knows:
   `workerStartExclusions` (sessions that acted as reviewers or verifiers,
   `neo/packs/coding/pack.ts`).
 - **Which model:** the start's `model` and `effort`.
-- **Which lane:** an optional `lane` label, so a todo with several kinds of worker gets
-  the right one back.
+- **Which lane:** a `lane` label, so a todo with several kinds of worker gets the right
+  one back. Optional for a pack whose todos have one kind of worker; coding always passes
+  it.
 
 **Coding.**
 
@@ -119,7 +120,9 @@ review rounds.
 
 **Upgrade.** Saved coding `sessionStrategy` values move once: a repo value to
 `sessionReuse` on each project that owns the repo, a global value to global
-`sessionReuse`: `long_lived` → `long_lived`, `per_task` → `per_todo`,
+`sessionReuse`. If one project owns several repos with different saved values, the most
+recently set one wins. A repo value with no owning project is not moved; the upgrade
+reports it to Neo, which tells the human, and that repo reads the global value. Mapping: `long_lived` → `long_lived`, `per_task` → `per_todo`,
 `per_pr` → `per_todo` (a PR is one todo), keeping `set_by`. The old rows and the feature
 table are then dropped. Existing todos seed `neo_todo_workers` from `neo_todo_sessions`
 and the coding assignment facts.
