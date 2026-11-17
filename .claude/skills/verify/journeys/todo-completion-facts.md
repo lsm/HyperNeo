@@ -33,7 +33,7 @@ turn is still incomplete: the required PR facts, not turn completion, decide.
 
 A synthetic legacy pack is installed at the test daemon's pack seam and returns
 both done and an explicit failure. The scheduled refresh must preserve failure
-precedence: the public ask read shows Failed with that reason. This fixture does
+precedence: the public ask read shows the todo blocked by `failure` with that reason. This fixture does
 not replace the runner or state reducer. The helper restores the pack seam on exit.
 
 Run against the baseline first: it must fail with a still-doing delivery todo or
@@ -43,6 +43,6 @@ The helper closes the WebSocket and owned daemon in finally, including failures.
 For the legacy-precedence regression, the baseline must fail because the same
 public read incorrectly shows Done for the conflicting result.
 
-Closed-without-replacement PR judgements must preserve failed
-todos instead of replacing their recorded outcome or sending another failure
-notice. The same terminal state must still become Done when its PR merges.
+Closed-without-replacement PR judgements must preserve todos blocked
+by `failure` instead of replacing their recorded outcome or sending another failure
+notice. The same todo must still become Done when its PR merges.

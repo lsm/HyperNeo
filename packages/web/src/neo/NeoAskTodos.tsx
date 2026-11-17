@@ -64,7 +64,6 @@ const marks = {
   doing: ['●', 'text-accent'],
   blocked: ['!', 'text-warning'],
   done: ['✓', 'text-success'],
-  failed: ['✕', 'text-danger'],
   removed: ['', 'text-fg-faint'],
 } as const;
 
