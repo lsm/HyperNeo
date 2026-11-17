@@ -51,6 +51,7 @@ function setup(
   runMigrations(db, () => {});
   createTables(db);
   const audited: string[] = [];
+  const metricReports: string[] = [];
   const auditLog = new McpAuditLogRepository(db);
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
@@ -76,6 +77,7 @@ function setup(
   const ops = createSessionGoalOperations({
     goals,
     schedules,
+    reportMetricTarget: (_id, text) => metricReports.push(text),
     sessionExists: (sessionId) => sessions.includes(sessionId),
     parentProblem,
     canReturn,
@@ -100,7 +102,19 @@ function setup(
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules, started, released, ops, sessions };
+  return {
+    db,
+    call,
+    audited,
+    scheduler,
+    goals,
+    schedules,
+    started,
+    released,
+    ops,
+    sessions,
+    metricReports,
+  };
 }
 
 describe('session goal detail reads', () => {
@@ -1095,7 +1109,7 @@ describe('deleting the owner session', () => {
 
 describe('goal journal', () => {
   test('review metrics retain history and show progress without completing the goal', async () => {
-    const { db, call } = setup();
+    const { db, call, scheduler, metricReports } = setup();
     const goal = (
       await call('goal.session.create', {
         title: 'Grow',
@@ -1112,14 +1126,42 @@ describe('goal journal', () => {
         metricPoint: { value, evidence: 'Synthetic count' },
       });
     expect((await append('work:1', 4)).accepted).toBe(false);
-    expect((await append('goal-review:1', 4)).accepted).toBe(true);
-    expect((await append('goal-review:2', 10)).accepted).toBe(true);
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    const run = (dueAt: number) => {
+      scheduler.repo.recordRun(
+        { ...schedule, nextRunAt: dueAt },
+        'fired',
+        `message-${dueAt}`,
+        dueAt
+      );
+      return `goal-review:${schedule.id}:${dueAt}:none`;
+    };
+    const firstRun = run(1);
+    const secondRun = run(2);
+    expect((await append(firstRun, 4)).accepted).toBe(true);
+    expect(await append(secondRun, 10)).toMatchObject({ accepted: true, metricReached: true });
+    expect((await append(secondRun, 11)).accepted).toBe(false);
+    expect(
+      (await append(`goal-review:${schedule.id}:2:00000000-0000-0000-0000-000000000000`, 11))
+        .accepted
+    ).toBe(false);
     const entries = (await call('goal.journal.list', { goalId: goal.id })).entries;
     expect(entries).toHaveLength(2);
+    expect(
+      entries.map(
+        (entry: { metricPoint: { value: number; evidence: string; time: number } }) =>
+          entry.metricPoint
+      )
+    ).toEqual([
+      expect.objectContaining({ value: 10, evidence: 'Synthetic count', time: expect.any(Number) }),
+      expect.objectContaining({ value: 4, evidence: 'Synthetic count', time: expect.any(Number) }),
+    ]);
     expect((await call('goal.facts', { goalId: goal.id })).facts.lines.join('\n')).toContain(
       'adopters: 10; target 10; change 6'
     );
     expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('active');
+    expect(metricReports).toHaveLength(1);
+    expect(metricReports[0]).toContain('adopters is 10');
     db.close();
   });
 

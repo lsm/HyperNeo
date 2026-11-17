@@ -34,6 +34,8 @@ export interface FamilyOperationContext {
   readonly defaultNeoSession?: () => string | undefined;
   readonly neoChanged?: () => void;
   readonly ensureNeo?: () => Promise<string>;
+  readonly reportGoalMetric?: (id: string, text: string) => void;
+  readonly notifyGoalMetric?: () => void;
   readonly neoPacks: () => readonly NeoPack[];
   readonly extensionAdapters?: (host: DaemonAdapterHost) => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;

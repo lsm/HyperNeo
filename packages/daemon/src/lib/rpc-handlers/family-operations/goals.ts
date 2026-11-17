@@ -74,6 +74,11 @@ export function registerSessionGoalOperations(
     releaseSession,
     neoChanged: context.neoChanged,
     ensureNeo: context.ensureNeo,
+    reportMetricTarget: (id, text) => {
+      if (!context.reportGoalMetric) throw new Error('Goal metric reporting is unavailable');
+      context.reportGoalMetric(id, text);
+    },
+    metricReported: context.notifyGoalMetric,
     audit: (caller, toolName, summary) =>
       audit.createEntry({
         agentName: caller.agentName,

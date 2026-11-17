@@ -473,6 +473,27 @@ export async function setupRPCHandlers<SpaceServices = never>(
     defaultNeoSession: () => neoService.defaultSessionId(),
     neoChanged: () => neoService.notifyChanged(),
     ensureNeo: () => neoService.openDefault(),
+    reportGoalMetric: (id, text) => {
+      const conversationId = neoService.repo.conversationId();
+      const speaker = neoService.repo.defaultBinding()?.sessionId;
+      if (!conversationId || !speaker)
+        throw new Error('Cannot report goal metric without a Neo conversation');
+      const result = neoService.publications.append(
+        {
+          conversationId,
+          publicationId: id,
+          shortText: text,
+          fullText: text,
+          links: [],
+        },
+        speaker
+      );
+      if (!result.accepted) throw new Error(`Goal metric report failed: ${result.reason}`);
+    },
+    notifyGoalMetric: () => {
+      const conversationId = neoService.repo.conversationId();
+      if (conversationId) neoService.notifyPublicationsChanged(conversationId);
+    },
     executionPreparations: () => neoService.packs(),
   };
   const familyOperations = [
