@@ -38,6 +38,9 @@ Last, it checks reservations that never got a session:
 - with no live alternative, the next slice selects a fresh start; an
   unreachable session held by active work still causes a wait.
 
+This journey covers feature reservations; missing PR-holder sessions follow the
+separate PR-routing path and are not covered by this change.
+
 Then it archives both sessions over RPC (`session.archive`):
 
 - with only archived sessions in the repository, dispatch starts a new session
