@@ -22,6 +22,7 @@ import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { createCodingHumanMergeOperation } from '../../../../src/lib/neo/packs/coding/human-merge-operation.ts';
 import { createCodingRetryMergeOperation } from '../../../../src/lib/neo/packs/coding/retry-merge-operation.ts';
 import { Logger } from '../../../../src/lib/logger.ts';
+import { recordGithubBudget } from '../../../../src/lib/github/gh-lookup-helpers.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/types.ts';
 import { NeoTrackerMirrorRepository } from '../../../../src/storage/repositories/neo-tracker-mirror.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
@@ -128,8 +129,12 @@ const spawn: SpawnFn = (args) => {
     (fail && args.some((a) => a.includes(fail))) ||
     (hideOutcome && state === 'MERGED' && args[2] !== 'merge') ||
     (mergeFailed && args[2] === 'merge');
+  const page = args.includes('per_page=100');
+  const body = JSON.stringify((page ? (data as unknown[])[0] : data) ?? {});
   return {
-    stdout: new Response(JSON.stringify(data ?? {}).replaceAll(url, candidateUrl)).body,
+    stdout: new Response(
+      (page ? 'HTTP/2.0 200 OK\r\n\r\n' : '') + body.replaceAll(url, candidateUrl)
+    ).body,
     stderr: new Response(mergeFailed && args[2] === 'merge' ? 'Required check still settling' : '')
       .body,
     exited: Promise.resolve(broken ? 1 : 0),
@@ -1670,3 +1675,101 @@ test.each([null, 'Synthetic lost reply'])(
     });
   }
 );
+
+describe('shared GitHub budget', () => {
+  const budget = (remaining: number) =>
+    recordGithubBudget(
+      new Headers({
+        'X-RateLimit-Resource': 'core',
+        'X-RateLimit-Limit': '5000',
+        'X-RateLimit-Remaining': String(remaining),
+        'X-RateLimit-Reset': '4102444800',
+      })
+    );
+  afterEach(() => budget(5000));
+  const row = (number: number, state: 'approved_green' | 'waiting_ci') => ({
+    repo: 'synthetic/merge',
+    number,
+    title: 'Fixture',
+    branch: `fixture-${number}`,
+    head,
+    state,
+    closedAt: null,
+  });
+  const twoRows = () =>
+    ledger.write('replace', 'synthetic/merge', [row(1, 'approved_green'), row(2, 'waiting_ci')], 1);
+  const readsOf2 = () =>
+    calls.filter((args) =>
+      args.some((arg) => arg.endsWith('/pull/2') || arg.includes('/pulls/2/') || arg === 'number=2')
+    );
+
+  test('below 20% the sweep reads only PRs ready to merge, and still merges them', async () => {
+    await twoRows();
+    budget(900);
+    await sweep()(10);
+    expect(readsOf2()).toEqual([]);
+    expect(merges()).toHaveLength(1);
+  });
+
+  test('at a healthy budget the sweep still reads waiting PRs', async () => {
+    await twoRows();
+    await sweep()(10);
+    expect(readsOf2().length).toBeGreaterThan(0);
+  });
+
+  test('below 5% Neo is woken once with the reset time', async () => {
+    budget(100);
+    const { run, wakes } = entry();
+    await run(10);
+    await run(11);
+    const told = wakes().filter((text) => text.includes('GitHub REST budget'));
+    expect(told).toEqual([expect.stringContaining('2100-01-01T00:00:00.000Z')]);
+  });
+
+  test('a confirmed daemon merge is logged', async () => {
+    const info: unknown[][] = [];
+    const spy = spyOn(Logger.prototype, 'info').mockImplementation((...args: unknown[]) => {
+      info.push(args);
+    });
+    try {
+      await sweep()(10);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(merges()).toHaveLength(1);
+    expect(info).toContainEqual(['Daemon merge confirmed', { url, head, commit: 'c'.repeat(40) }]);
+  });
+});
+
+test('a later review page still blocks the merge after its first page is answered by a 304', async () => {
+  let probes = 0;
+  const review = (state: string, anchor: string) => ({
+    state,
+    commit_id: head,
+    user: { login: 'bot', type: 'Bot' },
+    html_url: `${url}#${anchor}`,
+  });
+  const first = [review('APPROVED', 'first')];
+  const paged: SpawnFn = (args, options) => {
+    if (!args.some((arg) => arg.endsWith('/reviews'))) return spawn(args, options);
+    calls.push(args);
+    const text = args.includes('--paginate')
+      ? JSON.stringify([first, [review('CHANGES_REQUESTED', 'later')]])
+      : probes++ === 0
+        ? `HTTP/2.0 200 OK\r\nETag: "pages"\r\nLink: <https://api.github.com/x?page=2>; rel="next"\r\n\r\n${JSON.stringify(first)}`
+        : 'HTTP/2.0 304 Not Modified\r\nETag: "pages"\r\n\r\n';
+    const code = text.startsWith('HTTP/2.0 304') ? 1 : 0;
+    return {
+      stdout: new Response(text).body,
+      stderr: new Response(code ? 'gh: HTTP 304' : '').body,
+      exited: Promise.resolve(code),
+      exitCode: code,
+      kill() {},
+    };
+  };
+  const run = sweep(paged);
+  await run(10);
+  await run(11);
+  expect(probes).toBeGreaterThan(1);
+  expect(merges()).toEqual([]);
+});

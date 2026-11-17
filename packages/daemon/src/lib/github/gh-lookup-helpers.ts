@@ -161,6 +161,44 @@ export async function fetchRateLimitResetEpoch(
   return pickRateLimitResetEpoch(parsed, resource);
 }
 
+const coreBudgets = new Map<string, { remaining: number; limit: number; resetAt: number }>();
+const ghHost = (args: string[]) =>
+  (
+    (args.includes('--hostname') ? args[args.indexOf('--hostname') + 1] : undefined) ??
+    args.find((arg) => arg.startsWith('https://'))?.split('/')[2] ??
+    process.env.GH_HOST ??
+    'github.com'
+  ).toLowerCase();
+export function recordGithubBudget(headers: Headers, host = 'github.com'): void {
+  const [remaining, limit, reset] = ['remaining', 'limit', 'reset'].map((name) => {
+    const value = headers.get(`x-ratelimit-${name}`);
+    return value && /^\d+$/.test(value) ? Number(value) : null;
+  });
+  if (headers.get('x-ratelimit-resource') === 'core' && remaining !== null && limit && reset)
+    coreBudgets.set(host, { remaining, limit, resetAt: reset * 1000 });
+}
+export function readGithubBudget(
+  now = Date.now(),
+  host = process.env.GH_HOST?.toLowerCase() ?? 'github.com'
+): {
+  level: 'ok' | 'low' | 'critical';
+  resetAt: number | null;
+} {
+  const coreBudget = coreBudgets.get(host);
+  if (!coreBudget || now >= coreBudget.resetAt) return { level: 'ok', resetAt: null };
+  const share = coreBudget.remaining / coreBudget.limit;
+  const level = share < 0.05 ? 'critical' : share < 0.2 ? 'low' : 'ok';
+  return { level, resetAt: coreBudget.resetAt };
+}
+
+const conditional = new Map<string, { etag: string; link: string | null; data: unknown }>();
+const isRestGet = (args: string[]) =>
+  args[1] === 'api' &&
+  !args.includes('graphql') &&
+  !args.includes('--input') &&
+  (args.some((arg, i) => ['-X', '--method'].includes(arg) && args[i + 1] === 'GET') ||
+    !args.some((arg) => ['-X', '--method', '-f', '-F', '--field', '--raw-field'].includes(arg)));
+
 export async function runGhJson(
   args: string[],
   cwd: string,
@@ -172,9 +210,35 @@ export async function runGhJson(
     stripGHRepo?: boolean;
     maxBufferBytes?: number;
     onResponse?: (quota: GhResponseQuota) => void;
+    firstPage?: boolean;
+    onLink?: (link: string | null) => void;
   }
 ): Promise<ConnectorOutcome> {
+  if (
+    options?.firstPage &&
+    isRestGet(args) &&
+    args.includes('--paginate') &&
+    args.includes('--slurp')
+  ) {
+    let more = true;
+    const page = await runGhJson(
+      [
+        ...args.filter((arg) => arg !== '--paginate' && arg !== '--slurp'),
+        '--method',
+        'GET',
+        '-F',
+        'per_page=100',
+      ],
+      cwd,
+      spawnImpl,
+      { ...options, firstPage: false, onLink: (link) => (more = /rel="next"/.test(link ?? '')) }
+    );
+    if (!page.ok) return page;
+    if (!more) return { ok: true, data: [page.data] };
+  }
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
+  const key = isRestGet(args) ? JSON.stringify([ghHost(args), args]) : null;
+  const cached = key ? conditional.get(key) : undefined;
 
   log.info('gh lookup', {
     resource: options?.resourceHint ?? null,
@@ -193,12 +257,15 @@ export async function runGhJson(
       args[1] === 'api' && !['--slurp', '--include', '-i'].some((flag) => args.includes(flag))
         ? [...args, '--include']
         : args;
-    proc = spawnImpl(requestArgs, {
-      cwd,
-      env: ghEnv,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    proc = spawnImpl(
+      cached ? [...requestArgs, '-H', `If-None-Match: ${cached.etag}`] : requestArgs,
+      {
+        cwd,
+        env: ghEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }
+    );
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -247,7 +314,12 @@ export async function runGhJson(
       retryAfterMs,
       requestId: response.headers.get('x-github-request-id'),
     });
+    recordGithubBudget(response.headers, ghHost(args));
+    options?.onLink?.(
+      cached && response.status === 304 ? cached.link : response.headers.get('link')
+    );
   }
+  if (cached && response?.status === 304) return { ok: true, data: cached.data };
 
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
@@ -306,6 +378,12 @@ export async function runGhJson(
       retryable: true,
       retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
     };
+  }
+  const etag = response?.headers.get('etag');
+  if (key && etag) {
+    conditional.delete(key);
+    conditional.set(key, { etag, link: response!.headers.get('link'), data: parsed });
+    if (conditional.size > 500) conditional.delete(conditional.keys().next().value!);
   }
   return { ok: true, data: parsed };
 }
