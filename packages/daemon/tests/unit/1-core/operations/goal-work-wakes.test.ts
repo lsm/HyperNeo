@@ -114,6 +114,36 @@ describe('goal work wakes', () => {
     expect(review()?.cadence).toEqual({ kind: 'every', everyMs: 180_000 });
   });
 
+  test('consecutive reviews without effect pause the goal and open one human question', async () => {
+    const goal = await create();
+    const asks = new NeoAskTodoRepository(db);
+    const review = async (run: number, effect: 'yes' | 'no') =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId: `goal-review:synthetic:${run}`,
+        done: 'Reviewed the outcome',
+        effect,
+        worked: 'Keep exploring',
+      });
+    await review(1, 'no');
+    await review(2, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(0);
+    await review(3, 'yes');
+    await review(4, 'no');
+    await review(5, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    await review(6, 'no');
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('paused');
+    const goalAsks = asks.listGoalAsks(goal.id);
+    expect(goalAsks).toHaveLength(1);
+    expect(asks.listQuestions(goalAsks[0]!.id)).toEqual([
+      expect.objectContaining({ state: 'open', text: expect.stringContaining('effect') }),
+    ]);
+  });
+
   test('review wakes carry new journal entries and note on every due time', async () => {
     const goal = await create();
     const review = () => scheduler.repo.getBySource('goal_review', goal.id)!;
