@@ -43,9 +43,9 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   const stored = app.db.getSession(sessionId);
-  assert.equal(stored?.config.harness, 'codex');
+  assert.equal(stored?.config.harness, 'oxap-codex');
   const update = await hub.request('session.update', { sessionId, config: { harness: 'sdk' } }).then(() => 'accepted', (error: Error) => error.message);
   assert.match(update, /harness/i);
   const guardUpdate = await hub.request('session.update', { sessionId, config: { workerOperations: true } }).then(() => 'accepted', (error: Error) => error.message);
@@ -58,8 +58,8 @@ try {
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
-  assert.equal(app.db.getSession(sessionId)?.config.harness, 'codex');
-  const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
+  const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   const agent = app.sessionManager.getSession(syntheticSession);
   assert(agent);
   const submissions: string[] = [];
@@ -146,7 +146,7 @@ try {
   assert.equal(errors.length, errorsBeforeTurns);
   agent.messageQueue.clear();
   await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
-  const { sessionId: orderSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP order', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const { sessionId: orderSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP order', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   const orderAgent = app.sessionManager.getSession(orderSession);
   assert(orderAgent);
   let orderTurn = 0;
@@ -188,7 +188,7 @@ try {
   }
   evidence.chronologicalToolRows = true;
   evidence.abruptStreamPartialSaved = true;
-  const { sessionId: interruptSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP interrupt', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const { sessionId: interruptSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP interrupt', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   const interruptAgent = app.sessionManager.getSession(interruptSession);
   assert(interruptAgent);
   let entered!: () => void;
@@ -258,7 +258,7 @@ try {
   agent.messageQueue.clear();
   await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
   evidence.port = app.server.port;
-  evidence.persistedHarness = 'codex';
+  evidence.persistedHarness = 'oxap-codex';
   evidence.updateRefused = true;
   evidence.workerOperationsRefused = true;
   evidence.visibleRefusal = errors.find((message) => /OAP configuration is incomplete/i.test(message));

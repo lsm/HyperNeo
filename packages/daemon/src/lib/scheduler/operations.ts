@@ -37,6 +37,7 @@ const Create = z.object({
 });
 const List = z.object({ target: WorkRefSchema.optional() });
 const ById = z.object({ scheduleId: z.string().min(1) });
+const Runs = ById.extend({ limit: z.number().int().min(1).max(500).default(100) });
 
 const ScheduleShape = z.object({ id: z.string(), status: z.string() }).passthrough();
 const ScheduleResult = z.union([
@@ -48,6 +49,22 @@ const ListResult = z.union([
   z.object({
     ok: z.literal(true),
     schedules: z.array(ScheduleShape.extend({ sourceLabel: z.string().nullable() })),
+  }),
+]);
+
+const RunsResult = z.union([
+  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({
+    ok: z.literal(true),
+    runs: z.array(
+      z.object({
+        dueAt: z.number().nullable(),
+        firedAt: z.number(),
+        outcome: z.string(),
+        skipReason: z.string().nullable(),
+        messageId: z.string().nullable(),
+      })
+    ),
   }),
 ]);
 
@@ -155,6 +172,17 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     )
     .end('outcome');
 
+  const runs = byId(superpipe({})('schedule.session.runs'), null)
+    .pipe(
+      (schedule: SessionSchedule, input: z.infer<typeof Runs>) => ({
+        ok: true as const,
+        runs: scheduler.repo.listRuns(schedule.id, input.limit),
+      }),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .end('outcome');
+
   type Run = (input: unknown, caller: OperationCaller) => unknown;
   const policy = (safetyClass: 'read' | 'mutate' | 'destructive') => ({
     safetyClass,
@@ -179,6 +207,15 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
       resultSchema: ListResult,
       policy: policy('read'),
       execute: async (input, caller) => (list as Run)(input, caller) as z.infer<typeof ListResult>,
+    }),
+    defineOperation({
+      name: 'schedule.session.runs',
+      description:
+        "List a session schedule's newest runs first (limit, default 100): due time, fired time, outcome, skip reason and the message id when one was sent.",
+      inputSchema: Runs,
+      resultSchema: RunsResult,
+      policy: policy('read'),
+      execute: async (input, caller) => (runs as Run)(input, caller) as z.infer<typeof RunsResult>,
     }),
     defineOperation({
       name: 'schedule.session.pause',

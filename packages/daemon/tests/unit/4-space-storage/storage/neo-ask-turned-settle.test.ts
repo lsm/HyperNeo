@@ -165,6 +165,59 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
     expect(await gateway.run(write, { now: 100, ids: ['ask'], versions: fresh })).toEqual(['ask']);
   });
 
+  test('a request ask the sweep settles tells its sender each final state once; a lone request tells nothing more', async () => {
+    const replies = () =>
+      (
+        db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo.request.reply'").all() as {
+          payload: string;
+        }[]
+      ).map((row) => JSON.parse(row.payload));
+    add('request', 'done');
+    db.prepare(
+      `UPDATE neo_todos SET named = '{"requestFrom":"stranger"}' WHERE id = 'request'`
+    ).run();
+    add('label', 'done', { reason: 'Labelled' });
+    add('review', 'removed', { reason: 'Already reviewed' });
+    consumedWake('ask');
+    expect(await sweep()).toEqual(['ask']);
+    expect(replies()).toEqual([
+      {
+        todoId: 'request',
+        key: 'neo-request-settled:ask',
+        to: 'stranger',
+        from: 'neo',
+        text: 'Your request "Step request" is finished:\n"Step label" (label) done: Labelled\n"Step review" (review) removed: Already reviewed',
+      },
+    ]);
+    await sweep();
+    expect(replies()).toHaveLength(1);
+    store.openAsk({
+      id: 'lone',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Lone',
+      request: 'Lone request',
+      createdAt: 1,
+    });
+    store.addTodo(
+      'lone-request',
+      'lone',
+      {
+        title: 'Lone',
+        doneWhen: 'Neo replied',
+        check: null,
+        instruction: null,
+        named: { requestFrom: 'stranger' },
+      },
+      1
+    );
+    db.prepare(`UPDATE neo_todos SET state = 'done' WHERE id = 'lone-request'`).run();
+    consumedWake('lone');
+    expect(await sweep()).toEqual(['lone']);
+    expect(replies()).toHaveLength(1);
+  });
+
   test('generates the outcome from the step list when Neo wrote none', async () => {
     add('alpha', 'done');
     add('gamma', 'removed', { reason: 'Superseded' });

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [portText, runText, mode = 'all'] = process.argv.slice(2);
@@ -22,7 +23,7 @@ const evidence: Record<string, any> = { operations: [] };
 let ws: WebSocket | undefined;
 try {
   await app.spaceRuntimeService.ready();
-  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as never);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connect')); });
   const rpc = (name: string, input: unknown = {}) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID(); const timer = setTimeout(() => fail(new Error(`RPC timeout: ${name}`)), 10000);
@@ -51,15 +52,15 @@ try {
     let payload:string | undefined;
     for(let i=0;i<100&&!payload;i++) {
       payload=(db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' AND json_extract(payload,'$.messageUuid')=?").get(messageId) as {payload:string}|null)?.payload;
-      if(mode==='nudge' && (db.prepare('SELECT last_outcome FROM session_schedules WHERE id=?').get(schedule.id) as any)?.last_outcome==='skipped_unchanged') break;
       if(!payload) await Bun.sleep(200);
     }
     evidence.mode=mode; evidence.facts=facts; evidence.mailbox=payload?JSON.parse(payload):null;
     evidence.schedule=db.prepare('SELECT last_outcome,last_message_id FROM session_schedules WHERE id=?').get(schedule.id);
     if(mode==='nudge') {
-      assert.equal(payload,undefined,'Unchanged facts forced a model turn');
-      assert.equal(evidence.schedule.last_outcome,'skipped_unchanged');
-      console.log('PASS: unchanged nudge creates no model-facing wake');
+      assert(payload,'An unchanged goal due time did not wake Neo to work');
+      assert(payload.includes('Nothing moved; check what can advance.'),'Unchanged work wake omitted its nothing-moved line');
+      assert.equal(evidence.schedule.last_outcome,'fired');
+      console.log('PASS: unchanged goal due time delivered a work wake');
     } else {
     assert(payload,'Scheduled wake was not delivered to the actual mailbox');
     assert(payload.includes('rewrite')&&payload.includes('worksNote'),'Model-facing wake omitted compaction instruction');

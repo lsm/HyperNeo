@@ -16,7 +16,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { workerEngine, workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { NEO_WORKER_BLOCKER, neoDaemonCardDraft } from '../../../../src/lib/neo/daemon-cards.ts';
+import { openHumanCard } from '../../../../src/lib/neo/human-card.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAttentionEvent } from '../../../../src/lib/neo/attention/decide.ts';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
@@ -40,6 +42,34 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { qualifyRemoteOrigin, renderAddress } from '../../../../src/lib/mailbox/address.ts';
 import { sessionSender } from '../../../../src/lib/messaging/message-send.ts';
+
+const legacyBlockerCard = (
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  todoId: string
+) => {
+  const todo = store.getTodo(todoId)!;
+  const ref = sessions.readRef(todoId)!;
+  const source = {
+    ...workerIdentity(ref, null),
+    provider: workerEngine(ref.adapter),
+    link: null,
+  };
+  const card = openHumanCard(
+    store,
+    crypto.randomUUID(),
+    todo.askId,
+    {
+      ...neoDaemonCardDraft(NEO_WORKER_BLOCKER, [todo]),
+      todoId,
+      document: todo.report,
+      sourceSession: source,
+    },
+    Date.now()
+  );
+  store.questionAnswers.bind(card.id, todoId, source);
+  return card;
+};
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const receipt = { executionId: ref.id, inputId: 'input-1' };
@@ -2322,7 +2352,7 @@ describe('neo todo runner', () => {
     });
   });
 
-  test('a start the driver keeps refusing is retried twice, then waits on one card', async () => {
+  test('a start the driver keeps refusing is retried twice, then is Neo’s with no card', async () => {
     const { db, store, add, told } = setup();
     const todo = add();
     const starts: string[] = [];
@@ -2346,25 +2376,10 @@ describe('neo todo runner', () => {
     expect(starts).toEqual(['work.start', 'work.start', 'work.start']);
     expect(result.ok && result.todo).toMatchObject({
       state: 'blocked',
+      blockedBy: 'failure',
       blockedReason: 'unavailable: login expired',
     });
-    expect(
-      store.listQuestions('ask').map(({ state, cause, todos, options, text }) => ({
-        state,
-        cause,
-        todos,
-        options,
-        text,
-      }))
-    ).toEqual([
-      {
-        state: 'open',
-        cause: 'retries_exhausted',
-        todos: [todo.id],
-        options: ['Retry', 'Mark done', 'Remove'],
-        text: '"Rows" could not start after 2 automatic retries: unavailable: login expired. Retry, mark done, or remove?',
-      },
-    ]);
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(told).toEqual([]);
   });
 
@@ -3064,19 +3079,13 @@ describe('blocked todos', () => {
     db.prepare('UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = ?').run(todo.id);
     await flaky.retry(todo.id);
     expect(starts).toBe(5);
-    const [card] = store.listQuestions('ask');
-    expect(card).toMatchObject({ cause: 'retries_exhausted', state: 'open' });
-    store.answerQuestion(card, ['Retry'], 'button', Date.now());
+    expect(store.listQuestions('ask')).toEqual([]);
     await flaky.retry(todo.id);
     expect(starts).toBe(8);
-    expect(
-      store
-        .listQuestions('ask')
-        .filter((q) => q.state === 'open' && q.cause === 'retries_exhausted')
-    ).toHaveLength(1);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
   });
 
-  test('a send that keeps failing after its identity is read still ends on one retries card', async () => {
+  test('a send that keeps failing after its identity is read ends failed with no card', async () => {
     const { db, store } = setup();
     const sessions = new NeoTodoSessionRepository(db);
     const todo = store.addTodo(
@@ -3120,13 +3129,11 @@ describe('blocked todos', () => {
     await runner.start(todo.id);
     expect(sessions.readRef(todo.id)).toBeNull();
     expect([sends, store.getTodo(todo.id)?.state]).toEqual([3, 'blocked']);
-    expect(store.listQuestions('ask').map((q) => [q.cause, q.state, q.todos])).toEqual([
-      ['retries_exhausted', 'open', [todo.id]],
-    ]);
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(told).toEqual([]);
   });
 
-  test('a todo whose retries ran out starts again on retry once its card is answered', async () => {
+  test('a todo whose retries ran out starts again when Neo retries it', async () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();
     const failing = createNeoTodoRunner({
@@ -3144,8 +3151,7 @@ describe('blocked todos', () => {
     });
     await failing.start(todo.id);
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'failure' });
-    const [card] = store.listQuestions('ask');
-    store.answerQuestion(card, ['Retry'], 'button', Date.now());
+    expect(store.listQuestions('ask')).toEqual([]);
     expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
@@ -3735,7 +3741,7 @@ describe('worker final-line blockers', () => {
     }
   );
   test.each(['unchanged', 'edited', 'question', 'closed', 'new-input'] as const)(
-    'opens one card after an untouched hour, with no reminder to Neo: %s',
+    'opens no card after an untouched hour; the blocker stays with Neo: %s',
     async (action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -3801,20 +3807,10 @@ describe('worker final-line blockers', () => {
         const open = h.store
           .listQuestions('ask')
           .filter((q) => q.todoId === todo.id && q.state === 'open');
-        expect(open).toHaveLength(['question', 'unchanged'].includes(action) ? 1 : 0);
-        if (action === 'edited') expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
+        expect(open).toHaveLength(action === 'question' ? 1 : 0);
+        if (['edited', 'unchanged'].includes(action))
+          expect(h.store.getTodo(todo.id)?.blockedBy).toBe('needs-human');
         expect(h.told.filter((note) => note.includes('still waits on'))).toHaveLength(0);
-        if (action === 'unchanged') {
-          expect(open[0]).toMatchObject({
-            cause: 'worker_blocker',
-            todos: [todo.id],
-            options: ['Mark done', 'Remove'],
-            document: 'Blocked (needs_human): Awaiting Neo confirmation',
-            text: '"Rows" is blocked: Awaiting Neo confirmation. Reply to its worker, mark it done, or remove it?',
-          });
-          await h.runner.refresh(() => {});
-          expect(h.store.listQuestions('ask').filter((q) => q.todoId === todo.id)).toHaveLength(1);
-        }
         expect(h.calls.filter((c) => c.name === 'work.send')).toHaveLength(0);
       } finally {
         clock.mockRestore();
@@ -3992,7 +3988,7 @@ describe('worker blocker ownership', () => {
       h.db.close();
     }
   });
-  test('a free reply to a blocker card opened while its source was unreadable reaches the worker once it recovers', async () => {
+  test('a free reply to a blocker card still open from before reaches the worker once it recovers', async () => {
     const h = setup(false);
     const clock = vi.spyOn(Date, 'now');
     try {
@@ -4010,10 +4006,7 @@ describe('worker blocker ownership', () => {
       });
       await h.runner.refresh(() => {});
       clock.mockReturnValue(start + 60 * 60_000);
-      await h.runner.refresh(() => {});
-      const [card] = h.store
-        .listQuestions('ask')
-        .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+      const card = legacyBlockerCard(h.store, h.sessions, todo.id);
       h.store.answerQuestion(card, 'Use the staging host', 'chat', Date.now());
       const sent: unknown[] = [];
       const deliver = (up: boolean) =>
@@ -4048,7 +4041,7 @@ describe('worker blocker ownership', () => {
     ['Mark done', 'neo.todo.done'],
     ['Remove', 'neo.todo.remove'],
   ])(
-    'after a restart, a blocker card answered %s runs its action once and never reaches the worker',
+    'after a restart, a blocker card still open from before, answered %s, runs its action once and never reaches the worker',
     async (answer, action) => {
       const h = setup(false);
       const clock = vi.spyOn(Date, 'now');
@@ -4067,10 +4060,7 @@ describe('worker blocker ownership', () => {
         });
         await h.runner.refresh(() => {});
         clock.mockReturnValue(start + 60 * 60_000);
-        await h.runner.refresh(() => {});
-        const [card] = h.store
-          .listQuestions('ask')
-          .filter((q) => q.cause === 'worker_blocker' && q.state === 'open');
+        const card = legacyBlockerCard(h.store, h.sessions, todo.id);
         h.store.answerQuestion(card, [answer], 'button', Date.now());
         const calls: string[] = [];
         const sweep = () =>
