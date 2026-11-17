@@ -27,6 +27,10 @@ try {
   await hub.request('providers.create', oxapCodexProvider);
   const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
+  const off = await hub.request('session.create', { workspacePath: join(run, 'workspace'), title: 'Off', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex', thinkingLevel: 'off' } });
+  assert.ok(off);
+  const clone = await hub.request<{ accepted: boolean }>('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId } });
+  assert.equal(clone.accepted, true);
   const before = app.db.listSessions().length;
   const result = await hub.request('operation.invoke', { name: 'session.clone.spawn', input: { parentSessionId: sessionId, thinkingLevel: 'think16k' } }).catch((error: Error) => ({ thrown: error.message }));
   const after = app.db.listSessions().length;

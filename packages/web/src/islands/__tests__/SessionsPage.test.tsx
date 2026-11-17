@@ -139,6 +139,12 @@ describe('SessionsPage', () => {
     expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
   });
 
+  it('shows an error when providers cannot be loaded', async () => {
+    mockListProviders.mockRejectedValue(new Error('Provider lookup failed'));
+    render(<SessionsPage />);
+    await waitFor(() => expect(screen.getByText(/Provider lookup failed/)).toBeTruthy());
+  });
+
   it('keeps thinking and sandbox choices for SDK providers', async () => {
     modelFixture.models = [
       {

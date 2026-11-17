@@ -153,6 +153,7 @@ describe('thinkingRefusal', () => {
   it('refuses a thinking level only for an OXAP row without thinking', () => {
     expect(thinkingRefusal('oxap-codex', 'think16k')).toMatch(/does not take a thinking level/);
     expect(thinkingRefusal('oxap-codex', undefined)).toBeUndefined();
+    expect(thinkingRefusal('oxap-codex', 'off')).toBeUndefined();
     expect(thinkingRefusal(undefined, 'think16k')).toBeUndefined();
   });
 });

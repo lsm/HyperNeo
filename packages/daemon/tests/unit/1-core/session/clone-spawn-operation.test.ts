@@ -233,6 +233,7 @@ describe('session.clone.spawn', () => {
       message: 'OXAP Codex does not take a thinking level.',
     });
     expect(h.created).toHaveLength(1);
+    expect((await run(h, { thinkingLevel: 'off' })).accepted).toBe(true);
   });
 
   test('the input schema accepts the Ultra thinking level and rejects unknown ones', () => {
