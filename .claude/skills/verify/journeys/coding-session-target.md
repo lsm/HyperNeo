@@ -13,6 +13,7 @@ worked in them as `frontend` and `backend`. It then asks the coding pack's
 operation:
 
 - a reservation pointing to a non-worker starts a new session;
+- a non-worker PR holder or task-bound session starts a new session;
 - unrelated work that asks to start a `backend` session is sent to the idle
   backend session instead;
 - a later slice of the same feature follows it there;

@@ -411,6 +411,17 @@ describe('coding session target decision', () => {
     }
   });
 
+  test('an explicit send to the reserved session remains available', async () => {
+    const { db, todo, worked, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'person', 'backend', 'done');
+    db.prepare("DELETE FROM work_started_sessions WHERE id = 'person'").run();
+    expect(await decide(todo(), { verb: 'send', ref: ref('person') })).toEqual({
+      value: { verb: 'send', ref: ref('person') },
+    });
+  });
+
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
     const { todo, worked, live, decide } = setup();
     worked(todo('other'), 'front', 'frontend', 'done');

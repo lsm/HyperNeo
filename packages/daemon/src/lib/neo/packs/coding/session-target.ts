@@ -165,7 +165,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       if (!facts) return { verb: 'keep' };
       let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
-      if (owner?.session && owner.todoId === facts.feature?.todoId && !owner.worker)
+      if (target.verb === 'start' && owner?.session && !owner.worker)
         return { verb: 'start', takeover: { todoId: owner.todoId, ref: owner.session.ref } };
       let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
       for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
@@ -185,6 +185,8 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         if (!owner.session && owner.todoId !== todo.id) return { verb: 'held' };
         ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
       }
+      if (target.verb === 'start' && owner?.session && !owner.worker)
+        return { verb: 'start', takeover: { todoId: owner.todoId, ref: owner.session.ref } };
       const archived = ownerState?.state === 'archived';
       const assigned = archived ? undefined : ownerState;
       const pool = assigned
