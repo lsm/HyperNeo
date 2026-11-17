@@ -301,8 +301,6 @@ export interface SessionGoalDependencies {
   readonly releaseSession: (sessionId: string) => Promise<void>;
   readonly neoChanged?: () => void;
   readonly ensureNeo?: () => Promise<string>;
-  readonly reportMetricTarget?: (id: string, text: string) => void;
-  readonly metricReported?: () => void;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -316,10 +314,6 @@ export function createSessionGoalOperations({
   releaseSession,
   neoChanged = () => {},
   ensureNeo,
-  reportMetricTarget = () => {
-    throw new Error('Goal metric reporting is unavailable');
-  },
-  metricReported,
   audit,
 }: SessionGoalDependencies) {
   const canOwn = (sessionId: string) =>
@@ -343,11 +337,15 @@ export function createSessionGoalOperations({
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
       .pipe(requireExistingGoal, 'goal', 'result:outcome')
       .pipe(requireGoalAccess, ['outcome', 'caller'], 'result:outcome');
-  const withReviewLimit = (goal: SessionGoal) => ({
-    ...goal,
-    metric: readMetric(goal),
-    noEffectReviewLimit: goals.wakeSchedule(goal.id)?.noEffectReviewLimit ?? 3,
-  });
+  const withReviewLimit = (goal: SessionGoal) => {
+    const { [metricKey]: _metric, ...metrics } = goal.metrics;
+    return {
+      ...goal,
+      metrics,
+      metric: readMetric(goal),
+      noEffectReviewLimit: goals.wakeSchedule(goal.id)?.noEffectReviewLimit ?? 3,
+    };
+  };
   const done = (result: SessionGoal) => ({
     accepted: true as const,
     goal: withReviewLimit(result),
@@ -545,10 +543,7 @@ export function createSessionGoalOperations({
     .pipe(
       async (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
         const { goalId: _goalId, ownerSessionId: _owner, metricPoint, ...draft } = input;
-        if (
-          metricPoint ||
-          (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
-        )
+        if (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
           await ensureNeo?.();
         const snapshot = metricPoint ? await goals.metricSnapshot(goal.id, input.runId) : null;
         if (snapshot && !snapshot.delivered)
@@ -564,7 +559,6 @@ export function createSessionGoalOperations({
               reason: 'metric_review_stale: review changed; retry.',
             };
           const metric = metricPoint ? readMetric(goal)! : null;
-          const previous = snapshot?.entries.map(readPoint).find((point) => point !== null);
           const met = !!metric && !!metricPoint && reachedTarget(metric, metricPoint.value);
           const entry = goals.appendJournal(
             goal.id,
@@ -575,20 +569,13 @@ export function createSessionGoalOperations({
             } as GoalJournalDraft,
             Date.now()
           );
-          const report =
-            metric && metricPoint && met && (!previous || !reachedTarget(metric, previous.value))
-              ? `The goal "${goal.title.slice(0, 200)}" reached its target: ${metric.name.slice(0, 200)} is ${metricPoint.value} (target ${metric.target}).`
-              : null;
-          if (report) reportMetricTarget(entry.id, report);
           if (input.runId?.startsWith('goal-review:')) schedules.reviewResult(goals.get(goal.id)!);
           return {
             accepted: true as const,
             entry: { ...entry, metricPoint: readPoint(entry) },
             metricReached: metricPoint ? met : undefined,
-            reported: !!report,
           };
         });
-        if ('reported' in result && result.reported) metricReported?.();
         if (input.runId?.startsWith('goal-review:')) neoChanged();
         return result;
       },
@@ -666,7 +653,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. If its question was retired, attempting to resume opens a new question. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
+        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. Structured metrics are set at creation and cannot be changed here. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. If its question was retired, attempting to resume opens a new question. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
@@ -692,7 +679,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.append',
       description:
-        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message. A structured metric requires metricPoint with numeric value and evidence on every delivered review. Points cannot be written outside reviews or replaced. metricReached reports whether the target was met; the human also receives a report, and the goal remains active. A no-effect review may pause the goal and ask the human.',
+        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message. A structured metric requires metricPoint with numeric value and evidence on every delivered review. Points cannot be written outside reviews or replaced. metricReached reports whether the target was met; the goal remains active and no automatic human report is sent. A no-effect review may pause the goal and ask the human.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Append,
       resultSchema: z.discriminatedUnion('accepted', [

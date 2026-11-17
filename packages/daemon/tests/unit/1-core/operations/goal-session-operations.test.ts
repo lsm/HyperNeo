@@ -51,7 +51,6 @@ function setup(
   runMigrations(db, () => {});
   createTables(db);
   const audited: string[] = [];
-  const metricReports: string[] = [];
   const auditLog = new McpAuditLogRepository(db);
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
@@ -77,7 +76,6 @@ function setup(
   const ops = createSessionGoalOperations({
     goals,
     schedules,
-    reportMetricTarget: (_id, text) => metricReports.push(text),
     sessionExists: (sessionId) => sessions.includes(sessionId),
     parentProblem,
     canReturn,
@@ -113,7 +111,6 @@ function setup(
     released,
     ops,
     sessions,
-    metricReports,
   };
 }
 
@@ -1182,7 +1179,7 @@ describe('goal journal', () => {
   });
 
   test('review metrics retain history and show progress without completing the goal', async () => {
-    const { db, call, scheduler, metricReports } = setup();
+    const { db, call, scheduler } = setup();
     const goal = (
       await call('goal.session.create', {
         title: 'Grow',
@@ -1232,9 +1229,18 @@ describe('goal journal', () => {
     expect((await call('goal.facts', { goalId: goal.id })).facts.lines.join('\n')).toContain(
       'adopters: 10; target 10; change 6'
     );
-    expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('active');
-    expect(metricReports).toHaveLength(1);
-    expect(metricReports[0]).toContain('adopters is 10');
+    const read = (await call('goal.session.get', { goalId: goal.id })).goal;
+    expect(read.status).toBe('active');
+    expect(read.metric).toEqual({
+      name: 'adopters',
+      target: 10,
+      direction: 'increase',
+      baseline: 2,
+    });
+    expect(read.metrics).not.toHaveProperty('__goal_metric_v1');
+    expect((await call('goal.session.list', {})).goals[0].metrics).not.toHaveProperty(
+      '__goal_metric_v1'
+    );
     db.close();
   });
 

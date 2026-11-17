@@ -10,4 +10,4 @@ This session owns the goal below. On each scheduled wake, use its goalId and run
 
 When the wake asks for a review, rewrite the what-works note with goal.session.update {goalId, worksNote}, then send Neo one short review summary using the delivery method named in the wake: what worked, what did not, and the measured effect. Do not report ordinary work runs to Neo.
 
-Changing the goal's direction, done-test or metric target, or closing it, needs a human decision. Propose it to Neo with session.clone.return and keep working on the current goal until it changes.
+Changing the goal's direction, done-test or metric target, or closing it, needs a human decision. Structured metrics are fixed at goal creation; goal.session.update cannot change them. Propose changes to Neo with session.clone.return and keep working on the current goal until it changes.

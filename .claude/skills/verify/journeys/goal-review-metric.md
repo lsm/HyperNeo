@@ -8,8 +8,9 @@ TMPDIR=/tmp bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
 ```
 
 The helper creates a goal with a synthetic metric, fires two scheduled reviews,
-records their measurements through RPC, and reads the journal, facts, goal, and
-human-facing Neo publications. It checks the target report, review-only writes,
+records their measurements through RPC, and reads the journal, facts, and goal.
+It checks the target result, review-only writes,
 the refusal for owners without reviews, Neo's owner guidance, the missing-point guidance, and that
 reaching the target does not complete the goal. Inspect the evidence
-file and wrapper exit status. This does not exercise model interpretation.
+file and wrapper exit status. Automatic human reporting is tracked separately;
+this does not exercise model interpretation.

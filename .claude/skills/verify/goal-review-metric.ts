@@ -74,16 +74,15 @@ try {
   evidence.facts = await call('goal.facts', { ownerSessionId, goalId });
   evidence.journal = await call('goal.journal.list', { ownerSessionId, goalId });
   evidence.goal = await call('goal.session.get', { ownerSessionId, goalId });
-  const snapshot = await call('neo.snapshot');
-  evidence.publications = await call('neo.publication.read', { conversationId: snapshot.conversationId, after: 0, limit: 100 });
   assert.equal(receipts[1].metricReached, true);
   assert((evidence.facts as any).facts.lines.join('\n').includes('adopters: 10; target 10; change 6'));
   assert.equal((evidence.journal as any).entries.length, 2);
   assert.deepEqual((evidence.journal as any).entries.map((entry: any) => entry.metricPoint.value), [10, 4]);
   assert((evidence.journal as any).entries.every((entry: any) => entry.metricPoint.evidence === 'Synthetic counter' && typeof entry.metricPoint.time === 'number'));
   assert.equal((evidence.goal as any).goal.status, 'active');
-  assert(JSON.stringify(evidence.publications).includes('reached its target'));
-  console.log('PASS: two scheduled reviews recorded; facts show 10/10 and change 6; owner and human received the target; goal remains active');
+  assert.deepEqual((evidence.goal as any).goal.metric, metric);
+  assert(!('__goal_metric_v1' in (evidence.goal as any).goal.metrics));
+  console.log('PASS: two scheduled reviews recorded; facts show 10/10 and change 6; the owner sees the target; goal remains active');
 } finally {
   Date.now = clock;
   writeFileSync(join(run, 'evidence/goal-review-metric.json'), JSON.stringify(evidence, null, 2));
