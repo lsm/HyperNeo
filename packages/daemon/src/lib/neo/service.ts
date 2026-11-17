@@ -56,6 +56,13 @@ import {
   recordNeoRequestTodo,
 } from './request-todo.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  workCleanupReads,
+  workCleanupWrites,
+} from '../../storage/repositories/work-cleanup-worker.ts';
+import { statfs } from 'node:fs/promises';
+import { getDataDir } from '../data-dir.ts';
+import { guardDisk, requestWorkCleanupSweep } from '../work-cleanup/disk-guard.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
@@ -185,6 +192,7 @@ export class NeoService {
   readonly sessionWatcher: NeoSessionWatcher;
   private watching: Promise<unknown> | null = null;
   private disposed = false;
+  private diskHold: string | null = null;
   private catchingUpTurns = false;
   private readonly turnsSeen = new Map<string, number>();
   filePacks: readonly NeoPack[] = [];
@@ -363,12 +371,18 @@ export class NeoService {
         this.deliverForward(ask.sessionId, key, note, ask.sessionId, kind),
       attend: (event) => this.attention(event, Date.now()),
       changed: this.notifyChanged,
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      limits: () => ({
+        ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+        hold: this.diskHold,
+      }),
     });
     this.sweepAttention = createNeoAttentionSweep({
       sessions: this.todoSessions,
       packs: () => this.installedPacks(),
-      limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+      limits: () => ({
+        ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+        hold: this.diskHold,
+      }),
       scan: async (now, waiting) => [
         ...driverHealthEvents(this.db.getGlobalSettings?.().driverHealth ?? {}),
         ...(
@@ -1310,6 +1324,25 @@ export class NeoService {
   }
 
   async sweepPacks(): Promise<void> {
+    await guardDisk(
+      {
+        free: async () => {
+          const volume = await statfs(getDataDir());
+          return volume.bavail * volume.bsize;
+        },
+        gone: () => this.db.gateway.call(workCleanupReads, 'gone'),
+        mark: (key, at) => this.db.gateway.call(workCleanupWrites, 'markGone', key, at),
+        forget: (keys) => this.db.gateway.call(workCleanupWrites, 'forgetGone', keys),
+        attend: (event) => this.attention(event, Date.now()),
+        backstop: async () => requestWorkCleanupSweep(this.db.getJobQueueRepo()),
+      },
+      Date.now()
+    ).then(
+      ({ hold }) => {
+        this.diskHold = hold;
+      },
+      (error) => this.log.warn('Disk guard pending', error)
+    );
     await this.todoRunner
       .recoverMoves()
       .catch((error) => this.log.warn('Todo move recovery pending', error));
@@ -1442,7 +1475,10 @@ export class NeoService {
       facts,
       {
         packs: () => this.installedPacks(),
-        limits: () => neoTodoLimits(this.db.getGlobalSettings?.().neo),
+        limits: () => ({
+          ...neoTodoLimits(this.db.getGlobalSettings?.().neo),
+          hold: this.diskHold,
+        }),
       },
       Date.now()
     ).catch((error) => {
