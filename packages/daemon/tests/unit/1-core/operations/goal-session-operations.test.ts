@@ -196,6 +196,24 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test('startup reconciliation does not rearm finished goal schedules', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
+        .goal;
+      const ids = ['goal', 'goal_review'].map((kind) => {
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        scheduler.pause(row);
+        expect(scheduler.repo.setStatus(row.id, 'paused', 'done', null, null)).toBe(true);
+        return row.id;
+      });
+      for (const existing of await goals.listScheduled()) schedules.sync(existing);
+      for (const id of ids)
+        expect(scheduler.repo.get(id)).toMatchObject({ id, status: 'done', pendingJobId: null });
+    } finally {
+      db.close();
+    }
+  });
   test('a goal assigned to an ordinary top-level session has no review schedule', async () => {
     const { db, call, scheduler } = setup();
     try {
