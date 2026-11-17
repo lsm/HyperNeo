@@ -114,6 +114,11 @@ describe('SessionsPage', () => {
     vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
     render(<SessionsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
+    await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
+    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
     fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
       target: { value: 'Hello' },
     });

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness, OXAP_HARNESSES } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   CreateSessionRequest,
   GitBranchesResponse,
   ModelInfo,
   Provider,
+  ProviderRecord,
   ThinkingLevel,
   WorkspaceHistoryEntry,
 } from '@hyperneo/shared';
@@ -17,6 +19,7 @@ import {
   getGitBranches,
   addWorkspaceToHistory,
   addFolderToProject,
+  listProviders,
 } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
@@ -128,6 +131,7 @@ export function SessionsPage() {
   const [initialSelection] = useState<NewChatSelection>(() => loadNewChatSelection());
   const { availableModels, loading: modelLoading, reload: reloadModels } = useModelSwitcher(null);
 
+  const [providers, setProviders] = useState<ProviderRecord[] | null>(null);
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [project, setProject] = useState<string | null>(initialSelection.project);
@@ -167,6 +171,45 @@ export function SessionsPage() {
     [availableModels, defaultModelId, globalSettings.value?.modelProvider]
   );
   const activeModelInfo = selectedModelInfo ?? defaultModelInfo;
+  const providerId =
+    (selectedModel && selectedModelInfo
+      ? selectedModelInfo.provider
+      : globalSettings.value?.modelProvider) ?? activeModelInfo?.provider;
+  const mayUseOxap = Object.values(OXAP_HARNESSES).some((row) =>
+    (row.providers as readonly string[]).includes(providerId ?? '')
+  );
+  const provider = providers?.find((record) => record.providerId === providerId);
+  let harness: unknown;
+  try {
+    harness = JSON.parse(provider?.configJson ?? '{}').harness;
+  } catch {}
+  const thinkingAllowed = !(
+    isOxapHarness(harness) &&
+    oxapHarness(harness).providers.includes(providerId ?? '') &&
+    !oxapHarness(harness).thinking
+  );
+
+  useEffect(() => {
+    if (connectionState.value !== 'connected') return;
+    let active = true;
+    let request = 0;
+    const load = () => {
+      const current = ++request;
+      setProviders(null);
+      void listProviders()
+        .then(({ providers }) => {
+          if (active && current === request) setProviders(providers);
+        })
+        .catch(() => {});
+    };
+    load();
+    const unsubscribe = connectionManager.getHubIfConnected()?.onEvent('providers.changed', load);
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [connectionState.value]);
+
   const activeModelLabel = getModelLabel(
     activeModelInfo,
     selectedModel ? selectedModel.id : defaultModelId
@@ -342,7 +385,7 @@ export function SessionsPage() {
 
   const handleSubmit = async () => {
     const content = text.trim();
-    if (!content || submitting) return;
+    if (!content || submitting || (mayUseOxap && providers === null)) return;
     if (!canCreate) {
       toast.error('Not connected to server. Please wait...');
       return;
@@ -361,7 +404,7 @@ export function SessionsPage() {
           provider: selectedModelInfo.provider as Provider,
         };
       }
-      if (selectedThinking) {
+      if (selectedThinking && thinkingAllowed) {
         req.config = { ...req.config, thinkingLevel: selectedThinking };
       }
       if (sandboxChoice !== null) {
@@ -442,6 +485,7 @@ export function SessionsPage() {
                   availableModels={availableModels}
                   loading={modelLoading}
                   thinkingLevel={thinkingLevel}
+                  showThinking={thinkingAllowed}
                   onSelectThinking={setSelectedThinking}
                   onReload={() => void reloadModels()}
                   onSelectModel={(model) => {
@@ -479,7 +523,13 @@ export function SessionsPage() {
                 type="button"
                 data-testid="landing-send"
                 onClick={handleSubmit}
-                disabled={!text.trim() || submitting || !canCreate || waitingForProjectGit}
+                disabled={
+                  !text.trim() ||
+                  submitting ||
+                  !canCreate ||
+                  waitingForProjectGit ||
+                  (mayUseOxap && providers === null)
+                }
                 title="Start chat"
                 aria-label="Start chat"
                 class="flex items-center justify-center w-8 h-8 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
