@@ -1232,17 +1232,23 @@ a:focus-visible {
 
 html.tauri-desktop body {
   --safe-height: calc(100dvh - 52px);
-  height: var(--safe-height);
-  overflow: visible;
-  transform: translateY(52px);
+  padding-top: 52px;
 }
 
 html.tauri-desktop .desktop-drag-strip {
   position: fixed;
-  inset: -52px 0 auto;
+  inset: 0 0 auto;
   z-index: 100;
   height: 52px;
   background: var(--bg);
+}
+
+html.tauri-desktop :is(.neo-session-pane, .neo-drawer-layer, .neo-scene-list.neo-scene-sheet, .fixed.inset-0, .fixed.top-0) {
+  top: 52px;
+}
+
+html.tauri-desktop .fixed.top-4 {
+  top: 68px;
 }
 
 html.tauri-desktop #root > main {
