@@ -174,6 +174,70 @@ describe('goal work wakes', () => {
     );
   });
 
+  test('a review wake bounds journal entries and points to earlier pages', async () => {
+    const goal = await create();
+    for (let i = 0; i < 25; i++)
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        done: `entry-${String(i).padStart(2, '0')}-unique`,
+        effect: 'None',
+        worked: 'Read',
+      });
+    const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+    now = row.nextRunAt!;
+    await createSessionScheduleFire({
+      scheduler,
+      status: async () => 'done',
+      deliver: async (_row, _id, text) => {
+        messages.push(text);
+      },
+    })(jobs.getJob(row.pendingJobId!)!);
+    expect(messages[0]).not.toContain('entry-00-unique');
+    expect(messages[0]).toContain('entry-05-unique');
+    expect(messages[0]).toContain('entry-24-unique');
+    expect(messages[0]).toContain('5 earlier');
+    expect(messages[0]).toContain('goal.journal.list');
+  });
+
+  test('entries added while a review is in flight appear in the next review', async () => {
+    const goal = await create();
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'Before snapshot',
+      effect: 'None',
+      worked: 'Read',
+    });
+    const fireReview = async () => {
+      const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+      now = row.nextRunAt!;
+      await createSessionScheduleFire({
+        scheduler,
+        status: async () => 'running',
+        deliver: async (_row, _id, text) => {
+          messages.push(text);
+        },
+      })(jobs.getJob(row.pendingJobId!)!);
+    };
+    await fireReview();
+    const runId = messages[0].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'During review',
+      effect: 'Changed',
+      worked: 'Read',
+    });
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId,
+      done: 'Review result',
+      effect: 'yes',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[1]).toContain('During review');
+    expect(messages[1]).not.toContain('Before snapshot');
+  });
+
   test('a due review is delivered to the mailbox while the owner is busy', async () => {
     const goal = await create();
     const row = scheduler.repo.getBySource('goal_review', goal.id)!;
