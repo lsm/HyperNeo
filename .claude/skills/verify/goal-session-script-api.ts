@@ -12,16 +12,17 @@ function nextBlock(body: Body) {
   if (!invoke)
     return { type: 'tool_use', id: `toolu_${Date.now()}_search`, name: 'ToolSearch', input: { query: 'select:mcp__hyperneo-operations__invoke', max_results: 1 } };
   const wake = JSON.stringify(messages[wakeAt].content);
-  const [, goalId, runId] = /goal\.journal\.append entry for goalId ([^,]+), runId ([^.\\"]+?)\./.exec(wake) ?? [];
+  const [, goalId, runId] = /goalId ([^,]+), runId ([^, .\\"]+)/.exec(wake) ?? [];
   const step = messages.slice(wakeAt).flatMap((message) => (message.role === 'assistant' && Array.isArray(message.content) ? message.content : []))
     .filter((block) => block?.type === 'tool_use' && String(block.name).endsWith('hyperneo-operations__invoke')).length;
-  const review = wake.includes('Read the journal pages and rewrite');
+  const review = wake.includes('Journal entries since the previous review');
+  const [, recipient] = /message\.send to (neo:[^ ,\\"]+)/.exec(wake) ?? [];
   const calls = [
-    { name: 'goal.journal.append', input: { goalId, runId, done: 'Posted the guide in two forums', effect: 'Three readers arrived', worked: 'Forum posts with one example' } },
+    { name: 'goal.journal.append', input: { goalId, runId, done: review ? 'Review: three readers arrived' : 'Posted the guide in two forums', effect: review ? 'yes' : 'Three readers arrived', worked: 'Forum posts with one example' } },
     ...(review
       ? [
           { name: 'goal.session.update', input: { goalId, worksNote: 'Forum posts with one example bring readers.' } },
-          { name: 'session.clone.return', input: { summary: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } },
+          ...(recipient ? [{ name: 'message.send', input: { to: recipient, kind: 'done', text: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } }] : [{ name: 'session.clone.return', input: { summary: `Review of goal ${goalId}: forum posts with one example worked; three readers arrived.` } }]),
         ]
       : []),
   ];
@@ -39,6 +40,8 @@ createServer(async (req, res) => {
   if (req.url?.startsWith('/v1/messages/count_tokens')) return res.end(JSON.stringify({ input_tokens: 100 }));
   const body = JSON.parse(Buffer.concat(chunks).toString() || '{}') as Body;
   const block = nextBlock(body);
+  if (block.type === 'text' && block.text === 'Journaled the work run.')
+    await new Promise((resolve) => setTimeout(resolve, 40_000));
   console.log(`${new Date().toISOString()} ${req.url} -> ${block.type} ${'input' in block ? (block.input as { name: string }).name : ''}`);
   const message = {
     id: `msg_${Date.now()}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-20250514', content: [block],

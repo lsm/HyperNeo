@@ -9,8 +9,12 @@ import type {
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { sessionGoalReviewReads } from './session-goal-review-read-worker.ts';
 
-type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
+  reviewCadence?: SessionSchedule['cadence'];
+};
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -69,6 +73,10 @@ export class SessionGoalRepository {
         )
         .all(ownerSessionId, includeClosed ? 1 : 0) as Row[]
     ).map(toGoal);
+  }
+
+  async listScheduled(): Promise<SessionGoal[]> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'scheduled');
   }
 
   create(
@@ -234,5 +242,11 @@ export class SessionGoalRepository {
         )
         .all(goalId, before, before, limit) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
+  }
+
+  async journalSinceReview(
+    goalId: string
+  ): Promise<{ entries: GoalJournalEntry[]; earlier: number; cursor: string }> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'journal', goalId);
   }
 }

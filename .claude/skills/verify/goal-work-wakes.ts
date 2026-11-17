@@ -35,12 +35,23 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: url => createLocalSocket(url, join(run, 'data/local-rpc.credential')) });
   hub.registerTransport(transport); await transport.initialize();
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
+  for (const name of ['goal.session.create', 'goal.session.update']) {
+    const description = await call('operations.describe', { name });
+    assert(description.found && description.description.includes('Ordinary top-level session owners have no review schedule'), `${name} omits the review schedule limitation`);
+  }
   const ownerSessionId = (await call('neo.open')).sessionId; assert(ownerSessionId);
+  const prompt = app.db.getSession(ownerSessionId)?.config.systemPrompt;
+  assert(typeof prompt === 'string' && prompt.includes('Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them.'), 'Neo did not receive the review schedule limitation');
+  evidence.neoGuidance = { includesReviewExclusion: true };
   const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published', cadence: { kind: 'every', everyMs: 60_000 }, dailyRunLimit: 2 });
   assert(created.accepted, JSON.stringify(created));
   evidence.goal = created.goal;
   assert.equal(created.goal.dailyRunLimit, 2);
   const db = app.db.getDatabase();
+  assert((await call('goal.session.update', { ownerSessionId, goalId: created.goal.id, reviewCadence: { kind: 'every', everyMs: 120_000 } })).accepted);
+  const audit = db.prepare("SELECT params_summary FROM mcp_audit_log WHERE tool_name = 'goal.session.update' ORDER BY rowid DESC LIMIT 1").get() as { params_summary: string } | null;
+  assert(audit && JSON.parse(audit.params_summary).fields.includes('reviewCadence'), 'Review cadence update was not named in the audit log');
+  evidence.audit = { reviewCadenceRecorded: true };
   const schedule = () => db.prepare("SELECT id, next_run_at, pending_job_id, last_outcome, last_skip_reason, status FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(created.goal.id) as { id: string; next_run_at: number; pending_job_id: string; last_outcome: string; last_skip_reason: string | null; status: string };
   const mailbox = (messageId: string) => (db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') = ?").get(messageId) as { payload: string } | null)?.payload ?? null;
   Date.now = () => now;
@@ -76,6 +87,19 @@ try {
   await status('completed'); now = first.due + 86_400_000; await status('active');
   const nextDay = await wake();
   assert.equal(nextDay.outcome, 'fired', 'Runs older than 24 hours still counted');
+  const review = db.prepare("SELECT id, next_run_at, pending_job_id FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(created.goal.id) as { id: string; next_run_at: number; pending_job_id: string };
+  assert(review, 'Neo-owned goal has no review schedule');
+  now = review.next_run_at;
+  await fire!(app!.jobQueue.getJob(review.pending_job_id)!);
+  const reviewWake = mailbox(`schedule:${review.id}:${review.next_run_at}`);
+  assert(reviewWake?.includes('Journal entries since the previous review'), 'Review wake did not reach Neo mailbox');
+  assert(!reviewWake.includes('goal.journal.list'), 'An empty review suggested paging');
+  const reviewId = /runId (goal-review:[^, ]+)/.exec(reviewWake)?.[1];
+  assert(reviewId, 'Review wake did not include its snapshot run id');
+  assert((await call('goal.journal.append', { ownerSessionId, goalId: created.goal.id, runId: reviewId, done: 'Reviewed the period', effect: 'yes', worked: 'Examples' })).accepted);
+  const journal = await call('goal.journal.list', { ownerSessionId, goalId: created.goal.id });
+  assert(journal.entries.some((entry: { runId: string; effect: string }) => entry.runId === reviewId && entry.effect === 'yes'), 'Review result was not readable');
+  evidence.review = { delivered: true, journaled: true };
   console.log(`PASS unchanged goal due times woke the owner, the third run in a day hit the limit of 2 with one notice, reactivation kept the limit and the next day fired. ${run}/evidence/goal-work-wakes.json`);
 } finally {
   Date.now = clock;

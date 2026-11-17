@@ -4,6 +4,7 @@ import { createSessionGoalOperations } from '../../../../src/lib/goals/session-g
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
+import { createSessionScheduleOperations } from '../../../../src/lib/scheduler/operations.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
@@ -13,6 +14,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -49,6 +51,7 @@ function setup(
   runMigrations(db, () => {});
   createTables(db);
   const audited: string[] = [];
+  const auditLog = new McpAuditLogRepository(db);
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
   const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
@@ -84,7 +87,14 @@ function setup(
       sessions.push(`goal-session-${started.length}`);
       return `goal-session-${started.length}`;
     },
-    audit: (_caller, toolName) => audited.push(toolName),
+    audit: (caller, toolName, summary) => {
+      audited.push(toolName);
+      auditLog.createEntry({
+        sessionId: caller.sessionId,
+        toolName,
+        paramsSummary: JSON.stringify(summary),
+      });
+    },
   });
   const call = (name: string, input: unknown, caller: OperationCaller = neo) => {
     const op = ops.find((item) => item.name === name)!;
@@ -168,93 +178,6 @@ describe('goal mandate reconciliation facts', () => {
 });
 
 describe('goal what-works compaction', () => {
-  test('ten new journal entries request compaction; rewriting the note advances its cursor without deleting history', async () => {
-    const { db, call, schedules } = setup();
-    try {
-      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
-        .goal;
-      const append = (runId: string) =>
-        call('goal.journal.append', {
-          goalId: goal.id,
-          runId,
-          done: runId,
-          effect: 'A reader tried it',
-          worked: 'Concrete examples',
-        });
-      for (let i = 0; i < 9; i++) await append(`cycle-${i}`);
-      const before = await call('goal.facts', { goalId: goal.id });
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
-        'rewrite'
-      );
-      await append('cycle-9');
-      const due = await call('goal.facts', { goalId: goal.id });
-      expect(due.facts.digest).not.toBe(before.facts.digest);
-      expect(due.facts.lines).toContain('What-works compaction due');
-      expect(await call('goal.facts', { goalId: goal.id })).toEqual(due);
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
-        'goal.session.update'
-      );
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
-        'worksNote'
-      );
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
-        'Resources and Do alone'
-      );
-      db.exec('UPDATE goal_journal SET created_at=5');
-      expect(
-        await call('goal.session.update', {
-          goalId: goal.id,
-          worksNote: 'Small examples bring readers',
-        })
-      ).toMatchObject({ accepted: true, goal: { worksNote: 'Small examples bring readers' } });
-      expect(
-        db.prepare('SELECT works_note_through FROM neo_goals WHERE id=?').get(goal.id)
-      ).toEqual({ works_note_through: 10 });
-      const events = db
-        .prepare(
-          "SELECT source,new_state FROM space_goal_events WHERE goal_id=? AND event_type='journal_compacted'"
-        )
-        .all(goal.id) as { source: string; new_state: string }[];
-      expect(events).toEqual([]);
-      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(10);
-      expect((await call('goal.facts', { goalId: goal.id })).facts.lines).not.toContain(
-        'What-works compaction due'
-      );
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
-        'Small examples bring readers'
-      );
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
-        'rewrite'
-      );
-      await append('cycle-9');
-      for (let i = 10; i < 19; i++) await append(`cycle-${i}`);
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
-        'rewrite'
-      );
-      await append('cycle-19');
-      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain('rewrite');
-    } finally {
-      db.close();
-    }
-  });
-  test('a nudge requests a rewrite even without ten entries and other sessions may compact', async () => {
-    const { db, call, schedules } = setup();
-    try {
-      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
-        .goal;
-      expect(schedules.message(goal.id, { summary: '', nudge: true })).toContain('rewrite');
-      expect(
-        await call(
-          'goal.session.update',
-          { goalId: goal.id, worksNote: 'Not mine' },
-          { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
-        )
-      ).toMatchObject({ accepted: true });
-      expect((await call('goal.session.get', { goalId: goal.id })).goal.worksNote).toBe('Not mine');
-    } finally {
-      db.close();
-    }
-  });
   test('cursor write failure rolls the note and cursor back together', async () => {
     const { db, call } = setup();
     try {
@@ -283,6 +206,153 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test.each(['goal', 'goal_review'])(
+    'startup does not restore a deleted %s schedule',
+    async (kind) => {
+      const { db, call, scheduler, goals, schedules } = setup();
+      try {
+        const goal = (
+          await call('goal.session.create', { title: 'Deleted wake', doneTest: 'Done' })
+        ).goal;
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        const remove = createSessionScheduleOperations(scheduler).find(
+          (op) => op.name === 'schedule.session.delete'
+        )!;
+        expect(
+          await remove.execute(remove.inputSchema.parse({ scheduleId: row.id }), neo)
+        ).toMatchObject({ ok: true });
+        for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+        expect(scheduler.repo.getBySource(kind, goal.id)).toBeNull();
+        const other = kind === 'goal' ? 'goal_review' : 'goal';
+        expect(scheduler.repo.getBySource(other, goal.id)?.status).toBe('active');
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test('startup reconciliation preserves individually paused schedules', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Paused wakes', doneTest: 'Done' }))
+        .goal;
+      const ids = ['goal', 'goal_review'].map((kind) => {
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        expect(scheduler.pause(row)?.status).toBe('paused');
+        return row.id;
+      });
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+      for (const id of ids)
+        expect(scheduler.repo.get(id)).toMatchObject({ id, status: 'paused', pendingJobId: null });
+    } finally {
+      db.close();
+    }
+  });
+  test('review cadence changes appear in the session audit log', async () => {
+    const { db, call } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Audit goal', doneTest: 'Done' }))
+        .goal;
+      const updated = await call('goal.session.update', {
+        goalId: goal.id,
+        reviewCadence: { kind: 'every', everyMs: 120_000 },
+      });
+      expect(updated.accepted).toBe(true);
+      const entry = new McpAuditLogRepository(db)
+        .listBySession('neo:root')
+        .find((item) => item.toolName === 'goal.session.update');
+      expect(entry?.paramsSummary && JSON.parse(entry.paramsSummary)).toMatchObject({
+        goalId: goal.id,
+        fields: ['reviewCadence'],
+      });
+    } finally {
+      db.close();
+    }
+  });
+  test('startup reconciliation does not rearm finished goal schedules', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
+        .goal;
+      const ids = ['goal', 'goal_review'].map((kind) => {
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        scheduler.pause(row);
+        expect(scheduler.repo.setStatus(row.id, 'paused', 'done', null, null)).toBe(true);
+        return row.id;
+      });
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+      for (const id of ids)
+        expect(scheduler.repo.get(id)).toMatchObject({ id, status: 'done', pendingJobId: null });
+    } finally {
+      db.close();
+    }
+  });
+  test('a goal assigned to an ordinary top-level session has no review schedule', async () => {
+    const { db, call, scheduler } = setup();
+    try {
+      const created = await call(
+        'goal.session.create',
+        {
+          ownerSessionId: 'plain',
+          title: 'Assigned goal',
+          doneTest: 'Done',
+        },
+        human
+      );
+      expect(created.accepted).toBe(true);
+      expect(scheduler.repo.getBySource('goal', created.goal.id)).not.toBeNull();
+      expect(scheduler.repo.getBySource('goal_review', created.goal.id)).toBeNull();
+      await call(
+        'goal.session.update',
+        { ownerSessionId: 'plain', goalId: created.goal.id, status: 'paused' },
+        human
+      );
+      await call(
+        'goal.session.update',
+        { ownerSessionId: 'plain', goalId: created.goal.id, status: 'active' },
+        human
+      );
+      expect(scheduler.repo.getBySource('goal_review', created.goal.id)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+  test('an existing active goal gains a review schedule during reconciliation', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
+        .goal;
+      scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
+      db.prepare(
+        "UPDATE neo_goals SET wake_schedule = json_remove(wake_schedule, '$.reviewCadence') WHERE id = ?"
+      ).run(goal.id);
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+      expect(scheduler.repo.getBySource('goal_review', goal.id)).toMatchObject({
+        status: 'active',
+        cadence: { kind: 'every', everyMs: 86_400_000 },
+      });
+    } finally {
+      db.close();
+    }
+  });
+  test('a failed first review schedule creation is retried on startup', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Legacy', doneTest: 'Done' })).goal;
+      scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
+      db.prepare(
+        "UPDATE neo_goals SET wake_schedule = json_remove(wake_schedule, '$.reviewCadence') WHERE id = ?"
+      ).run(goal.id);
+      db.exec(
+        "CREATE TRIGGER fail_review BEFORE INSERT ON session_schedules WHEN NEW.source_kind = 'goal_review' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
+      );
+      expect(() => schedules.reconcile(goal)).toThrow('synthetic failure');
+      db.exec('DROP TRIGGER fail_review');
+      schedules.reconcile(goal);
+      expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('active');
+    } finally {
+      db.close();
+    }
+  });
   test('puts the full cycle only in goal wake content, preserving cadence and identity', async () => {
     const { db, call, scheduler, schedules } = setup();
     try {
