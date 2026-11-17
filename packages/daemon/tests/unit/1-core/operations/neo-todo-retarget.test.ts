@@ -16,7 +16,7 @@ afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
 
-function setup() {
+function setup(handoff = false) {
   const db = new Database(':memory:');
   databases.push(db);
   runMigrations(db, () => {});
@@ -39,7 +39,7 @@ function setup() {
       title: 'Work',
       doneWhen: 'Done',
       instruction: 'Continue work',
-      check: null,
+      check: handoff ? { pack: 'coding', kind: 'pr', params: {} } : null,
       named: null,
       approvedAt: 1,
     },
@@ -70,7 +70,18 @@ function setup() {
       sessions,
       write: gatewayFor(db).run.bind(gatewayFor(db)),
       limits: () => ({ running: capacity, perGroup: 3 }),
-      packs: () => [],
+      packs: () =>
+        handoff
+          ? [
+              {
+                id: 'coding',
+                describe: 'Coding',
+                instructions: () => null,
+                workerStartBrief: (message, parameters) =>
+                  `${message}\nInherited: ${JSON.stringify(parameters?.replacedWorker)}`,
+              },
+            ]
+          : [],
       changed: () => {
         changed.push({ state: store.getTodo('todo')?.state, ref: sessions.readRef('todo') });
       },
@@ -158,6 +169,29 @@ function setup() {
 }
 
 describe('neo.todo.retarget', () => {
+  test('passes the replaced worker to the new worker brief', async () => {
+    const h = setup(true);
+    await h.boot().retarget('todo', old);
+    const message = String(h.calls.find((call) => call.name === 'work.start')?.input.message);
+    expect(message).toContain('"adapter":"hyperneo"');
+    expect(message).toContain('"id":"old"');
+  });
+
+  test('a later start after reopening has no replaced worker', async () => {
+    const h = setup(true);
+    h.seed();
+    expect(
+      await gatewayFor(h.db).call(neoTodoMoveWrites, 'reopen', {
+        todoId: 'todo',
+        fromRef: old,
+        at: 1,
+      })
+    ).toBe(true);
+    await h.boot().start('todo');
+    const message = String(h.calls.find((call) => call.name === 'work.start')?.input.message);
+    expect(message).toContain('Inherited: undefined');
+  });
+
   test('an unknown todo is refused', async () => {
     const h = setup();
     expect(await h.boot().retarget('missing', old)).toMatchObject({
