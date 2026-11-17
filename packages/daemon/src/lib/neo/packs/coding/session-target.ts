@@ -5,17 +5,16 @@ import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
-import type { NeoPack, NeoWorkerTargetDecision } from '../../pack-contract.ts';
+import type { NeoLineScope, NeoPack, NeoWorkerTargetDecision } from '../../pack-contract.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
 import { planCodingSessionDispatch, planCodingStrategyQuestion } from './session-strategy.ts';
-import { codingStagePreference } from './stage-preferences.ts';
+import { codingStageTargetReads } from './stage-target-db.ts';
 import {
   type CodingLines,
   codingCandidateLine,
-  codingLineScope,
   codingStartAlternatives,
   rankCodingTargets,
   lineText,
@@ -65,13 +64,16 @@ async function sessionState(session: Pooled, status: Status) {
   };
 }
 
+const lineScope = (db: Database, todoId: string, repo?: string) =>
+  gatewayFor(db).call(codingStageTargetReads, 'lineScope', { todoId, ...(repo ? { repo } : {}) });
+
 const workKind = (todo: NeoTodo) =>
   typeof todo.named?.workKind === 'string' ? todo.named.workKind : 'coding.write';
 
 async function routedPool(
   pool: Awaited<ReturnType<typeof sessionState>>[],
   lines: CodingLines | undefined,
-  scope: () => ReturnType<typeof codingLineScope>,
+  scope: () => Promise<NeoLineScope>,
   kind: string
 ) {
   if (!lines?.active()) return pool;
@@ -87,7 +89,7 @@ async function routedPool(
               ...(session.line.model ? { model: session.line.model } : {}),
             })
           ).line;
-      const ranking = await lines.rank(kind, [line], scope());
+      const ranking = await lines.rank(kind, [line], await scope());
       return ranking.ranked.length ? session : { ...session, state: 'busy' as const };
     })
   );
@@ -188,7 +190,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         : await routedPool(
             await Promise.all(facts.pool.map((s) => sessionState(s, status))),
             lines,
-            () => codingLineScope(db, todo.id, facts.repo),
+            () => lineScope(db, todo.id, facts.repo),
             workKind(todo)
           );
       return {
@@ -219,7 +221,10 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         return { value: { target } };
       const saved =
         facts && rankedHere(target)
-          ? codingStagePreference(db, { repo: facts.repo, stage: 'write' })
+          ? await gatewayFor(db).call(codingStageTargetReads, 'stagePreference', {
+              repo: facts.repo,
+              stage: 'write',
+            })
           : {};
       const usable = async (field: 'model' | 'effort') => {
         const value = !target[field] && saved[field];
@@ -233,7 +238,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         lines,
         workKind(todo),
         await codingStartAlternatives(start, lines),
-        codingLineScope(db, todo.id, facts?.repo)
+        await lineScope(db, todo.id, facts?.repo)
       );
       if ('reason' in ranked) return { reason: { reason: ranked.reason } };
       const [chosen] = ranked.value;
