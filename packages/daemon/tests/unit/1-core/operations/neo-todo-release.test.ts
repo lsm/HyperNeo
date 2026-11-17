@@ -22,6 +22,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
 import { recordedWorkInvoke } from '../../helpers/recorded-work-invoke.ts';
 
 const worker = { adapter: 'hyperneo', id: 'worker-1' };
@@ -181,6 +182,46 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
+  test('keeps a reused existing session once, even when the target requested a start', async () => {
+    const h = setup();
+    try {
+      const db = { getDatabase: () => h.db } as never;
+      h.setArchive(
+        (caller) =>
+          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+      );
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(1);
+      const fact = h.db
+        .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
+        .get() as { value_json: string };
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('archives a daemon-started worker after work was sent to it', async () => {
+    const h = setup();
+    try {
+      recordWorkerStarted(h.db, worker);
+      const db = { getDatabase: () => h.db } as never;
+      h.setArchive(
+        (caller) =>
+          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+      );
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('keeps a worker the human named', async () => {
     const h = setup();
     try {
@@ -216,12 +257,13 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
-  test('keeps a worker the todo only sent work to', async () => {
+  test('does not release a worker sent work when the archive does not succeed', async () => {
     const h = setup();
     try {
+      h.setArchive(() => ({ ok: false, reason: 'busy' }));
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
-      expect(h.archived).toEqual([]);
+      expect(h.released()).toEqual([]);
     } finally {
       h.db.close();
     }
@@ -593,6 +635,7 @@ describe('admitSessionArchive', () => {
     const h = setup();
     try {
       const db = { getDatabase: () => h.db } as never;
+      recordWorkerStarted(h.db, worker);
       expect(
         admitSessionArchive(
           worker,

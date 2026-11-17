@@ -7,7 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordWorkerStarted, readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -22,7 +22,7 @@ const evidence: Record<string, unknown> = {};
 try {
   assert.notEqual(app.server.port, 8399);
   const now = new Date().toISOString();
-  const workers = { released: crypto.randomUUID(), named: crypto.randomUUID(), neoNamed: crypto.randomUUID(), unsaved: crypto.randomUUID(), removed: crypto.randomUUID() };
+  const workers = { released: crypto.randomUUID(), named: crypto.randomUUID(), neoNamed: crypto.randomUUID(), unsaved: crypto.randomUUID(), removed: crypto.randomUUID(), existing: crypto.randomUUID() };
   const unsaved = join(run, 'unsaved');
   mkdirSync(unsaved);
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Proof', '-c', 'user.email=proof@example.com', ...args], { cwd: unsaved, stdio: 'ignore' });
@@ -39,6 +39,7 @@ try {
   const ask = todos.openAsk({ id: 'release', sessionId: `neo:${crypto.randomUUID()}`, projectId: null, originMessageId: null,
     title: 'Release proof', request: 'Release proof', createdAt: Date.now() });
   for (const [key, id] of Object.entries(workers)) {
+    if (key !== 'existing') recordWorkerStarted(raw, { adapter: 'hyperneo', id });
     const todo = todos.addTodo(`todo-${key}`, ask.id, { title: `Finished ${key}`, doneWhen: 'Done', instruction: null, named: key === 'named' ? { session: 'Jason' } : null, check: null }, Date.now());
     sessions.create(todo.id, { verb: 'start', adapter: 'hyperneo', ...(key === 'named' ? { name: 'Jason' } : key === 'neoNamed' ? { name: 'dev-6' } : {}) });
     raw.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id }), todo.id);
@@ -54,6 +55,7 @@ try {
   evidence.neoNamedStatus = await status(workers.neoNamed);
   evidence.unsavedStatus = await status(workers.unsaved);
   evidence.removedStatus = await status(workers.removed);
+  evidence.existingStatus = await status(workers.existing);
   evidence.releasedWorkers = raw.prepare('SELECT id FROM work_started_sessions WHERE released_at IS NOT NULL ORDER BY id').all();
   raw.prepare('UPDATE work_started_sessions SET unusable_at = NULL').run();
   evidence.freeLaterThanAnHour = [...readFreeWorkers(raw, 'hyperneo')].sort();
@@ -63,6 +65,7 @@ try {
   assert.equal(evidence.neoNamedStatus, 'archived');
   assert.equal(evidence.unsavedStatus, 'active');
   assert.equal(evidence.removedStatus, 'archived');
+  assert.equal(evidence.existingStatus, 'active');
   assert.deepEqual((evidence.releasedWorkers as { id: string }[]).map((row) => row.id), [workers.released, workers.neoNamed, workers.removed].sort());
   assert.ok(!(evidence.freeLaterThanAnHour as string[]).some((id) => id === workers.released || id === workers.neoNamed || id === workers.removed));
   assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id).sort(), ['todo-neoNamed', 'todo-released', 'todo-removed']);
