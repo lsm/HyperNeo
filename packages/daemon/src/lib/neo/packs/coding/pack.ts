@@ -243,8 +243,8 @@ export function createCodingPack(deps: {
         }),
       };
     },
-    workerTarget: (todo, target, status) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status),
+    workerTarget: (todo, target, status, askSetting) =>
+      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting),
     workerTargetRefused: (todo) =>
       gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
         todoId: todo.id,
