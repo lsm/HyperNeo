@@ -534,7 +534,9 @@ export class CodingPrLedgerRepository {
         ).map((row) => [row.number, row.state])
       );
       planned.rows = planned.rows.map((row) =>
-        failedThreads.includes(row.number) && previous.has(row.number)
+        failedThreads.includes(row.number) &&
+        previous.has(row.number) &&
+        !['closed', 'merged'].includes(previous.get(row.number)!)
           ? { ...row, state: previous.get(row.number)! }
           : row
       );

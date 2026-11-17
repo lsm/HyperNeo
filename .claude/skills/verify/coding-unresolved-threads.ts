@@ -184,7 +184,18 @@ try {
   assert.equal(cross.state, 'waiting_cross_review');
   const escalated = await sweep('cross-model review reminder', 50);
   assert(escalated.woken.some((text) => text.includes('different model')));
-  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated }, null, 2));
+  const closed = async () => ({ data: { rateLimit: { remaining: 4000 }, repository: {
+    nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] },
+    done: { nodes: [{ ...pr(), state: 'CLOSED', closedAt: new Date(t0 + 51 * MIN).toISOString() }] },
+  } } });
+  await reconcileCodingPrLedger(ledger, [repo], closed, t0 + 51 * MIN);
+  assert.equal(ledger.list()[0].state, 'closed');
+  head = 'c'.repeat(40);
+  await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 52 * MIN, failedRefresh);
+  const reopened = ledger.list()[0];
+  assert.equal(reopened.state, 'waiting_cross_review');
+  assert.equal(reopened.closedAt, null);
+  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened }, null, 2));
 } finally {
   db.close();
 }

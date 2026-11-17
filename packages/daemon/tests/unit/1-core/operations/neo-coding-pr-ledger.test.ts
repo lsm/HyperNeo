@@ -240,6 +240,22 @@ describe('planCodingLedgerRead', () => {
 });
 
 describe('PR ledger reconcile', () => {
+  test.each(['CLOSED', 'MERGED'] as const)(
+    'shows a reopened PR after thread refresh fails following %s',
+    async (state) => {
+      const { db, ledger } = setup();
+      const closed = named(async () =>
+        response([], [node(1, { state, closedAt: new Date(1).toISOString() })])
+      );
+      await reconcileCodingPrLedger(ledger, ['x/x'], closed, 100);
+      const open = named(async () => response([node(1)]));
+      await reconcileCodingPrLedger(ledger, ['x/x'], open, 200, async () => ({ ok: false }));
+      expect(ledger.list().map((row) => [row.state, row.closedAt, row.readAt])).toEqual([
+        ['waiting_human', null, 200],
+      ]);
+      db.close();
+    }
+  );
   test('preserves the previous PR state when its thread refresh fails', async () => {
     const { db, ledger } = setup();
     const read = named(async () => response([node(1)]));

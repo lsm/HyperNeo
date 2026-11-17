@@ -15,3 +15,5 @@ does not verify live GitHub collection or a live worker receiving the reminder.
 Draft, conflicting and failing PRs retain those states while threads remain open.
 The helper also checks that a failed thread refresh preserves a successful ledger
 poll, low quota prevents refresh, and unowned cross-model review reaches Neo.
+When a closed PR reopens during a failed thread refresh, the ledger reports its
+open state.
