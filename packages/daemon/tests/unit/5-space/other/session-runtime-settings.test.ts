@@ -243,6 +243,23 @@ describe('session.runtimeSettings.update on a cold chat and an OXAP provider', (
     expect(h.persisted.size).toBe(0);
   });
 
+  test('refuses an inferred OXAP provider for a cold Claude Code chat', async () => {
+    const h = harness();
+    const config = { model: 'claude-sonnet-5', maxTokens: 8192, temperature: 0 } as SessionConfig;
+    catalog.mockReturnValue([model('gpt-5.5', 'anthropic-codex')]);
+    h.sessions.set('plain', makeSession({ id: 'plain', config }));
+    const result = await run(h, 'session.runtimeSettings.update', {
+      sessionId: 'plain',
+      model: 'gpt-5.5',
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot move to'),
+    });
+    expect(h.persisted.size).toBe(0);
+    expect(h.sessions.get('plain')!.config).toEqual(config);
+  });
+
   test('refuses moving an OXAP chat to another provider before it commits', async () => {
     for (const provider of ['anthropic', 'glm']) {
       const h = harness();
