@@ -125,12 +125,10 @@ describe('neo.session.archive', () => {
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
   });
 
-  test('does not use local ownership to authorize a remote Neo archive', async () => {
-    recordWorkerStarted(db.getDatabase(), ref);
-    expect(await invoke({ ...ref, daemon: 'remote' }, caller)).toMatchObject({
-      value: { ok: false, reason: 'not_started_by_us' },
-    });
-    expect(remote.invoke).not.toHaveBeenCalled();
+  test('forwards a remote Neo archive without a local ownership record', async () => {
+    const target = { ...ref, daemon: 'remote' };
+    expect(await invoke(target, caller)).toMatchObject({ value: { ok: true } });
+    expect(remote.invoke).toHaveBeenCalledWith('remote', 'neo.session.archive', { ref }, undefined);
   });
 
   test.each(['worker_binding', 'unbound', 'no_session', 'internal', 'untrusted_rpc'])(
