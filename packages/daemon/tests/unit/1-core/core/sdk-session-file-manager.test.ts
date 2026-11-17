@@ -1,13 +1,21 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   validateSDKSessionFile,
   getSDKSessionFilePath,
   repairSDKSessionFile,
   validateAndRepairSDKSession,
-  deleteSDKSessionFiles,
-  archiveSDKSessionFiles,
+  deleteSDKSessions,
+  archiveSDKSessions,
   removeToolResultFromSessionFile,
   truncateSessionFileAtMessage,
   messageUuidExistsInSessionFile,
@@ -984,119 +992,81 @@ describe('SDK Session File Manager', () => {
     });
   });
 
-  describe('deleteSDKSessionFiles', () => {
-    test('should return success with empty deletedFiles when no files exist', async () => {
-      const result = deleteSDKSessionFiles(
-        '/nonexistent/workspace',
-        'nonexistent-sdk-session',
-        'hyperneo-session-1'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.deletedFiles).toHaveLength(0);
-      expect(result.deletedSize).toBe(0);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    test('should delete SDK session file by sdkSessionId', async () => {
-      const content = JSON.stringify({
+  describe('archive and delete through the SDK', () => {
+    let root: string;
+    let workspace: string;
+    let projectDir: string;
+    let originalConfigDir: string | undefined;
+    const own = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const other = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const kaiSessionId = 'cccccccc-0000-4000-8000-000000000003';
+    const ownPath = () => join(projectDir, `${own}.jsonl`);
+    const otherPath = () => join(projectDir, `${other}.jsonl`);
+    const line = (sessionId: string, text: string) =>
+      JSON.stringify({
         type: 'user',
-        uuid: 'u1',
-        message: { content: [{ type: 'text', text: 'Hello' }] },
+        uuid: crypto.randomUUID(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text }] },
       });
-      writeFileSync(testSessionFile, content + '\n', 'utf-8');
-
-      expect(existsSync(testSessionFile)).toBe(true);
-
-      const result = deleteSDKSessionFiles(
-        testWorkspacePath,
-        testSdkSessionId,
-        'hyperneo-session-1'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.deletedFiles).toHaveLength(1);
-      expect(result.deletedFiles[0]).toContain(testSdkSessionId);
-      expect(result.deletedSize).toBeGreaterThan(0);
-      expect(existsSync(testSessionFile)).toBe(false);
-    });
-
-    test('should find and delete SDK files by kaiSessionId when sdkSessionId is null', async () => {
-      const kaiSessionId = 'test-hyperneo-id-12345678';
-
-      const content = JSON.stringify({
-        type: 'user',
-        uuid: 'u1',
-        sessionId: kaiSessionId,
-        message: { content: [{ type: 'text', text: 'Hello' }] },
-      });
-      writeFileSync(testSessionFile, content + '\n', 'utf-8');
-
-      const result = deleteSDKSessionFiles(testWorkspacePath, null, kaiSessionId);
-
-      expect(result.success).toBe(true);
-      expect(result.deletedFiles.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe('archiveSDKSessionFiles', () => {
-    const kaiSessionId = 'test-archive-session-id';
-    let archiveDir: string;
 
     beforeEach(() => {
-      archiveDir = join(process.env.TEST_SDK_SESSION_DIR!, 'claude-session-archives', kaiSessionId);
+      root = realpathSync(process.env.TEST_SDK_SESSION_DIR!);
+      originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = root;
+      workspace = join(root, 'shared-workspace');
+      mkdirSync(workspace, { recursive: true });
+      projectDir = join(root, 'projects', workspace.replace(/[/.]/g, '-'));
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(ownPath(), `${line(own, 'own transcript')}\n`);
+      writeFileSync(
+        otherPath(),
+        `${line(other, `worker ${kaiSessionId} (${own}) opened a PR`)}\n${line(kaiSessionId, 'quoted')}\n`
+      );
     });
 
     afterEach(() => {
-      if (existsSync(archiveDir)) {
-        try {
-          rmSync(archiveDir, { recursive: true, force: true });
-        } catch {}
-      }
+      if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
     });
 
-    test('should return success with empty archivedFiles when no files exist', async () => {
-      const result = archiveSDKSessionFiles(
-        '/nonexistent/workspace',
-        'nonexistent-sdk-session',
-        kaiSessionId
-      );
+    test('archiving marks the session archived and leaves both transcripts byte-identical', async () => {
+      const before = { own: readFileSync(ownPath()), other: readFileSync(otherPath()) };
 
-      expect(result.success).toBe(true);
-      expect(result.archivedFiles).toHaveLength(0);
-      expect(result.archivePath).toBeNull();
-      expect(result.totalSize).toBe(0);
+      await archiveSDKSessions(workspace, [own]);
+
+      expect(readFileSync(ownPath())).toEqual(before.own);
+      expect(readFileSync(otherPath())).toEqual(before.other);
+      expect(existsSync(join(projectDir, own, 'archived.json'))).toBe(true);
+      expect(existsSync(join(projectDir, other, 'archived.json'))).toBe(false);
     });
 
-    test('should archive SDK session file and create metadata', async () => {
-      const content = JSON.stringify({
-        type: 'user',
-        uuid: 'u1',
-        message: { content: [{ type: 'text', text: 'Hello' }] },
-      });
-      writeFileSync(testSessionFile, content + '\n', 'utf-8');
+    test('deleting removes only its own transcript', async () => {
+      const before = readFileSync(otherPath());
 
-      expect(existsSync(testSessionFile)).toBe(true);
+      await deleteSDKSessions(workspace, [own]);
 
-      const result = archiveSDKSessionFiles(testWorkspacePath, testSdkSessionId, kaiSessionId);
+      expect(existsSync(ownPath())).toBe(false);
+      expect(readFileSync(otherPath())).toEqual(before);
+    });
 
-      expect(result.success).toBe(true);
-      expect(result.archivePath).toBe(archiveDir);
-      expect(result.archivedFiles).toHaveLength(1);
-      expect(result.totalSize).toBeGreaterThan(0);
+    test('a session without an SDK id touches no transcript', async () => {
+      const before = { own: readFileSync(ownPath()), other: readFileSync(otherPath()) };
 
-      expect(existsSync(testSessionFile)).toBe(false);
+      await archiveSDKSessions(workspace, []);
+      await deleteSDKSessions(workspace, []);
 
-      const archivedFile = join(archiveDir, `${testSdkSessionId}.jsonl`);
-      expect(existsSync(archivedFile)).toBe(true);
+      expect(readFileSync(ownPath())).toEqual(before.own);
+      expect(readFileSync(otherPath())).toEqual(before.other);
+      expect(readdirSync(projectDir).sort()).toEqual([`${own}.jsonl`, `${other}.jsonl`].sort());
+    });
 
-      const metadataFile = join(archiveDir, 'archive-metadata.json');
-      expect(existsSync(metadataFile)).toBe(true);
+    test('a missing transcript is not an error', async () => {
+      await archiveSDKSessions(workspace, ['dddddddd-0000-4000-8000-000000000004']);
+      await deleteSDKSessions(workspace, ['dddddddd-0000-4000-8000-000000000004']);
 
-      const metadata = JSON.parse(readFileSync(metadataFile, 'utf-8'));
-      expect(metadata.kaiSessionId).toBe(kaiSessionId);
-      expect(metadata.originalWorkspacePath).toBe(testWorkspacePath);
-      expect(metadata.fileCount).toBe(1);
+      expect(readdirSync(projectDir).sort()).toEqual([`${own}.jsonl`, `${other}.jsonl`].sort());
     });
   });
 
@@ -1111,19 +1081,8 @@ describe('SDK Session File Manager', () => {
       expect(result).toBe(false);
     });
 
-    test('should return false when neither sdkSessionId nor kaiSessionId provided', async () => {
+    test('should return false when sdkSessionId is not provided', async () => {
       const result = removeToolResultFromSessionFile(testWorkspacePath, null, 'message-uuid-123');
-
-      expect(result).toBe(false);
-    });
-
-    test('should return false when kaiSessionId search finds no files', async () => {
-      const result = removeToolResultFromSessionFile(
-        testWorkspacePath,
-        null,
-        'message-uuid-123',
-        'nonexistent-hyperneo-session-id'
-      );
 
       expect(result).toBe(false);
     });
@@ -1215,7 +1174,7 @@ describe('SDK Session File Manager', () => {
       expect(userMessage.message.content[0].content[0].text).toContain('Output removed by user');
     });
 
-    test('should find file by kaiSessionId when sdkSessionId is null', async () => {
+    test('edits no transcript when sdkSessionId is null', async () => {
       const kaiSessionId = 'findable-hyperneo-session-id-12345678';
 
       const messages = [
@@ -1240,11 +1199,10 @@ describe('SDK Session File Manager', () => {
       const result = removeToolResultFromSessionFile(
         testWorkspacePath,
         null,
-        'target-message-uuid',
-        kaiSessionId
+        'target-message-uuid'
       );
 
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
     test('should handle multiple tool_result blocks in same message', async () => {
@@ -1299,7 +1257,6 @@ describe('SDK Session File Manager', () => {
       const exists = messageUuidExistsInSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'kai-session-id',
         'message-uuid-2'
       );
 
@@ -1316,14 +1273,13 @@ describe('SDK Session File Manager', () => {
       const exists = messageUuidExistsInSessionFile(
         testWorkspacePath,
         testSdkSessionId,
-        'kai-session-id',
         'missing-message-uuid'
       );
 
       expect(exists).toBe(false);
     });
 
-    test('should fall back to Kai session ID lookup when sdkSessionId is unavailable', async () => {
+    test('finds no transcript by HyperNeo session id when sdkSessionId is unavailable', async () => {
       writeFileSync(
         testSessionFile,
         [
@@ -1336,18 +1292,16 @@ describe('SDK Session File Manager', () => {
       const exists = messageUuidExistsInSessionFile(
         testWorkspacePath,
         undefined,
-        'kai-session-fallback',
         'fallback-message-uuid'
       );
 
-      expect(exists).toBe(true);
+      expect(exists).toBe(false);
     });
   });
 
   describe('truncateSessionFileAtMessage', () => {
     const testTruncateWorkspacePath = '/tmp/test-workspace-sdk-truncation';
     const testTruncateSdkSessionId = 'test-sdk-session-truncation';
-    const testKaiSessionId = 'test-kai-session-truncation-12345';
     let testTruncateSessionDir: string;
     let testTruncateSessionFile: string;
 
@@ -1370,7 +1324,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         '/nonexistent/workspace',
         null,
-        'nonexistent-kai-session',
         'message-uuid-123'
       );
 
@@ -1382,7 +1335,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         '/nonexistent/workspace',
         'nonexistent-sdk-session',
-        'kai-session-id',
         'message-uuid-123'
       );
 
@@ -1408,7 +1360,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'nonexistent-uuid-999'
       );
 
@@ -1442,7 +1393,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'message-uuid-2'
       );
 
@@ -1473,7 +1423,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'message-uuid-1'
       );
 
@@ -1494,7 +1443,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'message-uuid-special'
       );
 
@@ -1519,7 +1467,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'msg-4'
       );
 
@@ -1543,7 +1490,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'first-msg'
       );
 
@@ -1565,7 +1511,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'msg-3'
       );
 
@@ -1595,7 +1540,6 @@ describe('SDK Session File Manager', () => {
       const result = truncateSessionFileAtMessage(
         testTruncateWorkspacePath,
         testTruncateSdkSessionId,
-        testKaiSessionId,
         'msg-3'
       );
 
@@ -1621,7 +1565,6 @@ describe('SDK Session File Manager', () => {
         const result = truncateSessionFileAtMessage(
           testTruncateWorkspacePath,
           testTruncateSdkSessionId,
-          testKaiSessionId,
           'msg-2'
         );
 

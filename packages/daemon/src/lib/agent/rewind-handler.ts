@@ -245,7 +245,6 @@ export class RewindHandler {
     const _jsonlResult = truncateSessionFileAtMessage(
       sdkWorkspacePath,
       session.sdkSessionId,
-      session.id,
       checkpointId
     );
 
@@ -260,7 +259,6 @@ export class RewindHandler {
       messageUuidExistsInSessionFile(
         sdkWorkspacePath,
         session.sdkSessionId,
-        session.id,
         previousUserMessage.uuid
       )
     ) {
@@ -539,7 +537,6 @@ export class RewindHandler {
           const _jsonlResult = truncateSessionFileAtMessage(
             rewindSdkPath,
             session.sdkSessionId,
-            session.id,
             jsonlUuid
           );
         }
@@ -555,7 +552,6 @@ export class RewindHandler {
           messageUuidExistsInSessionFile(
             rewindSdkPath,
             session.sdkSessionId,
-            session.id,
             previousUserMessage.uuid
           )
         ) {
