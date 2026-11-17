@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { VIDEO_MAX_BYTES, videoExtension } from '@hyperneo/shared/types/video-container';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import type { PipelineAPI, SuperPipeFactory } from 'superpipe';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { artifactIdentityWrites } from '../../storage/repositories/artifact-file-identity-write.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
@@ -10,26 +10,33 @@ import { artifactFileRowWrites } from '../../storage/repositories/artifact-file-
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { artifactCaptureOwner } from './capture-owner.ts';
 import type { ArtifactContext } from './file-policy.ts';
-import { readBoundGitBlob } from './git-blob.ts';
+import type { StorageAdmission } from './capture-admission.ts';
+import type { GitBlobReader } from './git-blob.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
 import { storedKind } from './stored-kind.ts';
 
 type Plan = { repository: string; sha: string; path: string; context: ArtifactContext };
+export type GitCaptureSteps = {
+  capture: ReturnType<SuperPipeFactory>;
+  admission: StorageAdmission;
+  readBlob: GitBlobReader;
+};
 const lanes = new WeakMap<Database, Promise<unknown>>();
 export function captureGitArtifact(
+  steps: GitCaptureSteps,
   db: Database,
   data: string,
   plan: Plan,
   requestId: string,
   current: () => Promise<boolean>,
-  readBlob = readBoundGitBlob,
   home = homedir()
 ) {
+  const { readBlob } = steps;
   const key = `git:${requestId}`;
   const fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
   const unavailable = () => ({ accepted: false as const, reason: 'unavailable' as const });
   async function publish(
-    blob: Extract<Awaited<ReturnType<typeof readBoundGitBlob>>, { accepted: true }>,
+    blob: Extract<Awaited<ReturnType<GitBlobReader>>, { accepted: true }>,
     repo: ArtifactFileRepository
   ) {
     const binding = loadRegistrationBinding(db, repo.daemonId, plan.context, home);
@@ -45,7 +52,10 @@ export function captureGitArtifact(
         actualBytes: blob.bytes.length,
         limitBytes: VIDEO_MAX_BYTES,
       };
-    const snapshot = await (await artifactCaptureOwner(db, data)).capture(blob.bytes);
+    const snapshot = await (await artifactCaptureOwner(db, data)).capture(
+      blob.bytes,
+      steps.admission
+    );
     if (!snapshot.accepted) return snapshot;
     if (snapshot.sha256 !== blob.sha256) return unavailable();
     const kind = await storedKind(join(data, 'artifacts'), snapshot.sha256, plan.path);
@@ -77,7 +87,7 @@ export function captureGitArtifact(
     );
     return (await matches()) ? { accepted: true, artifact: saved.artifact } : unavailable();
   }
-  const run = (superpipe({})('artifact-git-capture') as PipelineAPI)
+  const run = (steps.capture as PipelineAPI)
     .input(['plan', 'repo'])
     .pipe(
       async (plan: Plan) => {

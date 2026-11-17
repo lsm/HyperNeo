@@ -1,5 +1,7 @@
 # Work delivery and liveness guarantees
 
+> Closed in part, 2026-11-16: slices 3–8 are not planned. Running todos now move through their pull requests, and a quiet worker is reminded and then reported to Neo by the todo nudge and the attention entry. A new symptom gets its own small design.
+
 Status: proposed implementation plan. Investigation base: `10f17a0a0067264c9b0de431a9334ef01c331532`
 (`origin/dev`, 2026-10-20). This page changes no runtime behavior. The human has
 approved proceeding with small implementation PRs after this document passes review.
