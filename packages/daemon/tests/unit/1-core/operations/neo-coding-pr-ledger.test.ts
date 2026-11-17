@@ -113,6 +113,25 @@ describe('codingPrState', () => {
 });
 
 describe('planCodingLedgerRead', () => {
+  test.each([
+    [{ isDraft: true }, 'SUCCESS', 'draft'],
+    [{ mergeable: 'CONFLICTING' }, 'SUCCESS', 'dirty'],
+    [{}, 'FAILURE', 'failing'],
+    [{}, 'ERROR', 'failing'],
+    [{}, 'SUCCESS', 'changes_requested'],
+  ] as const)('preserves higher-priority states with unresolved threads', (more, ci, expected) => {
+    const result = planCodingLedgerRead(
+      response([node(1, more, ci)]),
+      0,
+      () => ({ mergePolicy: 'ci_only' }),
+      () => [],
+      () => ({
+        headOid: 'h1',
+        unresolvedThreadUrls: ['https://github.com/x/x/pull/1#discussion_r1'],
+      })
+    );
+    expect(result?.rows[0].state).toBe(expected);
+  });
   test.each(['review_bot', 'ci_only'] as const)(
     'scopes %s human signoff to changed paths',
     (mergePolicy) => {

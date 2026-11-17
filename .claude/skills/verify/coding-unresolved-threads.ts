@@ -50,6 +50,9 @@ try {
 
   let head = 'a'.repeat(40);
   let botReview = 'APPROVED';
+  let draft = false;
+  let mergeable = 'MERGEABLE';
+  let ci = 'SUCCESS';
   const pr = () => ({
     number: 1,
     title: 'Fix it',
@@ -57,15 +60,15 @@ try {
     headRefName: 'fix',
     headRefOid: head,
     state: 'OPEN',
-    isDraft: false,
-    mergeable: 'MERGEABLE',
+    isDraft: draft,
+    mergeable,
     reviewDecision: null,
     reviews: {
       nodes: [{ state: botReview, commit: { oid: head }, author: { login: 'synthetic-bot' } }],
     },
     closedAt: null,
     author: { login: 'someone', __typename: 'User' },
-    commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+    commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
   });
   const told: { ref: unknown; key: string; text: string }[] = [];
   const woken: string[] = [];
@@ -128,7 +131,17 @@ try {
   const before = await sweep('approved green with an unresolved thread', 0);
   assert.equal(before.state, 'changes_requested');
   assert.equal(before.owner, 'hyperneo:synthetic-author');
-  const reminder = await sweep('author reminder', 21);
+  draft = true;
+  assert.equal((await sweep('draft with an unresolved thread', 1)).state, 'draft');
+  draft = false;
+  mergeable = 'CONFLICTING';
+  assert.equal((await sweep('conflict with an unresolved thread', 2)).state, 'dirty');
+  mergeable = 'MERGEABLE';
+  ci = 'FAILURE';
+  assert.equal((await sweep('failing CI with an unresolved thread', 3)).state, 'failing');
+  ci = 'SUCCESS';
+  assert.equal((await sweep('ready except for thread', 4)).state, 'changes_requested');
+  const reminder = await sweep('author reminder', 25);
   assert(told.some((item) => item.text.includes(`${url}#discussion_r1`)));
   const decision = decideCodingDaemonMerge({
     ok: true, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE',
@@ -140,9 +153,9 @@ try {
   assert.equal(ledger.pollFacts.record(
     { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
     { value: { headOid: head, unresolvedThreadUrls: [] }, etag: null, next: null },
-    t0 + 22 * MIN, 1
+    t0 + 26 * MIN, 1
   ), true);
-  const resolved = await sweep('thread resolved', 22);
+  const resolved = await sweep('thread resolved', 26);
   assert.equal(resolved.state, 'approved_green');
   writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision }, null, 2));
 } finally {

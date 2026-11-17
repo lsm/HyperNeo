@@ -283,6 +283,7 @@ export function planCodingLedgerRead(
       const threads = readThreads(canonical, pr.number);
       const unresolved = threads?.headOid === pr.headRefOid ? threads.unresolvedThreadUrls : [];
       const findings = [...codingCrossModelFindings(pr.headRefOid, facts), ...unresolved];
+      const state = codingPrState(pr, repoHasCi, policy, facts);
       return {
         repo: canonical,
         number: pr.number,
@@ -290,9 +291,9 @@ export function planCodingLedgerRead(
         branch: pr.headRefName,
         head: pr.headRefOid,
         state:
-          pr.state === 'OPEN' && unresolved.length
+          unresolved.length && !['draft', 'dirty', 'failing', 'closed', 'merged'].includes(state)
             ? ('changes_requested' as const)
-            : codingPrState(pr, repoHasCi, policy, facts),
+            : state,
         ...(findings.length ? { findings } : {}),
         ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
         replyAt: codingPrReplyAt(pr),
