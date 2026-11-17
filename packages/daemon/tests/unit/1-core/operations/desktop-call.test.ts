@@ -198,6 +198,16 @@ test('a screenshot over the model image limit is replaced by a note', async () =
   });
 });
 
+test('a malformed driver image block still returns the reply', async () => {
+  body = { content: [{ type: 'image' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true, dispatched: true });
+});
+
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
