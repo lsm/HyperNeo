@@ -41,12 +41,22 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
     null,
     release ? ['todo', 'doing', 'blocked'] : ['doing']
   );
-  return todo
-    ? reject(
-        'live_todo',
-        `Todo "${todo.title}" is still working in this session; finish or drop it first.`
+  if (todo)
+    return reject(
+      'live_todo',
+      `Todo "${todo.title}" is still working in this session; finish or drop it first.`
+    );
+  if (
+    !isLocalUser(caller) &&
+    !db
+      .getDatabase()
+      .prepare(
+        "SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND role = 'worker'"
       )
-    : null;
+      .get(ref.adapter, ref.id)
+  )
+    return reject('not_started_by_us', 'This session was not started by the daemon.');
+  return null;
 }
 
 async function archiveSession(

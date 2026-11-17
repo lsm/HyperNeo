@@ -66,9 +66,10 @@ try {
   assert.equal(evidence.unsavedStatus, 'active');
   assert.equal(evidence.removedStatus, 'archived');
   assert.equal(evidence.existingStatus, 'active');
-  assert.deepEqual((evidence.releasedWorkers as { id: string }[]).map((row) => row.id), [workers.released, workers.neoNamed, workers.removed].sort());
+  assert.deepEqual((evidence.releasedWorkers as { id: string }[]).map((row) => row.id), [workers.released, workers.neoNamed, workers.removed, workers.existing].sort());
   assert.ok(!(evidence.freeLaterThanAnHour as string[]).some((id) => id === workers.released || id === workers.neoNamed || id === workers.removed));
-  assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id).sort(), ['todo-neoNamed', 'todo-released', 'todo-removed']);
+  assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id).sort(), ['todo-existing', 'todo-neoNamed', 'todo-released', 'todo-removed']);
+  assert.deepEqual(JSON.parse((evidence.releasedFacts as { todo_id: string; value_json: string }[]).find((row) => row.todo_id === 'todo-existing')!.value_json), { kept: 'not_started_by_us' });
   console.log('PASS: the daemon refresh job archived the workers finished and removed todos started (one only Neo named), fenced them against reuse with no expiry, recorded each once, and kept the human-named worker and the worker with unsaved work active.');
 } finally {
   writeFileSync(join(run, 'evidence/todo-release.json'), JSON.stringify(evidence, null, 2));
