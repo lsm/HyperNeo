@@ -14,6 +14,7 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { neoAttentionNotes } from '../../helpers/neo-attention-notes.ts';
 import { planCodingPrEvent } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { SendWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
 
 const MIN = 60_000;
@@ -438,4 +439,65 @@ describe('PR delivery keys', () => {
       });
     }
   });
+});
+
+describe('sweepCodingPrs acknowledgement after a late review fail', () => {
+  test.each([
+    ['reminder', 0, 20],
+    ['escalation', 2, 60],
+  ] as const)(
+    'a review fail recorded while its %s is in flight keeps the fresh reminders',
+    async (_kind, nudges, minutes) => {
+      const { db, insert } = setup();
+      insert(12, 'changes_requested');
+      const now = minutes * MIN;
+      db.prepare('UPDATE pack_coding_pr_ledger SET nudges = ?, read_at = ?').run(nudges, now);
+      const url = 'https://github.com/lsm/hyperneo/pull/12';
+      db.prepare(
+        'INSERT INTO pack_coding_stage_heads (url, head, observed_at) VALUES (?, ?, 0)'
+      ).run(url, 'abc1234def');
+      const recordFail = () =>
+        new CodingPrLedgerRepository(db).recordStage(
+          {
+            url,
+            head: 'abc1234def',
+            stage: 'review',
+            actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+            verdict: 'fail',
+            acceptanceContract: 'contract',
+            evidence: ['P1 the retry loop never stops.'],
+          },
+          now
+        );
+      const repo = new CodingPrSweepRepository(db);
+      await sweepCodingPrs(
+        repo,
+        {
+          host: 'github.com',
+          tell: async () => recordFail(),
+          attend: async () => recordFail(),
+        },
+        now
+      );
+      expect(repo.rows().map((row) => [row.nudges, row.stateSince, row.findings])).toEqual([
+        [0, now, ['P1 the retry loop never stops.']],
+      ]);
+      const told: string[] = [];
+      db.prepare('UPDATE pack_coding_pr_ledger SET read_at = ?').run(now + 20 * MIN);
+      await sweepCodingPrs(
+        repo,
+        {
+          host: 'github.com',
+          tell: async (_ref, key) => {
+            told.push(key);
+            return true;
+          },
+          attend: async () => true,
+        },
+        now + 20 * MIN
+      );
+      expect(told).toEqual(['neo-pr-sweep:lsm/hyperneo#12:abc1234def:changes_requested:review:1']);
+      db.close();
+    }
+  );
 });
