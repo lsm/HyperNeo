@@ -13,6 +13,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -49,6 +50,7 @@ function setup(
   runMigrations(db, () => {});
   createTables(db);
   const audited: string[] = [];
+  const auditLog = new McpAuditLogRepository(db);
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
   const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
@@ -84,7 +86,14 @@ function setup(
       sessions.push(`goal-session-${started.length}`);
       return `goal-session-${started.length}`;
     },
-    audit: (_caller, toolName) => audited.push(toolName),
+    audit: (caller, toolName, summary) => {
+      audited.push(toolName);
+      auditLog.createEntry({
+        sessionId: caller.sessionId,
+        toolName,
+        paramsSummary: JSON.stringify(summary),
+      });
+    },
   });
   const call = (name: string, input: unknown, caller: OperationCaller = neo) => {
     const op = ops.find((item) => item.name === name)!;
@@ -196,6 +205,27 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test('review cadence changes appear in the session audit log', async () => {
+    const { db, call } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Audit goal', doneTest: 'Done' }))
+        .goal;
+      const updated = await call('goal.session.update', {
+        goalId: goal.id,
+        reviewCadence: { kind: 'every', everyMs: 120_000 },
+      });
+      expect(updated.accepted).toBe(true);
+      const entry = new McpAuditLogRepository(db)
+        .listBySession('neo:root')
+        .find((item) => item.toolName === 'goal.session.update');
+      expect(entry?.paramsSummary && JSON.parse(entry.paramsSummary)).toMatchObject({
+        goalId: goal.id,
+        fields: ['reviewCadence'],
+      });
+    } finally {
+      db.close();
+    }
+  });
   test('startup reconciliation does not rearm finished goal schedules', async () => {
     const { db, call, scheduler, goals, schedules } = setup();
     try {
