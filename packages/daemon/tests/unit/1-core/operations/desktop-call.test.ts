@@ -169,6 +169,7 @@ test('a driver error reaches the session with the driver message and screenshot'
     structuredContent: { code: 'no_screenshot' },
   });
   expect(response.content.slice(1)).toEqual(body.content);
+  expect(response.isError).toBe(true);
 });
 
 test('a full-window screenshot larger than 2 MiB reaches the session', async () => {
@@ -180,6 +181,7 @@ test('a full-window screenshot larger than 2 MiB reaches the session', async () 
   const response = await handler({ name: 'desktop.call', input });
   expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true });
   expect(response.content[1]).toEqual(body.content?.[0]);
+  expect(response.isError).toBeFalsy();
 });
 
 test.each([
