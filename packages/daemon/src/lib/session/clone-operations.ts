@@ -10,6 +10,7 @@ import {
   type OperationCaller,
   type OperationCallerRole,
 } from '../operations/registry.ts';
+import { thinkingRefusal } from '../agent/session-engine.ts';
 import { stripRejectedSessionConfig } from './create-session-config.ts';
 import { admitSpaceStage } from './ensure-agent-session.ts';
 import type { CreateSessionParams } from './session-lifecycle.ts';
@@ -126,7 +127,7 @@ export async function buildCloneParams(
 ): Promise<CreateSessionParams> {
   const workspacePath = parent.worktree?.mainRepoPath ?? parent.workspacePath;
   const isGit = workspacePath ? await deps.isGitRepo(workspacePath) : false;
-  const config = stripRejectedSessionConfig(parent.config);
+  const { thinkingLevel, ...config } = stripRejectedSessionConfig(parent.config);
   const parentBranch = parent.worktree?.branch ?? parent.gitBranch ?? undefined;
   return {
     workspacePath,
@@ -139,6 +140,7 @@ export async function buildCloneParams(
     toolProfile: parent.config.toolProfile,
     config: {
       ...config,
+      ...(thinkingRefusal(parent.config.harness, thinkingLevel) ? {} : { thinkingLevel }),
       ...(input.model ? { model: input.model } : {}),
       ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel as ThinkingLevel } : {}),
     },
