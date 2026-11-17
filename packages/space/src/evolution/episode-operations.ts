@@ -444,7 +444,7 @@ export function applyEvolutionRollup(
 }
 
 export function createEvolutionEpisodeOperations(evolution: EvolutionEpisodeOperationDependencies) {
-  const episodeCreate = (superpipe({ evolution })('evolution-episode-create') as PipelineAPI)
+  const episodeCreate = (superpipe({ evolution })('evolution.episode.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEpisodeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
@@ -455,7 +455,7 @@ export function createEvolutionEpisodeOperations(evolution: EvolutionEpisodeOper
     )
     .endAsync('outcome');
 
-  const episodeUpdate = (superpipe({ evolution })('evolution-episode-update') as PipelineAPI)
+  const episodeUpdate = (superpipe({ evolution })('evolution.episode.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionEpisode, ['input', 'outcome', 'evolution'], 'result:outcome')
@@ -466,14 +466,14 @@ export function createEvolutionEpisodeOperations(evolution: EvolutionEpisodeOper
     )
     .endAsync('outcome');
 
-  const lessonUpdate = (superpipe({ evolution })('evolution-lesson-update') as PipelineAPI)
+  const lessonUpdate = (superpipe({ evolution })('evolution.lesson.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionLesson, ['input', 'outcome', 'evolution'], 'result:outcome')
     .pipe(applyEvolutionLessonUpdate, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const proposalCreate = (superpipe({ evolution })('evolution-proposal-create') as PipelineAPI)
+  const proposalCreate = (superpipe({ evolution })('evolution.proposal.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEpisodeScope, ['input', 'outcome', 'evolution'], 'result:outcome')
@@ -484,7 +484,7 @@ export function createEvolutionEpisodeOperations(evolution: EvolutionEpisodeOper
     )
     .endAsync('outcome');
 
-  const proposalUpdate = (superpipe({ evolution })('evolution-proposal-update') as PipelineAPI)
+  const proposalUpdate = (superpipe({ evolution })('evolution.proposal.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionProposal, ['input', 'outcome', 'evolution'], 'result:outcome')
@@ -495,14 +495,14 @@ export function createEvolutionEpisodeOperations(evolution: EvolutionEpisodeOper
     )
     .endAsync('outcome');
 
-  const proposalTask = (superpipe({ evolution })('evolution-proposal-create-task') as PipelineAPI)
+  const proposalTask = (superpipe({ evolution })('evolution.proposal.task.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionProposal, ['input', 'outcome', 'evolution'], 'result:outcome')
     .pipe(applyEvolutionProposalTask, ['input', 'outcome', 'caller', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const rollupApply = (superpipe({ evolution })('evolution-rollup-apply') as PipelineAPI)
+  const rollupApply = (superpipe({ evolution })('evolution.rollup.apply') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionEpisode, ['input', 'outcome', 'evolution'], 'result:outcome')

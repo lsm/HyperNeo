@@ -255,7 +255,7 @@ export function readEvolutionScopeParts(
 }
 
 export function createEvolutionScopeGetOperation(evolution: EvolutionScopeGetDependencies) {
-  const get = (superpipe({ evolution })('evolution-scope-get') as PipelineAPI)
+  const get = (superpipe({ evolution })('evolution.scope.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionReader, ['input', 'caller'], 'result:outcome')
     .pipe(resolveEvolutionScopeAddress, ['input', 'outcome', 'evolution'], 'result:outcome')
