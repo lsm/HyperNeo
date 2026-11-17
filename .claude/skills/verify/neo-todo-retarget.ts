@@ -1,7 +1,9 @@
 process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
@@ -17,7 +19,21 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'workspace'), { recursive: true });
-writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nprintf \'[{"url":"https://github.com/example/repo/pull/12"}]\'\n', { mode: 0o700 });
+const workspace = join(run, 'workspace');
+const git = (args: string[], input?: string) => execFileSync('git', args, { cwd: workspace, input, encoding: 'utf8' }).trim();
+git(['init', '-q']);
+const tree = git(['hash-object', '-t', 'tree', '-w', '--stdin'], '');
+const commit = (parent?: string) => git(['hash-object', '-t', 'commit', '-w', '--stdin'], `tree ${tree}\n${parent ? `parent ${parent}\n` : ''}author Test <test@example.com> 1 +0000\ncommitter Test <test@example.com> 1 +0000\n\nfixture\n`);
+const base = commit();
+const head = commit(base);
+git(['update-ref', 'refs/heads/handoff', head]);
+git(['symbolic-ref', 'HEAD', 'refs/heads/handoff']);
+git(['update-ref', 'refs/remotes/origin/handoff', base]);
+git(['config', 'remote.origin.url', 'https://github.com/example/repo.git']);
+git(['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
+writeFileSync(join(workspace, 'unfinished.txt'), 'unfinished');
+for (let index = 0; index < 700; index++) writeFileSync(join(workspace, `${String(index).padStart(4, '0')}-${'x'.repeat(155)}`), 'x');
 globalThis.fetch = (() => { throw new Error('External HTTP is disabled'); }) as typeof fetch;
 const root = 'neo:00000000-0000-4000-8000-000000000004';
 let oldId = '';
@@ -32,14 +48,25 @@ for (const phase of ['request', 'recovery']) {
     await app.jobProcessor.stop();
     assert.notEqual(app.server.port, 8399);
     service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+    const coding = service.installedPacks().find((pack) => pack.id === 'coding');
+    assert(coding);
+    coding.workerTarget = undefined;
     const db = app.db.getDatabase();
     const { todos, todoSessions } = service;
     const production = app.sessionManager.getOperationRegistry();
     const retarget = createNeoOperations(service).find((op) => op.name === 'neo.todo.retarget')!;
-    const registry = createOperationRegistry(production.entries.map((op) => op.name === retarget.name ? retarget : op.name === 'work.start' ? { ...op, execute: async (input) => {
+    const registry = createOperationRegistry(production.entries.map((op) => op.name === retarget.name ? retarget : op.name === 'work.start' ? { ...op, execute: async (input, caller) => {
       starts++;
       evidence.push({ phase, admittedStart: input });
-      return { ok: true, value: { ref: { adapter: 'hyperneo', id: nextId }, title: 'Replacement', place: { machine: 'synthetic', name: 'workspace', folder: join(run, 'workspace') }, status: 'queued', lastActivityAt: Date.now(), receipt: { executionId: nextId, inputId: 'replacement' } } };
+      if (phase === 'request') {
+        const message = String(input.message);
+        for (const expected of [workspace, 'handoff', head.slice(0, 7), 'https://github.com/example/repo/pull/12']) assert(message.includes(expected), `missing handoff fact: ${expected}`);
+        assert.match(message, /\.\.\. and \d+ more/);
+      }
+      const result = await op.execute(input, caller) as { ok: boolean; value?: { ref: { id: string } } };
+      assert(result.ok && result.value, JSON.stringify(result));
+      nextId = result.value.ref.id;
+      return result;
     } } : op));
     app.sessionManager.setOperationRegistryProvider(() => registry);
     const handler = createOperationMcpHandler(() => registry, () => ({ sessionId: root, role: 'neo' }));
@@ -52,9 +79,10 @@ for (const phase of ['request', 'recovery']) {
       service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
       service.repo.conversationId();
       todos.openAsk({ id: 'ask', sessionId: root, projectId: null, originMessageId: null, title: 'Core move', request: 'Continue in the stored place', createdAt: 1 });
-      const target = { verb: 'start' as const, adapter: 'hyperneo', model: 'stored-model', place: { machine: 'synthetic', name: 'workspace', folder: join(run, 'workspace') } };
+      db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('github.com/example/repo', 'ask');
+      const target = { verb: 'start' as const, adapter: 'hyperneo', place: { machine: hostname(), name: 'workspace', folder: join(run, 'workspace') } };
       for (const id of ['requested', 'interrupted']) {
-        const todo = todos.addTodo(id, 'ask', { title: id, doneWhen: 'Done', instruction: 'Continue the synthetic work', check: null, named: null, approvedAt: 1 }, 1);
+        const todo = todos.addTodo(id, 'ask', { title: id, doneWhen: 'Done', instruction: 'Continue the synthetic work', check: { pack: 'coding', kind: 'pr', params: {} }, named: null, approvedAt: 1 }, 1);
         todoSessions.create(id, target);
         todoSessions.recordRef(id, { adapter: 'hyperneo', id: oldId }, 1);
         todos.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
@@ -83,6 +111,9 @@ for (const phase of ['request', 'recovery']) {
       assert.equal(result.isError ?? false, false, JSON.stringify(result));
       assert.equal(JSON.parse(result.content[0]!.text).ok, true, JSON.stringify(result));
       assert.equal(starts, 1);
+      const delivered = db.prepare("SELECT message FROM work_delivery_inputs WHERE message LIKE '%Unpushed commits%' ORDER BY accepted_at DESC LIMIT 1").get() as { message: string } | null;
+      assert(delivered?.message.includes(head.slice(0, 7)), 'the actual worker delivery must contain the unpushed commit');
+      evidence.push({ phase, workerDeliveryContainsHandoff: true });
       assert.deepEqual(todoSessions.get('requested'), target);
       assert.deepEqual(todoSessions.readRef('requested'), { adapter: 'hyperneo', id: nextId });
       assert.notEqual(live.getProcessingState().status, 'rate_limit_cooldown');
