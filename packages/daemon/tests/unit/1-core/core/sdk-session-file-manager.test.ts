@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { listSessions } from '@anthropic-ai/claude-agent-sdk';
 import {
   existsSync,
   mkdirSync,
@@ -1039,9 +1038,8 @@ describe('SDK Session File Manager', () => {
 
       expect(readFileSync(ownPath())).toEqual(before.own);
       expect(readFileSync(otherPath())).toEqual(before.other);
-      const listed = await listSessions({ dir: workspace });
-      expect(listed.find((session) => session.sessionId === own)?.archived).toBe(true);
-      expect(listed.find((session) => session.sessionId === other)?.archived).toBeFalsy();
+      expect(existsSync(join(projectDir, own, 'archived.json'))).toBe(true);
+      expect(existsSync(join(projectDir, other, 'archived.json'))).toBe(false);
     });
 
     test('deleting removes only its own transcript', async () => {

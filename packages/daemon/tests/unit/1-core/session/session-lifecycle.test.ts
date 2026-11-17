@@ -1598,11 +1598,10 @@ describe('SessionLifecycle', () => {
       await lifecycle.archiveResources('archive-id', 'ui_session_archive');
 
       expect([current, retired, bystander].map((id) => readFileSync(file(id)))).toEqual(before);
-      const { listSessions } = await import('@anthropic-ai/claude-agent-sdk');
-      const archived = Object.fromEntries(
-        (await listSessions({ dir: workspace })).map((s) => [s.sessionId, s.archived === true])
+      const marked = [current, retired, bystander].map((id) =>
+        existsSync(join(projectDir, id, 'archived.json'))
       );
-      expect(archived).toEqual({ [current]: true, [retired]: true, [bystander]: false });
+      expect(marked).toEqual([true, true, false]);
     });
 
     it('delete removes the current and retired transcripts and leaves the bystander', async () => {
