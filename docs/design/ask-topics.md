@@ -42,10 +42,12 @@ first of these that exists:
 2. **Its origin, one step only.** For a follow-up ask, its parent (`parent_id`), which
    contributes only its rule 1 result or its stored pick, never its own origin. For a
    request from a session, the sender session's project. The sender is the request todo's
-   `named.requestFrom` (`adapter:id`, or a bare id for a HyperNeo session, adapter
-   `hyperneo`; written by `recordNeoRequestTodo`); it is a session on
-   this daemon, so its `work:` alias is this machine, that adapter and that id
-   (`packs/coding/project-mirror.ts`), looked up in the alias table. One step keeps a read to at most
+   `named.requestFrom`, from `sessionSender` (`packages/daemon/src/lib/messaging/message-send.ts`).
+   A local sender is its session id: a bare id for a HyperNeo session (adapter
+   `hyperneo`), or an id that carries its adapter, such as `claude-code:<id>`. Its `work:`
+   alias is this machine, that adapter and that id (`packs/coding/project-mirror.ts`),
+   looked up in the alias table. A remote sender (`daemon:<daemonId>::<sessionId>`) has no
+   alias here, because the mirror skips remote work, so it falls to rule 3. One step keeps a read to at most
    one other ask, so it cannot loop, and stops a topic from drifting down a chain of asks
    that each moved on to something else. A sender's earlier requests are not used: one
    session can ask about unrelated matters, so a sender with no project falls to rule 3.
@@ -124,6 +126,7 @@ Acceptance, as tests on the pure function and one integration case per row:
 | Neo merges "A" into "B" | every ask stored as "A" now stores "B"; "A" leaves the list |
 | An ask with nothing at all, and one with the stored pick for the other topic | both under one other-topic chip |
 | A request from a session with no project, after its earlier request in topic T | Neo's pick, not T |
+| A request from a session on another daemon | Neo's pick |
 | Web, with two projects titled P and picks "kids" and "Kids": select each chip, reload, click a card's topic | each P chip shows only its project's asks; "kids" shows both picks; the saved filter and the card button select the same set |
 
 ## Risks
