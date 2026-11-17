@@ -1,5 +1,5 @@
 #!/bin/bash
-# First-run setup link on an isolated CLI daemon: printed link, owner-only token file,
+# First-run setup token on an isolated CLI daemon: owner-only token file,
 # one browser grant, refusal after, a used link staying dead across reset-human without
 # a restart, and a fresh link after a restart. Exits 1 if any expectation fails.
 # Usage: setup-link.sh <port>   (never 8399). Tokens and credentials are never echoed.
@@ -31,7 +31,7 @@ start() {
   for _ in $(seq 1 30); do [ -S "$RUN/data/session-door.sock" ] && break; sleep 1; done
 }
 stop() { kill "$PID"; wait "$PID" 2>/dev/null || true; PID=; }
-link_token() { sed -n "s|.*Open $BASE/setup#\([A-Za-z0-9_-]*\) to set up.*|\1|p" "$RUN/daemon-$1.log"; }
+link_token() { cat "$RUN/data/setup-token" 2>/dev/null || true; }
 setup() {
   local code
   code=$(curl -s -D "$RUN/headers" -o "$RUN/body" -w '%{http_code}' -X POST "$BASE/setup" \
@@ -49,32 +49,31 @@ reset_human() {
 }
 
 start 1
-TOKEN=$(link_token 1)
-check "new daemon prints a setup link" 43 "${#TOKEN}"
+TOKEN=$(link_token)
+check "new daemon writes a setup token" 43 "${#TOKEN}"
 check "setup-token file mode" 600 "$(stat -f '%Lp' "$RUN/data/setup-token" 2>/dev/null || stat -c '%a' "$RUN/data/setup-token")"
-check "file holds the printed token" yes "$([ "$(cat "$RUN/data/setup-token")" = "$TOKEN" ] && echo yes || echo no)"
 check "WebSocket before setup" 401 "$(ws)"
 check "wrong token" "401 invalid_token" "$(setup AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)"
-check "printed token" "200 human" "$(setup "$TOKEN")"
+check "file token" "200 human" "$(setup "$TOKEN")"
 COOKIE=$(sed -n 's/^set-cookie: \(hyperneo_device=[^;]*\).*/\1/Ip' "$RUN/headers" | tr -d '\r')
 check "WebSocket with the setup cookie" 101 "$(ws "$COOKIE")"
 check "active owners" 1 "$(owners)"
 check "same link again" "409 has_owner" "$(setup "$TOKEN")"
-check "token in daemon output beyond the printed line" 0 "$(grep -v 'to set up HyperNeo' "$RUN/daemon-1.log" | grep -c "$TOKEN" || true)"
+check "token in daemon output" 0 "$(grep -c "$TOKEN" "$RUN/daemon-1.log" || true)"
 check "token in data dir outside setup-token" 0 "$(grep -rl --exclude=setup-token "$TOKEN" "$RUN/data" 2>/dev/null | wc -l | tr -d ' ')"
 check "reset-human" True "$(reset_human)"
 check "used link after reset, no restart" "401 invalid_token" "$(setup "$TOKEN")"
 check "active owners after reset" 0 "$(owners)"
 stop
 start 2
-NEXT=$(link_token 2)
-check "restart after reset prints a new link" yes "$([ ${#NEXT} = 43 ] && [ "$NEXT" != "$TOKEN" ] && echo yes || echo no)"
+NEXT=$(link_token)
+check "restart after reset writes a new token" yes "$([ ${#NEXT} = 43 ] && [ "$NEXT" != "$TOKEN" ] && echo yes || echo no)"
 check "old link after restart" "401 invalid_token" "$(setup "$TOKEN")"
 check "new link" "200 human" "$(setup "$NEXT")"
 check "new link again" "409 has_owner" "$(setup "$NEXT")"
 check "active owners" 1 "$(owners)"
 stop
 start 3
-check "restart with an owner prints no link" "" "$(link_token 3)"
+check "restart with an owner mints no token" yes "$([ "$(link_token)" = "$NEXT" ] && echo yes || echo no)"
 [ "$FAILED" = 0 ] && echo "setup-link: all checks passed" || echo "setup-link: FAILED"
 exit "$FAILED"

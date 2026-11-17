@@ -47,7 +47,6 @@ import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
   MessageHub,
   MessageHubRouter,
-  withConsoleLogCaptureSuppressed,
 } from '@hyperneo/shared';
 import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
@@ -1443,16 +1442,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
-      const origin = new URL(`http://${dialableHost(config.host)}:${server.port}`).origin;
-      await ensureLocalCredential(db.gateway, 'agent', origin);
+      await ensureLocalCredential(
+        db.gateway,
+        'agent',
+        new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
+      );
       setupLink = await mintSetupToken(db.gateway);
-      if (setupLink) {
-        const link = `${origin}/setup#${setupLink.token}`;
-        withConsoleLogCaptureSuppressed(() =>
-          console.error(`\n   Open ${link} to set up HyperNeo\n`)
-        );
-        logInfo('[Daemon] First-run setup link printed on the starting terminal');
-      }
     }
 
     startupTimer.start('post-bind jobs + background services');
