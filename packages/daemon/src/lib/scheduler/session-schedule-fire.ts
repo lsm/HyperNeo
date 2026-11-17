@@ -15,6 +15,13 @@ export interface ScheduleFireDeps {
 }
 
 type Outcome = { outcome: string };
+type Delivery = {
+  schedule: SessionSchedule;
+  outcome: 'fired' | 'skipped_budget';
+  digest: string | null;
+  text: string;
+  commit?: () => void;
+};
 type Gate<T> = { value: T } | { reason: Outcome };
 
 export function createSessionScheduleFire(deps: ScheduleFireDeps) {
@@ -59,17 +66,33 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
       'result:run'
     )
     .pipe(
-      async (
-        schedule: SessionSchedule
-      ): Promise<
-        Gate<{ schedule: SessionSchedule; digest: string; text: string; commit?: () => void }>
-      > => {
+      async (schedule: SessionSchedule): Promise<Gate<Delivery>> => {
         const source = scheduler.source(schedule.sourceKind);
         if (!source) throw new Error(`Unregistered schedule source: ${schedule.sourceKind}`);
+        const limit = source.dailyRunLimit?.(schedule.sourceId) ?? null;
+        const day =
+          limit === null
+            ? null
+            : scheduler.repo.budgetRuns(
+                schedule.sourceKind,
+                schedule.sourceId,
+                Date.now() - 86_400_000
+              );
+        if (limit !== null && day && day.fired >= limit) {
+          if (day.noticed) return finish(schedule, 'skipped_budget');
+          return {
+            value: {
+              schedule,
+              outcome: 'skipped_budget',
+              digest: schedule.factsDigest,
+              text: `${source.label?.(schedule.sourceId) ?? 'This schedule'} reached its daily run limit of ${limit}; due times are skipped until runs from the last 24 hours age out.`,
+            },
+          };
+        }
         const facts = await scheduler.facts(schedule);
         if (!facts) return finish(schedule, 'source_gone');
         const nudge = facts.digest === schedule.factsDigest;
-        if (nudge) {
+        if (nudge && limit === null) {
           const quiet = { ...schedule, dueCount: schedule.dueCount + 1 };
           return finish(quiet, 'skipped_unchanged');
         }
@@ -78,6 +101,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         return {
           value: {
             schedule,
+            outcome: 'fired',
             digest: facts.digest,
             commit: facts.commit,
             text,
@@ -88,17 +112,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
       'result:run'
     )
     .pipe(
-      async ({
-        schedule,
-        digest,
-        text,
-        commit,
-      }: {
-        schedule: SessionSchedule;
-        digest: string;
-        text: string;
-        commit?: () => void;
-      }): Promise<Outcome> => {
+      async ({ schedule, outcome, digest, text, commit }: Delivery): Promise<Outcome> => {
         const current = scheduler.repo.get(schedule.id);
         if (current?.status !== 'active' || current.pendingJobId !== schedule.pendingJobId)
           return { outcome: 'superseded' };
@@ -117,8 +131,8 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
               : 'superseded',
           };
         return {
-          outcome: scheduler.finishRun(schedule, 'fired', digest, messageId, Date.now(), commit)
-            ? 'fired'
+          outcome: scheduler.finishRun(schedule, outcome, digest, messageId, Date.now(), commit)
+            ? outcome
             : 'superseded',
         };
       },

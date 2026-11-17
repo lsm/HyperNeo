@@ -57,6 +57,10 @@ export class SessionGoalSchedules implements ScheduleSource {
     return this.goals.get(id)?.title ?? null;
   }
 
+  dailyRunLimit(id: string): number | null {
+    return this.goals.get(id)?.dailyRunLimit ?? null;
+  }
+
   async facts(id: string) {
     const goal = this.goals.get(id);
     if (!goal || goal.status === 'completed' || goal.status === 'archived') return null;

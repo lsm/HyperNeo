@@ -14,8 +14,9 @@
     to open the root session transcript headlessly and capture
     `evidence/goal-schedule-transcript.png`. Keep the `neo:` colon unescaped in
     the session route; the router does not decode a percent-encoded session id.
-    CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
-    skips/backoff, linked question/PR changes, repository splits and migration reruns.
+    CI covers foreign-goal rejection, failed/unconfirmed delivery, work wakes at
+    every due time with the daily run limit, linked question/PR changes,
+    repository splits and migration reruns.
     Missing and closed Neo targets finish `target_gone`; open interrupted Neo
     targets remain active with `skipped_busy` and can fire when idle. Delivery
     rechecks closure after facts load, so a closing target receives no wake.
