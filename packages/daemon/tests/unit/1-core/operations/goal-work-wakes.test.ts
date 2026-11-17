@@ -31,7 +31,8 @@ describe('goal work wakes', () => {
       goals,
       new NeoAskTodoRepository(db),
       scheduler,
-      () => []
+      () => [],
+      () => false
     );
     scheduler.registerSource(schedules);
     const ops = createSessionGoalOperations({

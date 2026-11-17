@@ -47,22 +47,24 @@ function setup(
   const audited: string[] = [];
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
+  const isChildSession = (sessionId: string) => sessionId.startsWith('goal-session-');
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(db),
     scheduler,
     () => packs,
+    isChildSession,
     mandateChange
   );
   scheduler.registerSource(schedules);
-  const sessions = ['neo:root', 'neo:other'];
+  const sessions = ['neo:root', 'neo:other', 'plain'];
   const started: { parentSessionId: string; title: string }[] = [];
   const released: string[] = [];
   const ops = createSessionGoalOperations({
     goals,
     schedules,
     sessionExists: (sessionId) => sessions.includes(sessionId),
-    isChildSession: (sessionId) => sessionId.startsWith('goal-session-'),
+    isChildSession,
     releaseSession: async (sessionId) => {
       released.push(sessionId);
     },
@@ -851,6 +853,39 @@ describe('a goal in its own session', () => {
       expect(started).toHaveLength(1);
       expect(released).toEqual(['goal-session-1']);
       expect(scheduler.repo.list()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a top-level plain session cannot own goals itself', async () => {
+    const { db, call } = setup();
+    try {
+      const plain: OperationCaller = { source: 'mcp', sessionId: 'plain', role: 'universal_read' };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, plain)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      expect(await call('goal.session.list', {}, plain)).toMatchObject({
+        reason: expect.stringContaining('owner_denied'),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a goal a human gives to a parentless session keeps the Neo cycle', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const created = await call(
+        'goal.session.create',
+        { ownerSessionId: 'plain', title: 'Plain', doneTest: 'Done' },
+        human
+      );
+      expect(
+        schedules
+          .message(created.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
     } finally {
       db.close();
     }
