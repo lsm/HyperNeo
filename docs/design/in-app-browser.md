@@ -1,5 +1,7 @@
 # In-App Browser & Agent Browser-Use
 
+> Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs through Neo.
+
 > **Status:** Exploratory design. Not implemented. This document captures a
 > design discussion and a recommended approach; it does not describe shipped
 > behaviour. Revised three times after automated review (Codex). Round 2 checked
