@@ -41,12 +41,13 @@ A missing path is refused. The daemon no longer fills in a path.
 
 **3. Existing open todos keep working.** A todo that already has a check keeps it and completes as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
 
-**4. The hidden path goes away.** Remove:
+**4. Stop assigning hidden paths.** Remove:
 
-- `withAssignedEvidence`, `todoEvidenceFile` and their callers;
+- `withAssignedEvidence` and its assignment callers;
 - `neoEvidenceRefusal`, replaced by rules 1 and 2;
-- the hiding helper in `ask-entries.ts`;
-- `HYPERNEO_EVIDENCE`, the `work/evidence` location, and the brief lines about private completion evidence.
+- `HYPERNEO_EVIDENCE`, its worker environment plumbing, and the general brief lines about private completion evidence.
+
+Keep `todoEvidenceFile` and the `ask-entries.ts` redaction for legacy records: their hidden paths remain masked in both done conditions and completion evidence, including historical and open todos. This lookup does not assign or create a path. For an existing todo whose check already names its assigned hidden path, the worker brief must still instruct the worker to satisfy that exact check privately; new todos receive only their actual outcome check and no instruction to write separate hidden evidence.
 
 Builds and scratch stay as they are: temporary folders that clean themselves.
 
@@ -78,6 +79,8 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 - A todo with no repository and a path inside the human's folder is accepted.
 - A todo with no repository retains an existing registered artifact check; a new artifact check remains subject to the existing admission policy.
 - An open todo whose existing check names a hidden path still completes when the file exists; editing its title or resubmitting that unchanged check succeeds, while changing its check applies the new rule.
+- A new worker brief gives the actual outcome check without a separate hidden-evidence instruction; a legacy hidden-path check gives the compatible private instruction.
+- Open and completed legacy todos hide their assigned paths in projected done conditions and completion evidence after both slices.
 
 ## Not in scope
 
@@ -86,5 +89,5 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Slices
 
-1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt and error text and add the tests above in this slice, so it independently refuses missing paths. Keep the helper and location only where still needed for legacy display and worker briefs.
-2. **Delete**: remove unused assignment code, `todoEvidenceFile`, `HYPERNEO_EVIDENCE`, the `work/evidence` location, the brief lines and the `ask-entries` helper. Removal only.
+1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt, error text and worker brief, including the legacy-check instruction, and add the tests above in this slice, so it independently refuses missing paths and gives consistent instructions. Retain legacy path lookup and redaction.
+2. **Delete**: remove unused assignment code and `HYPERNEO_EVIDENCE` environment plumbing. Retain the legacy path lookup and redaction. Removal only.
