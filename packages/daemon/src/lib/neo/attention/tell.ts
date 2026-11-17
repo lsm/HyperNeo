@@ -92,11 +92,12 @@ export function createNeoAttention(deps: {
     )
     .pipe(
       async (event: NeoAttentionEvent, message: Extract<NeoAttentionOutcome, { told: string }>) => {
-        if (await deps[message.told](message.uuid, message.text, event))
-          deps
-            .kinds()
-            .find((kind) => kind.id === event.kind)
-            ?.sent?.(event);
+        if (!(await deps[message.told](message.uuid, message.text, event)))
+          return { dropped: 'no_session' };
+        deps
+          .kinds()
+          .find((kind) => kind.id === event.kind)
+          ?.sent?.(event);
         return message;
       },
       ['event', 'message'],

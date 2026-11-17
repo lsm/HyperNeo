@@ -178,6 +178,34 @@ describe('Message Remove Output', () => {
       );
     });
 
+    test('removes output from an unloaded session through its saved SDK session id', async () => {
+      const sessionId = await createSession();
+      const messageUuid = '00000000-0000-0000-0000-000000000006';
+      const sdkSessionId = 'eeeeeeee-0000-4000-8000-00000000000e';
+      expect(sdkSessionId).not.toBe(sessionId);
+      const sessionFile = createMockSDKSessionFile(
+        process.cwd(),
+        sdkSessionId,
+        sdkSessionId,
+        messageUuid
+      );
+      await daemon.daemonContext.db.updateSession(sessionId, { sdkSessionId });
+      expect(
+        daemon.daemonContext.sessionManager.getSession(sessionId)?.getSDKSessionId()
+      ).toBeNull();
+
+      const result = (await daemon.messageHub.request('message.removeOutput', {
+        sessionId,
+        messageUuid,
+      })) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const target = readSDKSessionFile(sessionFile).find(
+        (msg: unknown) => (msg as Record<string, unknown>).uuid === messageUuid
+      ) as { message: { content: Array<{ content: Array<{ text: string }> }> } };
+      expect(target.message.content[0].content[0].text).toContain('Output removed by user');
+    });
+
     test('should preserve other messages when removing tool_result', async () => {
       const sessionId = await createSession();
       const messageUuid = '00000000-0000-0000-0000-000000000003';
@@ -204,21 +232,25 @@ describe('Message Remove Output', () => {
     });
   });
 
-  describe('Fallback search by HyperNeo session ID', () => {
-    test('should find session file when SDK session ID unavailable', async () => {
+  describe('Without an SDK session id', () => {
+    test('does not edit a transcript that only mentions the HyperNeo session id', async () => {
       const sessionId = await createSession();
       const messageUuid = '00000000-0000-0000-0000-000000000003';
       const sdkSessionId = 'test-sdk-session-789';
-      createMockSDKSessionFile(process.cwd(), sdkSessionId, sessionId, messageUuid);
+      const sessionFile = createMockSDKSessionFile(
+        process.cwd(),
+        sdkSessionId,
+        sessionId,
+        messageUuid
+      );
+      const before = readFileSync(sessionFile, 'utf-8');
 
       setSDKSessionId(sessionId, null);
 
-      const result = (await daemon.messageHub.request('message.removeOutput', {
-        sessionId,
-        messageUuid,
-      })) as { success: boolean };
-
-      expect(result.success).toBe(true);
+      await expect(
+        daemon.messageHub.request('message.removeOutput', { sessionId, messageUuid })
+      ).rejects.toThrow('Failed to remove output from SDK session file');
+      expect(readFileSync(sessionFile, 'utf-8')).toBe(before);
     });
   });
 

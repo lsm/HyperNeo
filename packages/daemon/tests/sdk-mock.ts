@@ -1,5 +1,7 @@
 import { vi } from 'vitest';
 
+export { archiveSession, deleteSession } from '@anthropic-ai/claude-agent-sdk/core';
+
 class MockMcpServer {
   readonly _registeredTools: Record<string, object> = {};
 
