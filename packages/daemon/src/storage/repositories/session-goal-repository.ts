@@ -247,6 +247,10 @@ export class SessionGoalRepository {
     return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
   }
 
+  async metricSnapshot(goalId: string, runId?: string) {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'metric', goalId, runId);
+  }
+
   listJournal(
     goalId: string,
     before: string | null,

@@ -8,6 +8,7 @@ import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 import { openHumanCard } from '../neo/human-card.ts';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
+import { metricKey, readMetric, readPoint } from './session-goal-metric.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {
   readonly kind = 'goal';
@@ -58,7 +59,7 @@ export class SessionGoalSchedules implements ScheduleSource {
         });
     const review = reviewCadence ??
       previous?.reviewCadence ?? { kind: 'every' as const, everyMs: 86_400_000 };
-    const canReview = goal.ownerSessionId.startsWith('neo:') || this.canReturn(goal.ownerSessionId);
+    const canReview = this.canReview(goal.ownerSessionId);
     let reviewRow = this.scheduler.repo.getBySource('goal_review', goal.id);
     if (
       reviewRow &&
@@ -131,6 +132,10 @@ export class SessionGoalSchedules implements ScheduleSource {
 
   dailyRunLimit(id: string): number | null {
     return this.goals.get(id)?.dailyRunLimit ?? null;
+  }
+
+  canReview(owner: string): boolean {
+    return owner.startsWith('neo:') || this.canReturn(owner);
   }
 
   inTransaction<T>(work: () => T): T {
@@ -249,6 +254,12 @@ export class SessionGoalSchedules implements ScheduleSource {
     const mandate = goal.mandateRef
       ? await this.mandateChange(goal.mandateRef, goal.mandateRev)
       : null;
+    const metric = readMetric(goal);
+    const points = metric
+      ? (await this.goals.metricSnapshot(id)).entries
+          .map(readPoint)
+          .filter((point) => point !== null)
+      : [];
     const lines = [
       ...(mandate
         ? [
@@ -256,7 +267,16 @@ export class SessionGoalSchedules implements ScheduleSource {
           ]
         : []),
       `Progress: ${goal.progress}`,
+      ...(() => {
+        if (!metric) return [];
+        const current = points[0]?.value ?? metric.baseline;
+        const previous = points[1]?.value ?? metric.baseline;
+        return [
+          `${metric.name}: ${current}; target ${metric.target}; change ${current - previous}`,
+        ];
+      })(),
       ...Object.keys(goal.metrics)
+        .filter((key) => key !== metricKey)
         .sort()
         .map((key) => `Metric ${key}: ${JSON.stringify(goal.metrics[key])}`),
       ...asks.map(
@@ -326,6 +346,6 @@ Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
     const paging = snapshot.earlier
       ? `\n${snapshot.earlier} earlier entries: read them with goal.journal.list {goalId: "${id}", before: "${snapshot.entries[0]!.id}", limit: 20}, paging until all earlier entries are read.`
       : '';
-    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review (newest 20):\n${JSON.stringify(snapshot.entries)}${paging}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
+    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review (newest 20):\n${JSON.stringify(snapshot.entries)}${paging}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\n${readMetric(goal) ? `Measure the metric ${JSON.stringify(readMetric(goal))} and include metricPoint {value, evidence} in the review append. ` : ''}Summarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
   }
 }

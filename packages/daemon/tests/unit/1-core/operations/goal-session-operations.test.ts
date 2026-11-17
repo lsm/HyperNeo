@@ -100,7 +100,18 @@ function setup(
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules, started, released, ops, sessions };
+  return {
+    db,
+    call,
+    audited,
+    scheduler,
+    goals,
+    schedules,
+    started,
+    released,
+    ops,
+    sessions,
+  };
 }
 
 describe('session goal detail reads', () => {
@@ -1094,6 +1105,198 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('concurrent writes to one review keep the first metric point', async () => {
+    const { db, call, scheduler, goals } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    scheduler.repo.recordRun({ ...schedule, nextRunAt: 1 }, 'fired', 'message-1', 1);
+    const runId = `goal-review:${schedule.id}:1:none`;
+    const snapshot = goals.metricSnapshot.bind(goals);
+    let releaseSecond!: () => void;
+    let secondStarted!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    let calls = 0;
+    spyOn(goals, 'metricSnapshot').mockImplementation(async (...args) => {
+      calls++;
+      if (calls === 2) {
+        secondStarted();
+        await paused;
+      }
+      return snapshot(...args);
+    });
+    const append = (value: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+        metricPoint: { value, evidence: 'Synthetic count' },
+      });
+    const first = append(4);
+    const second = append(8);
+    await started;
+    expect((await first).accepted).toBe(true);
+    releaseSecond();
+    expect(await second).toEqual({
+      accepted: false,
+      reason: 'metric_review_recorded: a measured review cannot be replaced.',
+    });
+    const entries = (await call('goal.journal.list', { goalId: goal.id })).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].metricPoint.value).toBe(4);
+    db.close();
+  });
+
+  test('metric goals require an owner with review wakes', async () => {
+    const { db, call } = setup();
+    const input = {
+      ownerSessionId: 'plain',
+      title: 'Grow',
+      metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+    };
+    expect(await call('goal.session.create', input)).toEqual({
+      accepted: false,
+      reason:
+        'metric_review_unavailable: use a goal session or a Neo owner for a structured metric.',
+    });
+    expect(await call('goal.session.create', { ...input, ownSession: true })).toMatchObject({
+      accepted: true,
+    });
+    db.close();
+  });
+
+  test('a metric review without a point tells the owner what is missing', async () => {
+    const { db, call } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    expect(
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId: 'goal-review:synthetic',
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+      })
+    ).toEqual({
+      accepted: false,
+      reason: 'metric_point_required: reviews of a metric goal must include metricPoint.',
+    });
+    db.close();
+  });
+
+  test('concurrent metric reviews do not lose the previous measurement', async () => {
+    const { db, call, scheduler } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    for (const dueAt of [1, 2])
+      scheduler.repo.recordRun(
+        { ...schedule, nextRunAt: dueAt },
+        'fired',
+        `message-${dueAt}`,
+        dueAt
+      );
+    const append = (dueAt: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId: `goal-review:${schedule.id}:${dueAt}:none`,
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+        metricPoint: { value: dueAt + 2, evidence: 'Synthetic count' },
+      });
+    const results = await Promise.all([append(1), append(2)]);
+    expect(results.filter((result) => result.accepted)).toHaveLength(1);
+    expect(results.find((result) => !result.accepted)?.reason).toContain('metric_review_stale');
+    expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(1);
+    db.close();
+  });
+
+  test('review metrics retain history and show progress without completing the goal', async () => {
+    const { db, call, scheduler } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const append = (runId: string, value: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: 'Reviewed adoption',
+        effect: 'yes',
+        worked: 'Guides',
+        metricPoint: { value, evidence: 'Synthetic count' },
+      });
+    expect((await append('work:1', 4)).accepted).toBe(false);
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    const run = (dueAt: number) => {
+      scheduler.repo.recordRun(
+        { ...schedule, nextRunAt: dueAt },
+        'fired',
+        `message-${dueAt}`,
+        dueAt
+      );
+      return `goal-review:${schedule.id}:${dueAt}:none`;
+    };
+    const firstRun = run(1);
+    const secondRun = run(2);
+    expect((await append(firstRun, 4)).accepted).toBe(true);
+    expect(await append(secondRun, 10)).toMatchObject({ accepted: true, metricReached: true });
+    expect((await append(secondRun, 11)).accepted).toBe(false);
+    expect(
+      (await append(`goal-review:${schedule.id}:2:00000000-0000-0000-0000-000000000000`, 11))
+        .accepted
+    ).toBe(false);
+    const entries = (await call('goal.journal.list', { goalId: goal.id })).entries;
+    expect(entries).toHaveLength(2);
+    expect(
+      entries.map(
+        (entry: { metricPoint: { value: number; evidence: string; time: number } }) =>
+          entry.metricPoint
+      )
+    ).toEqual([
+      expect.objectContaining({ value: 10, evidence: 'Synthetic count', time: expect.any(Number) }),
+      expect.objectContaining({ value: 4, evidence: 'Synthetic count', time: expect.any(Number) }),
+    ]);
+    expect((await call('goal.facts', { goalId: goal.id })).facts.lines.join('\n')).toContain(
+      'adopters: 10; target 10; change 6'
+    );
+    const read = (await call('goal.session.get', { goalId: goal.id })).goal;
+    expect(read.status).toBe('active');
+    expect(read.metric).toEqual({
+      name: 'adopters',
+      target: 10,
+      direction: 'increase',
+      baseline: 2,
+    });
+    expect(read.metrics).not.toHaveProperty('__goal_metric_v1');
+    expect((await call('goal.session.list', {})).goals[0].metrics).not.toHaveProperty(
+      '__goal_metric_v1'
+    );
+    db.close();
+  });
+
   test('a retried run keeps its entry id, so a page cursor on it still works; an unknown cursor is refused', async () => {
     const { db, call } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
