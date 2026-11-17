@@ -1741,7 +1741,7 @@ describe('shared GitHub budget', () => {
   });
 });
 
-test('a later review page still blocks the merge after its first page is answered by a 304', async () => {
+test('a later review page keeps blocking the merge, from the cached read and after a 304 re-probe', async () => {
   let probes = 0;
   const review = (state: string, anchor: string) => ({
     state,
@@ -1770,6 +1770,9 @@ test('a later review page still blocks the merge after its first page is answere
   const run = sweep(paged);
   await run(10);
   await run(11);
+  expect(probes).toBe(1);
+  expect(merges()).toEqual([]);
+  await run(600_010);
   expect(probes).toBeGreaterThan(1);
   expect(merges()).toEqual([]);
 });
