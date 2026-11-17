@@ -137,7 +137,7 @@ export async function readLocalTurns(input: ReadInput, deps: ReadWorkDeps): Prom
   return { ok: true, value: { sessionId: input.sessionId, turns } };
 }
 
-const runReadWork = (superpipe({})('read-work') as PipelineAPI)
+const runReadWork = (superpipe({})('work.read') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeRead, ['input', 'deps'], 'result:outcome')
   .pipe(readLocalTurns, ['outcome', 'deps'], 'outcome')
