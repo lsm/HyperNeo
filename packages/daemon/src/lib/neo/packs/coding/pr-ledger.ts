@@ -1030,7 +1030,10 @@ export async function reconcileCodingPrLedger(
   repos: readonly string[],
   read: CodingLedgerRead,
   now: number,
-  refreshThreads?: (url: string, cwd: string) => Promise<{ ok: boolean; data?: unknown }>
+  refreshThreads?: (
+    url: string,
+    cwd: string
+  ) => Promise<{ ok: boolean; data?: unknown; retryable?: boolean }>
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
@@ -1039,9 +1042,22 @@ export async function reconcileCodingPrLedger(
     const context = await ledger.pollContextCurrent(repo);
     if (!context.watched) continue;
     const observedAt = Date.now();
-    let raw = await read(repo, context.health?.quota);
+    const raw = await read(repo, context.health?.quota);
     const parsed = Response.safeParse(raw);
-    if (refreshThreads && parsed.success && !parsed.data.errors?.length) {
+    const quota = context.health?.quota;
+    if (
+      refreshThreads &&
+      parsed.success &&
+      !parsed.data.errors?.length &&
+      (parsed.data.data.rateLimit.remaining ?? CODING_LEDGER_MIN_RATE) >= CODING_LEDGER_MIN_RATE &&
+      !(quota?.retryAt && quota.retryAt > observedAt) &&
+      !(
+        quota?.resource === 'graphql' &&
+        quota.remaining !== null &&
+        quota.remaining < CODING_LEDGER_MIN_RATE &&
+        (!quota.resetAt || quota.resetAt > observedAt)
+      )
+    ) {
       const canonical = parsed.data.data.repository.nameWithOwner.toLowerCase();
       for (const pr of parsed.data.data.repository.open.nodes) {
         const url = `https://${process.env.GH_HOST ?? 'github.com'}/${canonical}/pull/${pr.number}`;
@@ -1064,10 +1080,8 @@ export async function reconcileCodingPrLedger(
           const current = refreshed.ok
             ? z.object({ headOid: z.string() }).safeParse(refreshed.data)
             : null;
-          if (!current?.success || current.data.headOid !== pr.headRefOid) {
-            raw = null;
+          if ((!current?.success || current.data.headOid !== pr.headRefOid) && refreshed.retryable)
             break;
-          }
         }
       }
     }

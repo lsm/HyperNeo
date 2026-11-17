@@ -240,6 +240,50 @@ describe('planCodingLedgerRead', () => {
 });
 
 describe('PR ledger reconcile', () => {
+  test('keeps a successful repo poll when a thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    const read = named(async () => response([node(1), node(2)]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100, async (url) => {
+      if (url.endsWith('/1')) return { ok: false };
+      const value = { headOid: 'h2', unresolvedThreadUrls: [`${url}#discussion_r2`] };
+      ledger.pollFacts.record(
+        {
+          credentialId: 'github-connector',
+          url,
+          accept: 'application/vnd.hyperneo.pr-review-threads+json',
+          apiVersion: 'v1',
+        },
+        { value, etag: null, next: null },
+        Date.now(),
+        0
+      );
+      return { ok: true, data: value };
+    });
+    expect(ledger.list().map((row) => [row.number, row.readAt, row.state])).toEqual([
+      [1, 100, 'waiting_human'],
+      [2, 100, 'changes_requested'],
+    ]);
+    expect(ledger.health.read('x/x')?.misses).toBe(0);
+    db.close();
+  });
+
+  test('does not refresh threads when the repo poll reports low GraphQL quota', async () => {
+    const { db, ledger } = setup();
+    let calls = 0;
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1)], [], { remaining: 499, next: false })),
+      100,
+      async () => {
+        calls++;
+        return { ok: false };
+      }
+    );
+    expect(calls).toBe(0);
+    expect(ledger.list()).toHaveLength(1);
+    db.close();
+  });
   test('lists every open PR across repos and moves state_since only on a state or head change', async () => {
     const { db, ledger } = setup();
     let second = [node(7)];
