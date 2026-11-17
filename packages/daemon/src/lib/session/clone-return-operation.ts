@@ -136,7 +136,7 @@ const RETURN_DESCRIPTION =
   'Report back to the session that spawned this 分身 (clone). The summary is delivered to the parent as a message: it starts a turn when the parent is idle and is steered into the running turn otherwise. The caller is always the clone itself; the parent is read from its own record. Repeating an identical summary is a no-op; a different summary is a new report. The clone stays open afterwards. Rejects not_a_clone when the caller was not spawned, and parent_unavailable when the parent is not active or its Space is paused, stopped or archived.';
 
 export function createReturnSessionCloneOperation(deps: ReturnSessionCloneDependencies) {
-  const run = (superpipe({ deps })('return-session-clone') as PipelineAPI)
+  const run = (superpipe({ deps })('session.clone.return') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(loadClone, ['caller', 'deps'], 'result:outcome')
     .pipe(loadParent, ['outcome', 'deps'], 'result:outcome')
