@@ -76,6 +76,9 @@ try {
   assert.equal(app.db.getSession(codex)?.config.harness, 'oxap-codex');
   const agent = app.sessionManager.getSession(codex);
   assert(agent);
+  const legacy = { ...agent.getSessionData().config, tools: { type: 'preset', preset: 'claude_code' } } as typeof agent.session.config;
+  await app.db.updateSession(codex, { config: legacy });
+  agent.getSessionData().config = legacy;
   (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
     openDirectorySupported: true,
     hub: createOapQueryHub(client),
