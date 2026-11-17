@@ -82,10 +82,10 @@ function fixture(
   projectAlias.run('repository:github.com/synthetic/actors', 'project');
   projectAlias.run(`folder:${hostname()}\u0000${project}`, 'project');
   db.exec(
-    "INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo', 'github.com/synthetic/actors')"
+    "INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','neo-fixture','Actors','Actors',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Actors','Merged','doing',1,1)"
   );
   db.exec(
-    "INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','neo-fixture','Actors','Actors',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Actors','Merged','doing',1,1)"
+    "INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo', 'github.com/synthetic/actors')"
   );
   const ledger = new CodingPrLedgerRepository(db),
     todos = new CodingTodoPrRepository(db),
