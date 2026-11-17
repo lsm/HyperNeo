@@ -40,9 +40,23 @@ try {
           light.style.cssText = `width:12px;height:12px;border-radius:50%;background:${color};border:1px solid #0003`;
           box.append(light);
         }
-        document.body.append(box);
+        document.documentElement.append(box);
+        const rect = box.getBoundingClientRect();
+        if (rect.left !== 16 || rect.top !== 28) throw new Error(`Traffic lights misplaced: ${rect.left}, ${rect.top}`);
       });
       await page.screenshot({ path: join(evidence, `${phase}-${name}-${theme}.png`), mask: [page.getByTestId('chat-header-folder')], maskColor: '#888888' });
+      if (name === 'session') {
+        const trigger = page.getByTestId('chat-menu-btn');
+        await trigger.click();
+        const menu = page.getByRole('menu');
+        await menu.waitFor();
+        await page.waitForTimeout(500);
+        const triggerBox = await trigger.boundingBox();
+        const menuBox = await menu.boundingBox();
+        measurement.menuGap = menuBox.y - (triggerBox.y + triggerBox.height);
+        await page.screenshot({ path: join(evidence, `${phase}-menu-${theme}.png`), mask: [page.getByTestId('chat-header-folder')], maskColor: '#888888' });
+        await page.keyboard.press('Escape');
+      }
       results.push({ name, theme, expectedPath: route, ...measurement });
     }
     await page.goto(`${base}/settings?tab=neo-model`);
@@ -84,6 +98,7 @@ for (const result of results) {
   assert(result.bottom <= 900, `${result.name}: bottom=${result.bottom}`);
   assert(result.desktop, `${result.name}: desktop class missing`);
   assert(result.bodyText, `${result.name} has no visible content`);
+  if (result.name === 'session') assert(Math.abs(result.menuGap - 4) <= 2, `Chat menu gap: ${result.menuGap}`);
   assert(result.top >= 52 && result.drag, `${result.name} ${result.theme}: top=${result.top} drag=${result.drag}`);
 }
 console.log(`PASS ${results.length} screenshots and desktop titlebar checks`);
