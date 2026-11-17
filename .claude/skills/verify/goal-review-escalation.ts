@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { JobQueueProcessor, type JobHandler } from '../../../packages/daemon/src/storage/job-queue-processor.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data/daemon.db')));
+for (const name of ['data', 'bin', 'evidence']) mkdirSync(join(run, name), { recursive: true });
+copyFileSync(new URL('./gh-stub.sh', import.meta.url), join(run, 'bin/gh'));
+process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
+let fire: JobHandler | undefined;
+const register = JobQueueProcessor.prototype.register;
+JobQueueProcessor.prototype.register = function (queue, handler, options) {
+  if (queue === 'sessionSchedule.fire') fire = handler;
+  return register.call(this, queue, handler, options);
+};
+const clock = Date.now;
+let now = clock();
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+const hub = new MessageHub({ defaultSessionId: 'global' });
+let transport: WebSocketClientTransport | undefined;
+const evidence: Record<string, unknown> = {};
+try {
+  app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true }, verbose: false });
+  await app.jobProcessor.stop();
+  assert(fire);
+  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: url => createLocalSocket(url, join(run, 'data/local-rpc.credential')) });
+  hub.registerTransport(transport);
+  await transport.initialize();
+  const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
+  const ownerSessionId = (await call('neo.open')).sessionId;
+  assert(ownerSessionId);
+  const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published' });
+  assert(created.accepted, JSON.stringify(created));
+  const goalId = created.goal.id;
+  const db = app.db.getDatabase();
+  Date.now = () => now;
+  for (let i = 0; i < 3; i++) {
+    const row = db.prepare("SELECT id, next_run_at, pending_job_id FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(goalId) as { id: string; next_run_at: number; pending_job_id: string };
+    now = row.next_run_at;
+    await fire(app.jobQueue.getJob(row.pending_job_id)!);
+    const mailbox = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') = ?").get(`schedule:${row.id}:${row.next_run_at}`) as { payload: string } | null;
+    assert(mailbox);
+    const runId = /runId (goal-review:[^, ]+)/.exec(mailbox.payload)?.[1];
+    assert(runId);
+    const reply = await call('goal.journal.append', { ownerSessionId, goalId, runId, done: 'Reviewed', effect: 'no', worked: 'Explore' });
+    assert(reply.accepted, JSON.stringify(reply));
+  }
+  evidence.goal = await call('goal.session.get', { ownerSessionId, goalId });
+  evidence.snapshot = await call('neo.snapshot');
+  evidence.schedules = db.prepare("SELECT source_kind, status FROM session_schedules WHERE source_id = ? ORDER BY source_kind").all(goalId);
+  assert.equal((evidence.goal as any).goal.status, 'paused', 'three no-effect reviews pause the goal');
+  assert.equal((evidence.snapshot as any).needsYou, 1, 'a human question is visible');
+  assert.deepEqual((evidence.schedules as any[]).map(row => row.status), ['paused', 'paused']);
+  const questionId = (evidence.snapshot as any).humanQueue.items[0].questionId;
+  evidence.earlyResume = await call('goal.session.update', { ownerSessionId, goalId, status: 'active' });
+  assert.equal((evidence.earlyResume as any).accepted, false);
+  evidence.answer = await call('neo.question.answer', { questionId, answer: 'Try a new audience' });
+  assert.equal((evidence.answer as any).ok, true);
+  evidence.resumed = await call('goal.session.update', { ownerSessionId, goalId, status: 'active', nextSteps: ['Try a new audience'] });
+  assert.equal((evidence.resumed as any).goal.status, 'active');
+  const work = db.prepare("SELECT id, next_run_at, pending_job_id FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(goalId) as { id: string; next_run_at: number; pending_job_id: string };
+  now = work.next_run_at;
+  await fire(app.jobQueue.getJob(work.pending_job_id)!);
+  const nextWake = db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' AND json_extract(payload, '$.messageUuid') = ?").get(`schedule:${work.id}:${work.next_run_at}`) as { payload: string } | null;
+  assert(nextWake?.payload.includes('Try a new audience'), 'the next work wake contains the human direction');
+  evidence.nextWake = JSON.parse(nextWake.payload);
+  console.log('PASS: three no-effect reviews pause the goal, show a human question, and the answer reaches the next work wake');
+} finally {
+  Date.now = clock;
+  writeFileSync(join(run, 'evidence/goal-review-escalation.json'), JSON.stringify(evidence, null, 2));
+  await transport?.close();
+  await app?.cleanup();
+  JobQueueProcessor.prototype.register = register;
+}

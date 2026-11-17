@@ -14,6 +14,10 @@ import { sessionGoalReviewReads } from './session-goal-review-read-worker.ts';
 
 type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
   reviewCadence?: SessionSchedule['cadence'];
+  noEffectReviewLimit?: number;
+  noEffectReviewCount?: number;
+  escalationReviewId?: string;
+  escalationQuestionId?: string;
 };
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
@@ -217,6 +221,23 @@ export class SessionGoalRepository {
     this.db
       .prepare('UPDATE neo_goals SET wake_schedule = ? WHERE id = ?')
       .run(JSON.stringify(config), id);
+  }
+
+  inTransaction<T>(work: () => T): T {
+    return this.db.transaction(work)();
+  }
+
+  recentReviewEffects(
+    id: string,
+    after: string | undefined,
+    limit: number
+  ): { id: string; effect: string }[] {
+    return this.db
+      .prepare(`SELECT id, effect FROM goal_journal WHERE goal_id = ?
+      AND run_id LIKE 'goal-review:%' AND rowid > COALESCE(
+        (SELECT rowid FROM goal_journal WHERE goal_id = ? AND id = ?), 0)
+      ORDER BY rowid DESC LIMIT ?`)
+      .all(id, id, after ?? null, limit) as { id: string; effect: string }[];
   }
 
   recordFacts(id: string, lines: readonly string[]): void {

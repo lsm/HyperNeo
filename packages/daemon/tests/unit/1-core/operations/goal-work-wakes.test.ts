@@ -142,6 +142,39 @@ describe('goal work wakes', () => {
     expect(asks.listQuestions(goalAsks[0]!.id)).toEqual([
       expect.objectContaining({ state: 'open', text: expect.stringContaining('effect') }),
     ]);
+    expect(await call('goal.session.update', { goalId: goal.id, status: 'active' })).toMatchObject({
+      accepted: false,
+      reason: expect.stringContaining('review_question_open'),
+    });
+    const question = asks.listQuestions(goalAsks[0]!.id)[0]!;
+    asks.answerQuestion(question, 'Try a new audience', 'button', now);
+    expect(
+      await call('goal.session.update', {
+        goalId: goal.id,
+        status: 'active',
+        nextSteps: ['Try a new audience'],
+      })
+    ).toMatchObject({ accepted: true });
+    expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
+    expect(messages.at(-1)).toContain('Try a new audience');
+    await review(7, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(1);
+  });
+
+  test('the no-effect review threshold is configurable on the goal', async () => {
+    const goal = await create({ noEffectReviewLimit: 2 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(2);
+    await call('goal.session.update', { goalId: goal.id, noEffectReviewLimit: 1 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(1);
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: 'goal-review:synthetic:1',
+      done: 'Reviewed',
+      effect: 'no',
+      worked: 'Explore',
+    });
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
   });
 
   test('review wakes carry new journal entries and note on every due time', async () => {
