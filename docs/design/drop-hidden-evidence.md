@@ -30,7 +30,7 @@ Today the code does the opposite:
 **1. Coding todos end on a real outcome.** A todo with a repository cannot use `evidence`. It ends on one of:
 
 - `pr_merged`, `pr_approved` or `issue_closed`;
-- `deployed` for a deploy;
+- `deployed` for a HyperNeo daemon deploy (the only repository that check supports);
 - `human_confirmed` for anything the human must try, such as an install on a phone.
 
 Adding a coding todo or changing its check to `evidence` is refused; unchanged legacy checks remain valid as described below. The refusal names the kinds above.
@@ -38,6 +38,8 @@ Adding a coding todo or changing its check to `evidence` is refused; unchanged l
 **2. Other todos keep results where the human can see them.** A todo without a repository may use `evidence` for an explicit absolute file path or a registered artifact already referenced by that todo, retaining the existing artifact admission policy. The human’s folder (`neoUserFolder` in `daemon/src/lib/neo/folder.ts`) is the default; a human may name another persistent directory. The prompts direct workers to put results in that chosen place, not the hidden work directory. Admission cannot establish whether an arbitrary path was named by the human, so it does not enforce that preference. It does enforce the one thing it can know: a new path inside the daemon's data directory (`getDataDir()`, which holds the hidden `work/` tree) is refused, because the human cannot see it.
 
 A missing path is refused. The daemon no longer fills in a path.
+
+With the worker sandbox on, a worker can write only its own root and the hidden work folders (`workerWritableRoots` in `drivers/worker-sandbox.ts`). So a worker started on a todo whose `evidence` path is outside those gets that path's directory as one more writable root.
 
 **3. Existing open todos keep working.** A todo that already has a check keeps it and completes as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
 
@@ -81,6 +83,7 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 - A new todo with no repository and a path under the daemon's data directory (for example `<data>/work/...`) is refused. It is accepted today.
 - A todo with no repository retains an existing registered artifact check; a new artifact check remains subject to the existing admission policy.
 - An open todo whose existing check names a hidden path still completes when the file exists; editing its title or resubmitting that unchanged check succeeds, while changing its check applies the new rule.
+- With the sandbox on, a worker on a todo whose evidence path is in the human's folder can write that file.
 - A new worker brief gives the actual outcome check without a separate hidden-evidence instruction; a legacy hidden-path check gives the compatible private instruction.
 - Open and completed legacy todos hide their assigned paths in projected done conditions and completion evidence after both slices.
 
@@ -91,5 +94,5 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Slices
 
-1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt, error text and worker brief, including the legacy-check instruction, and add the tests above in this slice, so it independently refuses missing paths and gives consistent instructions. Retain legacy path lookup and redaction. Update `neo-todo-evidence-path.test.ts` and `human-report-locations.test.ts` for admission and briefs, and keep legacy projection coverage in `neo-ask-entries.test.ts`. Update and run the `human-report-locations` verify journey and its executable proof to exercise new checks and legacy redaction.
+1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt, error text and worker brief, including the legacy-check instruction, and add the tests above in this slice, so it independently refuses missing paths and gives consistent instructions. Retain legacy path lookup and redaction. Add the sandbox writable root for the todo's evidence directory. Update `neo-todo-evidence-path.test.ts`, `human-report-locations.test.ts` and `neo-todo-add-write.test.ts` (its assigned-path case) for admission and briefs, and keep legacy projection coverage in `neo-ask-entries.test.ts`. Update and run the `human-report-locations` verify journey and its executable proof to exercise new checks and legacy redaction.
 2. **Delete**: remove unused assignment code and `HYPERNEO_EVIDENCE` environment plumbing. Retain the legacy path lookup and redaction. Update the affected assertions in `worker-local-binding.test.ts`, `worker-sandbox.test.ts`, `worker-sandbox-release.test.ts`, `codex-desktop-start.test.ts`, `query-options-builder.test.ts` and `safe-process-env.test.ts`. Update and run the `worker-sandbox` verify journey and `worker-sandbox.ts` proof without the removed variable; update the `work-cleanup-sweep.ts` proof where it assumes worker evidence locations, while retaining coverage of cleanup for existing evidence. Production changes in this slice are removal only.
