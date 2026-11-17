@@ -4,6 +4,7 @@ import { createSessionGoalOperations } from '../../../../src/lib/goals/session-g
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
+import { createSessionScheduleOperations } from '../../../../src/lib/scheduler/operations.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
@@ -205,6 +206,30 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test.each(['goal', 'goal_review'])(
+    'startup does not restore a deleted %s schedule',
+    async (kind) => {
+      const { db, call, scheduler, goals, schedules } = setup();
+      try {
+        const goal = (
+          await call('goal.session.create', { title: 'Deleted wake', doneTest: 'Done' })
+        ).goal;
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        const remove = createSessionScheduleOperations(scheduler).find(
+          (op) => op.name === 'schedule.session.delete'
+        )!;
+        expect(
+          await remove.execute(remove.inputSchema.parse({ scheduleId: row.id }), neo)
+        ).toMatchObject({ ok: true });
+        for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+        expect(scheduler.repo.getBySource(kind, goal.id)).toBeNull();
+        const other = kind === 'goal' ? 'goal_review' : 'goal';
+        expect(scheduler.repo.getBySource(other, goal.id)?.status).toBe('active');
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('startup reconciliation preserves individually paused schedules', async () => {
     const { db, call, scheduler, goals, schedules } = setup();
     try {
@@ -297,6 +322,9 @@ describe('goal-owned schedules', () => {
       const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
         .goal;
       scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
+      db.prepare(
+        "UPDATE neo_goals SET wake_schedule = json_remove(wake_schedule, '$.reviewCadence') WHERE id = ?"
+      ).run(goal.id);
       for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
       expect(scheduler.repo.getBySource('goal_review', goal.id)).toMatchObject({
         status: 'active',
