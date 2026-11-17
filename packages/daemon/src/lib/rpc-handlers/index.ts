@@ -458,6 +458,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
+    workCleanupAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
     },

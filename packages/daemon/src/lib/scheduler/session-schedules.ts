@@ -17,6 +17,7 @@ import { nextScheduleRun, requireNextRun } from './session-schedule-cadence.ts';
 export interface ScheduleSource {
   kind: string;
   label?(id: string): string | null;
+  dailyRunLimit?(id: string): number | null;
   facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;
   message(id: string, change: { summary: string; nudge: boolean }): string | null;
 }
@@ -186,6 +187,13 @@ export class SessionScheduler {
     commit?: () => void
   ): boolean {
     return this.db.transaction(() => {
+      if (outcome !== 'progress')
+        this.repo.recordRun(
+          schedule,
+          outcome,
+          messageId !== schedule.lastMessageId ? messageId : null,
+          now
+        );
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
       if (outcome === 'fired' || outcome === 'skipped_unchanged') commit?.();
       const next =

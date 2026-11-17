@@ -47,7 +47,8 @@ import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-to
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
 import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
-import { codexSessionRefusal, selectSessionEngine } from './session-engine.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
@@ -806,7 +807,7 @@ export class QueryRunner {
     let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
-    let engine: 'sdk' | 'codex' = 'sdk';
+    let engine: SessionEngine = 'sdk';
     let oapQuery: ReturnType<typeof createOapQuery> | undefined;
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
@@ -816,7 +817,7 @@ export class QueryRunner {
 
     try {
       engine = selectSessionEngine(session.config.harness);
-      if (engine === 'codex') {
+      if (isOxapHarness(engine)) {
         if (!this.ctx.oap?.openDirectorySupported) {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
@@ -1650,7 +1651,7 @@ export class QueryRunner {
       const errorMessage = String(error);
       isAbortError = error instanceof Error && error.name === 'AbortError';
       const cancelled = isAbortError || stateManager.getState().status === 'interrupted';
-      if (engine === 'codex') {
+      if (isOxapHarness(engine)) {
         if (!live()) return;
         const failure = error instanceof Error ? error : new Error(errorMessage);
         messageQueue.clear(cancelled ? undefined : failure);
@@ -1661,7 +1662,7 @@ export class QueryRunner {
             ErrorCategory.SESSION,
             failure.message,
             stateManager.getState(),
-            { harness: 'codex' },
+            { harness: engine },
             live
           );
         }
@@ -2126,13 +2127,13 @@ export class QueryRunner {
       releaseStartupPermit('attempt_finished');
 
       const generationChanged = this.ctx.getQueryGeneration() !== queryGeneration;
-      const isStaleQuery = generationChanged || (engine === 'codex' && !attemptOwned);
+      const isStaleQuery = generationChanged || (isOxapHarness(engine) && !attemptOwned);
 
       if (generationChanged) {
         stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
       }
 
-      if (isStaleQuery && engine === 'codex') oapQuery?.close();
+      if (isStaleQuery && isOxapHarness(engine)) oapQuery?.close();
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;

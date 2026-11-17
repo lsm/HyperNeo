@@ -755,7 +755,7 @@ describe('QueryModeHandler', () => {
         session: {
           ...mockSession,
           sdkSessionId: 'native-thread',
-          config: { ...mockSession.config, harness: 'codex' },
+          config: { ...mockSession.config, harness: 'oxap-codex' },
         },
         slotResetsContext: () => true,
         clearConversationContext: async () => {

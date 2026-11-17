@@ -1,11 +1,12 @@
 import type { SessionConfig } from '@hyperneo/shared';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-type SessionEngine = NonNullable<SessionConfig['harness']>;
+export type SessionEngine = NonNullable<SessionConfig['harness']>;
 
 export function selectSessionEngine(harness: unknown): SessionEngine {
   if (harness === undefined || harness === 'sdk') return 'sdk';
-  if (harness === 'codex') return 'codex';
+  if (isOxapHarness(harness)) return harness;
   throw new Error(`Unknown session harness: ${String(harness)}`);
 }
 
