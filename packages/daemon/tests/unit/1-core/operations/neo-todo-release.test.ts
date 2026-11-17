@@ -111,7 +111,7 @@ function setup() {
     attend: async () => {},
     changed: () => {},
   });
-  const add = (target: NeoDriverTarget) => {
+  const add = (target: NeoDriverTarget, named: Record<string, unknown> | null = null) => {
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
@@ -122,7 +122,7 @@ function setup() {
         doneWhen: 'PR merged',
         check: null,
         instruction: 'Build the rows.',
-        named: null,
+        named,
       },
       1
     );
@@ -184,9 +184,20 @@ describe('neo todo runner refresh releases finished workers', () => {
   test('keeps a worker the human named', async () => {
     const h = setup();
     try {
-      await h.finishTodo(h.add({ ...started, name: 'Jason' }));
+      await h.finishTodo(h.add({ ...started, name: 'Jason' }, { session: 'Jason' }));
       await h.refresh();
       expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('archives a worker only Neo named', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add({ ...started, name: 'dev-6' }));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
     } finally {
       h.db.close();
     }
