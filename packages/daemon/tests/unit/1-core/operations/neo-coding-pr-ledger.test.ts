@@ -438,6 +438,31 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
     );
   };
 
+  test('sends an approved green PR with unresolved threads back to its author', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({ mergePolicy: 'review_bot', reviewBot: 'bot' }))
+      db.prepare(
+        `INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'x/x', ?, ?, 'human', 1)`
+      ).run(key, JSON.stringify(value));
+    const prUrl = 'https://github.com/x/x/pull/1';
+    const threadUrl = `${prUrl}#discussion_r1`;
+    const author = { adapter: 'claude-desktop', id: 'author-1' };
+    claim(db, 'live', 'doing', 10, prUrl, author);
+    expect(ledger.pollFacts.record(
+      { credentialId: 'github-connector', url: prUrl, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+      { value: { headOid: 'h1', unresolvedThreadUrls: [threadUrl] }, etag: null, next: null },
+      100, 0
+    )).toBe(true);
+    await reconcile(ledger, ['x/x'], async () => response([
+      node(1, { reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] } }),
+    ]), 200);
+    expect(ledger.snapshot(['x/x'], 200).map((row) => [row.state, row.ownerId])).toEqual([
+      ['changes_requested', 'author-1'],
+    ]);
+    expect(new CodingPrSweepRepository(db).rows()[0].findings).toContain(threadUrl);
+    db.close();
+  });
+
   test('takes the owner from the open todo that claims the PR, and leaves an unclaimed PR unassigned', async () => {
     const { db, ledger } = setup();
     const url = 'https://github.com/lsm/hyperneo/pull/1';
