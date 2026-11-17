@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -45,7 +45,6 @@ try {
     dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop();
   assert.notEqual(app.server.port, 8399);
-  // Two sessions share one workspace, so their SDK transcripts share one folder.
   const workspace = join(run, 'shared-workspace');
   mkdirSync(workspace);
   const dir = getSDKProjectDir(workspace);
@@ -53,31 +52,43 @@ try {
   mkdirSync(dir, { recursive: true });
   const worker = crypto.randomUUID();
   const other = crypto.randomUUID();
-  const sdk = { worker: crypto.randomUUID(), other: crypto.randomUUID() };
+  const sdk = { worker: crypto.randomUUID(), retired: crypto.randomUUID(), other: crypto.randomUUID() };
+  const file = (id: string) => join(dir, `${id}.jsonl`);
   const line = (sessionId: string, text: string) =>
-    JSON.stringify({ type: 'user', uuid: crypto.randomUUID(), sessionId,
+    JSON.stringify({ type: 'user', uuid: crypto.randomUUID(), sessionId, timestamp: new Date().toISOString(),
       message: { role: 'user', content: [{ type: 'text', text }] } });
-  writeFileSync(join(dir, `${sdk.worker}.jsonl`), `${line(sdk.worker, 'worker transcript')}\n`);
-  // The other session's transcript talks about the worker, as a Neo session does.
-  writeFileSync(join(dir, `${sdk.other}.jsonl`),
-    `${line(sdk.other, `worker ${worker} opened a PR`)}\n${line(sdk.other, `archive ${worker}`)}\n`);
+  writeFileSync(file(sdk.worker), `${line(sdk.worker, 'worker transcript')}\n`);
+  writeFileSync(file(sdk.retired), `${line(sdk.retired, 'worker transcript before a reset')}\n`);
+  writeFileSync(file(sdk.other),
+    `${line(sdk.other, `worker ${worker} (${sdk.worker}) opened a PR`)}\n${line(worker, `archive ${worker}`)}\n`);
+  const otherBefore = readFileSync(file(sdk.other));
   const now = new Date().toISOString();
-  for (const [id, sdkSessionId] of [[worker, sdk.worker], [other, sdk.other]])
-    await app.db.createSession({ id, title: 'Transcript proof', workspacePath: workspace, sdkSessionId,
-      createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' },
-      metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
-  const reply = await rpc('session.archive', { sessionId: worker, confirmed: true });
-  evidence.archive = reply;
-  assert.ok(!reply.error, JSON.stringify(reply));
-  const archive = join(run, 'data', 'claude-session-archives', worker);
+  const metadata = { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 };
+  await app.db.createSession({ id: worker, title: 'Transcript proof', workspacePath: workspace, sdkSessionId: sdk.worker,
+    createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' },
+    metadata: { ...metadata, pastSdkSessionIds: [sdk.retired] } });
+  await app.db.createSession({ id: other, title: 'Transcript proof', workspacePath: workspace, sdkSessionId: sdk.other,
+    createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' }, metadata });
+  const archived = await rpc('session.archive', { sessionId: worker, confirmed: true });
+  evidence.archive = archived;
+  assert.ok(!archived.error, JSON.stringify(archived));
   evidence.workerStatus = app.db.getSession(worker)?.status;
-  evidence.projectFolder = readdirSync(dir).sort();
-  evidence.archiveFolder = existsSync(archive) ? readdirSync(archive).sort() : null;
-  evidence.otherTranscriptInPlace = existsSync(join(dir, `${sdk.other}.jsonl`));
+  evidence.afterArchive = readdirSync(dir, { recursive: true }).map(String).sort();
+  evidence.otherUnchangedAfterArchive = readFileSync(file(sdk.other)).equals(otherBefore);
   assert.equal(evidence.workerStatus, 'archived');
-  assert.deepEqual(evidence.projectFolder, [`${sdk.other}.jsonl`]);
-  assert.deepEqual(evidence.archiveFolder, [`${sdk.worker}.jsonl`, 'archive-metadata.json'].sort());
-  console.log('PASS: archiving the worker moved only its own transcript; the other session\'s transcript that mentions the worker stayed in place.');
+  assert.deepEqual(evidence.afterArchive, [
+    `${sdk.worker}`, `${sdk.worker}.jsonl`, `${sdk.worker}/archived.json`,
+    `${sdk.retired}`, `${sdk.retired}.jsonl`, `${sdk.retired}/archived.json`, `${sdk.other}.jsonl`,
+  ].sort());
+  assert.equal(evidence.otherUnchangedAfterArchive, true);
+  const deleted = await rpc('session.delete', { sessionId: worker });
+  evidence.delete = deleted;
+  assert.ok(!deleted.error, JSON.stringify(deleted));
+  evidence.afterDelete = readdirSync(dir, { recursive: true }).map(String).sort();
+  evidence.otherUnchangedAfterDelete = readFileSync(file(sdk.other)).equals(otherBefore);
+  assert.deepEqual(evidence.afterDelete, [`${sdk.other}.jsonl`]);
+  assert.equal(evidence.otherUnchangedAfterDelete, true);
+  console.log('PASS: archiving the worker marked its current and retired transcripts archived in place; deleting it removed only those; the other session transcript that mentions the worker stayed byte-identical.');
 } finally {
   writeFileSync(join(run, 'evidence/archive-transcripts.json'), JSON.stringify(evidence, null, 2));
   await app?.cleanup();
