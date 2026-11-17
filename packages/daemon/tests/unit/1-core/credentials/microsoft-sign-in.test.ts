@@ -18,18 +18,19 @@ const tenant = '11111111-2222-4333-8444-555555555555';
 const otherTenant = '99999999-2222-4333-8444-555555555555';
 const scopes = ['openid', 'profile', 'email', 'offline_access', 'Mail.ReadWrite', 'Calendars.Read'];
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const jwk = (issuer: string) => ({
+const jwk = (issuer?: string, kid = 'synthetic-key') => ({
   ...keys.publicKey.export({ format: 'jwk' }),
-  kid: 'synthetic-key',
+  kid,
   use: 'sig',
-  issuer,
+  ...(issuer ? { issuer } : {}),
 });
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let store: DatabaseCredentialStore;
 let registry: ReturnType<typeof createOperationRegistry>;
 let claims: Record<string, unknown>;
-let keyIssuer: string;
+let keyIssuer: string | undefined;
+let otherKeys: object[];
 let tokenForms: URLSearchParams[];
 let external: string[];
 
@@ -60,7 +61,7 @@ const nonces = new Map<string, string>();
 const fetchImpl = (async (url, init) => {
   const target = new URL(String(url));
   if (target.href === `${login}/common/discovery/v2.0/keys`)
-    return Response.json({ keys: [jwk(keyIssuer)] });
+    return Response.json({ keys: [...otherKeys, jwk(keyIssuer)] });
   if (target.href === `${login}/common/oauth2/v2.0/token`) {
     const form = new URLSearchParams(String(init?.body));
     tokenForms.push(form);
@@ -82,6 +83,7 @@ beforeEach(async () => {
   store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
   claims = {};
   keyIssuer = `${login}/{tenantid}/v2.0`;
+  otherKeys = [];
   tokenForms = [];
   external = [];
   nonces.clear();
@@ -206,6 +208,21 @@ test.each([
 
 test('a token signed by a key restricted to another tenant is refused', async () => {
   keyIssuer = `${login}/${otherTenant}/v2.0`;
+  const { start, authorize } = await begin();
+  await consent(authorize);
+  expect(await settle(start.loginId!)).toMatchObject({ state: 'failed', reason: 'login_failed' });
+  expect(await rows()).toEqual([]);
+});
+
+test('another key in the set without an issuer does not block sign-in', async () => {
+  otherKeys = [jwk(undefined, 'synthetic-rotating-key')];
+  const { start, authorize } = await begin();
+  await consent(authorize);
+  expect((await settle(start.loginId!)).state).toBe('complete');
+});
+
+test('a selected signing key without an issuer is refused', async () => {
+  keyIssuer = undefined;
   const { start, authorize } = await begin();
   await consent(authorize);
   expect(await settle(start.loginId!)).toMatchObject({ state: 'failed', reason: 'login_failed' });
