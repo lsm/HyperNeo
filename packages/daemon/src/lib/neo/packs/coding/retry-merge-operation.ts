@@ -37,7 +37,7 @@ export function createCodingRetryMergeOperation(
   spawn: SpawnFn = spawnProcess,
   invalidate: (url: string) => void = () => {}
 ) {
-  const retry = (superpipe({})('coding.retry-daemon-merge') as PipelineAPI)
+  const retry = (superpipe({})('neo.coding.merge.retry') as PipelineAPI)
     .input('input')
     .pipe(
       async (input: Input) => {
