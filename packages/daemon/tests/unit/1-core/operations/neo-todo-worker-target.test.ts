@@ -56,6 +56,7 @@ function world(coding = false) {
     askInTarget: false,
     attend: false,
     status: null as (() => unknown) | null,
+    missing: false,
     closeOnStart: false,
   };
   const pack = {
@@ -93,6 +94,8 @@ function world(coding = false) {
       calls.push({ name, input });
       if (name === 'pack.preferences.ask' && failing.setting)
         return { kind: 'failed', code: 'execution_failed', message: 'synthetic_failure' };
+      if (name === 'work.status' && failing.missing)
+        return completed({ ok: false, reason: 'not_found' });
       if (name === 'work.status' && failing.status)
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
@@ -377,6 +380,33 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     ).toEqual(['work.start']);
     expect(w.store.getTodo(second)?.state).toBe('doing');
   });
+
+  test.each(['done', 'removed'] as const)(
+    'a %s feature owner with a session releases the next todo',
+    async (state) => {
+      const w = (current = world(true));
+      const check = { pack: 'coding', kind: 'pr_merged', params: {} };
+      const first = w.add(check, 'first');
+      const second = w.add(check, 'second');
+      for (const id of [first, second])
+        w.db
+          .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
+          .run(id, 'synthetic/repo');
+      await w.runner.start(first);
+      expect(w.sessions.readRef(first)).toEqual({ adapter: 'hyperneo', id: 'fresh' });
+      w.store.updateTodo(w.store.getTodo(first)!, { state, finishedAt: 1 }, 1);
+      w.failing.missing = true;
+      const before = w.dispatched().length;
+      await w.runner.start(second);
+      expect(
+        w
+          .dispatched()
+          .slice(before)
+          .map((call) => call.name)
+      ).toEqual(['work.start']);
+      expect(w.store.getTodo(second)?.state).toBe('doing');
+    }
+  );
 
   test('a claim refused after the coding hook reserved a new start releases the feature', async () => {
     const w = (current = world(true));

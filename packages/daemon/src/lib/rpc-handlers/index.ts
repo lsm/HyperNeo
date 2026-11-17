@@ -571,6 +571,8 @@ export async function setupRPCHandlers<SpaceServices = never>(
       },
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       log: (line) => neoService.logReorganize(line),
+      topics: () => neoService.todos.pickedTopics(),
+      wake: (key, text) => neoService.wakeNeo(key, text),
     })
   );
   scheduleNeoNightlyReorganize(deps.jobQueue, Date.now() + NEO_REORGANIZE_IDLE_MS, null);
