@@ -31,6 +31,7 @@ const SPAWN_REJECTIONS = [
   'parent_not_found',
   'nested_clone',
   'parent_unavailable',
+  'harness_unsupported',
 ] as const;
 
 type SpawnInput = z.infer<typeof SpawnInputSchema>;
@@ -120,6 +121,14 @@ export async function admitSpaceParent(
   return { value: parent };
 }
 
+export function admitCloneThinking(
+  parent: Session,
+  input: SpawnInput
+): { value: Session } | { reason: SpawnRejection } {
+  const message = thinkingRefusal(parent.config.harness, input.thinkingLevel);
+  return message ? { reason: reject('harness_unsupported', message) } : { value: parent };
+}
+
 export async function buildCloneParams(
   parent: Session,
   input: SpawnInput,
@@ -184,7 +193,7 @@ export async function createClone(
 }
 
 const SPAWN_DESCRIPTION =
-  'Spawn a 分身 (clone) of a session: a new session with the same configuration and workspace (its own git worktree when the workspace is a repository) but none of the conversation, optionally with a different model or thinking level. A brief, when given, becomes the first message and asks the clone to report back through session.clone.return. An agent or session calling through invoke clones itself; the RPC door names parentSessionId. A clone of a Space agent session acts as that agent. Rejects nested_clone (clones cannot clone), parent_unavailable (inactive session, task or workflow worker, or a paused, stopped or archived Space), parent_not_found and caller_denied.';
+  'Spawn a 分身 (clone) of a session: a new session with the same configuration and workspace (its own git worktree when the workspace is a repository) but none of the conversation, optionally with a different model or thinking level. A brief, when given, becomes the first message and asks the clone to report back through session.clone.return. An agent or session calling through invoke clones itself; the RPC door names parentSessionId. A clone of a Space agent session acts as that agent. Rejects harness_unsupported (thinking cannot be enforced), nested_clone (clones cannot clone), parent_unavailable (inactive session, task or workflow worker, or a paused, stopped or archived Space), parent_not_found and caller_denied.';
 
 export function createSpawnSessionCloneOperation(deps: SpawnSessionCloneDependencies) {
   const spawn = (superpipe({ deps })('session.clone.spawn') as PipelineAPI)
@@ -192,6 +201,7 @@ export function createSpawnSessionCloneOperation(deps: SpawnSessionCloneDependen
     .pipe(resolveParentId, ['input', 'caller'], 'result:outcome')
     .pipe(loadParent, ['outcome', 'deps'], 'result:outcome')
     .pipe(admitSpaceParent, ['outcome', 'deps'], 'result:outcome')
+    .pipe(admitCloneThinking, ['outcome', 'input'], 'result:outcome')
     .pipe(buildCloneParams, ['outcome', 'input', 'deps'], 'params')
     .pipe(createClone, ['outcome', 'params', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: SpawnInput, caller: OperationCaller) => Promise<SpawnResult>;
