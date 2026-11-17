@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
@@ -46,6 +47,7 @@ let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { syntheticHub: true };
 try {
   await client.connect();
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true },
     verbose: false,
@@ -62,7 +64,8 @@ try {
   rpc.registerTransport(transport);
   await transport.initialize();
   await rpc.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  await rpc.request('providers.create', oxapCodexProvider);
+  const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);
   (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = { openDirectorySupported: true, hub: createOapQueryHub(client) };
