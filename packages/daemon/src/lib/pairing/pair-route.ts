@@ -65,7 +65,7 @@ function deviceCookie(credential: string, origin: string): string {
   ].join('; ');
 }
 
-function answerPaired(
+export function answerPaired(
   req: Request,
   paired: { device: { id: string; kind: string }; credential: string }
 ): Response {

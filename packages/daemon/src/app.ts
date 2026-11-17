@@ -18,6 +18,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createSetupRoute, mintSetupToken } from './lib/pairing/setup-token.ts';
 import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
@@ -46,6 +47,7 @@ import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
   MessageHub,
   MessageHubRouter,
+  withConsoleLogCaptureSuppressed,
 } from '@hyperneo/shared';
 import type { ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
@@ -365,6 +367,7 @@ export interface DaemonAppContext {
   oapEngine: OapEngine;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handleSetup: (req: Request) => Promise<Response>;
   handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
@@ -1239,6 +1242,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
       waits: daemonPairWaits,
     });
+    let setupToken: string | null = null;
+    const handleSetup = createSetupRoute({
+      db: db.gateway,
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+      token: () => setupToken,
+    });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
       now: Date.now,
@@ -1383,6 +1393,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/setup' && req.method === 'POST') return handleSetup(req);
         if (handlePair2 && url.pathname.startsWith('/pair2/'))
           return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
@@ -1431,12 +1442,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
-      await ensureLocalCredential(
-        db.gateway,
-        'agent',
-        new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
-      );
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
+      const origin = new URL(`http://${dialableHost(config.host)}:${server.port}`).origin;
+      await ensureLocalCredential(db.gateway, 'agent', origin);
+      setupToken = await mintSetupToken(db.gateway);
+      if (setupToken) {
+        const link = `${origin}/setup#${setupToken}`;
+        withConsoleLogCaptureSuppressed(() =>
+          console.log(`\n   Open ${link} to set up HyperNeo\n`)
+        );
+        logInfo('[Daemon] First-run setup link printed on the starting terminal');
+      }
+    }
 
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {
@@ -1817,6 +1834,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       oapEngine,
       server,
       handlePair,
+      handleSetup,
       handlePair2,
       handleAskMarkdown,
       handleMessageImage,

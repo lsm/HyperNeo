@@ -1,0 +1,93 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { z } from 'zod';
+import { getDataDir } from '../data-dir.ts';
+import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  pairingRequestReads,
+  pairingRequestWrites,
+} from '../../storage/repositories/pairing-request-repository.ts';
+import { checkWindowsCredential } from './local-credential-permissions.ts';
+import { answerPaired, readBoundedText } from './pair-route.ts';
+import type { PairingLimiter } from './pairing-limiter.ts';
+
+export const setupTokenPath = (dataDir = getDataDir()) => join(dataDir, 'setup-token');
+
+export async function mintSetupToken(
+  db: DbGateway,
+  path = setupTokenPath()
+): Promise<string | null> {
+  if (!(await db.call(pairingRequestReads, 'firstDeviceOpen'))) return null;
+  const token = randomBytes(32).toString('base64url');
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomBytes(8).toString('hex')}.tmp`;
+  try {
+    const file = await open(temporary, 'wx', 0o600);
+    try {
+      if (process.platform === 'win32') checkWindowsCredential(temporary, true);
+      await file.writeFile(token);
+    } finally {
+      await file.close();
+    }
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return token;
+}
+
+const SetupRequest = z.object({
+  token: z.string().max(80),
+  name: z.string().trim().min(1).max(80).optional(),
+});
+
+const digest = (value: string) => createHash('sha256').update(value).digest();
+
+const answer = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+  });
+
+export interface SetupRouteDeps {
+  readonly db: DbGateway;
+  readonly limiter: PairingLimiter;
+  readonly now: () => number;
+  readonly token: () => string | null;
+}
+
+export function createSetupRoute({ db, limiter, now, token }: SetupRouteDeps) {
+  return async (req: Request): Promise<Response> => {
+    if (req.method !== 'POST') return answer(405, { error: 'method_not_allowed' });
+    const admitted = limiter.admit(now());
+    if (!admitted.ok)
+      return answer(429, { error: admitted.error, retryAfterMs: admitted.retryAfterMs });
+    const text = await readBoundedText(req);
+    let body: unknown = null;
+    try {
+      body = text === null ? null : JSON.parse(text);
+    } catch {}
+    const parsed = SetupRequest.safeParse(body);
+    const expected = token();
+    if (
+      !parsed.success ||
+      !expected ||
+      !timingSafeEqual(digest(parsed.data.token), digest(expected))
+    ) {
+      limiter.fail(now());
+      return answer(401, { error: 'invalid_token' });
+    }
+    const granted = await db.call(
+      pairingRequestWrites,
+      'grantSetupDevice',
+      parsed.data.name ?? 'First device',
+      now()
+    );
+    if (!granted) return answer(409, { error: 'has_owner' });
+    return answerPaired(req, {
+      device: { id: granted.deviceId, kind: 'human' },
+      credential: granted.credential,
+    });
+  };
+}

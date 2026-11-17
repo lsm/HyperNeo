@@ -345,6 +345,25 @@ export class PairingRequestRepository {
       return { ok: true as const, deviceId, credential, owner: step.owner };
     })();
   }
+
+  grantSetupDevice(name: string, now: number): { deviceId: string; credential: string } | null {
+    const credential = randomBytes(32).toString('base64url');
+    const deviceId = randomUUID();
+    return this.db.transaction(() => {
+      if (!this.firstDeviceOpen()) return null;
+      this.cancelFirstDeviceRequests(now);
+      const devices = new DevicePairingRepository(this.db);
+      devices.unapproveHumanCodes();
+      devices.closeHumanRecovery(now);
+      this.db
+        .prepare(
+          `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner)
+           VALUES (?, ?, 'human', ?, ?, 1)`
+        )
+        .run(deviceId, name, hash(credential), now);
+      return { deviceId, credential };
+    })();
+  }
 }
 
 export const pairingRequestReads = defineRepositoryOp(
@@ -372,5 +391,6 @@ export const pairingRequestWrites = defineRepositoryOp(
     'cancelRequest',
     'cancelBoundRequest',
     'completeRequest',
+    'grantSetupDevice',
   ] as const
 );

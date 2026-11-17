@@ -49,9 +49,9 @@ describe('first-run setup link', () => {
     return token;
   };
   const owners = () =>
-    writer
-      .prepare("SELECT name FROM paired_devices WHERE kind = 'human' AND owner = 1")
-      .all() as { name: string }[];
+    writer.prepare("SELECT name FROM paired_devices WHERE kind = 'human' AND owner = 1").all() as {
+      name: string;
+    }[];
 
   test('a new daemon writes an owner-only token that grants the first device once', async () => {
     const minted = await mint();
