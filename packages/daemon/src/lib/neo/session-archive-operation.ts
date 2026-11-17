@@ -1,6 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
+import type { Database as RawDatabase } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { readStartedWork } from '../../storage/work-started-sessions.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
@@ -30,14 +31,14 @@ type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archi
 
 export const NEO_TODO_RELEASE_PRINCIPAL = 'neo.todo.release';
 
-function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: Database) {
+function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: RawDatabase) {
   const release = caller.source === 'internal' && caller.principal === NEO_TODO_RELEASE_PRINCIPAL;
   const binding = caller.sessionId
-    ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
+    ? new NeoRepository(db).getBindingBySession(caller.sessionId)
     : null;
   if (!release && !isLocalUser(caller) && !isNeoConversationSession(caller, binding))
     return reject('human_only', 'This action needs the user or a bound Neo session.');
-  const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(
+  const todo = new NeoTodoSessionRepository(db).doingTodoOn(
     ref,
     null,
     release ? ['todo', 'doing', 'blocked'] : ['doing']
@@ -51,9 +52,10 @@ function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: Database)
 }
 
 export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
-  const refused = admitArchiveCaller(ref, caller, db);
+  const raw = db.getDatabase();
+  const refused = admitArchiveCaller(ref, caller, raw);
   if (refused) return refused;
-  if (!isLocalUser(caller) && readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
+  if (!isLocalUser(caller) && readStartedWork(raw, null, undefined, ref).length === 0)
     return reject('not_started_by_us', 'This session was not started by the daemon.');
   return null;
 }
@@ -85,7 +87,7 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
   .input(['ref', 'caller', 'deps'])
   .pipe(
     (ref: WorkRef, caller: OperationCaller, deps: Deps) => {
-      const refused = admitArchiveCaller(ref, caller, deps.db);
+      const refused = admitArchiveCaller(ref, caller, deps.db.getDatabase());
       return refused ? { reason: refused } : { value: ref };
     },
     ['ref', 'caller', 'deps'],
