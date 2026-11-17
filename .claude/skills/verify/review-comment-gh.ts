@@ -6,13 +6,64 @@ const [run, ...args] = process.argv.slice(2);
 appendFileSync(join(run, 'evidence/gh.log'), `gh ${JSON.stringify(args)}\n`);
 const store = join(run, 'comments.json');
 const comments: { path: string; body: string }[] = existsSync(store) ? JSON.parse(readFileSync(store, 'utf8')) : [];
+if (args[0] === 'api' && args.includes('/rate_limit')) {
+  const reset = Math.floor(Date.now() / 1000) + 5;
+  console.log(JSON.stringify({ resources: { core: { remaining: 0, reset } } }));
+  process.exit(0);
+}
+const http = (body: unknown) =>
+  process.stdout.write(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(body)}`);
+const pr: { head: string; state: 'OPEN' | 'MERGED' } = existsSync(join(run, 'pr.json'))
+  ? JSON.parse(readFileSync(join(run, 'pr.json'), 'utf8'))
+  : { head: 'head-a', state: 'OPEN' };
+const updated = new Date(Date.UTC(2026, 0, 1)).toISOString();
+const pull = {
+  number: 7,
+  title: 'Synthetic',
+  head: { ref: 'branch', sha: pr.head },
+  updated_at: new Date(Date.UTC(2026, 0, 2) + (pr.head === 'head-b' ? 2000 : 0) + (pr.state === 'MERGED' ? 1000 : 0)).toISOString(),
+  created_at: updated,
+  closed_at: pr.state === 'MERGED' ? new Date().toISOString() : null,
+  merged_at: pr.state === 'MERGED' ? new Date().toISOString() : null,
+  draft: false,
+  base: { repo: { full_name: 'synthetic/review-comment' } },
+};
+if (args[0] === 'api' && args[1] === 'user') {
+  http({ login: 'synthetic' });
+  process.exit(0);
+}
+if (args[0] === 'api' && args[1]?.startsWith('repos/synthetic/review-comment/pulls?state=')) {
+  const open = args[1].includes('state=open');
+  http(open === (pr.state === 'OPEN') ? [pull] : []);
+  process.exit(0);
+}
+if (args[0] === 'api' && args[1] === 'graphql' && args.some((arg) => arg.includes('p7: pullRequest'))) {
+  http({
+    data: {
+      rateLimit: { cost: 1, remaining: 4000, resetAt: new Date(Date.now() + 3_600_000).toISOString() },
+      repository: {
+        nameWithOwner: 'synthetic/review-comment',
+        p7: {
+          number: 7, title: 'Synthetic', body: '', headRefName: 'branch', headRefOid: pr.head,
+          state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null,
+          closedAt: null, createdAt: updated, author: { login: 'writer', __typename: 'User' },
+        },
+      },
+    },
+  });
+  process.exit(0);
+}
+if (existsSync(join(run, 'rate-limited'))) {
+  console.error('gh: API rate limit exceeded for user ID 1. (HTTP 403)');
+  process.exit(1);
+}
 const path = args.find((arg) => /^repos\/.+\/issues\/\d+\/comments$/.test(arg));
 if (args[0] !== 'api' || !path) {
   console.error(`review comment gh stub: unsupported gh ${args.join(' ')}`);
   process.exit(1);
 }
 if (args.includes('GET')) {
-  console.log(JSON.stringify([comments.filter((item) => item.path === path).map(({ body }) => ({ body }))]));
+  console.log(JSON.stringify(comments.filter((item) => item.path === path).map(({ body }) => ({ body }))));
   process.exit(0);
 }
 const body = args.find((arg) => arg.startsWith('body='))?.slice('body='.length);

@@ -5,6 +5,7 @@ export type ConnectorOutcome =
       error: string;
       retryable?: boolean;
       retryAfterMs?: number;
+      rateLimited?: boolean;
     };
 
 export interface ConnectorContext {

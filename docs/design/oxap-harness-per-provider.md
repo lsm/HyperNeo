@@ -155,103 +155,78 @@ The first row is `oxap-codex`:
 - adapter type `codex`, for provider `anthropic-codex`;
 - settings: the Codex executable;
 - hub entry: `approval_policy: on-request`, `sandbox: workspace-write` and
-  `any_directory`, as today's `oap-hub-config.ts` builds it. `CODEX_HOME` is
-  an empty directory per provider, owned by the daemon under the state
-  directory, with `cli_auth_credentials_store = "ephemeral"`. So it never
-  loads or overwrites the human's own Codex login.
-- `CODEX_HOME` is a path, not a key, so the entry carries it as a literal
-  `CODEX_HOME=<path>` environment entry. The Go hub already accepts literal
-  `NAME=value` entries (`resolveEnvironment` in `go/serve/registry.go`). Two
-  providers on OXAP Codex therefore get separate homes without touching the
-  shared process environment.
+  `any_directory`, as today's `oap-hub-config.ts` builds it. It sets no
+  `CODEX_HOME`. Codex reads its own system-level login, the same one the Codex
+  CLI and Desktop use (see "How OXAP Codex signs in"). The entry lists `HOME`,
+  and `CODEX_HOME` when the human has set one, by name only, so the hub's Codex
+  process finds that login.
 
 ### How OXAP Codex signs in
 
-The human chose to reuse HyperNeo's stored OpenAI login. Codex app-server
-supports this safely with its `chatgptAuthTokens` mode:
+The human decided that OXAP Codex uses Codex's own official login. It is
+system-level, like the Codex CLI and Desktop: Codex stores the token and
+refreshes it itself. HyperNeo never passes, stores or refreshes a Codex token,
+and no token travels through OXAP. OXAP needs no change for this.
 
-- `account/login/start` takes only an access token and an account id.
-- Codex keeps them in memory and never refreshes them itself.
-- On a 401, Codex sends the host `account/chatgptAuthTokens/refresh` and waits
-  10 seconds for a new access token.
-- The refresh token never leaves HyperNeo. HyperNeo stays the only refresher,
-  through its existing single-flight refresh, so no two programs rotate one
-  login.
+HyperNeo talks to the official Codex app-server for sign-in only. It already
+has a client that starts `codex app-server --listen stdio://` from the Codex
+executable (`codex-app-server.ts`); sign-in uses the executable the row's
+settings name. These are the Codex 0.169.0 app-server methods, checked against
+the JSON schema that version generates (`codex app-server
+generate-json-schema`):
 
-The tokens follow the keys rule: they never touch disk. Today's Go hub cannot
-drive this mode yet:
+- `account/read` (params `{}`) returns `{ account, requiresOpenaiAuth }`.
+  `account` is `null` when Codex is not signed in. HyperNeo never sets the
+  optional `refreshToken` flag; Codex refreshes on its own.
+- `account/login/start` with `{ type: "chatgptDeviceCode" }` returns
+  `{ type, loginId, verificationUrl, userCode }`. With `{ type: "chatgpt" }`
+  it returns `{ type, loginId, authUrl }` instead.
+- The notification `account/login/completed` carries
+  `{ success, loginId, error }`.
+- `account/login/cancel` ends a pending login.
 
-- Its Codex adapter never sends `account/login/start`.
-- It answers every server request it does not know with -32601 "unsupported
-  Codex server request" (`go/adapter/codex/appserver/session.go`). That
-  includes `account/chatgptAuthTokens/refresh`.
+The `chatgptAuthTokens` login type, where a client supplies the access token,
+is not used. The same schema marks it unstable and for OpenAI internal use
+only.
 
-So one upstream OXAP change comes first. It adds a host-auth option on the
-Codex adapter. At session start and on each refresh request, the adapter asks
-the session's client for tokens through one new host interaction, and the
-client answers. HyperNeo answers from its provider. The tokens travel only on
-that live channel, never in the config file or the hub environment.
+Each OXAP Codex open first checks the login:
 
-The same upstream change must let that first request reach the client. In
-the pinned hub, `Hub.openIn` (`go/serve/serve.go`) calls the adapter's `Open`
-before it registers the session and starts its event source, and
-`Hub.Subscribe` and the stdio `events` call look the session up first, so an
-unopened id gets `unknown_session`. A token request made inside the adapter's
-`Open` could reach no one. The upstream change therefore splits open in two:
+1. **Check.** `account/read`. If `account` is set, the open goes ahead.
+2. **Start.** If it is `null`, HyperNeo calls `account/login/start` with
+   `chatgptDeviceCode`. A device code works from any device, including the
+   human's phone. The `chatgpt` link finishes on a sign-in callback
+   (`/auth/callback`) that Codex serves itself, so it suits only a browser on
+   the daemon's own machine.
+3. **Show.** The chat shows the code and the link in the existing auth status
+   card (`AuthStatusCard`), as an SDK `auth_status` message with
+   `isAuthenticating: true` and the lines "Open <verificationUrl>" and
+   "Enter code <userCode>". That card shows text only, so the link is not
+   clickable until PR 7 makes it a link. That is the only UI step, and it is a
+   small one.
+4. **Wait.** The turn waits for `account/login/completed` with the same
+   `loginId`. On success the card turns to "Authentication Complete" and the
+   open continues. Codex has saved the login in its own store, so the Codex
+   CLI and Desktop are signed in too.
+5. **Fail.** On `success: false`, the card shows the `error`, and the turn
+   fails with "Codex is not signed in. Sign in, then send again."
 
-- `session.open` registers the session and starts its event source, then
-  returns. The adapter's login has not run yet, and the session is not ready.
-- The adapter then asks for tokens through the session's ordinary event
-  stream and sends `account/login/start` with the answer. The session becomes
-  ready only after that login succeeds. A submit before then waits for it.
-- The hub keeps the pending token request until it is answered and delivers
-  it to every subscriber that attaches while it is pending. The pinned hub's
-  `deliverLocked` (`go/serve/session.go`) sends only to current subscribers,
-  so without this a request emitted before HyperNeo subscribes would be lost
-  and the login would time out with valid credentials.
-- Cancellation: if the client closes the session, the connection drops, or
-  the request is not answered in time, the hub fails the login, closes the
-  adapter session and removes the registration. It records no opened binding.
+Sign-in is one machine-wide state, so a pending login is single-flight. A
+second OXAP chat that opens while it is pending shows the same code and waits
+for the same `loginId`. HyperNeo never starts a login on its own, for example
+at daemon start. A login starts only from a turn the human sent.
 
-Upstream integration tests run a real stdio hub with no existing session and
-a first login that needs tokens: one subscribing at once, and one whose
-subscription is deliberately delayed past the first token request.
+**When the human is not present.** The turn waits at most 15 minutes. Then
+HyperNeo sends `account/login/cancel` and fails the turn with the same message.
+The human's message stays in the chat, so they can sign in and send again.
+Neo and Space chats never run on OXAP Codex (`codexSessionRefusal` refuses
+them), so no unattended worker can start a login.
 
-That request can arrive before any run exists: during `open`, or while the
-chat is idle. Today nothing would hear it. `createOapRuntime` awaits
-`openOapSession` before it builds the query hub. The only session
-subscription is made at submit. Its `readEvent` turns any event without a
-`run_id` into an `Error('Invalid OAP hub event scope')`, which fails that
-run's stream. So PR 6 adds one session-level auth dispatcher:
+A signed-in Codex that later loses its login, for example after a logout in
+the Codex CLI, reaches the same check at the chat's next open or reopen.
 
-- **Installed right after open.** It subscribes as soon as `open` returns,
-  before the session is ready and before any submit. A token request emitted
-  before it attaches is replayed to it by the hub. It reads only the
-  session-scoped host-auth event, with no `run_id`.
-- **Ignored by the run stream.** If that event arrives mid-run, the submit-time
-  subscription also sees it. PR 6 makes `readEvent` skip exactly the host-auth
-  event type, so the run continues while the dispatcher answers. Any other
-  event without a `run_id` stays an error, as today.
-- **Provider-bound.** It answers only with tokens from the session's own
-  `config.provider`, using the reply operation the upstream change defines.
-  Any other request gets an error reply.
-- **Timeout.** It answers within HyperNeo's existing 5-second refresh bound,
-  inside Codex's 10-second wait. If refresh fails, it sends an error reply, and
-  the open or run fails with "Sign in again on the OpenAI Codex provider"
-  instead of hanging.
-- **Cleanup.** It unsubscribes when the session closes or is deleted, and when
-  the hub restarts.
-
-PR 6 tests three cases: first login right after open, refresh while idle,
-and a refresh failure during startup that must end in that error, not a hang.
-The first-login case runs against a real stdio hub with no existing session.
-
-This needs an OAuth login on the OpenAI Codex provider. The provider can also
-hold an API key instead: from `OPENAI_API_KEY` in its environment, or
-imported from Codex's `auth.json`. An API key has no access token or account
-id. So `decideOxapOpen` refuses that case before any open, with "OXAP Codex
-needs an OpenAI sign-in, not an API key; sign in on the OpenAI Codex
-provider". The harness dropdown shows the same reason.
+The provider record's own credential is not used by OXAP Codex. An OpenAI
+Codex provider that holds an API key instead of an OAuth login can still
+choose this harness.
 
 A DeepSeek row is not written yet. The Go DeepSeek adapter takes an
 executable, a `provider`, a `model` and an environment. Before that row
@@ -268,8 +243,7 @@ harness keep separate settings.
 A pure function, `buildHubConfig(providerRecords, OXAP_HARNESSES)`, builds the
 config. It keeps the existing posture (`docs/architecture/oap-backend-plan.md`):
 the config lists only allowlisted environment variable names, never keys.
-Non-secret values, such as a provider's `CODEX_HOME` path, may be literal
-`NAME=value` entries.
+Non-secret values may be literal `NAME=value` entries.
 
 - A key goes only into the hub process's environment, under the name its
   harness reads. The hub resolves each listed name from that environment.
@@ -476,23 +450,24 @@ production-line estimates, sized against `oap-hub-config.ts`,
 | 3 | Hub from settings: pinned download checked against the release's `SHA256SUMS.txt`, hub-binary setting, `buildHubConfig` at hub start with one entry per provider, the adapter name switched to `config.provider` in the same PR, key names in the hub environment, `oxap.settings.save`, `OapEngine.restart()`, `decideOxapOpen`, remove the `HYPERNEO_OAP_*` vars | daemon | ~230 |
 | 4 | `model_id` on submit when advertised | daemon | ~20 |
 | 5 | Mechanical rename OAP → OXAP: `lib/oap/` → `lib/oxap/`, `oap-*` files and `Oap*` identifiers, the `oapx` binary name → `oxap`. The `oap` state directory and the stored session metadata keys `oapRecovery` and `oapClearThreadId` keep their names, so existing hub state and recovery state stay readable. Moves and renames only, no behavior change | daemon | rename |
-| OXAP | Codex adapter host-auth option: `account/login/start` with `chatgptAuthTokens`, `account/chatgptAuthTokens/refresh` relayed as one host interaction; two-phase open, with the pending token request kept and replayed to late subscribers, cancellation cleanup and real-stdio-hub tests including a delayed subscription | OXAP repo | upstream |
-| 6 | Answer that interaction with the provider's current access token and account id, refreshing through the existing single-flight path. Per-provider empty ephemeral `CODEX_HOME`. Session-level auth dispatcher subscribed right after open returns | daemon | ~110 |
-| 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine, thinking control and tools/MCP panel hidden, attach/paste/drop disabled with a reason when the row says so | **UI** | ~180 |
+| 6 | Codex login check before each OXAP Codex open, on the official app-server: `account/read`; when `account` is `null`, a single-flight `account/login/start` with `chatgptDeviceCode`, the code and link in an `auth_status` message, wait for the matching `account/login/completed`, 15-minute bound with `account/login/cancel`, and the "Codex is not signed in" failure | daemon | ~120 |
+| 7 | Harness dropdown on the provider card, hub-binary field, picker filtered by engine, thinking control and tools/MCP panel hidden, attach/paste/drop disabled with a reason when the row says so, and the link in `AuthStatusCard` made clickable | **UI** | ~185 |
 
-Merge order is 1 → 2 → 3 → 4 → 5, then the OXAP change and a new `oxap`
-release, then 6 → 7. The rename lands after PR 4 and before the UI PR. PRs 1–5
-do not wait on OXAP. Only PR 7 changes what the human sees, and it lands once
-sign-in works. Before it, the daemon PRs are reachable
+Merge order is 1 → 2 → 3 → 4 → 5 → 6 → 7. The rename lands after PR 4 and
+before the UI PR. No PR waits on an OXAP change. Only PR 7 changes what the
+human sees, and it lands once sign-in works. Before it, the daemon PRs are reachable
 through RPC and the verify skill. Each later
 harness, starting with OXAP Claude Code, OXAP DeepSeek and OXAP Pi, is its own small PR: one table row and its fields.
 
 ## Ready today vs. waiting
 
-Ready today, enough for PRs 1–4:
+Ready today, enough for PRs 1–4 and 6:
 
 - The Go `oapx` release `v0.1.0-alpha.32` serves the Codex app-server adapter
   over stdio with open-any-directory.
+- The official Codex app-server (checked on 0.169.0) serves `account/read`,
+  `account/login/start` with `chatgptDeviceCode`, `account/login/completed`
+  and `account/login/cancel`. Sign-in needs no OXAP change.
 - The daemon already handles hub start with a pinned binary, open and reopen,
   submit, stream, cancel, clear, recovery after a lost hub, and delete.
 
@@ -510,9 +485,6 @@ Limits users will see, from code that already exists:
 
 Waiting:
 
-- Sign-in. OXAP Codex reaches users only after the upstream host-auth change
-  and an OXAP release that carries it (see "How OXAP Codex signs in").
-
 - More harness rows. Each needs a check on how that harness takes the
   provider's key and endpoint.
 - The Rust port. The Rust Codex adapter can already open, submit, stream and
@@ -524,8 +496,11 @@ Waiting:
 
 ## Choices for the human
 
-1. **How OXAP Codex signs in.** Decided: HyperNeo's stored login through
-   `chatgptAuthTokens`, as above.
+1. **How OXAP Codex signs in.** Decided: Codex's own official, system-level
+   login, as above. OXAP Decision 0029 stays as it is.
+   Open choice: (a) device code, (b) the `chatgpt` browser link. **Recommend
+   (a).** It works from any device; the link works only in a browser on the
+   daemon's machine.
 2. **Where the harness is chosen.** (a) Per provider now, and per model later
    if needed. (b) Per model from the start. **Recommend (a).** It covers both
    examples (OpenAI Codex, OpenCode Go) with one setting, and per model can be

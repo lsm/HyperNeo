@@ -2,9 +2,12 @@
 
 Read shared isolation setup in `../SKILL.md` and `coding-assignment-results.md`.
 This proof starts one real daemon on an ephemeral loopback port with a fresh
-synthetic DB/home. `$RUN/bin/gh` runs `review-comment-gh.ts`, which answers only
-issue-comment list and create calls from `$RUN/comments.json` and logs every call
-to `$RUN/evidence/gh.log`. Nothing reaches github.com; HTTP is refused.
+synthetic DB/home. `$RUN/bin/gh` runs `review-comment-gh.ts`, which answers the
+ledger's identity, PR-list and hydration reads from `$RUN/pr.json` (head and
+OPEN/MERGED state), issue-comment list and create calls from `$RUN/comments.json`,
+and logs every call to `$RUN/evidence/gh.log`. Comments are posted only for PRs
+the same sweep's ledger read confirmed open. Nothing reaches github.com; HTTP is
+refused.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-review-comment-XXXXXX)
@@ -26,10 +29,22 @@ re-observes the head before the second result. Each starts with `**HyperNeo reco
 names the reviewer model and harness, the verdict and the head. The reviewer
 session id never appears. The helper prints the first comment as a sample.
 
+Then a second Neo service on the same DB stands in for a restart: two sweeps
+make no issue-comment calls, because each PR's posted marker is stored in the DB.
+Next the PR moves to a new open head with a new review, and the stub answers
+comment calls with a rate-limit error (and `/rate_limit` with a reset seconds
+out, so the hold is the one-minute floor): one sweep tries once and the next
+sweeps make no comment calls. The helper checks the hold is stored in the DB and
+waits until it ends. Then the stub stops refusing and the pending review on the
+open PR posts once, so an unheld pending review does make a call. Last, the PR
+moves to a third head with a new review, the stub reports it merged and a third
+service starts: that review gets no comment call, because the ledger read in that
+sweep shows the PR merged; no hold is active.
+
 Keep `evidence/review-comment.json` (RPC inputs, replies, comments, gh calls).
 
 Run `neo-coding-review-comment` unit tests for the outage retry, closed PRs,
-moved heads, overlapping sweeps, a verdict that returns at one head and a PR
-merged during a GitHub outage.
+moved heads, overlapping sweeps, a verdict that returns at one head, a restart,
+a merged PR and a rate-limit hold.
 
 Not verified here: real GitHub, the human's gh account, or the PR page rendering.
