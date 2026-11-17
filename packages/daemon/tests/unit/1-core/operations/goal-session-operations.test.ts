@@ -52,7 +52,12 @@ function setup(
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
   const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
-  const isChildSession = (sessionId: string) => canReturn(sessionId) || sessionId === 'moved';
+  const parentProblem = (sessionId: string) =>
+    canReturn(sessionId) || sessionId === 'moved'
+      ? ('child' as const)
+      : sessionId === 'archived'
+        ? ('inactive' as const)
+        : null;
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(db),
@@ -62,14 +67,14 @@ function setup(
     mandateChange
   );
   scheduler.registerSource(schedules);
-  const sessions = ['neo:root', 'neo:other', 'plain', 'moved'];
+  const sessions = ['neo:root', 'neo:other', 'plain', 'moved', 'archived'];
   const started: { parentSessionId: string; title: string }[] = [];
   const released: string[] = [];
   const ops = createSessionGoalOperations({
     goals,
     schedules,
     sessionExists: (sessionId) => sessions.includes(sessionId),
-    isChildSession,
+    parentProblem,
     canReturn,
     releaseSession: async (sessionId) => {
       released.push(sessionId);
@@ -845,6 +850,27 @@ describe('a goal in its own session', () => {
       expect(started).toHaveLength(1);
       expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual(goalsBefore);
       expect(scheduler.repo.list()).toHaveLength(schedulesBefore);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an archived session cannot get a goal session under it', async () => {
+    const { db, call, scheduler, started } = setup();
+    try {
+      expect(
+        await call(
+          'goal.session.create',
+          { ownerSessionId: 'archived', title: 'Late', doneTest: 'Done', ownSession: true },
+          human
+        )
+      ).toEqual({
+        accepted: false,
+        reason: 'parent_unavailable: a goal session must start under an active session.',
+      });
+      expect(started).toEqual([]);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });
+      expect(scheduler.repo.list()).toEqual([]);
     } finally {
       db.close();
     }
