@@ -1098,6 +1098,42 @@ describe('SDK Session File Manager', () => {
       expect(metadata.originalWorkspacePath).toBe(testWorkspacePath);
       expect(metadata.fileCount).toBe(1);
     });
+
+    test('leaves another session transcript that only mentions this session id', async () => {
+      writeFileSync(
+        testSessionFile,
+        JSON.stringify({ type: 'user', uuid: 'u1', sessionId: testSdkSessionId }) + '\n',
+        'utf-8'
+      );
+      const bystander = join(testSessionDir, 'other-sdk-session.jsonl');
+      writeFileSync(
+        bystander,
+        [
+          JSON.stringify({
+            type: 'user',
+            uuid: 'o1',
+            sessionId: 'other-sdk-session',
+            message: { content: [{ type: 'text', text: `worker ${kaiSessionId} is done` }] },
+          }),
+          JSON.stringify({
+            type: 'assistant',
+            uuid: 'o2',
+            sessionId: 'other-sdk-session',
+            message: {
+              content: [
+                { type: 'tool_use', id: 't1', name: 'read', input: { sessionId: kaiSessionId } },
+              ],
+            },
+          }),
+        ].join('\n') + '\n',
+        'utf-8'
+      );
+
+      const result = archiveSDKSessionFiles(testWorkspacePath, testSdkSessionId, kaiSessionId);
+
+      expect(result.archivedFiles).toEqual([join(archiveDir, `${testSdkSessionId}.jsonl`)]);
+      expect(existsSync(bystander)).toBe(true);
+    });
   });
 
   describe('removeToolResultFromSessionFile', () => {
@@ -1341,6 +1377,28 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(exists).toBe(true);
+    });
+
+    test('does not treat a transcript that only mentions the session id as its own', async () => {
+      writeFileSync(
+        testSessionFile,
+        JSON.stringify({
+          type: 'user',
+          uuid: 'bystander-message-uuid',
+          sessionId: testSdkSessionId,
+          message: { content: [{ type: 'text', text: 'see session kai-session-mentioned' }] },
+        }) + '\n',
+        'utf-8'
+      );
+
+      const exists = messageUuidExistsInSessionFile(
+        testWorkspacePath,
+        undefined,
+        'kai-session-mentioned',
+        'bystander-message-uuid'
+      );
+
+      expect(exists).toBe(false);
     });
   });
 
