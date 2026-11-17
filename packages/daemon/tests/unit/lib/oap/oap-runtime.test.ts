@@ -49,7 +49,7 @@ function session(id: string, workspace: string): Session {
   return {
     id,
     workspacePath: workspace,
-    config: { harness: 'codex' },
+    config: { harness: 'oxap-codex' },
   } as Session;
 }
 

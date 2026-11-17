@@ -38,6 +38,8 @@ Rules, all pure and in core (`lib/neo/human-card.ts`, `lib/neo/human-queue.ts`):
 4. **A blocked todo with no card is Neo's.** A todo blocked on `question` or `needs-human` that no open card covers is handled by the next-step owner table of the attention design (`docs/design/neo-attention.md`): the daemon while an answer is still being delivered, otherwise Neo, which `todo.neo_step` wakes. Nothing is added here for it.
 5. **A human step gets its card when it can start.** A todo with a check, no instruction and no worker is a human step. When its prerequisites are done, the daemon opens one card asking the human to do it, with "done" and "remove". Putting it aside is the ordinary card hold below, which every card has; it changes no todo. This takes the place of the `check_overdue` card: same producer (the stall reminder sweep), but the selection changes in two ways. Today `listCheckable` picks a check-only `todo` by age alone, with no readiness condition; the new selection drops the 24-hour age and adds that the todo's prerequisites are finished (`neoTodoReady`, `todo-dependencies.ts`). And the card asks for the step instead of "keep waiting?". Existing open `check_overdue` cards stay until answered.
 
+   > Changed by `neo-asks-the-human.md`: the daemon no longer opens this card. A check-only todo is the daemon's until its 24-hour deadline, then Neo's (`check_overdue`); Neo asks the human when the step needs them.
+
 ## Held cards
 
 A held card is an open card the human put aside. It is a state, not a timer: it stays held until the human answers it or takes it back. Old readers still see it as open, and no state value is added. One new nullable column on `neo_questions`: `held_at`.

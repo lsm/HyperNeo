@@ -16,7 +16,8 @@ import {
 } from './asr-relay.ts';
 import { voiceDiagnostic } from './diagnostics.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
-import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
+import type { VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
+import { resolveVoiceKey, voiceParts } from './voice-parts.ts';
 import { streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
 
@@ -40,13 +41,14 @@ export interface VoiceStreamDeps {
 type Gate<T> = { value: T } | { reason: string };
 
 export function voiceMode(voice: VoiceSettings | undefined): VoiceMode {
-  if (!voice?.streamEndpoint?.trim()) return 'batch';
+  if (!voiceParts(voice).live) return 'batch';
   return voice?.mode === 'batch' || voice?.mode === 'streaming' ? voice.mode : 'auto';
 }
 
 export function admitVoiceStream(voice: VoiceSettings | undefined): Gate<VoiceSettings> {
   if (!voice?.enabled) return { reason: 'Voice input is disabled' };
-  if (!voice.endpoint?.trim() || !voice.model?.trim())
+  const recorded = voiceParts(voice).recorded;
+  if (!recorded?.endpoint.trim() || !recorded.model.trim())
     return { reason: 'Voice transcription endpoint and model are required' };
   return { value: voice };
 }
@@ -54,8 +56,9 @@ export function admitVoiceStream(voice: VoiceSettings | undefined): Gate<VoiceSe
 export function voiceStreamRoute(
   voice: VoiceSettings
 ): { url: URL; protocol: StreamProtocol } | null {
-  const protocol = streamProtocol(voice.streamProtocol);
-  const endpoint = voice.streamEndpoint?.trim();
+  const live = voiceParts(voice).live;
+  const protocol = streamProtocol(live?.provider);
+  const endpoint = live?.endpoint.trim();
   if (!protocol || !endpoint) return null;
   let url: URL;
   try {
@@ -109,10 +112,9 @@ async function buildAsrRelayOpen(
       voice.allowPrivateNetwork ?? false,
       voice.allowInsecureTls ?? false
     );
-    const endpoint = new URL(voice.endpoint);
     const apiKey = await withVoiceCredentialLock(() =>
       withTimeout(
-        resolveApiKey(voice.apiKey, voice.apiKeyEndpoint, endpoint, deps.credentialManager),
+        resolveVoiceKey(voice, url, deps.credentialManager),
         CREDENTIAL_LOOKUP_TIMEOUT_MS,
         'Voice transcription credential lookup timed out'
       )
@@ -129,7 +131,7 @@ async function buildAsrRelayOpen(
         streamId,
         clientId: deps.clientId,
         url: target.toString(),
-        protocolName: voice.streamProtocol ?? 'deepgram',
+        protocolName: voiceParts(voice).live?.provider ?? 'deepgram',
         wsOptions: {
           ...tls,
           tls: { ...tls, ...(pinned ? { serverName: url.hostname } : {}) },
@@ -265,7 +267,7 @@ export class VoiceStream {
         status,
         via,
         mode: plan.mode,
-        route: plan.route ? (plan.voice.streamProtocol ?? 'deepgram') : 'batch',
+        route: plan.route ? (voiceParts(plan.voice).live?.provider ?? 'deepgram') : 'batch',
         streamOrigin: plan.route?.url.origin,
         fallbackReason,
       });

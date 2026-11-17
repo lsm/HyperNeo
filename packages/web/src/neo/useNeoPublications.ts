@@ -1,6 +1,6 @@
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI, type SuperPipeFactory } from 'superpipe';
 import { connectionManager } from '../lib/connection-manager.ts';
 import {
   admitPublicationCursor,
@@ -106,14 +106,20 @@ export function mergePublicationEdits(
   return touched ? { ...state, items } : state;
 }
 
-const placePublications = (name: string, place: typeof appendPublicationWindow) =>
-  (superpipe({})(name) as PipelineAPI)
+const placePublications = (
+  pipeline: ReturnType<SuperPipeFactory>,
+  place: typeof appendPublicationWindow
+) =>
+  (pipeline as PipelineAPI)
     .input(['state', 'response'])
     .pipe(admitPublicationUpdate, ['state', 'response'], 'result:page')
     .pipe(place, ['state', 'page'], 'page')
     .end('page') as (state: NeoPublicationState, response: PublicationRead) => NeoPublicationState;
-const applyTail = placePublications('neo-publication-tail', placePublicationTail);
-const applyEarlier = placePublications('neo-publication-earlier', prependPublicationWindow);
+const applyTail = placePublications(superpipe({})('neo-publication-tail'), placePublicationTail);
+const applyEarlier = placePublications(
+  superpipe({})('neo-publication-earlier'),
+  prependPublicationWindow
+);
 
 const applyPage = (superpipe({})('neo-publication-state') as PipelineAPI)
   .input(['state', 'response'])

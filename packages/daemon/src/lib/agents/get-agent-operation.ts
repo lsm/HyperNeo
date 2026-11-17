@@ -40,7 +40,7 @@ const GET_AGENT_DESCRIPTION =
 
 export function createGetAgentOperation(deps: GetAgentDependencies) {
   const access = 'read' as const;
-  const read = (superpipe({ deps, access })('get-space-agent') as PipelineAPI)
+  const read = (superpipe({ deps, access })('agent.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitAgentCaller, ['input', 'caller', 'deps', 'access'], 'result:outcome')
     .pipe(readAgentInSpace, ['outcome', 'input', 'deps'], 'outcome')

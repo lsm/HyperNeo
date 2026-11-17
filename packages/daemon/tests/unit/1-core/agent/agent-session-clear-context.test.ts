@@ -137,7 +137,7 @@ describe('AgentSession.clearConversationContext', () => {
       agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex' },
         } as Partial<Session>,
         makeEventBus(),
         runtime
@@ -164,7 +164,7 @@ describe('AgentSession.clearConversationContext', () => {
     const agent = createAgentSession(
       {
         sdkSessionId: 'native-thread-1',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>,
       makeEventBus(),
       runtime
@@ -224,7 +224,7 @@ describe('AgentSession.clearConversationContext', () => {
       const agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex' },
         } as Partial<Session>,
         makeEventBus(),
         proxy
@@ -271,7 +271,7 @@ describe('AgentSession.clearConversationContext', () => {
       const session = createAgentSession({
         sdkSessionId: 'native-thread-1',
         sdkOriginPath: '/synthetic/original',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>);
       const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
       const enqueue = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
@@ -330,7 +330,7 @@ describe('AgentSession.clearConversationContext', () => {
     async (operation) => {
       const session = createAgentSession({
         sdkSessionId: 'native-thread-1',
-        config: { model: 'synthetic', harness: 'codex' },
+        config: { model: 'synthetic', harness: 'oxap-codex' },
       } as Partial<Session>);
       spyOn(session, 'showNotice').mockRejectedValue(new Error('synthetic storage failure'));
       const reset = spyOn(session, 'resetQuery').mockResolvedValue({ success: true });
@@ -350,7 +350,7 @@ describe('AgentSession.clearConversationContext', () => {
   it('publishes a session error when the Codex refusal cannot be saved', async () => {
     const session = createAgentSession({
       sdkSessionId: 'native-thread-1',
-      config: { model: 'synthetic', harness: 'codex' },
+      config: { model: 'synthetic', harness: 'oxap-codex' },
     } as Partial<Session>);
     spyOn(session.db, 'saveSDKMessage').mockResolvedValue(false);
     await expect(session.startFreshContext()).rejects.toBeInstanceOf(

@@ -206,7 +206,7 @@ describe('bind an already running worker without dispatch', () => {
           state: 'open',
           cause: 'hold',
           options: ['Start', 'Remove'],
-          text: '"Waiting step" is on hold: The human said wait. Start it, or remove it?',
+          text: 'The human said wait.',
         },
       ]);
       expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.' })).toMatchObject({

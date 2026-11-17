@@ -13,8 +13,16 @@ const todo = (id: string, state: NeoTodo['state'] = 'todo', askId = 'ask-a') => 
 const card = (
   id: string,
   todos: string[],
-  extra: Partial<Pick<NeoQuestion, 'state' | 'heldAt' | 'askId'>> = {}
-) => ({ id, askId: 'ask-a', text: `Card ${id}?`, todos, state: 'open' as const, ...extra });
+  extra: Partial<Pick<NeoQuestion, 'state' | 'heldAt' | 'askId' | 'createdAt'>> = {}
+) => ({
+  id,
+  askId: 'ask-a',
+  text: `Card ${id}?`,
+  todos,
+  state: 'open' as const,
+  createdAt: 0,
+  ...extra,
+});
 const none = new Map<string, NeoStepOwner>();
 
 describe('neoHumanQueue', () => {
@@ -71,6 +79,22 @@ describe('neoHumanQueue', () => {
     expect(queue.items).toHaveLength(2);
   });
 
+  test('unanswered cards come first, newest card first, held cards after them', () => {
+    const queue = neoHumanQueue({
+      questions: [
+        card('stale', [], { askId: 'old-ask', createdAt: 10 }),
+        card('held', [], { askId: 'new-ask', createdAt: 40, heldAt: 41 }),
+        card('fresh', [], { askId: 'old-ask', createdAt: 30 }),
+        card('middle', [], { askId: 'new-ask', createdAt: 20 }),
+      ],
+      todos: [todo('t1', 'doing')],
+      owners: none,
+    });
+    expect(
+      queue.items.map((item) => ('questionId' in item ? item.questionId : item.todoId))
+    ).toEqual(['fresh', 'middle', 'stale', 'held', 't1']);
+  });
+
   test('an ask-level card is one item about the whole ask', () => {
     const queue = neoHumanQueue({ questions: [card('q1', [])], todos: [], owners: none });
     expect(queue.items).toEqual([
@@ -91,6 +115,7 @@ describe('neoHumanQueue', () => {
       worker: null,
       packWaiting: false,
       start: null,
+      now: 4,
     });
     const queue = neoHumanQueue({
       questions: [card('q1', ['t1'], { state: 'answered' })],

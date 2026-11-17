@@ -27,7 +27,7 @@ function session(nativeId?: string, messageCount = 0): Session {
     id: 'session-a',
     workspacePath: '/synthetic/workspace',
     sdkSessionId: nativeId,
-    config: { harness: 'codex' },
+    config: { harness: 'oxap-codex' },
     metadata: { messageCount },
   } as Session;
 }

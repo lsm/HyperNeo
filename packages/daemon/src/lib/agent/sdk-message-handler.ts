@@ -857,6 +857,11 @@ export class SDKMessageHandler {
       return;
     }
 
+    if (message.type === 'tool_progress' && message.tool_use_id.startsWith('hook-')) {
+      this.logFilteredSDKMessage('hook_heartbeat', message);
+      return;
+    }
+
     const circuitBreakerTripped = this.isInvocationStale(invocationGeneration)
       ? false
       : await this.circuitBreaker.checkMessage(message, invocationGeneration ?? undefined);

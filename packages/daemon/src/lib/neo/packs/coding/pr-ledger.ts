@@ -72,6 +72,7 @@ export const CODING_LEDGER_WARN_SKIPS = 3;
 export const CODING_LEDGER_SNAPSHOT_CLOSED_MS = 24 * 60 * 60_000;
 
 const log = new Logger('NeoCodingLedger');
+const STALE_READ = `(read_at < ? AND NOT (state = 'approved_pending' AND closed_at IS NULL))`;
 
 export const Node = z.object({
   number: z.number().int(),
@@ -457,9 +458,6 @@ export class CodingPrLedgerRepository {
         .sort(
           (a, b) => (last.get(this.canonicalRepo(a)) ?? 0) - (last.get(this.canonicalRepo(b)) ?? 0)
         ),
-      pending: this.list()
-        .filter((row) => row.state === 'approved_pending')
-        .map(({ repo, number, head, readAt }) => ({ repo, number, head, readAt })),
     };
   }
 
@@ -484,8 +482,7 @@ export class CodingPrLedgerRepository {
     raw: unknown,
     now: number,
     observedAt: number,
-    seen: readonly string[],
-    pending: ReturnType<CodingPrLedgerRepository['pollSnapshot']>['pending']
+    seen: readonly string[]
   ) {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
@@ -501,11 +498,7 @@ export class CodingPrLedgerRepository {
     );
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
-    const canonical = this.canonicalRepo(repo);
-    const health = this.recordHealth(repo, {
-      ...cycle,
-      pending: pending.filter((row) => row.repo === canonical),
-    });
+    const health = this.recordHealth(repo, cycle);
     if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
     const transitions =
       planned && !seen.includes(planned.repo)
@@ -532,8 +525,32 @@ export class CodingPrLedgerRepository {
     return this.stageFacts.record(fact);
   }
 
-  readHealthCurrent(repo: string) {
-    return gatewayFor(this.db).call(codingLedgerReads, 'readHealth', repo);
+  readHealthDelivery(repos: readonly string[], staleBefore: number) {
+    return gatewayFor(this.db).call(codingLedgerReads, 'healthDelivery', repos, staleBefore);
+  }
+
+  healthDelivery(repos: readonly string[], staleBefore: number) {
+    const pending = (repo: string) =>
+      this.db
+        .prepare(
+          `SELECT number, head, read_at AS readAt FROM pack_coding_pr_ledger
+            WHERE repo = ? AND state = 'approved_pending' AND closed_at IS NULL AND read_at <= ?
+            ORDER BY number`
+        )
+        .all(repo, staleBefore) as { number: number; head: string; readAt: number }[];
+    return [...new Set(repos.map((repo) => this.canonicalRepo(repo)))].flatMap((repo) => {
+      const health = this.health.read(repo);
+      return health
+        ? [
+            {
+              repo,
+              incident: health.incident,
+              pending:
+                health.reason === 'complete' || repo.startsWith('polling:') ? [] : pending(repo),
+            },
+          ]
+        : [];
+    });
   }
 
   readHealth(repo: string) {
@@ -542,10 +559,6 @@ export class CodingPrLedgerRepository {
 
   recordHealth(repo: string, cycle: RepoHealthCycle) {
     return this.health.record(repo, cycle);
-  }
-
-  acceptHealthNotice(repo: string, key: string, at: number) {
-    this.health.accept(repo, key, at);
   }
 
   readStageFacts(url: string) {
@@ -882,8 +895,8 @@ export class CodingPrLedgerRepository {
     this.db
       .prepare(
         codingWatchedRepos(this.db) === null
-          ? `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR read_at < ? OR repo NOT IN (SELECT value FROM json_each(?))`
-          : `DELETE FROM pack_coding_pr_ledger WHERE (closed_at < ? OR read_at < ?) AND repo IN (SELECT value FROM json_each(?))`
+          ? `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR ${STALE_READ} OR repo NOT IN (SELECT value FROM json_each(?))`
+          : `DELETE FROM pack_coding_pr_ledger WHERE (closed_at < ? OR ${STALE_READ}) AND repo IN (SELECT value FROM json_each(?))`
       )
       .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
     this.db
@@ -954,21 +967,13 @@ export async function reconcileCodingPrLedger(
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
-  const { order, pending } = await ledger.pollSnapshotCurrent(repos);
+  const { order } = await ledger.pollSnapshotCurrent(repos);
   for (const repo of order) {
     const context = await ledger.pollContextCurrent(repo);
     if (!context.watched) continue;
     const observedAt = Date.now();
     const raw = await read(repo, context.health?.quota);
-    const observation = await ledger.write(
-      'observePoll',
-      repo,
-      raw,
-      now,
-      observedAt,
-      [...seen],
-      pending
-    );
+    const observation = await ledger.write('observePoll', repo, raw, now, observedAt, [...seen]);
     if (observation.warning)
       log.warn('PR ledger coverage missed three eligible cycles', {
         repo,
@@ -986,7 +991,6 @@ type CodingLedgerWrite =
   | 'holdForHuman'
   | 'daemonMerge'
   | 'acceptTerminalEvent'
-  | 'acceptHealthNotice'
   | 'recordHealth'
   | 'readHealth'
   | 'recordStage'
@@ -1005,7 +1009,6 @@ export const codingLedgerWrites = defineRepositoryOp<CodingPrLedgerRepository, C
     'holdForHuman',
     'daemonMerge',
     'acceptTerminalEvent',
-    'acceptHealthNotice',
     'recordHealth',
     'readHealth',
     'recordStage',
@@ -1022,5 +1025,13 @@ export const codingLedgerReads = defineRepositoryOp(
   'coding.ledger.read',
   'read',
   CodingPrLedgerRepository,
-  ['lastReads', 'list', 'humanHandoffs', 'readHealth', 'policyContext', 'readStageFacts'] as const
+  [
+    'lastReads',
+    'list',
+    'humanHandoffs',
+    'readHealth',
+    'healthDelivery',
+    'policyContext',
+    'readStageFacts',
+  ] as const
 );

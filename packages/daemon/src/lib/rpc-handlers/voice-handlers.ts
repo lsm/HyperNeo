@@ -452,6 +452,7 @@ async function transcribeViaPipeline(
     runVoiceTranscribe({
       data,
       context,
+      interactive: true,
       signal,
       deps: { settingsManager, credentialManager, limiters: transcriptionLimiters, beforeDispatch },
     });

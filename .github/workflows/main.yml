@@ -199,6 +199,9 @@ jobs:
       - name: Test API compatibility tooling
         run: bun run test:api-diff
 
+      - name: Test system map script
+        run: bun run test:system-map
+
       - name: Test cleanup sandbox bootstrap
         run: python3 scripts/test-cleanup-sandbox.py
 

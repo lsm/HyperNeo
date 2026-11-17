@@ -823,6 +823,25 @@ describe('SDKSystemMessage', () => {
     });
   });
 
+  describe('Session Writes Lost Message', () => {
+    it('warns that the session could not be saved', () => {
+      const message = {
+        type: 'system',
+        subtype: 'session_writes_lost',
+        error_code: 'ENOSPC',
+        lost: ['transcript', 'global_config'],
+        uuid: createUUID(),
+        session_id: 'test-session',
+      } as Extract<SDKMessage, { type: 'system' }>;
+
+      const { container } = render(<SDKSystemMessage message={message} />);
+
+      expect(container.textContent).toContain('Session not saved');
+      expect(container.textContent).toContain('disk is full');
+      expect(container.textContent).toContain('transcript, global_config');
+    });
+  });
+
   describe('Plugin Install Message', () => {
     it('should render failed plugin install', () => {
       const message = {

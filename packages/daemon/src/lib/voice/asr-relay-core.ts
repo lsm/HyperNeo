@@ -111,7 +111,7 @@ export function startAsrCore(open: AsrRelayOpen, emit: (event: AsrRelayEvent) =>
           sinceLastPongMs: since(lastPongAt),
         },
       });
-      finishWaiter?.(true);
+      finishWaiter?.(!protocol?.needsEndMessage);
       finishWaiter = null;
       emit({ type: 'dead' });
     });
@@ -154,6 +154,11 @@ export function startAsrCore(open: AsrRelayOpen, emit: (event: AsrRelayEvent) =>
         partial = '';
       } else partial = parsed.text;
       emit({ type: 'text', text: text() });
+      if (parsed.end === undefined || !finishWaiter) return;
+      finishWaiter(parsed.end);
+      if (!closeInitiator) closeInitiator = 'relay';
+      socket = null;
+      owned.close(1000);
     });
   };
   const since = (at: number | null) => (at === null ? null : Date.now() - at);

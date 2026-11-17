@@ -26,12 +26,14 @@ const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   nextSteps: 'next_steps',
   mandateRef: 'mandate_ref',
   mandateRev: 'mandate_rev',
+  dailyRunLimit: 'daily_run_limit',
 };
 const JSON_FIELDS = new Set<keyof SessionGoalPatch>(['metrics', 'nextSteps']);
 
 const SELECT = `SELECT id, owner_session_id AS ownerSessionId, title, description, status, type,
   priority, metrics, done_test AS doneTest, summary, works_note AS worksNote, progress, next_steps AS nextSteps,
-  mandate_ref AS mandateRef, mandate_rev AS mandateRev, created_at AS createdAt,
+  mandate_ref AS mandateRef, mandate_rev AS mandateRev, daily_run_limit AS dailyRunLimit,
+  created_at AS createdAt,
   updated_at AS updatedAt, completed_at AS completedAt, revision FROM neo_goals`;
 
 type Row = Omit<SessionGoal, 'metrics' | 'nextSteps'> & { metrics: string; nextSteps: string };
@@ -81,8 +83,8 @@ export class SessionGoalRepository {
         .prepare(
           `INSERT INTO neo_goals (id, owner_session_id, title, description, type, priority,
              metrics, done_test, summary, progress, next_steps, mandate_ref, mandate_rev,
-             created_at, updated_at, revision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+             daily_run_limit, created_at, updated_at, revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
         )
         .run(
           id,
@@ -98,6 +100,7 @@ export class SessionGoalRepository {
           JSON.stringify(draft.nextSteps ?? []),
           draft.mandateRef ?? null,
           draft.mandateRev ?? null,
+          draft.dailyRunLimit ?? 24,
           now,
           now
         );

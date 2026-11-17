@@ -1,64 +1,46 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
-import { emitStructuredLogEvent } from '../../../logger.ts';
-import type { HealthNotice } from './health-state.ts';
+import { Logger } from '../../../logger.ts';
+import type { NeoAttentionEvent } from '../../attention/decide.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
-import type { CodingSweepDeps } from './pr-sweep.ts';
 
-const deliverNotice = (superpipe({})('coding-health-notice-delivery') as PipelineAPI)
-  .input(['ledger', 'repo', 'notice', 'wake', 'now'])
-  .pipe(
-    (notice: HealthNotice, wake: CodingSweepDeps['wake']) =>
-      wake(notice.key, notice.text).catch(() => false),
-    ['notice', 'wake'],
-    'accepted'
-  )
-  .pipe(
-    async (
-      ledger: CodingPrLedgerRepository,
-      repo: string,
-      notice: HealthNotice,
-      accepted: boolean,
-      now: number
-    ) => {
-      if (accepted) await ledger.write('acceptHealthNotice', repo, notice.key, now);
-      return accepted;
-    },
-    ['ledger', 'repo', 'notice', 'accepted', 'now'],
-    'accepted'
-  )
-  .endAsync('accepted') as (
-  ledger: CodingPrLedgerRepository,
-  repo: string,
-  notice: HealthNotice,
-  wake: CodingSweepDeps['wake'],
-  now: number
-) => Promise<boolean>;
+const log = new Logger('NeoCodingHealth');
+const PENDING_STALE_MS = 15 * 60_000;
+
+const event = (subject: NeoAttentionEvent['subject'], since: number, text: string) => ({
+  kind: 'coding.github_health',
+  subject,
+  since,
+  facts: { text },
+});
 
 export async function deliverCodingHealth(
   ledger: CodingPrLedgerRepository,
   repos: readonly string[],
-  wake: CodingSweepDeps['wake'],
+  attend: (event: NeoAttentionEvent) => Promise<unknown>,
   now: number
 ): Promise<void> {
-  for (const repo of new Set(repos.map((repo) => repo.toLowerCase()))) {
-    const health = await ledger.readHealthCurrent(repo);
-    for (const notice of health?.notices ?? []) {
-      if (notice.acceptedAt !== null) continue;
-      emitStructuredLogEvent({
-        level: 'info',
-        source: 'logger',
-        module: 'coding-health',
-        args: ['Repository coverage notice'],
-        metadata: {
-          repo,
-          key: notice.key,
-          pending: notice.pending,
-          coverage: health!.reason,
-          lagMs: Math.max(0, now - (health!.completeAt ?? health!.firstMissAt ?? now)),
-          nextRetryAt: health!.nextRetryAt,
-        },
-      });
-      if (!(await deliverNotice(ledger, repo, notice, wake, now))) break;
-    }
-  }
+  if (!repos.length) return;
+  const events = (await ledger.readHealthDelivery(repos, now - PENDING_STALE_MS)).flatMap(
+    ({ repo, incident, pending }) => [
+      ...(incident && incident.resolvedAt === null
+        ? [
+            event(
+              { type: 'repo', id: repo },
+              incident.raisedAt,
+              `GitHub coverage stalled for ${repo}. Incident ${incident.key}.`
+            ),
+          ]
+        : []),
+      ...pending.map((row) =>
+        event(
+          { type: 'pr_head', id: `${repo}#${row.number}@${row.head}` },
+          row.readAt,
+          `GitHub readiness observation stalled for ${repo}#${row.number} (approved_pending, head ${row.head.slice(0, 7)}) since ${new Date(row.readAt).toISOString()}. Current CI is unverified; check polling before acting.`
+        )
+      ),
+    ]
+  );
+  for (const item of events)
+    await attend(item).catch((error) =>
+      log.warn(`GitHub health ${item.subject.id} not told; the next sweep retries`, error)
+    );
 }

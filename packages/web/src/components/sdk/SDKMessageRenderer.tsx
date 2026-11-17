@@ -132,6 +132,7 @@ function isActivityOnly(message: SDKMessage): boolean {
     return message.subtype === 'success' && !(message as { is_error?: boolean }).is_error;
   }
   if (isSDKCompactBoundary(message)) return false;
+  if ((message as { subtype?: unknown }).subtype === 'session_writes_lost') return false;
   return (
     isSDKSystemMessage(message) ||
     isSDKToolProgressMessage(message) ||

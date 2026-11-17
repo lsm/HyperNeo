@@ -40,6 +40,8 @@ const NEO_STEP: Record<NeoStepReason, (detail: string) => string> = {
     'it waits on an answer and no card is open. Answer its worker, or ask the human with neo.question.ask.',
   no_worker: () =>
     'its prerequisites are done and it has no instruction or worker. Write the instruction and start it, or remove it.',
+  check_overdue: () =>
+    'its check has not passed for 24 hours. Ask whoever it waits on, mark it done, or remove it.',
   idle_worker: () =>
     'its worker is idle and nothing is pending. Continue it, mark it done, or remove it.',
 };
@@ -87,6 +89,7 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
   { id: 'worker.session_error', render: carried, decide: always('wake') },
   { id: 'request.reply_failed', render: carried, decide: always('wake') },
   { id: 'driver.health', render: carried, decide: always('digest'), ladder: [DAY] },
+  { id: 'work.cleanup', render: carried, decide: always('digest') },
   {
     id: 'todo.follow_up_missing',
     decide: always('wake'),

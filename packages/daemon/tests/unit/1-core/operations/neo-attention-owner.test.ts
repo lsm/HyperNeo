@@ -19,6 +19,7 @@ const facts = (change: Partial<NeoStepFacts> = {}): NeoStepFacts => ({
   worker: null,
   packWaiting: false,
   start: null,
+  now: 0,
   ...change,
 });
 const doing = { ...facts().todo, state: 'doing' as const, startedAt: 30 };
@@ -28,6 +29,12 @@ const blocked = (blockedBy: NeoStepFacts['todo']['blockedBy']) => ({
   blockedBy,
 });
 const idle = { status: 'idle' as const, since: 50 };
+const DAY = 24 * 3_600_000;
+const checked = {
+  ...facts().todo,
+  instruction: null,
+  check: { pack: 'coding', kind: 'pr_merged', params: {} },
+};
 
 describe('nextStepOwner', () => {
   test.each<[string, NeoStepFacts, ReturnType<typeof nextStepOwner>]>([
@@ -121,6 +128,30 @@ describe('nextStepOwner', () => {
       'no start target after its prerequisite finished',
       facts({ prerequisites: [{ state: 'done', finishedAt: 80 }] }),
       { owner: 'neo', reason: 'no_worker', since: 80 },
+    ],
+    [
+      'a check with no instruction before its deadline',
+      facts({ todo: checked, now: 10 + DAY - 1 }),
+      { owner: 'daemon' },
+    ],
+    [
+      'a check with no instruction once its deadline passed',
+      facts({ todo: checked, now: 10 + DAY }),
+      { owner: 'neo', reason: 'check_overdue', since: 10 + DAY },
+    ],
+    [
+      'a check whose prerequisite finished later counts its deadline from that finish',
+      facts({
+        todo: checked,
+        prerequisites: [{ state: 'done', finishedAt: 80 }],
+        now: 80 + DAY - 1,
+      }),
+      { owner: 'daemon' },
+    ],
+    [
+      'a check with an instruction and no start target is still Neo’s to start',
+      facts({ todo: { ...checked, instruction: 'Merge it.' }, now: 10 + DAY - 1 }),
+      { owner: 'neo', reason: 'no_worker', since: 20 },
     ],
     [
       'an idle worker with nothing to wait on',
