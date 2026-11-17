@@ -35,7 +35,10 @@ const quota = (remaining: number, reset = Math.floor(Date.now() / 1000) + 600) =
   'X-RateLimit-Reset': String(reset),
 });
 
-afterEach(() => recordGithubBudget(new Headers(quota(5000))));
+afterEach(() => {
+  recordGithubBudget(new Headers(quota(5000)));
+  recordGithubBudget(new Headers(quota(5000)), 'ghe.synthetic.test');
+});
 
 describe('conditional GitHub reads', () => {
   test('an unchanged read is answered by a 304 with the earlier data', async () => {
@@ -93,6 +96,19 @@ describe('conditional GitHub reads', () => {
       ok: true,
       data: [[{ state: 'COMMENTED' }], [{ state: 'APPROVED' }]],
     });
+  });
+
+  test('another GitHub host keeps its own ETags and budget', async () => {
+    const endpoint = 'repos/synthetic/hosts/issues/1/labels';
+    const gh = fakeGh([
+      { status: 200, headers: { ETag: '"public"', ...quota(4000) }, body: [] },
+      { status: 200, headers: { ETag: '"enterprise"', ...quota(10) }, body: [] },
+    ]);
+    await runGhJson(['gh', 'api', '--hostname', 'github.com', endpoint], '/tmp', gh.spawn);
+    await runGhJson(['gh', 'api', '--hostname', 'ghe.synthetic.test', endpoint], '/tmp', gh.spawn);
+    expect(gh.calls[1].join(' ')).not.toContain('If-None-Match');
+    expect(readGithubBudget().level).toBe('ok');
+    expect(readGithubBudget(Date.now(), 'ghe.synthetic.test').level).toBe('critical');
   });
 
   test('the remaining core budget sets the level until the reset', async () => {
