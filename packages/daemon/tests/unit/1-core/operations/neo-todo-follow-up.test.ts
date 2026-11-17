@@ -35,9 +35,28 @@ describe('neoTodoFollowUpRefusal', () => {
     h.store.updateTodo(h.plan, { state: 'done' }, 2);
     expect(h.store.getTodo('todo-plan')?.producesFollowUp).toBe(true);
     expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
-    const later = h.store.addTodo('todo-build', h.ask.id, { ...draft, title: 'Build it' }, 3);
+    const later = h.store.addTodo(
+      'todo-build',
+      h.ask.id,
+      { ...draft, title: 'Build it', dependsOn: [h.plan.id] },
+      3
+    );
     expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toBeNull();
     h.store.updateTodo(later, { state: 'removed', reason: 'dropped' }, 4);
+    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
+  });
+
+  test('refuses when an unrelated later todo hides a removed follow-up', () => {
+    const h = setup();
+    h.store.updateTodo(h.plan, { state: 'done' }, 2);
+    const followUp = h.store.addTodo(
+      'todo-build',
+      h.ask.id,
+      { ...draft, title: 'Build it', dependsOn: [h.plan.id] },
+      3
+    );
+    h.store.updateTodo(followUp, { state: 'removed', reason: 'dropped' }, 4);
+    h.store.addTodo('todo-other', h.ask.id, { ...draft, title: 'Other work', dependsOn: [] }, 5);
     expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
   });
 });
