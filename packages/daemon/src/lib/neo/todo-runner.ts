@@ -706,6 +706,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     }
     const chosen = decision.value;
     if (
+      target.verb === 'start' &&
+      chosen.verb === 'send' &&
+      !(await sessions.read('isStartedWorker', chosen.ref))
+    )
+      return { value: target };
+    if (
       chosen.verb === 'send' &&
       (target.verb !== 'send' || neoWorkerKey(target.ref) !== neoWorkerKey(chosen.ref))
     )

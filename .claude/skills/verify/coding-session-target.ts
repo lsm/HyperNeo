@@ -2,11 +2,14 @@ process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import type { WorkRef } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
@@ -45,6 +48,10 @@ try {
   const pack = neo.packs().find((candidate) => candidate.id === 'coding');
   assert(pack?.workerTarget, 'the coding pack declares workerTarget');
   const db = app.db.getDatabase();
+  const conversation = new NeoRepository(db).conversationId() ?? crypto.randomUUID();
+  db.prepare('INSERT OR IGNORE INTO neo_conversation (singleton, id, created_at) VALUES (1, ?, 1)').run(conversation);
+  const requestId = crypto.randomUUID();
+  assert(new NeoConversationAskRepository(db).append({ conversationId: conversation, requestId, askOrigin: { sessionId: 'neo', messageId: requestId }, content: `Work in ${join(run, 'workspace')}` }).accepted);
   const store = new NeoAskTodoRepository(db);
   for (const id of ['feature', 'earlier'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
@@ -74,9 +81,9 @@ try {
   const waited = await decide('an unreachable feature session waits', todo('lost'), { verb: 'start', adapter: 'hyperneo' });
   assert('reason' in waited && waited.reason.startsWith('session_unknown'));
   const sessions = new NeoTodoSessionRepository(db);
-  const ready = (askId: string) => {
+  const ready = (askId: string, withPlace = false) => {
     const item = store.addTodo(crypto.randomUUID(), askId, { approvedAt: 1, title: 'Next slice', instruction: 'Synthetic next slice; reply ok.', named: null, check: { pack: 'coding', kind: 'pr_merged', params: {} }, doneWhen: 'Done' }, 3, repo);
-    sessions.create(item.id, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
+    sessions.create(item.id, { verb: 'start', adapter: 'hyperneo', name: 'backend', ...(withPlace ? { place: { machine: hostname(), name: 'workspace', folder: join(run, 'workspace') } } : {}) });
     return item;
   };
   const dispatched = async (label: string, item: ReturnType<typeof todo>) => {
@@ -85,8 +92,9 @@ try {
     evidence.push(row);
     return row;
   };
-  const nonworker = await dispatched('a non-worker redirect starts new work', ready('feature'));
+  const nonworker = await dispatched('a non-worker redirect starts new work', ready('feature', true));
   assert.equal(nonworker.target?.verb, 'start', JSON.stringify(nonworker));
+  assert(nonworker.ref && nonworker.ref.id !== back.id, JSON.stringify(nonworker));
   db.prepare("INSERT INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')").run(back.adapter, back.id);
   const reused = await dispatched('a ready slice of the feature is sent to its backend session', ready('feature'));
   assert.equal(reused.todo?.state, 'doing');
@@ -97,6 +105,7 @@ try {
   assert(held.todo?.reason?.includes('session_unknown'));
   assert.deepEqual(held.target, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
   assert.equal(held.ref, null);
+  db.prepare('DELETE FROM neo_todo_sessions WHERE ref = ?').run(JSON.stringify(missing));
   const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
   const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
   for (const id of ['failed', 'refused'])
@@ -116,7 +125,6 @@ try {
   await pack.workerTargetRefused(reused.todo!);
   assert.deepEqual(reserved('refused'), [{ todoId: reused.todo!.id }]);
   for (const ref of [front, back]) await rpc('session.archive', { sessionId: ref.id, confirmed: true });
-  db.prepare('DELETE FROM neo_todo_sessions WHERE ref = ?').run(JSON.stringify(missing));
   const archivedStatus = await status(back);
   evidence.push({ surface: 'work.status', label: 'an archived session reports stopped', status: archivedStatus });
   assert.equal((archivedStatus.value as { value?: { status?: string } }).value?.status, 'stopped', JSON.stringify(archivedStatus));

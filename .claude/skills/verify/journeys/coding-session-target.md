@@ -12,13 +12,14 @@ worked in them as `frontend` and `backend`. It then asks the coding pack's
 `workerTarget` hook, with live status from the daemon's own `work.status`
 operation:
 
-- a reservation pointing to a non-worker starts a new session;
-- a non-worker PR holder or task-bound session starts a new session;
 - unrelated work that asks to start a `backend` session is sent to the idle
   backend session instead;
 - a later slice of the same feature follows it there;
 - a feature whose recorded session `work.status` cannot find waits instead of
   starting another.
+
+The todo runner starts a new session when the pack redirects to a non-worker,
+and sends to the same session once recorded as a worker.
 
 It then starts two ready coding todos through the todo runner, each stored with
 a `backend` start target:

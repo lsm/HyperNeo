@@ -90,6 +90,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'syncedLive',
     ref: WorkRef
   ): Promise<ReturnType<NeoTodoSessionRepository['syncedLive']>>;
+  read(method: 'isStartedWorker', ref: WorkRef): Promise<boolean>;
   read(
     method: 'finishedWorkers',
     since: number
@@ -780,6 +781,17 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
+  isStartedWorker(ref: WorkRef): boolean {
+    return (
+      !ref.daemon &&
+      !!this.db
+        .prepare(
+          "SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND role = 'worker'"
+        )
+        .get(ref.adapter, ref.id)
+    );
+  }
+
   private liveTodo(todoId: string | null): boolean {
     const todo = todoId ? new NeoAskTodoRepository(this.db).getTodo(todoId) : null;
     return !!todo && LIVE_TODO_STATES.includes(todo.state);
@@ -818,6 +830,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'syncedActivity',
     'syncedLive',
     'finishedWorkers',
+    'isStartedWorker',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(

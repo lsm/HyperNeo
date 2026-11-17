@@ -65,9 +65,6 @@ function setup() {
     return added;
   };
   const worked = (item: NeoTodo, session: string, name?: string, state?: 'doing' | 'done') => {
-    db.prepare(
-      "INSERT OR IGNORE INTO work_started_sessions (adapter, id, started_at, role) VALUES ('claude-desktop', ?, 1, 'worker')"
-    ).run(session);
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
       item.id,
       JSON.stringify(name ? start(name) : { verb: 'send', ref: ref(session) }),
@@ -363,76 +360,6 @@ describe('coding session target decision', () => {
     });
     live['backend-1'] = 'unreachable';
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
-  });
-
-  test('a reservation reuses only a daemon-started worker', async () => {
-    for (const worker of [false, true]) {
-      const { db, todo, worked, decide } = setup();
-      const first = todo();
-      await decide(first, start('backend'));
-      worked(first, 'owner', 'backend', 'done');
-      if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'owner'").run();
-      const result = await decide(todo(), start());
-      if (worker) expect(result).toEqual({ value: { verb: 'send', ref: ref('owner') } });
-      else expect(result).toMatchObject({ value: { verb: 'start', name: 'dev' } });
-    }
-  });
-
-  test('a PR holder is reused only when it is a worker for every strategy', async () => {
-    for (const strategy of ['long_lived', 'per_pr', 'per_task']) {
-      for (const worker of [false, true]) {
-        const { db, todo, worked, decide } = setup();
-        db.prepare(
-          `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', ?, 'human', 1)`
-        ).run(repo, JSON.stringify(strategy));
-        const url = 'https://github.com/synthetic/repo/pull/9';
-        worked(todo('other', repo, url), 'holder', 'backend', 'done');
-        if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'holder'").run();
-        const result = await decide(todo('feature', repo, url), start('backend'));
-        expect(result).toMatchObject(
-          worker ? { value: { verb: 'send', ref: ref('holder') } } : { value: { verb: 'start' } }
-        );
-      }
-    }
-  });
-
-  test('per-task work reuses its bound session only when it is a worker', async () => {
-    for (const worker of [false, true]) {
-      const { db, todo, worked, decide } = setup();
-      db.prepare(
-        `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`
-      ).run(repo);
-      const item = todo();
-      worked(item, 'bound', 'backend', 'done');
-      if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'bound'").run();
-      expect(await decide(item, start())).toMatchObject(
-        worker ? { value: { verb: 'send', ref: ref('bound') } } : { value: { verb: 'start' } }
-      );
-    }
-  });
-
-  test('a non-worker PR holder replaces the existing feature reservation', async () => {
-    const { db, todo, worked, decide } = setup();
-    const reserved = todo();
-    await decide(reserved, start('backend'));
-    worked(reserved, 'reserved-worker', 'backend', 'done');
-    const url = 'https://github.com/synthetic/repo/pull/9';
-    worked(todo('other', repo, url), 'person', 'person', 'done');
-    db.prepare("DELETE FROM work_started_sessions WHERE id = 'person'").run();
-    expect(await decide(todo('feature', repo, url), start('backend'))).toMatchObject({
-      value: { verb: 'start' },
-    });
-  });
-
-  test('an explicit send to the reserved session remains available', async () => {
-    const { db, todo, worked, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'person', 'backend', 'done');
-    db.prepare("DELETE FROM work_started_sessions WHERE id = 'person'").run();
-    expect(await decide(todo(), { verb: 'send', ref: ref('person') })).toEqual({
-      value: { verb: 'send', ref: ref('person') },
-    });
   });
 
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
