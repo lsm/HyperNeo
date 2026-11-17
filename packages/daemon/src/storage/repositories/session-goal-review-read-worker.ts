@@ -5,6 +5,47 @@ import type { Database } from '../sqlite-compat.ts';
 class SessionGoalReviewReader {
   constructor(private readonly db: Database) {}
 
+  metric(goalId: string, runId?: string) {
+    return this.db.transaction(() => {
+      const match = runId?.match(/^goal-review:([^:]+):(\d+):([a-f0-9-]{36}|none)$/i);
+      const delivered =
+        match &&
+        this.db
+          .prepare(`SELECT 1 FROM session_schedule_runs
+        WHERE source_kind = 'goal_review' AND source_id = ? AND schedule_id = ?
+          AND due_at = ? AND outcome = 'fired' AND message_id IS NOT NULL`)
+          .get(goalId, match[1], Number(match[2]));
+      const occurrence = match ? `goal-review:${match[1]}:${match[2]}:` : '';
+      const other =
+        match &&
+        this.db
+          .prepare(`SELECT 1 FROM goal_journal WHERE goal_id = ?
+        AND substr(run_id, 1, length(?)) = ? AND run_id <> ? LIMIT 1`)
+          .get(goalId, occurrence, occurrence, runId);
+      const head = this.db
+        .prepare(`SELECT id FROM goal_journal WHERE goal_id = ?
+        AND run_id LIKE 'goal-review:%' ORDER BY rowid DESC LIMIT 1`)
+        .get(goalId) as { id: string } | null;
+      const rows = this.db
+        .prepare(`SELECT id, goal_id AS goalId, run_id AS runId,
+        session_id AS sessionId, done, effect, evidence, worked, failed, created_at AS createdAt
+        FROM goal_journal WHERE goal_id = ? AND run_id LIKE 'goal-review:%'
+          AND EXISTS (SELECT 1 FROM json_each(goal_journal.evidence)
+            WHERE json_extract(value, '$.kind') = 'metric'
+              AND json_extract(value, '$.ref') LIKE 'goal-metric-v1:%')
+        ORDER BY rowid DESC LIMIT 2`)
+        .all(goalId) as (Omit<GoalJournalEntry, 'evidence'> & { evidence: string })[];
+      return {
+        delivered: !!delivered && !other,
+        head: head?.id ?? null,
+        entries: rows.map((row) => ({
+          ...row,
+          evidence: JSON.parse(row.evidence) as GoalJournalEntry['evidence'],
+        })),
+      };
+    })();
+  }
+
   scheduled(): SessionGoal[] {
     const rows = this.db
       .prepare(`SELECT id, owner_session_id AS ownerSessionId, title, description,
@@ -63,5 +104,5 @@ export const sessionGoalReviewReads = defineRepositoryOp(
   'sessionGoal.review.read',
   'read',
   SessionGoalReviewReader,
-  ['scheduled', 'journal'] as const
+  ['scheduled', 'journal', 'metric'] as const
 );

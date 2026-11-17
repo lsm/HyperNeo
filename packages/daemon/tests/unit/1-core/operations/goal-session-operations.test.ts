@@ -1108,6 +1108,38 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('concurrent metric reviews do not lose the previous measurement', async () => {
+    const { db, call, scheduler } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    for (const dueAt of [1, 2])
+      scheduler.repo.recordRun(
+        { ...schedule, nextRunAt: dueAt },
+        'fired',
+        `message-${dueAt}`,
+        dueAt
+      );
+    const append = (dueAt: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId: `goal-review:${schedule.id}:${dueAt}:none`,
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+        metricPoint: { value: dueAt + 2, evidence: 'Synthetic count' },
+      });
+    const results = await Promise.all([append(1), append(2)]);
+    expect(results.filter((result) => result.accepted)).toHaveLength(1);
+    expect(results.find((result) => !result.accepted)?.reason).toContain('metric_review_stale');
+    expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(1);
+    db.close();
+  });
+
   test('review metrics retain history and show progress without completing the goal', async () => {
     const { db, call, scheduler, metricReports } = setup();
     const goal = (

@@ -8,7 +8,7 @@ import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 import { openHumanCard } from '../neo/human-card.ts';
 import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
-import { readMetric, readPoint, reachedTarget } from './session-goal-metric.ts';
+import { readMetric, readPoint } from './session-goal-metric.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {
   readonly kind = 'goal';
@@ -138,39 +138,6 @@ export class SessionGoalSchedules implements ScheduleSource {
     return this.asks.inTransaction(work);
   }
 
-  isReviewRun(goalId: string, runId?: string): boolean {
-    const match = runId?.match(/^goal-review:([^:]+):(\d+):([a-f0-9-]{36}|none)$/i);
-    if (!match || !this.scheduler.repo.wasDeliveredReview(goalId, match[1]!, Number(match[2])))
-      return false;
-    return !this.goals.hasOtherReview(goalId, `goal-review:${match[1]}:${match[2]}:`, runId!);
-  }
-
-  metricReached(goal: SessionGoal): boolean {
-    const metric = readMetric(goal);
-    if (!metric) return false;
-    const points = this.goals
-      .metricReviews(goal.id)
-      .map(readPoint)
-      .filter((point) => point !== null);
-    return !!points[0] && reachedTarget(metric, points[0].value);
-  }
-
-  metricTargetReport(goal: SessionGoal): string | null {
-    const metric = readMetric(goal);
-    if (!metric) return null;
-    const points = this.goals
-      .metricReviews(goal.id)
-      .map(readPoint)
-      .filter((point) => point !== null);
-    if (
-      !points[0] ||
-      !reachedTarget(metric, points[0].value) ||
-      (points[1] && reachedTarget(metric, points[1].value))
-    )
-      return null;
-    return `The goal "${goal.title.slice(0, 200)}" reached its target: ${metric.name.slice(0, 200)} is ${points[0].value} (target ${metric.target}).`;
-  }
-
   reviewResult(goal: SessionGoal): void {
     if (goal.status !== 'active') return;
     const config = this.goals.wakeSchedule(goal.id);
@@ -283,6 +250,12 @@ export class SessionGoalSchedules implements ScheduleSource {
     const mandate = goal.mandateRef
       ? await this.mandateChange(goal.mandateRef, goal.mandateRev)
       : null;
+    const metric = readMetric(goal);
+    const points = metric
+      ? (await this.goals.metricSnapshot(id)).entries
+          .map(readPoint)
+          .filter((point) => point !== null)
+      : [];
     const lines = [
       ...(mandate
         ? [
@@ -291,12 +264,7 @@ export class SessionGoalSchedules implements ScheduleSource {
         : []),
       `Progress: ${goal.progress}`,
       ...(() => {
-        const metric = readMetric(goal);
         if (!metric) return [];
-        const points = this.goals
-          .metricReviews(id)
-          .map(readPoint)
-          .filter((point) => point !== null);
         const current = points[0]?.value ?? metric.baseline;
         const previous = points[1]?.value ?? metric.baseline;
         return [

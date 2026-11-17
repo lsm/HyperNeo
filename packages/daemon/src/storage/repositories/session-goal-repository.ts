@@ -247,26 +247,8 @@ export class SessionGoalRepository {
     return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
   }
 
-  metricReviews(goalId: string): GoalJournalEntry[] {
-    return (
-      this.db
-        .prepare(`${JOURNAL_SELECT} WHERE goal_id = ? AND run_id LIKE 'goal-review:%'
-          AND EXISTS (SELECT 1 FROM json_each(goal_journal.evidence)
-            WHERE json_extract(value, '$.kind') = 'metric'
-              AND json_extract(value, '$.ref') LIKE 'goal-metric-v1:%')
-          ORDER BY rowid DESC LIMIT 2`)
-        .all(goalId) as JournalRow[]
-    ).map((row) => ({
-      ...row,
-      evidence: JSON.parse(row.evidence),
-    }));
-  }
-
-  hasOtherReview(goalId: string, occurrence: string, runId: string): boolean {
-    return !!this.db
-      .prepare(`SELECT 1 FROM goal_journal WHERE goal_id = ?
-      AND substr(run_id, 1, length(?)) = ? AND run_id <> ? LIMIT 1`)
-      .get(goalId, occurrence, occurrence, runId);
+  async metricSnapshot(goalId: string, runId?: string) {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'metric', goalId, runId);
   }
 
   listJournal(

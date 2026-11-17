@@ -104,14 +104,6 @@ export class SessionScheduleRepository {
     }));
   }
 
-  wasDeliveredReview(goalId: string, scheduleId: string, dueAt: number): boolean {
-    return !!this.db
-      .prepare(`SELECT 1 FROM session_schedule_runs WHERE source_kind = 'goal_review'
-      AND source_id = ? AND schedule_id = ? AND due_at = ? AND outcome = 'fired'
-      AND message_id IS NOT NULL`)
-      .get(goalId, scheduleId, dueAt);
-  }
-
   recordWake(
     sessionId: string,
     messageId: string,

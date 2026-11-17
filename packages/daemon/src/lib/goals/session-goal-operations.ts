@@ -31,6 +31,7 @@ import {
   metricKey,
   readMetric,
   readPoint,
+  reachedTarget,
   reservedMetricEvidence,
 } from './session-goal-metric.ts';
 
@@ -513,9 +514,7 @@ export function createSessionGoalOperations({
         return input.evidence.some((item) => reservedMetricEvidence(item.ref))
           ? refuse('reserved_metric_evidence: use metricPoint on a review.')
           : (input.metricPoint || (readMetric(goal) && input.runId?.startsWith('goal-review:'))) &&
-              (!readMetric(goal) ||
-                !input.metricPoint ||
-                !schedules.isReviewRun(goal.id, input.runId))
+              (!readMetric(goal) || !input.metricPoint)
             ? refuse('metric_review_required: metric points require a delivered review.')
             : existing && readPoint(existing)
               ? refuse('metric_review_recorded: a measured review cannot be replaced.')
@@ -540,8 +539,22 @@ export function createSessionGoalOperations({
           (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
         )
           await ensureNeo?.();
+        const snapshot = metricPoint ? await goals.metricSnapshot(goal.id, input.runId) : null;
+        if (snapshot && !snapshot.delivered)
+          return refuse('metric_review_required: metric points require a delivered review.').reason;
         audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
         const result = schedules.inTransaction(() => {
+          if (
+            snapshot &&
+            (goals.listJournal(goal.id, null, 1, null)[0]?.id ?? null) !== snapshot.head
+          )
+            return {
+              accepted: false as const,
+              reason: 'metric_review_stale: review changed; retry.',
+            };
+          const metric = metricPoint ? readMetric(goal)! : null;
+          const previous = snapshot?.entries.map(readPoint).find((point) => point !== null);
+          const met = !!metric && !!metricPoint && reachedTarget(metric, metricPoint.value);
           const entry = goals.appendJournal(
             goal.id,
             caller.sessionId ?? null,
@@ -551,17 +564,20 @@ export function createSessionGoalOperations({
             } as GoalJournalDraft,
             Date.now()
           );
-          const report = metricPoint ? schedules.metricTargetReport(goal) : null;
+          const report =
+            metric && metricPoint && met && (!previous || !reachedTarget(metric, previous.value))
+              ? `The goal "${goal.title.slice(0, 200)}" reached its target: ${metric.name.slice(0, 200)} is ${metricPoint.value} (target ${metric.target}).`
+              : null;
           if (report) reportMetricTarget(entry.id, report);
           if (input.runId?.startsWith('goal-review:')) schedules.reviewResult(goals.get(goal.id)!);
           return {
             accepted: true as const,
             entry: { ...entry, metricPoint: readPoint(entry) },
-            metricReached: metricPoint ? schedules.metricReached(goal) : undefined,
+            metricReached: metricPoint ? met : undefined,
             reported: !!report,
           };
         });
-        if (result.reported) metricReported?.();
+        if ('reported' in result && result.reported) metricReported?.();
         if (input.runId?.startsWith('goal-review:')) neoChanged();
         return result;
       },
