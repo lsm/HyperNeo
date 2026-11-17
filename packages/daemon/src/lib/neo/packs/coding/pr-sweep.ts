@@ -149,9 +149,9 @@ export class CodingPrSweepRepository {
     this.db
       .prepare(
         `UPDATE pack_coding_pr_ledger SET nudges = ?, told_at = ?
-          WHERE repo = ? AND number = ? AND head = ? AND state = ?`
+          WHERE repo = ? AND number = ? AND head = ? AND state = ? AND state_since = ?`
       )
-      .run(nudges, now, row.repo, row.number, row.head, row.state);
+      .run(nudges, now, row.repo, row.number, row.head, row.state, row.stateSince);
   }
 }
 
