@@ -64,7 +64,7 @@ function collectMembers(
   };
 }
 
-export const readTaskMembers = (superpipe({})('read-task-members') as PipelineAPI)
+export const readTaskMembers = (superpipe({})('task.member.list') as PipelineAPI)
   .input(['taskRepo', 'readCoreTask', 'nodeExecutionRepo', 'taskId'])
   .pipe(locateTask, ['taskRepo', 'readCoreTask', 'taskId'], 'result:roster')
   .pipe(collectMembers, ['nodeExecutionRepo', 'roster'], 'roster')
