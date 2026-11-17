@@ -35,7 +35,14 @@ export function registerSessionGoalOperations(
     context.sessionScheduler,
     context.neoPacks,
     canReturn,
-    context.goalMandateChange
+    context.goalMandateChange,
+    (owner) => {
+      const neo = context.defaultNeoSession?.();
+      if (!neo || owner === neo) return '';
+      return context.deps.db.getSession(owner)?.parentSessionId === neo
+        ? ' Send Neo the review summary with session.clone.return.'
+        : ` Send Neo the review summary with message.send to ${neo}, kind done.`;
+    }
   );
   context.sessionScheduler.registerSource(schedules);
   for (const goal of goals.listScheduled()) schedules.sync(goal);

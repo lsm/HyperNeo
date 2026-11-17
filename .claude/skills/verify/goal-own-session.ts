@@ -33,6 +33,9 @@ async function until<T>(read: () => T | null | undefined, message: string, timeo
 const transcript = (sessionId: string) => db.query('SELECT sdk_uuid, sdk_message AS content FROM sdk_messages WHERE session_id = ? ORDER BY rowid').all(sessionId) as { sdk_uuid: string; content: string }[];
 
 const root = (await rpc('neo.open', {})).sessionId;
+const otherParent = (await rpc('rpc:session.create', { workspacePath: run, title: 'Independent parent' })).sessionId;
+const other = await rpc('goal.session.create', { ownerSessionId: otherParent, title: 'Other goal', doneTest: 'Done', ownSession: true, reviewCadence: { kind: 'every', everyMs: 60000 } });
+assert(other.accepted, 'Could not create another goal session');
 const created = await rpc('goal.session.create', {
   ownerSessionId: root, title: 'Market the adapter guide', doneTest: 'Ten readers a week',
   cadence: { kind: 'every', everyMs: 60000 }, reviewCadence: { kind: 'every', everyMs: 90000 }, ownSession: true,
@@ -87,6 +90,11 @@ await finished('Journaled the run; review sent to Neo.');
 evidence.returnsAfterReview = returns().length;
 assert(review.content.includes(owner) && returns().length === 1, 'Neo did not receive exactly the review summary');
 assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
+
+const otherReview = await until(() => transcript(root).find((row) => row.content.includes(`Review of goal ${other.goal.id}`)), 'Neo did not receive the other goal session review');
+evidence.otherReview = otherReview;
+const otherJournal = await rpc('goal.journal.list', { ownerSessionId: other.goal.ownerSessionId, goalId: other.goal.id });
+assert(otherJournal.entries.some((item: { runId: string | null; effect: string }) => item.runId?.startsWith('goal-review:') && item.effect === 'yes'), 'Other goal session review was not journaled');
 
 const closed = await rpc('goal.session.update', { ownerSessionId: owner, goalId, status: 'completed' });
 evidence.closed = closed;

@@ -30,6 +30,7 @@ export interface FamilyOperationContext {
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
+  readonly defaultNeoSession?: () => string | undefined;
   readonly neoPacks: () => readonly NeoPack[];
   readonly extensionAdapters?: (host: DaemonAdapterHost) => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;

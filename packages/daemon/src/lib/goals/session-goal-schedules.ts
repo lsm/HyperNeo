@@ -19,7 +19,9 @@ export class SessionGoalSchedules implements ScheduleSource {
     private readonly mandateChange: (
       ref: string,
       revision: string | null
-    ) => Promise<string | null> = async () => null
+    ) => Promise<string | null> = async () => null,
+    private readonly reviewReport: (sessionId: string) => string = (sessionId) =>
+      this.canReturn(sessionId) ? ' Send Neo the review summary with session.clone.return.' : ''
   ) {
     scheduler.registerSource({
       kind: 'goal_review',
@@ -199,6 +201,6 @@ Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
       return null;
     const entries = this.goals.journalSinceReview(id);
     const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}`;
-    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review:\n${JSON.stringify(entries)}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.canReturn(goal.ownerSessionId) ? ' Send Neo the review summary with session.clone.return.' : ''}`;
+    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review:\n${JSON.stringify(entries)}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
   }
 }
