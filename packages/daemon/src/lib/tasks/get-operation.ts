@@ -1,5 +1,6 @@
 import type { SpaceBlockReason, SpaceTask } from '@hyperneo/shared/types/space';
 import type { TaskCore, TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { VALID_TASK_TRANSITIONS } from './transitions.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -99,13 +100,29 @@ export function createGetTaskOperation(
   readTask: (taskId: string, caller: OperationCaller) => TaskCore | null | Promise<TaskCore | null>,
   readTaskByNumber?: TaskByNumberReader
 ) {
+  const get = (superpipe({})('task.get') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      async (input: z.infer<typeof ById> | z.infer<typeof ByNumber>, caller: OperationCaller) => {
+        const task = await ('taskId' in input
+          ? readTask(input.taskId, caller)
+          : readTaskByNumber!(input.spaceId, input.taskNumber, caller));
+        return task === null ? { reason: null } : { value: task };
+      },
+      ['input', 'caller'],
+      'result:task'
+    )
+    .endAsync('task') as (
+    input: z.infer<typeof ById> | z.infer<typeof ByNumber>,
+    caller: OperationCaller
+  ) => Promise<TaskCore | null>;
   if (!readTaskByNumber) {
     return defineOperation({
       name: 'task.get',
       description: BY_ID_DESCRIPTION,
       inputSchema: ById,
       resultSchema: TaskWithSpaceFieldsSchema.nullable(),
-      execute: async (input, caller) => readTask(input.taskId, caller),
+      execute: (input, caller) => get(input, caller),
     });
   }
   return defineOperation({
@@ -113,9 +130,6 @@ export function createGetTaskOperation(
     description: BY_NUMBER_DESCRIPTION,
     inputSchema: z.union([ById, ByNumber]),
     resultSchema: TaskWithSpaceFieldsSchema.nullable(),
-    execute: async (input, caller) =>
-      'taskId' in input
-        ? readTask(input.taskId, caller)
-        : readTaskByNumber(input.spaceId, input.taskNumber, caller),
+    execute: (input, caller) => get(input, caller),
   });
 }
