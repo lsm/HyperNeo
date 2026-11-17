@@ -1,5 +1,7 @@
 # RFC: Data-Defined Workflow Engine
 
+> Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs through Neo.
+
 Status: Proposed — Revision 13 (Phase 0, architecture only; no runtime changes).
 Incorporates all human + codex-connector review rounds to date. Every
 code-level claim below was re-verified directly against the current source this

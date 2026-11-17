@@ -3,7 +3,11 @@ import { WORK_START_EXCLUDE_REFS_MAX } from '../../../drivers/work-operations.ts
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import { type CodingSessionStrategy, codingSessionStrategy } from './session-strategy.ts';
+import {
+  type CodingSessionStrategy,
+  codingSessionStrategyRequest,
+  savedCodingSessionStrategy,
+} from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
 type Holder = Owner & { assignedAt: number };
@@ -115,7 +119,8 @@ class CodingSessionAssignments {
       } | null
     )?.repo;
     if (!repo) return null;
-    const strategy = codingSessionStrategy(this.db, repo);
+    const saved = savedCodingSessionStrategy(this.db, repo);
+    const strategy = saved ?? 'long_lived';
     const rows = this.db
       .prepare(
         `SELECT t.id, t.state, ${SESSION_OF}, json_extract(s.target, '$.name') AS name
@@ -143,6 +148,7 @@ class CodingSessionAssignments {
     return {
       repo,
       strategy,
+      strategySaved: saved !== null,
       owner: pooled(this.ownerAmong(holders, { ...input, repo, strategy })),
       feature: pooled(strategy === 'long_lived' ? this.feature(repo, input.featureKey) : null),
       successors: [...holders].sort((a, b) => b.assignedAt - a.assignedAt).map(pooled),
@@ -150,6 +156,17 @@ class CodingSessionAssignments {
         (session) => session.ref.adapter === input.adapter && !actors.has(workKey(session.ref))
       ),
     };
+  }
+
+  strategyQuestions(repo: string) {
+    const questions = this.db
+      .prepare(
+        `SELECT q.id, q.state, p.values_json AS proposal FROM neo_pack_preference_proposals p
+         JOIN neo_questions q ON q.id = p.question_id
+         WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
+      )
+      .all(codingSessionStrategyRequest(repo)) as { id: string; state: string; proposal: string }[];
+    return { saved: savedCodingSessionStrategy(this.db, repo) !== null, questions };
   }
 
   private feature(repo: string, featureKey: string): Owner | null {
@@ -197,7 +214,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts', 'actorRefs']
+  ['owner', 'dispatchFacts', 'strategyQuestions', 'actorRefs']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',

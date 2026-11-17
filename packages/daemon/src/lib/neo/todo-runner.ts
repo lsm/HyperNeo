@@ -664,8 +664,28 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       neoTodoStartRefusal(todo, store.listFamilyTodos(ask.id), store.gateQuestions(ask), hold)
     )
       return { value: null };
-    const decision = await pack.workerTarget(todo, target, (ref) =>
-      deps.invoke(caller(ask), 'work.status', { ref })
+    const decision = await pack.workerTarget(
+      todo,
+      target,
+      (ref) => deps.invoke(caller(ask), 'work.status', { ref }),
+      async (input) => {
+        const outcome = await deps.invoke(caller(ask), 'pack.preferences.ask', {
+          askId: ask.id,
+          ...input,
+        });
+        const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
+        if (!reply?.ok)
+          await note(
+            'todo.unworked',
+            todo,
+            Date.now(),
+            `A settings question for this todo could not be opened (${JSON.stringify(outcome)}); the work continues without it.`,
+            { reason: 'settings_question' }
+          ).catch((error) =>
+            log.warn('Settings question note pending', { todoId: todo.id }, error)
+          );
+        return outcome;
+      }
     );
     if ('reason' in decision) {
       const reason = `${TARGET_WAIT}${decision.reason}`;

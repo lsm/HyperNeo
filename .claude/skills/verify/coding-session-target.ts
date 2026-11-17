@@ -56,7 +56,7 @@ try {
     return item;
   };
   const decide = async (label: string, item: ReturnType<typeof todo>, target: Parameters<NonNullable<typeof pack.workerTarget>>[1]) => {
-    const decision = await pack.workerTarget!(item, target, status);
+    const decision = await pack.workerTarget!(item, target, status, async () => ({ kind: 'completed' as const, value: { ok: true } }));
     evidence.push({ surface: 'coding pack workerTarget', label, target, decision });
     return decision;
   };

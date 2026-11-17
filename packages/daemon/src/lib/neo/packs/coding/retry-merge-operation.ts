@@ -34,7 +34,8 @@ const refuse = (reason: string) => ({ reason: { accepted: false as const, reason
 export function createCodingRetryMergeOperation(
   database: () => Database,
   ledger: CodingPrLedgerRepository,
-  spawn: SpawnFn = spawnProcess
+  spawn: SpawnFn = spawnProcess,
+  invalidate: (url: string) => void = () => {}
 ) {
   const retry = (superpipe({})('coding.retry-daemon-merge') as PipelineAPI)
     .input('input')
@@ -66,6 +67,7 @@ export function createCodingRetryMergeOperation(
     .pipe(
       async (input: Input) => {
         await ledger.write('daemonMerge', { kind: 'retry', ...input, at: Date.now() });
+        invalidate(input.url);
         return { accepted: true as const };
       },
       'result',

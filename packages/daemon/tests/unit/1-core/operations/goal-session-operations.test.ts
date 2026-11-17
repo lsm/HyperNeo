@@ -172,6 +172,9 @@ describe('goal what-works compaction', () => {
       expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
         'worksNote'
       );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'Resources and Do alone'
+      );
       db.exec('UPDATE goal_journal SET created_at=5');
       expect(
         await call('goal.session.update', {

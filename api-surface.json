@@ -44677,6 +44677,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "hold": {
+            "const": false,
+            "type": "boolean"
+          },
           "requestId": {
             "minLength": 1,
             "type": "string"

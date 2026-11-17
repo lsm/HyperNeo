@@ -803,6 +803,7 @@ test('ledger facts retain terminal state despite missing approval and red CI', (
             state: 'MERGED',
             closedAt: new Date(now - 1).toISOString(),
             createdAt: new Date(now - 100).toISOString(),
+            updatedAt: '2026-11-16T12:00:00Z',
             author: { login: 'writer', __typename: 'User' },
           },
           'FAILURE'
@@ -823,6 +824,7 @@ test('ledger facts retain terminal state despite missing approval and red CI', (
       replyAt: null,
       closedAt: now - 1,
       createdAt: now - 100,
+      updatedAt: '2026-11-16T12:00:00Z',
       authorIsBot: false,
     },
   ]);

@@ -162,6 +162,10 @@ export type NeoQuestionDraft = Pick<
 > &
   Pick<NeoQuestion, 'cause'> & { todos?: readonly string[] };
 
+export const NEO_ADVISORY_QUESTION = (question: string) =>
+  `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
+    AND json_extract(p.values_json, '$.hold') = 0)`;
+
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, labels, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
@@ -679,7 +683,8 @@ export class NeoAskTodoRepository {
       FROM neo_asks WHERE status = 'open'
       AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_asks.session_id AND sessions.status = 'active')
       AND NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state IN ('todo', 'doing'))
-      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open')
+      AND NOT EXISTS (SELECT 1 FROM neo_questions WHERE ask_id = neo_asks.id AND state = 'open'
+        AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')})
       AND (?2 OR NOT EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = neo_asks.id AND state = 'blocked'))
       AND (updated_at <= ?1 OR (?3 AND ${ASK_ALL_DONE}))`)
       .all(before, includeBlocked ? 1 : 0, wakeFinishedNow ? 1 : 0) as ReturnType<
@@ -1033,10 +1038,15 @@ export class NeoAskTodoRepository {
     this.changeQuestion(id, { actions_applied_at: now }, 'answered');
   }
 
-  listQuestions(askId: string): NeoQuestion[] {
+  listBlockingQuestions(askId: string): NeoQuestion[] {
+    return this.listQuestions(askId, true);
+  }
+
+  listQuestions(askId: string, blockingOnly = false): NeoQuestion[] {
+    const advisory = blockingOnly ? `AND NOT ${NEO_ADVISORY_QUESTION('neo_questions')}` : '';
     return (
       this.db
-        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
+        .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ${advisory} ORDER BY created_at, rowid`)
         .all(askId) as QuestionRow[]
     ).map(toQuestion);
   }
