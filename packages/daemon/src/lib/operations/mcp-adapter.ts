@@ -34,7 +34,9 @@ function desktopCallResult(value: unknown): McpResult {
     content: [
       mcpResult(rest).content[0],
       ...content.map((block) =>
-        block.type === 'image' && block.data.length > MAX_IMAGE_BASE64_SIZE
+        block.type === 'image' &&
+        typeof block.data === 'string' &&
+        block.data.length > MAX_IMAGE_BASE64_SIZE
           ? {
               type: 'text' as const,
               text: `Screenshot omitted: ${block.data.length} base64 bytes exceeds the ${MAX_IMAGE_BASE64_SIZE}-byte model image limit. Call get_window_state again with a smaller max_image_dimension.`,
