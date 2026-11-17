@@ -35,8 +35,7 @@ Last, it checks reservations that never got a session:
 - a finished owner retains its live session even for another work type;
 - when a done or removed owner's session is missing, its next slice
   dispatches to a live session and takes over the reservation.
-- with no live alternative, the next slice selects a fresh start; an
-  unreachable session held by active work still causes a wait.
+- with no live alternative, the next slice selects a fresh start.
 
 This journey covers feature reservations; missing PR-holder sessions follow the
 separate PR-routing path and are not covered by this change.
