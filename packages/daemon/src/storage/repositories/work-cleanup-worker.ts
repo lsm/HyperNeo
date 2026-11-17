@@ -145,7 +145,7 @@ class WorkCleanupRepository {
         .all(),
       ...this.db
         .prepare(
-          `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')`
+          `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked')`
         )
         .all(),
     ]

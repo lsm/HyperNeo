@@ -102,7 +102,7 @@ describe('Data-only atomic ask settlement', () => {
     for (const todo of store.listTodos('ask')) moveToChild(todo.id);
   };
 
-  test.each(['todo', 'doing', 'blocked', 'failed', 'removed'] as const)(
+  test.each(['todo', 'doing', 'blocked', 'removed'] as const)(
     'done refuses an unfinished %s row without changing work or cards',
     async (state) => {
       db.prepare('UPDATE neo_todos SET state = ?, reason = NULL WHERE id = ?').run(state, 'first');
