@@ -175,7 +175,7 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const makeSession = async (workspace: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, workspace), title: 'Synthetic OAP workspace', config: { model: 'haiku', provider: 'anthropic', harness: 'codex' } });
+  const makeSession = async (workspace: string) => hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, workspace), title: 'Synthetic OAP workspace', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);

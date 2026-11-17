@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
-import { readBoundPrSummary } from '../../../packages/daemon/src/lib/artifacts/pr-summary.ts';
+import { resolvePrSummary as readBoundPrSummary } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 const root = realpathSync(process.argv[2]);
