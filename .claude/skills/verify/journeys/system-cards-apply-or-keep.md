@@ -31,3 +31,9 @@ The home-repository card is covered by `neo-home-github.ts` in
 with its `verify`, `chat`, `legacy` and `decline` modes. Citing a chat `A` to
 `neo.rule.save` needs a Neo session caller, so unit tests cover it, not this RPC
 helper. Stop the daemon with `stop.sh` in the same shell as launch.
+
+To check only that a yes on a yes/no card applies nothing, after building web run
+`.claude/skills/verify/yesno-refusals.sh <port>`. It runs the rule and setting
+helper, the confirmed home save (`after`) and the home-repository card (`legacy`,
+then `verify`), each on its own fresh isolated daemon, prints one `exit=` line per
+run and exits non-zero if any fails.
