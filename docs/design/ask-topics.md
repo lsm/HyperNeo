@@ -7,7 +7,7 @@ mirror (`neo-projects.md`). Paths without a prefix are under `packages/daemon/sr
 
 The Live page groups asks by topic. Topics spread: one code project ends up under many
 topics, the same matter gets two names (a word and its synonym, or two spellings of a
-name), and asks land in the wrong topic or in "Other". Many people never open the inbox
+name), and asks land in the wrong topic or in the catch-all topic. Many people never open the inbox
 to fix this, so the grouping has to be right on its own.
 
 Four facts in the code cause it:
@@ -46,7 +46,10 @@ first of these that exists:
    that each moved on to something else. A sender's earlier requests are not used: one
    session can ask about unrelated matters, so a sender with no project falls to rule 3.
 3. **Neo's pick:** the stored `topic`.
-4. Otherwise "Other".
+4. Otherwise the existing other topic, `NEO_OTHER_TOPIC` (`packages/web/src/neo/topic-color.ts`),
+   with the same key as a stored pick of that name, so derived and picked asks share one
+   chip and keep its sort-last style. The prompt keeps telling Neo to use it when no area
+   fits.
 
 Nothing is backfilled: every existing ask is grouped by the same rule the next time it is
 read, and nothing has to be kept in sync. Code work, worker requests and follow-ups then
@@ -112,9 +115,9 @@ Acceptance, as tests on the pure function and one integration case per row:
 | Two projects both titled P | two topics named P |
 | Picks "kids" and "Kids" on asks with no project | one topic |
 | An ask with `project_id` P and no todos | topic is P's title |
-| A follow-up of a follow-up whose grandparent alone has a topic | "Other": one step only |
+| A follow-up of a follow-up whose grandparent alone has a topic | the other topic: one step only |
 | Neo merges "A" into "B" | every ask stored as "A" now stores "B"; "A" leaves the list |
-| An ask with nothing at all | "Other" |
+| An ask with nothing at all, and one with the stored pick for the other topic | both under one other-topic chip |
 | A request from a session with no project, after its earlier request in topic T | Neo's pick, not T |
 | Web, with two projects titled P and picks "kids" and "Kids": select each chip, reload, click a card's topic | each P chip shows only its project's asks; "kids" shows both picks; the saved filter and the card button select the same set |
 
