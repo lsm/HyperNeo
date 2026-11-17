@@ -150,10 +150,13 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    registry repository's plain `delete`, and any plain `update` of `url`,
    `sourceType` or `auth`, refuses a row with `auth` set. Only the remove
    and replace operations use the separate repository method that may touch
-   such a row. That covers the other writers: the MCP import service, which
-   creates, updates and deletes the rows it imports, and built-in seeding in
-   the skills manager. Neither ever sets `auth`. The one migration that deletes
-   registry rows removes only legacy IDs that predate the column.
+   such a row. That covers the other writers. The MCP import service creates,
+   updates and deletes the rows it imports. Built-in seeding in the skills
+   manager creates rows. Startup default seeding (`seedDefaultMcpEntries`)
+   creates rows, and its only update sets `source`, which is outside the refused
+   set. Sessions record attach outcomes (`recordAttachOutcomes`), which only sets
+   `last_attach_error`. None of them ever sets `auth`. The one migration that deletes registry
+   rows removes only legacy IDs that predate the column.
 6. **Read-only until the approval gate exists.** [Connections](connectors.md)
    requires one human approval per external mutation, and remote MCP must use the
    same gate. That gate (phase 2) is not built. So this design is read-only: only
