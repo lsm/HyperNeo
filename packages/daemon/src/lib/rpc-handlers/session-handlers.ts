@@ -393,7 +393,11 @@ export function setupSessionHandlers(
       }
     }
 
-    if (updates.config && Object.hasOwn(updates.config, 'tools')) {
+    if (
+      updates.config &&
+      Object.hasOwn(updates.config, 'tools') &&
+      !(isOxapHarness(existingConfig?.harness) && updates.config.tools === undefined)
+    ) {
       if (!deps?.writeToolPreferences) throw new Error('Tool preference writer unavailable');
       const tools = updates.config.tools ?? {};
       const result = await deps.writeToolPreferences(
