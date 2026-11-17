@@ -119,14 +119,14 @@ const GET_DESCRIPTION =
   OPEN_ACCESS_NOTE;
 
 export function createSpaceReadOperations(deps: SpaceReadDependencies): OperationDefinition[] {
-  const listSpaces = (superpipe({ deps })('space-list') as PipelineAPI)
+  const listSpaces = (superpipe({ deps })('space.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitDiscoveryCaller, 'caller', 'result:listing')
     .pipe(readSpaceListing, ['input', 'deps'], 'spaces')
     .pipe(summarizeSpaceListing, 'spaces', 'listing')
     .endAsync('listing') as (input: ListInput, caller: OperationCaller) => Promise<ListResult>;
 
-  const getSpace = (superpipe({ deps })('space-get') as PipelineAPI)
+  const getSpace = (superpipe({ deps })('space.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitDiscoveryCaller, 'caller', 'result:outcome')
     .pipe(findSpaceById, ['input', 'deps'], 'result:outcome')

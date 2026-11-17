@@ -507,7 +507,7 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
     : { kind: 'rejected', reason: outcome.reason };
 }
 
-const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
+const runSendMessage = (superpipe({})('message.send') as PipelineAPI)
   .input([
     'input',
     'caller',
