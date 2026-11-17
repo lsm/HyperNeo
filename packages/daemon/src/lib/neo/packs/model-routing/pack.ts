@@ -178,18 +178,36 @@ function workOf(named: string | null): { kind: string; scope: NeoLineScope } {
 }
 
 function readHolds(db: Database): LineHold[] {
-  return readCooldowns(db).flatMap(({ provider, model, reason, retryAt }) =>
-    typeof provider === 'string' && typeof model === 'string' && typeof retryAt === 'number'
-      ? [{ provider, model, retryAt, ...(typeof reason === 'string' ? { reason } : {}) }]
-      : []
-  );
+  return readCooldowns(db).flatMap((row) => {
+    const { provider, model, reason, retryAt } = row;
+    const waiting = waitsOnSomeone(row) || typeof retryAt !== 'number';
+    return typeof provider === 'string' && typeof model === 'string'
+      ? [
+          {
+            provider,
+            model,
+            ...(typeof reason === 'string' ? { reason } : {}),
+            ...(typeof retryAt === 'number' ? { retryAt } : {}),
+            ...(waiting ? { waiting } : {}),
+          },
+        ]
+      : [];
+  });
 }
 
-async function readAvailability(provider: Provider | undefined): Promise<Availability> {
-  if (!provider) return 'not configured';
+type Access = { availability: Availability; owner: Provider | undefined; account?: string };
+
+async function readAccess(provider: Provider | undefined): Promise<Access> {
+  if (!provider) return { availability: 'not configured', owner: provider };
   const status = await provider.getAuthStatus?.();
-  if (status && !status.isAuthenticated) return 'not signed in';
-  return (await provider.isAvailable()) ? 'ready' : 'not configured';
+  const account = `${status?.method ?? ''}:${status?.user?.email ?? status?.user?.name ?? ''}`;
+  if (status && !status.isAuthenticated)
+    return { availability: 'not signed in', owner: provider, account };
+  return {
+    availability: (await provider.isAvailable()) ? 'ready' : 'not configured',
+    owner: provider,
+    account,
+  };
 }
 
 export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
@@ -201,6 +219,7 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
   ];
 
   const inflight = new Map<string, { read: Promise<void>; since: number }>();
+  const owners = new Map<string, Omit<Access, 'availability'>>();
   const refresh = (id: string) => {
     const running = inflight.get(id);
     if (running && now() - running.since <= USAGE_STALE_MS) return running.read;
@@ -217,26 +236,33 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     return entry.read;
   };
 
-  const readUsage = async (candidates: readonly NeoLine[]) => {
+  const readUsage = async (candidates: readonly NeoLine[], access: Record<string, Access>) => {
+    for (const id of providers(candidates)) {
+      const seen = access[id];
+      const known = owners.get(id);
+      const account = seen?.account ?? known?.account;
+      if (known && known.owner === seen?.owner && known.account === account) continue;
+      readings.delete(id);
+      inflight.delete(id);
+      owners.set(id, { owner: seen?.owner, account });
+    }
     const stale = providers(candidates).filter((id) => !usageCurrent(readings.get(id), now()));
     await Promise.all(stale.map((id) => within(refresh(id), deadline, undefined)));
     return Object.fromEntries(readings);
   };
 
-  const availability = async (candidates: readonly NeoLine[]) =>
+  const readAccesses = async (candidates: readonly NeoLine[]) =>
     Object.fromEntries(
       await Promise.all(
-        providers(candidates).map(
-          async (id) =>
-            [
-              id,
-              await within(
-                readAvailability(deps.provider(id)).catch((): Availability => 'not configured'),
-                deadline,
-                'availability unknown'
-              ),
-            ] as const
-        )
+        providers(candidates).map(async (id) => {
+          const owner = deps.provider(id);
+          const access = await within(
+            readAccess(owner).catch((): Access => ({ availability: 'not configured', owner })),
+            deadline,
+            { availability: 'availability unknown', owner }
+          );
+          return [id, access] as const;
+        })
       )
     );
 
@@ -244,8 +270,14 @@ export function createModelRoutingPack(deps: ModelRoutingDeps): NeoPack {
     .input(['kind', 'candidates', 'scope'])
     .pipe(() => readPrefs(deps.database()), 'kind', 'prefs')
     .pipe(() => readHolds(deps.database()), 'kind', 'holds')
-    .pipe(readUsage, 'candidates', 'usage')
-    .pipe(availability, 'candidates', 'availability')
+    .pipe(readAccesses, 'candidates', 'access')
+    .pipe(readUsage, ['candidates', 'access'], 'usage')
+    .pipe(
+      (access: Record<string, Access>) =>
+        Object.fromEntries(Object.entries(access).map(([id, entry]) => [id, entry.availability])),
+      'access',
+      'availability'
+    )
     .pipe(() => now(), 'kind', 'now')
     .pipe(
       (
