@@ -529,6 +529,10 @@ export class CodingPrLedgerRepository {
   }
 
   recordStage(fact: CodingStageFact, at = Date.now()): boolean {
+    return this.db.transaction(() => this.recordStageOnce(fact, at))();
+  }
+
+  private recordStageOnce(fact: CodingStageFact, at: number): boolean {
     const recorded = this.stageFacts.record(fact);
     const pr = parsePrUrl(fact.url);
     if (recorded && fact.stage === 'review' && fact.verdict === 'fail' && pr)
