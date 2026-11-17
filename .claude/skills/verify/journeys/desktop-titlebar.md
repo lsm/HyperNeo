@@ -14,3 +14,15 @@ screenshots and geometry. A synthetic session workspace path is masked in screen
 region in the empty titlebar. The screenshots are visual evidence only; an
 attended check in the actual desktop app is still needed to verify window drag.
 The `before` phase records the same screenshots and fails on the broken layout.
+
+To verify fixed overlays, also run the synthetic worker session fixture:
+
+```sh
+NODE_PATH=<Playwright modules> VERIFY_BROWSER=<headless Chromium> \
+  bash .claude/skills/verify/proof-run.sh <absolute-evidence-directory> \
+  .claude/skills/verify/composer-attention.ts titlebar
+```
+
+Open the worker chat from its question and click Back to Neo. The back button
+must be below the titlebar and receive the pointer. Inspect the session and
+settings drawer screenshots; keep `titlebar-overlay.json` and `cleanup.json`.
