@@ -35,7 +35,7 @@ Today the code does the opposite:
 
 Adding a coding todo or changing its check to `evidence` is refused; unchanged legacy checks remain valid as described below. The refusal names the kinds above.
 
-**2. Other todos keep results where the human can see them.** A todo without a repository may use `evidence` for an explicit absolute file path or a registered artifact already referenced by that todo, retaining the existing artifact admission policy. The human’s folder (`neoUserFolder` in `daemon/src/lib/neo/folder.ts`) is the default; a human may name another persistent directory. The prompts direct workers to put results in that chosen place, not the hidden work directory. Admission cannot establish whether an arbitrary path was named by the human, so it does not enforce that preference.
+**2. Other todos keep results where the human can see them.** A todo without a repository may use `evidence` for an explicit absolute file path or a registered artifact already referenced by that todo, retaining the existing artifact admission policy. The human’s folder (`neoUserFolder` in `daemon/src/lib/neo/folder.ts`) is the default; a human may name another persistent directory. The prompts direct workers to put results in that chosen place, not the hidden work directory. Admission cannot establish whether an arbitrary path was named by the human, so it does not enforce that preference. It does enforce the one thing it can know: a new path inside the daemon's data directory (`getDataDir()`, which holds the hidden `work/` tree) is refused, because the human cannot see it.
 
 A missing path is refused. The daemon no longer fills in a path.
 
@@ -77,6 +77,7 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 - A todo with no repository and no evidence path is refused. Today the daemon fills in the hidden path.
 - A todo with no repository and a path in a human-named persistent directory outside the default folder is accepted.
 - A todo with no repository and a path inside the human's folder is accepted.
+- A new todo with no repository and a path under the daemon's data directory (for example `<data>/work/...`) is refused. It is accepted today.
 - A todo with no repository retains an existing registered artifact check; a new artifact check remains subject to the existing admission policy.
 - An open todo whose existing check names a hidden path still completes when the file exists; editing its title or resubmitting that unchanged check succeeds, while changing its check applies the new rule.
 - A new worker brief gives the actual outcome check without a separate hidden-evidence instruction; a legacy hidden-path check gives the compatible private instruction.
