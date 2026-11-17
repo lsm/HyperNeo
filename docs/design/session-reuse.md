@@ -61,6 +61,14 @@ The setting `sessionReuse` decides step 2:
 | `per_todo` | none; start a new worker | One session per step |
 
 "Worked on this ask" reads `neo_todo_workers` joined to the ask, so reviewers count too.
+
+**Prepared starts.** `reuseIdleWorker` today gives up before any reuse when the start
+carries a `preparation` (`drivers/work-operations.ts`), which review, verify and write
+starts do when the worker sandbox is on. Steps 1 and 2 instead also apply to a prepared
+start, but only to a candidate that was itself started with the same preparation pack and
+sandbox setting; `neo_todo_workers` records both. The per-round parameters (PR, head,
+role) go in the message, as the review brief already does. A candidate prepared
+differently is skipped.
 Neo's explicit `send` to a named session is unchanged; this only decides what a `start` may
 reuse.
 
@@ -79,7 +87,9 @@ A pack does not pick sessions. When it starts work for a todo it passes two thin
 already knows:
 
 - **Who must not take it:** `excludeRefs`, as the coding pack already does for review
-  (`neo/packs/coding/assign-operation.ts`).
+  (`neo/packs/coding/assign-operation.ts`) and, for write starts, through
+  `workerStartExclusions` (sessions that acted as reviewers or verifiers,
+  `neo/packs/coding/pack.ts`).
 - **Which model:** the start's `model` and `effort`.
 
 **Coding.**
@@ -131,6 +141,7 @@ Acceptance, one integration case per row:
 | `per_todo`, a PR reviewed in three rounds | one author session and one reviewer session throughout |
 | the earlier reviewer is busy when a new round starts | the review waits and goes to it; no new session |
 | the earlier reviewer was archived | a new reviewer starts |
+| worker sandbox on, second review round | the first round's (sandboxed) reviewer is reused |
 | verify after review | a third session, neither author nor reviewer |
 | `long_lived`, a free daemon worker that worked on the same ask | reused |
 | `per_ask`, a free daemon worker that only worked on another ask | new worker started |
