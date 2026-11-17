@@ -1233,6 +1233,7 @@ a:focus-visible {
 html.tauri-desktop body {
   --safe-height: calc(100dvh - 52px);
   height: var(--safe-height);
+  overflow: visible;
   transform: translateY(52px);
 }
 
