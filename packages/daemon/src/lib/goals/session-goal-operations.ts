@@ -26,6 +26,11 @@ import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 
 type Rejection = { accepted: false; reason: string };
 
+const PARENT_REFUSALS = {
+  child: 'parent_is_child: a goal session must start under a top-level session.',
+  inactive: 'parent_unavailable: a goal session must start under an active session.',
+} as const;
+
 const OWNER_READ_POLICY = {
   ...GOAL_READ_POLICY,
   roles: [...GOAL_READ_POLICY.roles, 'universal_read'],
@@ -257,7 +262,7 @@ export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
-  readonly isChildSession: (sessionId: string) => boolean;
+  readonly parentProblem: (sessionId: string) => 'child' | 'inactive' | null;
   readonly canReturn: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly releaseSession: (sessionId: string) => Promise<void>;
@@ -268,7 +273,7 @@ export function createSessionGoalOperations({
   goals,
   schedules,
   sessionExists,
-  isChildSession,
+  parentProblem,
   canReturn,
   startSession,
   releaseSession,
@@ -306,10 +311,10 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (parent: string, input: z.infer<typeof Create>) =>
-        input.ownSession && isChildSession(parent)
-          ? refuse('parent_is_child: a goal session must start under a top-level session.')
-          : { value: parent },
+      (parent: string, input: z.infer<typeof Create>) => {
+        const problem = input.ownSession ? parentProblem(parent) : null;
+        return problem ? refuse(PARENT_REFUSALS[problem]) : { value: parent };
+      },
       ['outcome', 'input'],
       'result:outcome'
     )

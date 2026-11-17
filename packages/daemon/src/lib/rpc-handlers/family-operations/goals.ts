@@ -11,8 +11,11 @@ export function registerSessionGoalOperations(
 ): OperationDefinition[] {
   const audit = new McpAuditLogRepository(context.deps.db.getDatabase());
   const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
-  const isChildSession = (sessionId: string) =>
-    !!context.deps.db.getSession(sessionId)?.parentSessionId;
+  const parentProblem = (sessionId: string) => {
+    const session = context.deps.db.getSession(sessionId);
+    if (session?.parentSessionId) return 'child' as const;
+    return session?.status === 'active' ? null : ('inactive' as const);
+  };
   const canReturn = (sessionId: string) => {
     const session = context.deps.db.getSession(sessionId);
     return (
@@ -34,7 +37,7 @@ export function registerSessionGoalOperations(
     goals,
     schedules,
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
-    isChildSession,
+    parentProblem,
     canReturn,
     startSession: (parentSessionId, title) =>
       context.deps.sessionManager.createSession({
