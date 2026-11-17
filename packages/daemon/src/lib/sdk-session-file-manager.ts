@@ -73,6 +73,19 @@ export function migrateSDKSessionFile(
   }
 }
 
+// A transcript belongs to a session only when its records carry that session id.
+// Text or tool input that merely mentions the id belongs to some other session.
+function isOwnTranscript(content: string, sessionId: string): boolean {
+  if (!content.includes(sessionId)) return false;
+  return content.split('\n').some((line) => {
+    try {
+      return (JSON.parse(line) as { sessionId?: unknown }).sessionId === sessionId;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string | null {
   try {
     const sessionDir = getSDKProjectDir(workspacePath);
@@ -89,7 +102,7 @@ function findSDKSessionFile(workspacePath: string, kaiSessionId: string): string
       const filePath = join(sessionDir, file);
       const content = readFileSync(filePath, 'utf-8');
 
-      if (content.includes(kaiSessionId)) {
+      if (isOwnTranscript(content, kaiSessionId)) {
         const stats = statSync(filePath);
         matchingFiles.push({ path: filePath, mtime: stats.mtimeMs });
       }
@@ -756,7 +769,7 @@ function findAllSDKFilesForSession(
 
       try {
         const content = readFileSync(filePath, 'utf-8');
-        if (content.includes(kaiSessionId)) {
+        if (isOwnTranscript(content, kaiSessionId)) {
           const stats = statSync(filePath);
           results.push({ path: filePath, size: stats.size });
         }
