@@ -230,7 +230,14 @@ describe('neo.ask.open and neo.ask.settle', () => {
     h.store.addTodo(
       id,
       askId,
-      { title: 'Build it', doneWhen: 'Merged', check: null, named: null, instruction: null },
+      {
+        title: 'Build it',
+        doneWhen: 'Merged',
+        check: null,
+        named: null,
+        instruction: null,
+        dependsOn: [h.store.listTodos(askId)[0].id],
+      },
       3
     );
     h.store.updateTodo(h.store.getTodo(id)!, { state: 'done' }, 4);
