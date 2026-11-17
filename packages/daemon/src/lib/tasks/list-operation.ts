@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ListTasksInput, TaskListPage } from '../../storage/tasks/list-tasks.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { BlockReasonSchema, TaskCoreSchema, TaskWithSpaceFieldsSchema } from './get-operation.ts';
@@ -31,6 +32,21 @@ export function createListTasksOperation(
     caller: OperationCaller
   ) => TaskListPage | TaskListDenial | Promise<TaskListPage | TaskListDenial>
 ) {
+  const list = (superpipe({})('task.list') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      async (input: ListTasksInput, caller: OperationCaller) => {
+        const scope = resolveListScope(input.spaceId, caller);
+        const page = await listTasks(scopedInput(input, scope), caller);
+        return 'accepted' in page ? page : { ...page, scope };
+      },
+      ['input', 'caller'],
+      'page'
+    )
+    .endAsync('page') as (
+    input: ListTasksInput,
+    caller: OperationCaller
+  ) => Promise<TaskListPage | TaskListDenial>;
   return defineOperation({
     name: 'task.list',
     description:
@@ -77,10 +93,6 @@ export function createListTasksOperation(
         scope: scopeSchema,
       }),
     ]),
-    execute: async (input, caller) => {
-      const scope = resolveListScope(input.spaceId, caller);
-      const page = await listTasks(scopedInput(input, scope), caller);
-      return 'accepted' in page ? page : { ...page, scope };
-    },
+    execute: (input, caller) => list(input, caller),
   });
 }

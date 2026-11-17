@@ -1,6 +1,7 @@
 import { TaskMutationDenialSchema, type TaskMutationDenial } from './mutation-denial.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { TaskDependencyRejection, TaskMetadataInput } from './metadata-editor.ts';
 import { defineOperation } from '../operations/registry.ts';
@@ -14,6 +15,13 @@ export function createUpdateTaskOperation(
     caller: OperationCaller
   ) => UpdateTaskResult | Promise<UpdateTaskResult>
 ) {
+  const update = (superpipe({})('task.update') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(editTask, ['input', 'caller'], 'result')
+    .endAsync('result') as (
+    input: TaskMetadataInput,
+    caller: OperationCaller
+  ) => Promise<UpdateTaskResult>;
   return defineOperation({
     name: 'task.update',
     description:
@@ -47,6 +55,6 @@ export function createUpdateTaskOperation(
         'dependency_cycle',
       ]),
     ]),
-    execute: async (input, caller) => editTask(input, caller),
+    execute: (input, caller) => update(input, caller),
   });
 }
