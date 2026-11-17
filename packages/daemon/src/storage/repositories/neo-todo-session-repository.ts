@@ -701,6 +701,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     target: NeoDriverTarget;
     ref: WorkRef;
     shared: boolean;
+    humanNamed: boolean;
     releasedBy: string | null;
   }[] {
     const match = (column: string, key: string) =>
@@ -709,6 +710,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE json_extract(ot.named, '$.session') IS NOT NULL
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS humanNamed,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
                 WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
@@ -730,6 +735,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         target: string;
         ref: string;
         shared: number;
+        humanNamed: number;
         releasedBy: string | null;
       }[]
     ).map((row) => ({
@@ -737,6 +743,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       target: JSON.parse(row.target) as NeoDriverTarget,
       ref: JSON.parse(row.ref) as WorkRef,
       shared: row.shared === 1,
+      humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
     }));
   }

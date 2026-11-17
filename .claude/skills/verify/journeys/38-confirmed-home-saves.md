@@ -15,8 +15,8 @@ The helper records question/get's answeredByHuman flag, both committed paths,
 contents and trailer. An unchanged retry adds no decision. Removing only the
 synthetic Git identity forces commit failure: both prior files and HEAD must
 remain identical, the index clean, and configuring identity makes retry succeed
-(that proposal is confirmed by button). A yes/no proposal row written as before
-the upgrade, answered yes, must still save.
+(that proposal is confirmed by button). A yes/no proposal row answered yes must be
+refused and leave the mandate unchanged.
 Evidence: `evidence/neo-home-confirmed-save-after.json`. On the test-only commit,
 use `before` in a separate fresh run to retain the confirm-option refusal.
 No provider/model, real credentials, GitHub request or GUI is exercised. Stop
