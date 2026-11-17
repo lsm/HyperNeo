@@ -21285,7 +21285,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -22368,7 +22367,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -23294,7 +23292,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -23830,7 +23827,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -24897,7 +24893,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25018,7 +25013,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25606,7 +25600,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -26142,7 +26135,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -31862,7 +31854,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -33084,6 +33075,54 @@
             "type": "object"
           }
         ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "neo.projects.list",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "projects": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "folders": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "folders",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "type": "object"
       }
     },
     {
@@ -40177,7 +40216,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -41356,7 +41394,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -41730,7 +41767,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42104,7 +42140,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42779,7 +42814,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43162,7 +43196,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43526,7 +43559,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43914,7 +43946,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44306,7 +44337,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"

@@ -37,6 +37,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.project.move',
   'neo.project.save',
   'neo.project.section',
+  'neo.projects.list',
   'neo.projects.reorganize',
   'neo.publication.publish',
   'neo.publication.read',

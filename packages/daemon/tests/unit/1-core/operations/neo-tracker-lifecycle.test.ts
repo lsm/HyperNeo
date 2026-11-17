@@ -87,7 +87,7 @@ for (const state of ['removed']) {
 
 test('failed todo keeps its child open', () => {
   bindChild();
-  db.prepare("UPDATE neo_todos SET state = 'failed'").run();
+  db.prepare("UPDATE neo_todos SET state = 'blocked', blocked_by = 'failure'").run();
   expect(plan()).toEqual([]);
 });
 

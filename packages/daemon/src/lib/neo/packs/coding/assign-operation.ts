@@ -28,6 +28,8 @@ import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import { CodingStageTarget } from './stage-preferences.ts';
+import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
+import { codingStageTargetReads } from './stage-target-db.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
@@ -60,6 +62,7 @@ type Deps = {
   todos: CodingTodoPrRepository;
   review: typeof runCodingReview;
   invoke: (name: string, input: unknown, caller: OperationCaller) => Promise<OperationOutcome>;
+  lines?: CodingLines;
 };
 type Failure = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Failure };
@@ -178,13 +181,32 @@ export function createCodingAssignmentOperation(deps: Deps) {
         `${owner}/${repo} has no known project folder on this machine, so no actor was started; open the repository as a project here, then assign again.`
       );
     const place = { machine: hostname(), folder, name: `${owner}/${repo}` };
-    const select = (candidates: Input['candidates']) =>
-      assignments.planTargetCurrent({
+    const select = async (candidates: Input['candidates']) => {
+      const plan = await assignments.planTargetCurrent({
         repo: repoName(input),
         stage: input.stage,
         candidates,
         body: pr.body,
       });
+      if (!plan.ok || !deps.lines)
+        return plan.ok ? { ok: true as const, ...plan.choices[0] } : plan;
+      const ranked = await rankCodingTargets(
+        deps.lines,
+        `coding.${input.stage}`,
+        plan.choices.map((choice) => choice.target),
+        await gatewayFor(deps.db).call(codingStageTargetReads, 'lineScope', {
+          todoId: input.todoId,
+          repo: repoName(input),
+        })
+      );
+      if ('reason' in ranked) return { ok: false as const, reason: ranked.reason };
+      const choice = plan.choices.find((entry) => entry.target === ranked.sources[0])!;
+      return {
+        ok: true as const,
+        target: ranked.value[0],
+        fallback: [...choice.fallback, ...ranked.skipped.map((line) => `Skipped ${line}.`)],
+      };
+    };
     const plan = await select(candidates);
     if (!plan.ok) return refuse(plan.reason);
     if (candidates.length < input.candidates.length)

@@ -54,7 +54,7 @@ The superpipe:
 | `ask.finished` (all todos finished) | wake once per finish | ask, todos | 24 h | ask settled or a todo added |
 | `todo.blocked` waiting on a human card | drop ("covered by card") | `neoTodoAwaitsHuman`, covering card | — | — |
 | `todo.blocked` other (needs-human without card, environment, check) | digest once per blocker revision | todo blocker, cards | 4 h, 24 h, then stop | blocker changes or clears |
-| `todo.failed` | a reason of `todo.neo_step`, not its own item | — | — | — |
+| `todo.blocked` by `failure` | reason `failed` of `todo.neo_step`, not its own item | — | — | — |
 | `todo.unworked`, waiting for a worker or capacity | drop ("daemon starts it") | queue reasons (`planWorkQueue`) | — | starts |
 | `todo.unworked`, not approved / no instruction | digest | todo, approval | 24 h | approved, started or removed |
 | `todo.neo_step` (new, core): the one Neo-facing incident per todo whose next step is Neo's (table below) | wake | the facts in the table below, read outside the pure function | 1 h, 4 h, 24 h, then every 24 h while the owner is Neo | the owner is no longer Neo |

@@ -272,7 +272,7 @@ describe('neo todo runner', () => {
       h.db.close();
     }
   });
-  test.each(['doing', 'done', 'failed', 'blocked', 'todo'] as const)(
+  test.each(['doing', 'done', 'blocked', 'todo'] as const)(
     'reports direct human work once on an open ask with todo state %s',
     async (state) => {
       const h = setup(false);
@@ -1000,7 +1000,11 @@ describe('neo todo runner', () => {
         ref,
         delivery: { delivered: false, queuedSubmissionId: 'queue-next' },
       });
-      h.store.updateTodo(h.store.getTodo(todo.id)!, { state: 'failed' }, Date.now());
+      h.store.updateTodo(
+        h.store.getTodo(todo.id)!,
+        { state: 'blocked', blockedBy: 'failure' },
+        Date.now()
+      );
       expect(h.db.prepare('SELECT count(*) AS n FROM work_delivery_inputs').get()).toEqual({
         n: 2,
       });
@@ -2301,7 +2305,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  for (const state of ['done', 'blocked', 'failed', 'removed'] as const) {
+  for (const state of ['done', 'blocked', 'removed'] as const) {
     test(`a todo changed to ${state} during recovery keeps the recorded decision`, async () => {
       const { db, store, sessions, runner, told, add } = setup();
       try {
@@ -2817,12 +2821,12 @@ describe('neoTodoStateEvent', () => {
     });
   });
 
-  test.each([
-    ['a failed row', todo({ state: 'failed' })],
-    ['a todo blocked by its failure', todo({ state: 'blocked', blockedBy: 'failure' })],
-  ])("%s raises nothing: the sweep's Neo step tells it", (_name, item) => {
-    expect(neoTodoStateEvent(item)).toBeNull();
-  });
+  test.each([['a todo blocked by its failure', todo({ state: 'blocked', blockedBy: 'failure' })]])(
+    "%s raises nothing: the sweep's Neo step tells it",
+    (_name, item) => {
+      expect(neoTodoStateEvent(item)).toBeNull();
+    }
+  );
 });
 
 describe('neoTodoNote', () => {
@@ -2837,12 +2841,6 @@ describe('neoTodoNote', () => {
       } as NeoTodo)
     ).toBe(
       'Todo "T" reported, and nothing checks it: record evidence for "Lane merged"; closing it without a passed outcome check leaves it blocked, never done.\nIts report:\nWaiting on CI'
-    );
-  });
-
-  test('says a failure with its reason', () => {
-    expect(neoTodoNote({ title: 'T', state: 'failed', reason: 'gone' } as NeoTodo)).toBe(
-      'Todo "T" failed: gone'
     );
   });
 
@@ -3073,7 +3071,7 @@ describe('blocked todos', () => {
     expect([starts, store.getTodo(todo.id)?.state]).toEqual([2, 'doing']);
     store.updateTodo(
       store.getTodo(todo.id)!,
-      { state: 'failed', reason: 'Worker died' },
+      { state: 'blocked', blockedBy: 'failure', blockedReason: 'Worker died' },
       Date.now()
     );
     db.prepare('UPDATE neo_todo_sessions SET ref = NULL WHERE todo_id = ?').run(todo.id);
@@ -3669,7 +3667,12 @@ describe('failed todo retry in place', () => {
       const original = h.sessions.inputs.list(todo.id)[0];
       h.store.updateTodo(
         h.store.getTodo(todo.id)!,
-        { state: 'failed', reason: 'Synthetic failure', report: 'Prior failure report' },
+        {
+          state: 'blocked',
+          blockedBy: 'failure',
+          blockedReason: 'Synthetic failure',
+          report: 'Prior failure report',
+        },
         3
       );
       h.setStatus({ ok: true, value: { status: 'failed', lastActivityAt: 2000 } });
@@ -4250,7 +4253,7 @@ describe('a todo for a busy worker', () => {
       expect(h.sessions.sendsNow(doing.id, ref)).toBe(true);
       const blocked = h.store.updateTodo(doing, { state: 'blocked', blockedBy: 'check' }, 2);
       expect(h.sessions.sendsNow(blocked.id, ref)).toBe(true);
-      h.store.updateTodo(blocked, { state: 'failed', finishedAt: 3 }, 3);
+      h.store.updateTodo(blocked, { state: 'done', finishedAt: 3 }, 3);
       expect(h.sessions.sendsNow(todo.id, ref)).toBe(false);
     } finally {
       h.db.close();

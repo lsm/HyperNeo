@@ -42,6 +42,7 @@ import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
+import { createNeoProjectListOperation } from './project-list-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
@@ -779,6 +780,7 @@ export function createNeoOperations(
       service.todos
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service, identity)),
+    createNeoProjectListOperation(service.repo, hostname),
     createNeoPublicationOperation(service.publish, (items) => service.presentPublications(items)),
     createNeoPublicationReadOperation(service.publications, (items) =>
       service.presentPublications(items)

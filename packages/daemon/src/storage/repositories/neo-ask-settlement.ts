@@ -301,7 +301,7 @@ const settleOutcomeSentence = (todos: readonly NeoTodo[]): string => {
       .map((todo) => todo.title)
       .join(', ');
   const finished = names(['done']);
-  const dropped = names(['removed', 'failed']);
+  const dropped = names(['removed']);
   const sentence = [
     ...(finished ? [`Finished ${finished}`] : []),
     ...(dropped ? [`cancelled or removed ${dropped}`] : []),

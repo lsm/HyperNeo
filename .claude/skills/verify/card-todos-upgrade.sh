@@ -25,10 +25,14 @@ INSERT INTO neo_asks (id, session_id, title, request, status, created_at, update
   ('ask-held', '$ROOT', 'Held', 'Held', 'open', $NOW, $NOW),
   ('ask-free', '$ROOT', 'Free', 'Free', 'open', $NOW, $NOW),
   ('ask-start', '$ROOT', 'Start', 'Start', 'open', $NOW, $NOW),
-  ('ask-old', '$ROOT', 'Old', 'Old', 'open', $NOW, $NOW);
+  ('ask-old', '$ROOT', 'Old', 'Old', 'open', $NOW, $NOW),
+  ('ask-settled', '$ROOT', 'Settled', 'Settled', 'done', $NOW, $NOW);
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, started_at, approved_at, created_at, updated_at) VALUES
   ('old-started', 'ask-old', 1, 'Old started step', 'Seen', 'closed_unverified', $NOW, $NOW, $NOW, $NOW),
   ('old-unstarted', 'ask-old', 2, 'Old unstarted step', 'Seen', 'closed_unverified', NULL, $NOW, $NOW, $NOW);
+INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, reason, started_at, approved_at, created_at, updated_at) VALUES
+  ('old-failed', 'ask-old', 3, 'Old failed step', 'Seen', 'failed', 'Worker died', $NOW, $NOW, $NOW, $NOW),
+  ('settled-failed', 'ask-settled', 1, 'Settled failed step', 'Seen', 'failed', 'CI red', $NOW, $NOW, $NOW, $NOW);
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, instruction, state, blocked_by, approved_at, created_at, updated_at) VALUES
   ('held', 'ask-held', 1, 'Held step', 'Seen', 'Do it', 'todo', NULL, $NOW, $NOW, $NOW),
   ('free', 'ask-free', 1, 'Free step', 'Seen', 'Do it', 'todo', NULL, $NOW, $NOW, $NOW),
@@ -43,7 +47,7 @@ ALTER TABLE neo_questions ADD COLUMN start_todos TEXT;
 INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at) VALUES
   ('q-start', 'ask-start', 'Start this?', 'start', '[\"waiting\"]', $NOW);
 ALTER TABLE neo_questions DROP COLUMN todos;
-DELETE FROM migration_markers WHERE key IN ('migration_502', 'migration_513', 'migration_514');"
+DELETE FROM migration_markers WHERE key IN ('migration_502', 'migration_513', 'migration_514', 'migration_524');"
 [ "$(sqlite3 -readonly "$DB" "SELECT count(*) FROM pragma_table_info('neo_questions') WHERE name = 'todos'")" = 0 ]
 echo "seeded legacy cards: no todos column, migration 502 marker removed"
 
@@ -56,10 +60,14 @@ echo "the upgrade dropped start_todos after copying it into todos"
 read=$(bun "$HERE/rpc.ts" neo.question.get '{"questionId":"q-ask"}' 2>&1 || true)
 echo "$read" | tr -d '\n ' | grep -q '"ok":true,"question":{"id":"q-ask".*"state":"open"'
 echo "the upgraded card reads through neo.question.get"
-old=$(sqlite3 -readonly "$DB" "SELECT id || '=' || state FROM neo_todos WHERE ask_id = 'ask-old' ORDER BY id" | tr '\n' ' ')
-echo "old closed unverified rows after upgrade: $old"
-[ "$old" = 'old-started=done old-unstarted=removed ' ]
+old=$(sqlite3 -readonly "$DB" "SELECT id || '=' || state || '/' || COALESCE(blocked_by, '-') || '/' || COALESCE(blocked_reason, '-') FROM neo_todos WHERE ask_id = 'ask-old' ORDER BY id" | tr '\n' ' ')
+echo "old closed unverified and failed rows after upgrade: $old"
+[ "$old" = 'old-failed=blocked/failure/Worker died old-started=done/-/- old-unstarted=removed/-/- ' ]
+settled=$(sqlite3 -readonly "$DB" "SELECT state || '/' || reason FROM neo_todos WHERE id = 'settled-failed'")
+echo "old failed row in a settled ask after upgrade: $settled"
+[ "$settled" = 'removed/CI red' ]
 bun "$HERE/rpc.ts" neo.ask.read '{"askId":"ask-old"}' 2>&1 | tr -d '\n ' | grep -q '"id":"old-started"'
+bun "$HERE/rpc.ts" neo.ask.read '{"askId":"ask-settled"}' 2>&1 | tr -d '\n ' | grep -q '"id":"settled-failed"'
 echo "the ask with rewritten rows reads through neo.ask.read"
 
 state() { sqlite3 -readonly "$DB" "SELECT state || '/' || COALESCE(blocked_by, '-') || '/' || CASE WHEN started_at IS NULL THEN 'unstarted' ELSE 'started' END FROM neo_todos WHERE id = '$1'"; }

@@ -39,7 +39,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
   const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(
     ref,
     null,
-    release ? ['todo', 'doing', 'blocked', 'failed'] : ['doing']
+    release ? ['todo', 'doing', 'blocked'] : ['doing']
   );
   return todo
     ? reject(

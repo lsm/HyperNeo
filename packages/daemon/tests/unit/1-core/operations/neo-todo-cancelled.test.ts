@@ -233,7 +233,7 @@ describe('cancelled prerequisites', () => {
       if (mode === 'failed')
         store.updateTodo(
           dependent,
-          { state: 'failed', reason: 'Synthetic check failed.' },
+          { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic check failed.' },
           Date.now()
         );
       if (mode === 'held')
@@ -252,14 +252,15 @@ describe('cancelled prerequisites', () => {
       if (mode === 'failed-after-cancel')
         store.updateTodo(
           store.getTodo(dependent.id)!,
-          { state: 'failed', reason: 'Synthetic check failed.' },
+          { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic check failed.' },
           Date.now()
         );
       if (mode.startsWith('failed')) {
         await runner.refresh(() => {});
         expect(store.getTodo(dependent.id)).toMatchObject({
-          state: 'failed',
-          reason: 'Synthetic check failed.',
+          state: 'blocked',
+          blockedBy: 'failure',
+          blockedReason: 'Synthetic check failed.',
         });
         expect(sent).toHaveLength(before);
         return;
@@ -607,10 +608,14 @@ describe('unfinished prerequisites of a started step', () => {
       const before = sent.length;
       const continued = await invoke('neo.todo.continue', { todoId: j.id, message: 'Next.' });
       expect(continued).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
-      store.updateTodo(store.getTodo(j.id)!, { state: 'failed', reason: 'Lost.' }, Date.now());
+      store.updateTodo(
+        store.getTodo(j.id)!,
+        { state: 'blocked', blockedBy: 'failure', blockedReason: 'Lost.' },
+        Date.now()
+      );
       const retried = await invoke('neo.todo.continue', { todoId: j.id });
       expect(retried).toMatchObject({ ok: false, reason: expect.stringMatching(/^not_ready:/) });
-      expect(store.getTodo(j.id)?.state).toBe('failed');
+      expect(store.getTodo(j.id)?.state).toBe('blocked');
       expect(sent).toHaveLength(before);
       store.updateTodo(store.getTodo(a.id)!, { state: 'done' }, Date.now());
       expect((await invoke('neo.todo.continue', { todoId: j.id })).ok).toBe(true);

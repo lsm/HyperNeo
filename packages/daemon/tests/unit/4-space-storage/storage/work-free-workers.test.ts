@@ -133,7 +133,11 @@ describe('readFreeWorkers', () => {
 
     test('a worker a failed or queued todo still holds cannot be claimed', () => {
       bind('failed-owner', 'w-done', 'done');
-      store.updateTodo(store.getTodo('failed-owner')!, { state: 'failed' }, 3);
+      store.updateTodo(
+        store.getTodo('failed-owner')!,
+        { state: 'blocked', blockedBy: 'failure' },
+        3
+      );
       liveTodo('next');
       expect(sessions.claimWorker(ref, 'next')).toBe(false);
       liveTodo('queued');

@@ -381,7 +381,7 @@ describe('neo.todo.retarget', () => {
     expect(h.store.getTodo('todo')?.instruction).toBe('Continue work');
   });
 
-  test.each(['done', 'failed', 'removed'] as const)(
+  test.each(['done', 'removed'] as const)(
     'a todo that becomes %s during stop is not restarted',
     async (state) => {
       const h = setup();

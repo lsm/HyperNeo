@@ -31,7 +31,7 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
 - Configured bot assigns Review with zero reviewer starts even with an explicit
   human; Verify still starts independently and uses the repo verify skill and
   shared contract with the coding-only override.
-- No-bot Review selects a different model and applies preferred harness/model/
+- No-bot Review selects a different model and applies preferred harness and
   effort. Verify receives another ref, pinned checkout and full contract. The
   kickoff remains below the message limit and names the immutable acceptance ref.
 - Repeating both assignments and restarting the daemon reuse recorded refs without
@@ -48,7 +48,7 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   and an actor checkout leaves the read mirror HEAD.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
-- A preflight-unavailable preferred model falls back to the qualifying default
+- A preflight-unavailable preferred harness falls back to the qualifying default
   with an explanation. An acceptance-contract change refuses.
 - A new PR head invalidates old assignment requests, requires new Review before
   Verify and assigns a fresh reviewer. Verify results accept the public `verify`

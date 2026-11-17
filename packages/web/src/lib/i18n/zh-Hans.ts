@@ -166,7 +166,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.replaced': '换成「{title}」',
   'todo.replaced.reason': '换成「{title}」——{reason}',
   'todo.removed': '删了',
-  'todo.failed': '没做成',
   'todo.notStarted': '没开始',
   'todo.doing': '在做',
   'todo.held': '暂缓中',

@@ -42,7 +42,7 @@ export function createCodingResultOperation(
     )
     .pipe(
       async (fact: CodingStageFact): Promise<Result> =>
-        (await ledger.write('recordStage', fact))
+        (await ledger.write('recordStage', fact, Date.now()))
           ? { ok: true }
           : { ok: false, reason: 'head_changed_or_failed_stage' },
       'fact',

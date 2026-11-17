@@ -1077,7 +1077,6 @@ describe('NeoAskTodos', () => {
           todos: [
             todo('a', { state: 'done', status: '#102 已合并', link: '/session/w' }),
             todo('b', { state: 'doing', status: '#103 开着，等 CI' }),
-            todo('c', { state: 'failed', status: '会话停了：测试没过' }),
             todo('d', { state: 'removed', status: '换成「Todo e」' }),
             todo('e', { addedAfterStart: true }),
           ],

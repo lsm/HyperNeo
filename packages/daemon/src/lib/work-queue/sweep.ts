@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { planWorkQueue, type RunningWork, type WorkCandidate } from './capacity.ts';
 import { mayRedispatch } from './follow-through.ts';
 
-type Limits = { running: number; perGroup: number };
+type Limits = { running: number; perGroup: number; hold?: string | null };
 type Queue = { candidates: WorkCandidate[]; running: RunningWork[] };
 
 export interface WorkQueueAdapter<Claim extends { plan: { kind: string } }> {

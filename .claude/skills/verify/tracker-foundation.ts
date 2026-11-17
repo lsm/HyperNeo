@@ -59,7 +59,7 @@ if (process.argv.includes('--seed') || process.argv.includes('--recover')) {
       await neo.sweepPacks();
       add('active'); add('failed');
       await neo.sweepPacks();
-      app.db.getDatabase().prepare("UPDATE neo_todos SET state = 'failed' WHERE id = 'failed'").run();
+      app.db.getDatabase().prepare("UPDATE neo_todos SET state = 'blocked', blocked_by = 'failure' WHERE id = 'failed'").run();
       await neo.sweepPacks();
       app.db.getDatabase().prepare("UPDATE neo_asks SET status = 'done'").run();
       await neo.sweepPacks();

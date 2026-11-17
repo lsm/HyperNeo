@@ -27,7 +27,7 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
-export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
+export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'removed';
 
 export type NeoTodoPriority = 'low' | 'normal' | 'high' | 'urgent';
 
