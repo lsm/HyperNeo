@@ -1541,6 +1541,81 @@ describe('SessionLifecycle', () => {
     });
   });
 
+  describe('SDK transcripts of an archived or deleted session', () => {
+    const current = 'aaaaaaaa-0000-4000-8000-00000000000a';
+    const retired = 'aaaaaaaa-0000-4000-8000-00000000000b';
+    const bystander = 'bbbbbbbb-0000-4000-8000-00000000000c';
+    let root: string;
+    let workspace: string;
+    let projectDir: string;
+    const saved: Record<string, string | undefined> = {};
+    const file = (id: string) => join(projectDir, `${id}.jsonl`);
+    const line = (sessionId: string, text: string) =>
+      `${JSON.stringify({
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      })}\n`;
+
+    beforeEach(() => {
+      root = realpathSync(mkdtempSync(join(tmpdir(), 'lifecycle-sdk-')));
+      for (const key of ['CLAUDE_CONFIG_DIR', 'TEST_SDK_SESSION_DIR']) {
+        saved[key] = process.env[key];
+        process.env[key] = root;
+      }
+      workspace = join(root, 'workspace');
+      mkdirSync(workspace);
+      projectDir = join(root, 'projects', workspace.replace(/[/.]/g, '-'));
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(file(current), line(current, 'current transcript'));
+      writeFileSync(file(retired), line(retired, 'retired transcript'));
+      writeFileSync(
+        file(bystander),
+        line(bystander, `worker archive-id (${current}, ${retired}) opened a PR`) +
+          line('archive-id', 'quoted record')
+      );
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'archive-id',
+        workspacePath: workspace,
+        sdkSessionId: current,
+        metadata: { pastSdkSessionIds: [retired] },
+      });
+    });
+
+    afterEach(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('archive marks the current and retired transcripts archived and moves nothing', async () => {
+      const before = [current, retired, bystander].map((id) => readFileSync(file(id)));
+
+      await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+      expect([current, retired, bystander].map((id) => readFileSync(file(id)))).toEqual(before);
+      const { listSessions } = await import('@anthropic-ai/claude-agent-sdk');
+      const archived = Object.fromEntries(
+        (await listSessions({ dir: workspace })).map((s) => [s.sessionId, s.archived === true])
+      );
+      expect(archived).toEqual({ [current]: true, [retired]: true, [bystander]: false });
+    });
+
+    it('delete removes the current and retired transcripts and leaves the bystander', async () => {
+      const before = readFileSync(file(bystander));
+
+      await lifecycle.deleteResources('archive-id', 'ui_session_delete');
+
+      expect(existsSync(file(current))).toBe(false);
+      expect(existsSync(file(retired))).toBe(false);
+      expect(readFileSync(file(bystander))).toEqual(before);
+    });
+  });
+
   describe('worktree removal follows who archives or deletes', () => {
     beforeEach(() => {
       process.env.HYPERNEO_DATA_DIR = realpathSync(workerDataDir);
