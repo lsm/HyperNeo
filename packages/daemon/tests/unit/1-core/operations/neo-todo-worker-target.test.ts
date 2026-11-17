@@ -56,6 +56,7 @@ function world(coding = false) {
     askInTarget: false,
     attend: false,
     status: null as (() => unknown) | null,
+    missing: false,
     closeOnStart: false,
   };
   const pack = {
@@ -93,6 +94,8 @@ function world(coding = false) {
       calls.push({ name, input });
       if (name === 'pack.preferences.ask' && failing.setting)
         return { kind: 'failed', code: 'execution_failed', message: 'synthetic_failure' };
+      if (name === 'work.status' && failing.missing)
+        return completed({ ok: false, reason: 'not_found' });
       if (name === 'work.status' && failing.status)
         return completed({ ok: true, value: failing.status() });
       if (name === 'work.start' && failing.start)
@@ -392,7 +395,7 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       await w.runner.start(first);
       expect(w.sessions.readRef(first)).toEqual({ adapter: 'hyperneo', id: 'fresh' });
       w.store.updateTodo(w.store.getTodo(first)!, { state, finishedAt: 1 }, 1);
-      w.failing.status = () => null;
+      w.failing.missing = true;
       const before = w.dispatched().length;
       await w.runner.start(second);
       expect(

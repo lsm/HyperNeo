@@ -96,6 +96,10 @@ try {
   assert.equal(held.ref, null);
   const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
   const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
+  store.openAsk({ id: 'terminal-live', projectId: null, sessionId: 'neo', originMessageId: null, title: 'terminal-live', request: 'Synthetic', createdAt: 1 });
+  const liveOwner = worked('terminal-live', front, 'frontend');
+  reserve('terminal-live', liveOwner.id);
+  assert.deepEqual(await decide('a finished owner keeps its live session', todo('terminal-live'), { verb: 'start', adapter: 'hyperneo', name: 'other' }), { value: { verb: 'send', ref: front } });
   for (const state of ['done', 'removed']) {
     const askId = `terminal-${state}`;
     store.openAsk({ id: askId, projectId: null, sessionId: 'neo', originMessageId: null, title: askId, request: 'Synthetic', createdAt: 1 });
