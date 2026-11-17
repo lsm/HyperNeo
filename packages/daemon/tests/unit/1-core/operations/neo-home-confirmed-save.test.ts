@@ -172,16 +172,20 @@ describe('Neo human-confirmed home saves', () => {
     expect(await git('rev-parse', 'HEAD')).toBe(changed.commit!);
     expect(await git('status', '--porcelain')).toBe('');
   });
-  test.each(['button', 'letter', 'legacy'])(
-    'saves on the confirmed option chosen by %s',
-    async (state) => {
-      const questionId = await proposal(input, state);
-      expect(await call('neo.home.save', { ...input, questionId }, owner)).toMatchObject({
-        ok: true,
-      });
-      expect(await bytes(input.path)).toEqual(Buffer.from(input.content));
-    }
-  );
+  test.each(['button', 'letter'])('saves on the confirmed option chosen by %s', async (state) => {
+    const questionId = await proposal(input, state);
+    expect(await call('neo.home.save', { ...input, questionId }, owner)).toMatchObject({
+      ok: true,
+    });
+    expect(await bytes(input.path)).toEqual(Buffer.from(input.content));
+  });
+  test('refuses a yes/no proposal answered yes', async () => {
+    const questionId = await proposal(input, 'legacy');
+    expect(await call('neo.home.save', { ...input, questionId }, owner)).toMatchObject({
+      ok: false,
+    });
+    expect(await bytes(input.path)).toBeNull();
+  });
   test.each(['direction.md', input.path])(
     'commits %s with its decision and human trailer once',
     async (path) => {
