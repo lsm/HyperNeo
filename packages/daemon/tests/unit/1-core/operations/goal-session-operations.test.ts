@@ -207,7 +207,7 @@ describe('goal-owned schedules', () => {
         expect(scheduler.repo.setStatus(row.id, 'paused', 'done', null, null)).toBe(true);
         return row.id;
       });
-      for (const existing of await goals.listScheduled()) schedules.sync(existing);
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
       for (const id of ids)
         expect(scheduler.repo.get(id)).toMatchObject({ id, status: 'done', pendingJobId: null });
     } finally {
@@ -250,7 +250,7 @@ describe('goal-owned schedules', () => {
       const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
         .goal;
       scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
-      for (const existing of await goals.listScheduled()) schedules.sync(existing);
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
       expect(scheduler.repo.getBySource('goal_review', goal.id)).toMatchObject({
         status: 'active',
         cadence: { kind: 'every', everyMs: 86_400_000 },

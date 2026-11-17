@@ -41,7 +41,8 @@ export class SessionGoalSchedules implements ScheduleSource {
     goal: SessionGoal,
     cadence?: SessionScheduleCadence,
     nudgeEvery = 4,
-    reviewCadence?: SessionScheduleCadence
+    reviewCadence?: SessionScheduleCadence,
+    reconciling = false
   ): void {
     let known = this.scheduler.repo.getBySource(this.kind, goal.id);
     const config = known
@@ -61,7 +62,7 @@ export class SessionGoalSchedules implements ScheduleSource {
       (!canReview ||
         goal.status === 'completed' ||
         goal.status === 'archived' ||
-        (goal.status === 'active' && reviewRow.status === 'done') ||
+        (goal.status === 'active' && reviewRow.status === 'done' && !reconciling) ||
         (reviewCadence && JSON.stringify(reviewRow.cadence) !== JSON.stringify(review)))
     ) {
       this.scheduler.delete(reviewRow);
@@ -86,7 +87,7 @@ export class SessionGoalSchedules implements ScheduleSource {
       if (known) this.scheduler.delete(known);
       return;
     }
-    if (goal.status === 'active' && known?.status === 'done') {
+    if (goal.status === 'active' && known?.status === 'done' && !reconciling) {
       this.scheduler.delete(known);
       known = null;
     }
@@ -103,6 +104,10 @@ export class SessionGoalSchedules implements ScheduleSource {
       });
     if (goal.status === 'paused' && row.status === 'active') this.scheduler.pause(row);
     if (goal.status === 'active' && row.status === 'paused') this.scheduler.resume(row);
+  }
+
+  reconcile(goal: SessionGoal): void {
+    this.sync(goal, undefined, 4, undefined, true);
   }
 
   label(id: string): string | null {
