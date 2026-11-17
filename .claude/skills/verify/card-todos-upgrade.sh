@@ -47,7 +47,7 @@ ALTER TABLE neo_questions ADD COLUMN start_todos TEXT;
 INSERT INTO neo_questions (id, ask_id, text, kind, start_todos, created_at) VALUES
   ('q-start', 'ask-start', 'Start this?', 'start', '[\"waiting\"]', $NOW);
 ALTER TABLE neo_questions DROP COLUMN todos;
-DELETE FROM migration_markers WHERE key IN ('migration_502', 'migration_513', 'migration_514', 'migration_523');"
+DELETE FROM migration_markers WHERE key IN ('migration_502', 'migration_513', 'migration_514', 'migration_524');"
 [ "$(sqlite3 -readonly "$DB" "SELECT count(*) FROM pragma_table_info('neo_questions') WHERE name = 'todos'")" = 0 ]
 echo "seeded legacy cards: no todos column, migration 502 marker removed"
 

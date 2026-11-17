@@ -1,7 +1,7 @@
 import { NEO_TODO_FAILURE_NEXT } from '../../lib/neo/todo-state.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration523(db: Database): void {
+export function runMigration524(db: Database): void {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todos'").get()) return;
   db.prepare(
     `UPDATE neo_todos SET state = 'blocked', blocked_by = 'failure',

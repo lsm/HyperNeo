@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runMigration523 } from '../../../../../src/storage/schema/m523-neo-todo-failed-rows.ts';
+import { runMigration524 } from '../../../../../src/storage/schema/m524-neo-todo-failed-rows.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 const rows = (db: Database) =>
@@ -9,7 +9,7 @@ const rows = (db: Database) =>
     )
     .all();
 
-describe('runMigration523', () => {
+describe('runMigration524', () => {
   test('a failed row is blocked by its failure in an open ask and removed in a settled one', () => {
     const db = new Database(':memory:');
     db.exec(`
@@ -24,8 +24,8 @@ describe('runMigration523', () => {
         ('d-dropped-silent', 'dropped', 'failed', '', NULL, NULL, NULL),
         ('e-doing', 'open', 'doing', NULL, NULL, NULL, NULL);
     `);
-    runMigration523(db);
-    runMigration523(db);
+    runMigration524(db);
+    runMigration524(db);
     const next = 'Ask the human how to go on, or take another approach.';
     expect(rows(db)).toEqual([
       {
@@ -74,7 +74,7 @@ describe('runMigration523', () => {
 
   test('leaves a database without the neo_todos table untouched', () => {
     const db = new Database(':memory:');
-    runMigration523(db);
+    runMigration524(db);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_todos'").all()).toEqual([]);
     db.close();
   });
