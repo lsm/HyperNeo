@@ -30,6 +30,7 @@ try {
           JSON.stringify({
             model: { id: 'codex-6-luna', provider: 'anthropic-codex' },
             thinkingLevel: 'off',
+            sandbox: true,
           })
         );
         localStorage.setItem('theme', theme);
@@ -41,13 +42,14 @@ try {
     await page.getByText('Synthetic Codex').first().waitFor();
     await page.getByRole('button', { name: 'Choose model and thinking' }).click();
     assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Sandbox' }).count(), 0);
     await page.screenshot({ path: `${output}/oxap-create-${theme}.png`, animations: 'disabled' });
     if (theme === 'light') {
       await page.getByPlaceholder('Ask anything to start a new chat...').fill('Hello');
       await page.getByRole('button', { name: 'Start chat' }).click();
       await page.waitForURL(/\/session\//, { timeout: 15000 });
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
-      console.log('OXAP create accepted with persisted thinking=off; slider absent');
+      console.log('OXAP create accepted with persisted thinking=off and sandbox=true; controls absent');
     }
     await context.close();
   }
