@@ -265,12 +265,11 @@ describe('SessionsSidebar', () => {
       {
         id: 'p-read',
         name: 'Neo Read',
-        homePath: null,
         folders: ['/code/neo-read', '/code/neo-read-2'],
         updatedAt: 1,
       },
-      { id: 'p-idle', name: 'Idle', homePath: '/code/idle', folders: [], updatedAt: 2 },
-      { id: 'p-section', name: 'Section', homePath: null, folders: [], updatedAt: 3 },
+      { id: 'p-idle', name: 'Idle', folders: ['/code/idle'], updatedAt: 2 },
+      { id: 'p-section', name: 'Section', folders: [], updatedAt: 3 },
     ]);
     render(<SessionsSidebar />);
 
@@ -283,6 +282,22 @@ describe('SessionsSidebar', () => {
     expect(screen.queryByRole('button', { name: /^Remove project/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
+  });
+
+  it('adds no empty duplicate when a sidebar project already owns the folders', async () => {
+    const project = { id: 'p1', name: 'Product', folders: ['/code'] };
+    mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/code'), project }]);
+    mockListSystemProjects.mockResolvedValue([
+      { id: 'n1', name: 'Product mirror', folders: ['/code'], updatedAt: 5 },
+    ]);
+    mockSessionsSignal.value = [createMockSession('chat', 'Code chat', '/code')];
+    render(<SessionsSidebar />);
+
+    await waitFor(() => expect(mockListSystemProjects).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Product')).toBeTruthy());
+    expect(screen.getAllByTestId('project-group-header')).toHaveLength(1);
+    expect(screen.queryByText('Product mirror')).toBeNull();
+    expect(screen.queryByText('No chats')).toBeNull();
   });
 
   it('renders the empty chats state', () => {

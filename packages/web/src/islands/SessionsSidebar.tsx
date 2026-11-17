@@ -73,17 +73,17 @@ function buildView(
     )
   );
   const systemTime = new Map<string, number>();
-  const systemDefinitions = systemProjects.map((project) => {
-    const shown = project.homePath ?? project.folders[0];
+  const systemDefinitions = systemProjects.flatMap((project) => {
+    const free = project.folders.filter((folder) => !memberships.has(folder));
+    if (project.folders.length > 0 && free.length === 0) return [];
     const definition = {
       id: `neo:${project.id}`,
       name: project.name,
-      folders: shown ? [shown] : [],
+      folders: free.slice(0, 1),
     };
-    for (const folder of [shown ?? [], ...project.folders].flat())
-      if (!memberships.has(folder)) memberships.set(folder, definition);
+    for (const folder of free) memberships.set(folder, definition);
     systemTime.set(definition.id, project.updatedAt);
-    return definition;
+    return [definition];
   });
   const projectKey = (path: string) => memberships.get(path)?.id ?? path;
   const definitions = new Map(

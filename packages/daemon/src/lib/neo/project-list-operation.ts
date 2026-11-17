@@ -10,7 +10,6 @@ type LocalFolder = { projectId: string; folder: string };
 const ListedProject = z.object({
   id: z.string(),
   name: z.string(),
-  homePath: z.string().nullable(),
   folders: z.array(z.string()),
   updatedAt: z.number(),
 });
@@ -25,7 +24,6 @@ export function listNeoProjects(
     projects: projects.map((project) => ({
       id: project.id,
       name: project.title,
-      homePath: project.homePath ?? null,
       folders: folders.filter((entry) => entry.projectId === project.id).map((e) => e.folder),
       updatedAt: project.updatedAt,
     })),

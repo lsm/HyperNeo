@@ -358,7 +358,6 @@ export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
 export interface SystemProject {
   id: string;
   name: string;
-  homePath: string | null;
   folders: string[];
   updatedAt: number;
 }

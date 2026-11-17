@@ -43,7 +43,7 @@ afterEach(() => db.close());
 describe('neo.projects.list', () => {
   test('lists every unmerged project with only its folders on this machine', async () => {
     const result = (await list()) as {
-      projects: { id: string; name: string; folders: string[]; homePath: string | null }[];
+      projects: { id: string; name: string; folders: string[] }[];
     };
     const byId = new Map(result.projects.map((project) => [project.id, project]));
 
@@ -51,7 +51,6 @@ describe('neo.projects.list', () => {
     expect(byId.get('project:read')).toMatchObject({
       name: 'neo-read',
       folders: ['/code/neo-read'],
-      homePath: null,
     });
     expect(byId.get('project:empty')?.folders).toEqual([]);
   });

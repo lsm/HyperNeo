@@ -33107,12 +33107,6 @@
                   },
                   "type": "array"
                 },
-                "homePath": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
                 "id": {
                   "type": "string"
                 },
@@ -33126,7 +33120,6 @@
               "required": [
                 "id",
                 "name",
-                "homePath",
                 "folders",
                 "updatedAt"
               ],
