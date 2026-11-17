@@ -177,7 +177,7 @@ describe('neo.todo.retarget', () => {
     expect(message).toContain('"id":"old"');
   });
 
-  test('a later start after reopening has no replaced worker', async () => {
+  test('a later start after reopening is ordinary, as for deferred or retried starts', async () => {
     const h = setup(true);
     h.seed();
     expect(
