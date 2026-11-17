@@ -33,8 +33,9 @@ model to ask for. Core knows todos and sessions, not authors, reviewers or PRs.
 ### Core
 
 **A todo's workers.** Core records every session the daemon starts or reuses for a todo:
-a new core table `neo_todo_workers (todo_id, adapter, id, at)`, written by `work.start`
-whenever it carries a `todoId`. This replaces the one-worker-per-todo claim rule
+a new core table `neo_todo_workers (todo_id, adapter, id, lane, at)`, written by
+`work.start` whenever it carries a `todoId`. `lane` is an optional label the pack passes
+on the start; core stores and matches it but never interprets it. This replaces the one-worker-per-todo claim rule
 (`claimWorker` in `packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`
 refuses a second claimed worker for the same todo). Today a todo's author is recorded in
 `neo_todo_sessions`, and its reviewers only in the coding pack's facts, so core cannot see
@@ -44,8 +45,8 @@ them.
 daemon started (`work_started_sessions.role = 'worker'`), and never among the request's
 `excludeRefs`. Order:
 
-1. **The todo's own worker.** A worker in `neo_todo_workers` for this todo, same adapter,
-   not excluded. If it is free, send there. If it is busy, the work waits for it: the
+1. **The todo's own worker.** A worker in `neo_todo_workers` for this todo with the same
+   adapter and the same `lane`, not excluded; the most recent `at` first. If it is free, send there. If it is busy, the work waits for it: the
    message is queued on that worker and delivered when it is free (the existing todo
    queue, `todoWorker.wait` in `drivers/work-operations.ts`, extended to a todo that is
    already doing). A new session starts only when no such worker is left (archived,
@@ -91,11 +92,14 @@ already knows:
   `workerStartExclusions` (sessions that acted as reviewers or verifiers,
   `neo/packs/coding/pack.ts`).
 - **Which model:** the start's `model` and `effort`.
+- **Which lane:** an optional `lane` label, so a todo with several kinds of worker gets
+  the right one back.
 
 **Coding.**
 
-- Review excludes the author. Verify excludes the author and the reviewer. With the author
-  excluded, the todo's remaining worker is the earlier reviewer, so step 1 picks it.
+- Starts pass lane `write`, `review` or `verify`. A review round's step 1 then sees only
+  earlier reviewers of this todo, never the verifier; the most recent is the one reused.
+  Review still excludes the author, and verify excludes the author and the reviewer.
 - A new review round asks for the earlier round's reviewer model and effort, read from the
   pack's own assignment facts. Reuse requires a matching model
   (`drivers/work-operations.ts`, `workStartConfiguration.confirm`), so this keeps the
@@ -113,8 +117,9 @@ review rounds.
 
 **Other packs** write nothing; they get core's rule as is.
 
-**Upgrade.** Saved coding `sessionStrategy` values move once to `sessionReuse` on each
-project that owns the repo: `long_lived` → `long_lived`, `per_task` → `per_todo`,
+**Upgrade.** Saved coding `sessionStrategy` values move once: a repo value to
+`sessionReuse` on each project that owns the repo, a global value to global
+`sessionReuse`: `long_lived` → `long_lived`, `per_task` → `per_todo`,
 `per_pr` → `per_todo` (a PR is one todo), keeping `set_by`. The old rows and the feature
 table are then dropped. Existing todos seed `neo_todo_workers` from `neo_todo_sessions`
 and the coding assignment facts.
