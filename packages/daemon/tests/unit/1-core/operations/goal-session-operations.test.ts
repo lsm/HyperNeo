@@ -232,7 +232,7 @@ describe('goal-owned schedules', () => {
       const goal = (await call('goal.session.create', { title: 'Existing', doneTest: 'Done' }))
         .goal;
       scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
-      for (const existing of goals.listScheduled()) schedules.sync(existing);
+      for (const existing of await goals.listScheduled()) schedules.sync(existing);
       expect(scheduler.repo.getBySource('goal_review', goal.id)).toMatchObject({
         status: 'active',
         cadence: { kind: 'every', everyMs: 86_400_000 },

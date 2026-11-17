@@ -9,6 +9,8 @@ import type {
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { sessionGoalReviewReads } from './session-goal-review-read-worker.ts';
 
 type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
   reviewCadence?: SessionSchedule['cadence'];
@@ -73,12 +75,8 @@ export class SessionGoalRepository {
     ).map(toGoal);
   }
 
-  listScheduled(): SessionGoal[] {
-    return (
-      this.db
-        .prepare(`${SELECT} WHERE owner_session_id IS NOT NULL AND status IN ('active', 'paused')`)
-        .all() as Row[]
-    ).map(toGoal);
+  async listScheduled(): Promise<SessionGoal[]> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'scheduled');
   }
 
   create(
@@ -246,13 +244,7 @@ export class SessionGoalRepository {
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 
-  journalSinceReview(goalId: string): GoalJournalEntry[] {
-    return (
-      this.db
-        .prepare(`${JOURNAL_SELECT} WHERE goal_id = ? AND rowid > COALESCE(
-      (SELECT MAX(rowid) FROM goal_journal WHERE goal_id = ? AND run_id LIKE 'goal-review:%'), 0)
-      ORDER BY rowid`)
-        .all(goalId, goalId) as JournalRow[]
-    ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
+  async journalSinceReview(goalId: string): Promise<GoalJournalEntry[]> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'journal', goalId);
   }
 }

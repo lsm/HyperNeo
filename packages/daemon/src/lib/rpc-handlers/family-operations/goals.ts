@@ -45,7 +45,11 @@ export function registerSessionGoalOperations(
     }
   );
   context.sessionScheduler.registerSource(schedules);
-  for (const goal of goals.listScheduled()) schedules.sync(goal);
+  context.startupTasks?.push(
+    goals.listScheduled().then((rows) => {
+      for (const goal of rows) schedules.sync(goal);
+    })
+  );
   return createSessionGoalOperations({
     goals,
     schedules,

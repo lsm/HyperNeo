@@ -18,6 +18,7 @@ const workers = new Set([
   'storage/repositories/neo-front-input-worker.ts',
   'storage/repositories/neo-ask-topic-read.ts',
   'storage/repositories/neo-front-read-worker.ts',
+  'storage/repositories/session-goal-review-read-worker.ts',
   'storage/repositories/anthropic-usage-read.ts',
   'storage/repositories/worker-input-worker.ts',
   'storage/repositories/work-cleanup-worker.ts',

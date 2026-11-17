@@ -97,7 +97,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
           const quiet = { ...schedule, dueCount: schedule.dueCount + 1 };
           return finish(quiet, 'skipped_unchanged');
         }
-        const text = source.message(schedule.sourceId, { summary: facts.summary, nudge });
+        const text = await source.message(schedule.sourceId, { summary: facts.summary, nudge });
         if (text === null) return finish(schedule, 'source_gone');
         return {
           value: {

@@ -194,12 +194,12 @@ Act using the usual tools${own ? '' : `; new asks in this cycle carry goalId ${i
 Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
   }
 
-  private reviewMessage(id: string): string | null {
+  private async reviewMessage(id: string): Promise<string | null> {
     const goal = this.goals.get(id);
     const schedule = this.scheduler.repo.getBySource('goal_review', id);
     if (!goal || !schedule || goal.status === 'completed' || goal.status === 'archived')
       return null;
-    const entries = this.goals.journalSinceReview(id);
+    const entries = await this.goals.journalSinceReview(id);
     const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}`;
     return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review:\n${JSON.stringify(entries)}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
   }

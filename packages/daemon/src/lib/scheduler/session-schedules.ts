@@ -20,7 +20,10 @@ export interface ScheduleSource {
   label?(id: string): string | null;
   dailyRunLimit?(id: string): number | null;
   facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;
-  message(id: string, change: { summary: string; nudge: boolean }): string | null;
+  message(
+    id: string,
+    change: { summary: string; nudge: boolean }
+  ): string | null | Promise<string | null>;
 }
 
 type Gate<T> = { value: T } | { reason: string };

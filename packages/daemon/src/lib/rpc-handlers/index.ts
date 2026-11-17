@@ -458,8 +458,10 @@ export async function setupRPCHandlers<SpaceServices = never>(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
+  const startupTasks: Promise<void>[] = [];
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
+    startupTasks,
     workCleanupAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
@@ -487,6 +489,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
+  await Promise.all(startupTasks);
   sessionScheduler.recover();
   let progressRefresh: Promise<void> | undefined;
   const progressRequested = new Set<string | undefined>();
