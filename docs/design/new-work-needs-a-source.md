@@ -50,6 +50,12 @@ Asks created before this change keep working. They count as accepted, and no dat
 **3. New todos and sessions trace to an accepted ask.**
 
 - `neo.ask.open` can record and start inline todos. The admission check runs before its write step. A proposal that comes with todos is refused, and nothing is written. Neo calls again without todos.
+- A session request takes a fourth path. When a session that is not working on a todo messages Neo, `recordNeoRequestTodo` (`request-todo.ts`, called from `service.ts`) writes an ask and a reply todo directly with `store.openAsk` and `store.addTodo`. It does not go through `neo.ask.open` or `neo.todo.add`. Admission runs in that path too, before either write:
+  - The sender is classified by rule 1.
+  - From an allowed sender, the ask is relayed and accepted.
+  - From an excluded sender, the ask is still written, so the request is not lost, but it is not accepted.
+  - The reply todo is written in both cases. It has no instruction and no target, so it cannot start a session. It only holds Neo to replying.
+  - New todos and starts on a request ask that is not accepted are refused, as for any ask.
 - `neo.todo.add` refuses a todo whose ask is not accepted. Its input path, which opens an ask from a human message through `claimNeoInputAsk`, is human by rule 1 and passes.
 - `work.start` needs a todo whose ask is accepted. This applies to every agent caller: Neo, workers and other agent roles. Today's `todo_required` warning (`neoTodoRecords`) becomes a refusal and no longer applies only to Neo. These starts are unchanged:
   - starts from the human's devices;
@@ -103,6 +109,8 @@ The new checks are added as steps in these pipelines, not as checks beside them.
 - `neo.ask.open` with no `messageIds` opens a proposal and its card. Adding a todo is refused until the card is accepted, then it starts.
 - `neo.ask.open` with human `messageIds` and inline todos records the ask and its inputs and starts the todos.
 - `neo.todo.add` with a human input message opens an ask through `claimNeoInputAsk`, and the todo starts.
+- A session request from an external, non-worker session that quotes the human makes a relayed, accepted ask. A work todo added to it starts.
+- A session request from a worker, `neo:*`, `system:*` or internal-agent sender writes its ask and reply todo, but the ask is not accepted. A work todo added to it is refused.
 - `work.start` with no `todoId` is refused from Neo and from a worker session. Today it starts with a warning.
 - `work.start` with no `todoId` still starts from a human device, from an internal call, and when forwarded from another daemon.
 
@@ -116,5 +124,5 @@ The new checks are added as steps in these pipelines, not as checks beside them.
 Three PRs, one rung each, as the repo's slicing rule requires:
 
 1. **Build**: the marker migration, the fact readers and the pure checks, with their unit tests. Nothing calls them yet.
-2. **Wire**: the steps in `neo.ask.open`, `neo.todo.add` and `start-work`, the proposal card, the end-to-end tests, the `work-todo-reference` journey, and the matching text in `neo.ask.open.md` and the `work.start` description.
+2. **Wire**: the steps in `neo.ask.open`, `neo.todo.add`, `start-work` and the session-request path, the proposal card, the end-to-end tests, the `work-todo-reference` journey, and the matching text in `neo.ask.open.md` and the `work.start` description.
 3. **Delete**: the relay-sender list (section 4) and its journey, replaced by the sender rule.
