@@ -96,7 +96,7 @@ export async function attachRemoteDaemon(
   };
 }
 
-const runAttachDaemon = (superpipe({})('attach-remote-daemon') as PipelineAPI)
+const runAttachDaemon = (superpipe({})('daemon.attach') as PipelineAPI)
   .input(['input', 'caller', 'registry', 'redeem'])
   .pipe(requireRpcAttachCaller, ['input', 'caller'], 'result:outcome')
   .pipe(pairRemoteDaemon, ['outcome', 'redeem'], 'result:outcome')
