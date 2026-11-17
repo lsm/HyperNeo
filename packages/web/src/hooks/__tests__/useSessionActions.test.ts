@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { Session } from '@hyperneo/shared';
-import { useSessionActions } from '../useSessionActions.ts';
+import { GOAL_CHILD_MESSAGE, useSessionActions } from '../useSessionActions.ts';
 
 const mockConnectionState = signal<'connected' | 'disconnected' | 'connecting'>('connected');
 
@@ -481,6 +481,31 @@ describe('useSessionActions', () => {
       expect(mockToastSuccess).toHaveBeenCalledWith('Session archived (3 commits removed)');
       expect(result.current.archiveConfirmDialog).toBeNull();
       expect(mockSessionsSignal.value).toEqual(updatedSessions);
+    });
+
+    it('reports a child that runs a goal and closes the confirmation', async () => {
+      mockArchiveSession.mockResolvedValue({
+        success: false,
+        reason: 'owns_goals',
+        clones: [{ id: 'g1', title: 'Goal: Grow' }],
+      });
+
+      const { result } = renderHook(() =>
+        useSessionActions({
+          sessionId: 'session-1',
+          session: defaultSession,
+          onDeleteModalClose: vi.fn(),
+          onStateReset: vi.fn(),
+        })
+      );
+
+      await act(async () => {
+        await result.current.handleConfirmArchive();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(GOAL_CHILD_MESSAGE);
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(result.current.archiveConfirmDialog).toBeNull();
     });
 
     it('should handle confirm archive error with Error instance', async () => {
