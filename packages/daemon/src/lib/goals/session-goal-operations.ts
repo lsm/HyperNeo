@@ -247,6 +247,7 @@ export interface SessionGoalDependencies {
   readonly sessionExists: (sessionId: string) => boolean;
   readonly isChildSession: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
+  readonly releaseSession: (sessionId: string) => Promise<void>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -256,6 +257,7 @@ export function createSessionGoalOperations({
   sessionExists,
   isChildSession,
   startSession,
+  releaseSession,
   audit,
 }: SessionGoalDependencies) {
   const owner = (pipeline: PipelineAPI) =>
@@ -296,9 +298,15 @@ export function createSessionGoalOperations({
       async (parent: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
         const { ownerSessionId: _owner, cadence, nudgeEvery, ownSession, ...draft } = input;
         const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
-        const goal = goals.create(owned, draft, Date.now(), (created) =>
-          schedules.sync(created, cadence, nudgeEvery)
-        );
+        let goal: SessionGoal;
+        try {
+          goal = goals.create(owned, draft, Date.now(), (created) =>
+            schedules.sync(created, cadence, nudgeEvery)
+          );
+        } catch (error) {
+          if (ownSession) await releaseSession(owned);
+          throw error;
+        }
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
         return done(goal);
       },

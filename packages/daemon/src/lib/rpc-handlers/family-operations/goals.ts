@@ -31,6 +31,9 @@ export function registerSessionGoalOperations(
         title,
         parentSessionId,
       }),
+    releaseSession: async (sessionId) => {
+      await context.deps.sessionManager.archiveSessionResources(sessionId, 'work_archive');
+    },
     audit: (caller, toolName, summary) =>
       audit.createEntry({
         agentName: caller.agentName,
