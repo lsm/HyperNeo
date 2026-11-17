@@ -1,4 +1,5 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
+import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
 import { useEffect, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
@@ -291,7 +292,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(sessionId, false, children);
-      if (result.reason === 'has_clones' && result.clones) {
+      if (result.reason === 'owns_goals') {
+        setCloneChoice(null);
+        toast.error(GOAL_CHILD_MESSAGE);
+      } else if (result.reason === 'has_clones' && result.clones) {
         setCloneChoice({ sessionId, clones: result.clones });
       } else if (result.requiresConfirmation && result.commitStatus) {
         setCloneChoice(null);
@@ -312,7 +316,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirm(null);
+      } else if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
       }

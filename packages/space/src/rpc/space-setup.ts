@@ -924,6 +924,7 @@ async function setupSpaceServices(
   spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
+    ownsActiveGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
     detach: async (sessionId) => {
       await deps.db.detachSessionFromParent(sessionId);
     },

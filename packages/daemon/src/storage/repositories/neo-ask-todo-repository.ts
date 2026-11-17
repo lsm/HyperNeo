@@ -39,6 +39,7 @@ import {
   neoAskInputReads,
   neoAskInputWrites,
 } from './neo-ask-input-worker.ts';
+import { readNeoAskTopics, readNeoTopicCounts } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
@@ -328,7 +329,7 @@ export class NeoAskTodoRepository {
     work = false,
     before?: { updatedAt: number; id: string }
   ) {
-    const asks = this.listAsks(projectId, limit, work, before);
+    const asks = this.withTopics(this.listAsks(projectId, limit, work, before));
     const ids = asks.map((ask) => ask.id);
     const todos = this.listTodosForAsks(ids);
     const questions = this.listQuestionsForAsks(ids);
@@ -366,6 +367,7 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+      topics: readNeoTopicCounts(this.db, Date.now() - 30 * 24 * 60 * 60 * 1000),
       ...(withUnanswered ? { unanswered: this.listUnansweredInputs() } : {}),
     };
   }
@@ -424,8 +426,9 @@ export class NeoAskTodoRepository {
 
   doneTodoFacts(askId: string) {
     const todos = this.listTodos(askId);
+    const ask = this.getAsk(askId);
     return {
-      ask: this.getAsk(askId),
+      ask: ask && this.withTopics([ask])[0]!,
       todos,
       links: new NeoTodoSessionRepository(this.db).readLinksForTodos(todos.map((todo) => todo.id)),
     };
@@ -619,6 +622,10 @@ export class NeoAskTodoRepository {
     queueNeoRequestSettledReply(this.db, ask.id, ask.sessionId);
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
+  }
+
+  private withTopics(asks: readonly NeoAsk[]): NeoAsk[] {
+    return readNeoAskTopics(this.db, asks, this.getAsks(asks.flatMap((ask) => ask.parentId ?? [])));
   }
 
   getAsk(id: string): NeoAsk | null {

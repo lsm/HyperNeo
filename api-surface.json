@@ -6699,7 +6699,7 @@
               },
               "tool": {
                 "const": "get_window_state",
-                "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Use fresh element handles for subsequent actions.",
+                "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Call this before any click, drag or other pointer action; their x and y are pixels in this screenshot (Retina pixels, not points). Use fresh element handles for subsequent actions.",
                 "type": "string"
               }
             },
@@ -6791,7 +6791,7 @@
               },
               "tool": {
                 "const": "click",
-                "description": "Click or focus an element or point inside the authorized target window. Secure and credential surfaces are refused.",
+                "description": "Click or focus an element or point inside the authorized target window. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points). Secure and credential surfaces are refused.",
                 "type": "string"
               }
             },
@@ -6842,7 +6842,7 @@
               },
               "tool": {
                 "const": "double_click",
-                "description": "Double-click inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Double-click inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -6893,7 +6893,7 @@
               },
               "tool": {
                 "const": "right_click",
-                "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -6957,7 +6957,7 @@
               },
               "tool": {
                 "const": "drag",
-                "description": "Drag between points inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Drag between points inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -7265,6 +7265,21 @@
                   "null"
                 ]
               },
+              "content": {
+                "items": {
+                  "additionalProperties": {},
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "decision": {
                 "enum": [
                   "allowed",
@@ -7283,7 +7298,8 @@
                   "string",
                   "null"
                 ]
-              }
+              },
+              "structuredContent": {}
             },
             "required": [
               "call_id",
@@ -15658,7 +15674,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16031,7 +16047,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -16198,7 +16214,7 @@
             "type": "integer"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -17798,8 +17814,13 @@
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "ownSession": {
+            "default": false,
+            "description": "Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.",
+            "type": "boolean"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -18020,7 +18041,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18212,7 +18233,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18460,7 +18481,7 @@
             "type": "array"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -21573,6 +21594,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -23025,6 +23049,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23559,6 +23586,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -24096,6 +24126,9 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "topicKey": {
+                        "type": "string"
                       },
                       "updatedAt": {
                         "type": "number"
@@ -25333,6 +25366,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -25867,6 +25903,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -31059,6 +31098,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -39421,6 +39463,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -47964,7 +48009,8 @@
                   "self_parent",
                   "parent_is_child",
                   "has_children",
-                  "unsupported_session"
+                  "unsupported_session",
+                  "owns_goals"
                 ],
                 "type": "string"
               }

@@ -3,6 +3,8 @@ import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
+export const NEO_OTHER_TOPIC = '其他';
+
 export interface NeoAsk {
   focusedSession?: NeoQuestionSource;
   id: string;
@@ -13,6 +15,7 @@ export interface NeoAsk {
   originMessageId: string | null;
   title: string;
   topic: string | null;
+  topicKey?: string;
   request: string;
   status: NeoAskStatus;
   outcome: string | null;
