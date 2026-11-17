@@ -16,6 +16,7 @@ import { nextScheduleRun, requireNextRun } from './session-schedule-cadence.ts';
 
 export interface ScheduleSource {
   kind: string;
+  alwaysFire?: boolean;
   label?(id: string): string | null;
   dailyRunLimit?(id: string): number | null;
   facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;

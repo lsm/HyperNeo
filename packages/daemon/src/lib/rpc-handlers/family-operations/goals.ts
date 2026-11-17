@@ -38,6 +38,7 @@ export function registerSessionGoalOperations(
     context.goalMandateChange
   );
   context.sessionScheduler.registerSource(schedules);
+  for (const goal of goals.listScheduled()) schedules.sync(goal);
   return createSessionGoalOperations({
     goals,
     schedules,

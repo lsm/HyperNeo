@@ -20,9 +20,27 @@ export class SessionGoalSchedules implements ScheduleSource {
       ref: string,
       revision: string | null
     ) => Promise<string | null> = async () => null
-  ) {}
+  ) {
+    scheduler.registerSource({
+      kind: 'goal_review',
+      alwaysFire: true,
+      label: (id) => this.label(id),
+      facts: async (id) => {
+        const goal = goals.get(id);
+        return goal && goal.status !== 'completed' && goal.status !== 'archived'
+          ? { digest: 'review', summary: '' }
+          : null;
+      },
+      message: (id) => this.reviewMessage(id),
+    });
+  }
 
-  sync(goal: SessionGoal, cadence?: SessionScheduleCadence, nudgeEvery = 4): void {
+  sync(
+    goal: SessionGoal,
+    cadence?: SessionScheduleCadence,
+    nudgeEvery = 4,
+    reviewCadence?: SessionScheduleCadence
+  ): void {
     let known = this.scheduler.repo.getBySource(this.kind, goal.id);
     const config = known
       ? { cadence: known.cadence, nudgeEvery: known.nudgeEvery }
@@ -30,7 +48,36 @@ export class SessionGoalSchedules implements ScheduleSource {
           cadence: { kind: 'every' as const, everyMs: 3_600_000 },
           nudgeEvery: 4,
         });
-    this.goals.saveWakeSchedule(goal.id, config);
+    const previous = this.goals.wakeSchedule(goal.id);
+    const review = reviewCadence ??
+      previous?.reviewCadence ?? { kind: 'every' as const, everyMs: 86_400_000 };
+    this.goals.saveWakeSchedule(goal.id, { ...config, reviewCadence: review });
+    let reviewRow = this.scheduler.repo.getBySource('goal_review', goal.id);
+    if (
+      reviewRow &&
+      (goal.status === 'completed' ||
+        goal.status === 'archived' ||
+        (goal.status === 'active' && reviewRow.status === 'done') ||
+        (reviewCadence && JSON.stringify(reviewRow.cadence) !== JSON.stringify(review)))
+    ) {
+      this.scheduler.delete(reviewRow);
+      reviewRow = null;
+    }
+    if (goal.status !== 'completed' && goal.status !== 'archived') {
+      reviewRow ??= this.scheduler.create({
+        target: { adapter: 'hyperneo', id: goal.ownerSessionId },
+        sourceKind: 'goal_review',
+        sourceId: goal.id,
+        note: null,
+        cadence: review,
+        nudgeEvery: 4,
+        createdBySession: goal.ownerSessionId,
+      });
+      if (goal.status === 'paused' && reviewRow.status === 'active')
+        this.scheduler.pause(reviewRow);
+      if (goal.status === 'active' && reviewRow.status === 'paused')
+        this.scheduler.resume(reviewRow);
+    }
     if (goal.status === 'completed' || goal.status === 'archived') {
       if (known) this.scheduler.delete(known);
       return;
@@ -78,7 +125,6 @@ export class SessionGoalSchedules implements ScheduleSource {
       ? await this.mandateChange(goal.mandateRef, goal.mandateRev)
       : null;
     const lines = [
-      ...(state.entries - (state.through ?? 0) >= 10 ? ['What-works compaction due'] : []),
       ...(mandate
         ? [
             `Mandate changed: ${goal.mandateRef} at ${mandate}; read and reconcile, then goal.session.update mandateRev ${mandate}.`,
@@ -136,13 +182,21 @@ export class SessionGoalSchedules implements ScheduleSource {
       return null;
     const runId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
     const state = this.goals.factState(id);
-    const compact = change.nudge || state.entries - (state.through ?? 0) >= 10;
     const own = this.canReturn(goal.ownerSessionId);
     return `${own ? GOAL_SESSION_CYCLE : NEO_GOAL_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
 ${state.note ?? 'No what-works note yet.'}
-${compact ? 'Read the journal pages and rewrite the what-works note with goal.session.update {goalId, worksNote}, folding new entries into it; keep its routines inside the Resources and Do alone sections of the goal definition. Journal entries are kept.' : ''}
 Act using the usual tools${own ? '' : `; new asks in this cycle carry goalId ${id}`}.
 Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
+  }
+
+  private reviewMessage(id: string): string | null {
+    const goal = this.goals.get(id);
+    const schedule = this.scheduler.repo.getBySource('goal_review', id);
+    if (!goal || !schedule || goal.status === 'completed' || goal.status === 'archived')
+      return null;
+    const entries = this.goals.journalSinceReview(id);
+    const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}`;
+    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review:\n${JSON.stringify(entries)}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.canReturn(goal.ownerSessionId) ? ' Send Neo the review summary with session.clone.return.' : ''}`;
   }
 }

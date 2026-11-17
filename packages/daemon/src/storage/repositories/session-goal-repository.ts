@@ -10,7 +10,9 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
 
-type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
+  reviewCadence?: SessionSchedule['cadence'];
+};
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -68,6 +70,14 @@ export class SessionGoalRepository {
            ORDER BY updated_at DESC, id DESC`
         )
         .all(ownerSessionId, includeClosed ? 1 : 0) as Row[]
+    ).map(toGoal);
+  }
+
+  listScheduled(): SessionGoal[] {
+    return (
+      this.db
+        .prepare(`${SELECT} WHERE owner_session_id IS NOT NULL AND status IN ('active', 'paused')`)
+        .all() as Row[]
     ).map(toGoal);
   }
 
@@ -233,6 +243,16 @@ export class SessionGoalRepository {
            ORDER BY created_at DESC, rowid DESC LIMIT ?`
         )
         .all(goalId, before, before, limit) as JournalRow[]
+    ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
+  }
+
+  journalSinceReview(goalId: string): GoalJournalEntry[] {
+    return (
+      this.db
+        .prepare(`${JOURNAL_SELECT} WHERE goal_id = ? AND rowid > COALESCE(
+      (SELECT MAX(rowid) FROM goal_journal WHERE goal_id = ? AND run_id LIKE 'goal-review:%'), 0)
+      ORDER BY rowid`)
+        .all(goalId, goalId) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 }

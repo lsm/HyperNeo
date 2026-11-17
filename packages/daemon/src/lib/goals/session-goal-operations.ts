@@ -89,6 +89,10 @@ const Create = z
     ...Fields,
     title: z.string().min(1),
     cadence: SessionScheduleCadenceSchema.default({ kind: 'every', everyMs: 3_600_000 }),
+    reviewCadence: SessionScheduleCadenceSchema.default({
+      kind: 'every',
+      everyMs: 86_400_000,
+    }),
     nudgeEvery: z
       .number()
       .int()
@@ -112,6 +116,7 @@ const Update = z
     goalId: z.string().min(1),
     title: z.string().min(1).optional(),
     status: GoalStatusSchema.optional(),
+    reviewCadence: SessionScheduleCadenceSchema.optional(),
     worksNote: z
       .string()
       .optional()
@@ -253,7 +258,12 @@ export function requireGoalDoneTest<T>(
 }
 
 function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
-  const { goalId: _goalId, ownerSessionId: _owner, ...patch } = input;
+  const {
+    goalId: _goalId,
+    ownerSessionId: _owner,
+    reviewCadence: _reviewCadence,
+    ...patch
+  } = input;
   return Object.fromEntries(
     Object.entries(patch).filter(([, value]) => value !== undefined)
   ) as SessionGoalPatch;
@@ -308,7 +318,12 @@ export function createSessionGoalOperations({
     .pipe(
       (owned: string, input: z.infer<typeof Create>) => {
         const cadence = requireValidCadence(input.cadence);
-        return 'reason' in cadence ? refuse(cadence.reason) : { value: owned };
+        const review = requireValidCadence(input.reviewCadence);
+        return 'reason' in cadence
+          ? refuse(cadence.reason)
+          : 'reason' in review
+            ? refuse(review.reason)
+            : { value: owned };
       },
       ['outcome', 'input'],
       'result:outcome'
@@ -323,12 +338,19 @@ export function createSessionGoalOperations({
     )
     .pipe(
       async (parent: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
-        const { ownerSessionId: _owner, cadence, nudgeEvery, ownSession, ...draft } = input;
+        const {
+          ownerSessionId: _owner,
+          cadence,
+          reviewCadence,
+          nudgeEvery,
+          ownSession,
+          ...draft
+        } = input;
         const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
         let goal: SessionGoal;
         try {
           goal = goals.create(owned, draft, Date.now(), (created) =>
-            schedules.sync(created, cadence, nudgeEvery)
+            schedules.sync(created, cadence, nudgeEvery, reviewCadence)
           );
         } catch (error) {
           if (ownSession) await releaseSession(owned);
@@ -359,7 +381,8 @@ export function createSessionGoalOperations({
 
   const update = owned(superpipe({})('goal.session.update') as PipelineAPI)
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Update>) => requireGoalChange(goal, patchOf(input)),
+      (goal: SessionGoal, input: z.infer<typeof Update>) =>
+        input.reviewCadence ? { value: goal } : requireGoalChange(goal, patchOf(input)),
       ['outcome', 'input'],
       'result:outcome'
     )
@@ -370,12 +393,21 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) => {
+        const cadence = input.reviewCadence && requireValidCadence(input.reviewCadence);
+        return cadence && 'reason' in cadence ? refuse(cadence.reason) : { value: goal };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
         const patch = patchOf(input);
         audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
         return done(
           goals.update(goal, patch, Date.now(), (updated) => {
-            if (patch.status) schedules.sync(updated);
+            if (patch.status || input.reviewCadence)
+              schedules.sync(updated, undefined, undefined, input.reviewCadence);
           })
         );
       },
@@ -385,6 +417,14 @@ export function createSessionGoalOperations({
     .endAsync('outcome');
 
   const append = owned(superpipe({})('goal.journal.append') as PipelineAPI)
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Append>) =>
+        input.runId?.startsWith('goal-review:') && !['yes', 'no'].includes(input.effect)
+          ? refuse('review_effect_required: use yes or no for a review effect.')
+          : { value: goal },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
         const { goalId: _goalId, ownerSessionId: _owner, ...draft } = input;
@@ -443,7 +483,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session, with one work wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Every due time wakes the owner to work, even when facts are unchanged, up to dailyRunLimit wakes in any 24 hours (default 24); later due times are skipped and the owner is told once. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. nudgeEvery is accepted for legacy compatibility only. Returns { accepted, goal } or { accepted: false, reason }.',
+        'Create a goal with work and review schedules. Give metrics or a written doneTest. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. ownSession starts a dedicated goal session that reports reviews back with session.clone.return. Closing the goal stops both schedules. nudgeEvery is accepted for legacy compatibility only.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
@@ -471,7 +511,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. worksNote summarizes the journal, advances its cursor and records journal_compacted without deleting entries. Each change is recorded as a goal event.',
+        'Update a session-owned goal, including its reviewCadence. Paused pauses both schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
