@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { revealAsk } from './queue-ask.mjs';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 export async function verifySharedDisclosure(page, { port, run, width, phase }) {
@@ -58,7 +59,7 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
   await position(human.getByRole('button',{name:'Show less',exact:true}), 'human-expanded');
   await human.getByRole('button',{name:'Show less',exact:true}).click();
   if (width === 390) await page.getByRole('button', { name:/^Your work/ }).click();
-  const card = page.locator('[data-ask="collapse-card"]:visible');
+  const card = await revealAsk(page, 'collapse-card');
   const labels=await card.locator('button[aria-expanded]').evaluateAll(nodes=>nodes.map(node=>({visible:node.textContent.replace(/[▴▾]/g,'').trim(),name:node.getAttribute('aria-label')??node.textContent.trim()})));
   record({name:'visible-words-in-accessible-names',controls:labels});
   if(phase==='after') for(const control of labels) assert(control.name.toLocaleLowerCase().includes(control.visible.toLocaleLowerCase()),JSON.stringify(control));

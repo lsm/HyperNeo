@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, directory] = process.argv.slice(2);
 assert(port && directory, 'usage: node card-topics-web.mjs <port> <run-dir>');
@@ -35,7 +36,17 @@ try {
     await page.locator('[data-topic-chips]').waitFor({ timeout: 15000 });
   };
   const chips = () => page.locator('[data-topic-chips] button').allInnerTexts();
-  const cards = () => page.locator('article[data-ask]').evaluateAll((all) => all.map((card) => card.getAttribute('data-ask')));
+  const cards = async () => {
+    const ids = new Set(await page.locator('article[data-ask]:visible').evaluateAll((all) => all.map((card) => card.getAttribute('data-ask'))));
+    const queue = page.locator('[data-human-queue]:visible');
+    if (await queue.count())
+      for (const state of await queue.locator('[data-queue-state]').all()) {
+        await state.click();
+        for (const id of await queue.locator('[data-queue-ask]').evaluateAll((all) => all.map((group) => group.getAttribute('data-queue-ask')))) ids.add(id);
+      }
+    return [...ids];
+  };
+  const card = (id) => revealAsk(page, id);
   await open();
   result.chips = (await chips()).map((text) => text.replace(/\s+/g, ' ').trim());
   assert.equal(result.chips[0], `全部 ${(await cards()).length}`);
@@ -43,10 +54,10 @@ try {
   assert.equal(result.chips.filter((chip) => /^kids 2$/i.test(chip)).length, 1, 'kids and Kids fold into one chip');
   assert(result.chips.includes('家长控制 2'));
   assert.equal(result.chips.at(-1), '其他 2', 'an ask with no topic joins the 其他 chip, last');
-  const header = await page.locator('article[data-ask="screen-time"] [data-ask-status]').innerText();
+  const header = await (await card('screen-time')).locator('[data-ask-status]').innerText();
   assert.equal(header.trim(), '在做');
   assert.equal(await page.locator('article[data-ask] .rounded-full.px-2\\.5').count(), 0);
-  assert.equal((await page.locator('article[data-ask="plain"]').getByRole('button', { name: '其他' }).count()), 1);
+  assert.equal((await (await card('plain')).getByRole('button', { name: '其他' }).count()), 1);
   const shopChips = page.locator('[data-topic-chips] button', { hasText: 'Shop' });
   const shopSets = [];
   for (const index of [0, 1]) {
@@ -62,11 +73,11 @@ try {
   await page.reload();
   await page.locator('[data-topic-chips]').waitFor();
   assert.deepEqual((await cards()).sort(), ['kids-lower', 'kids-upper'], 'the folded filter survives reload');
-  await page.locator('article[data-ask="kids-upper"]').getByRole('button', { name: 'Kids' }).click();
+  await (await card('kids-upper')).getByRole('button', { name: 'Kids' }).click();
   assert((await cards()).length > 2, 'the card button toggles the same folded key off');
-  await page.locator('article[data-ask="shop-b"]').getByRole('button', { name: 'Shop' }).click();
+  await (await card('shop-b')).getByRole('button', { name: 'Shop' }).click();
   assert.deepEqual(await cards(), ['shop-b'], 'the card button selects its own project');
-  await page.locator('article[data-ask="shop-b"]').getByRole('button', { name: 'Shop' }).click();
+  await (await card('shop-b')).getByRole('button', { name: 'Shop' }).click();
   result.topicKeys = true;
   await page.waitForTimeout(800);
   for (const scheme of ['light', 'dark']) {
@@ -80,10 +91,10 @@ try {
   assert.deepEqual((await cards()).sort(), ['app-approvals', 'screen-time'], 'the filter survives reload');
   await page.locator('[data-topic-chips] button', { hasText: '家长控制' }).click();
   assert((await cards()).length > 2, 'a second tap clears the filter');
-  await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
+  await (await card('protocol')).getByRole('button', { name: 'OAP' }).click();
   assert.deepEqual(await cards(), ['protocol']);
   await page.screenshot({ path: join(evidence, 'topics-1280-filtered.png') });
-  await page.locator('article[data-ask="protocol"]').getByRole('button', { name: 'OAP' }).click();
+  await (await card('protocol')).getByRole('button', { name: 'OAP' }).click();
   assert((await cards()).length > 1, 'tapping the card topic again clears it');
   await page.getByRole('button', { name: /search work|搜索/i }).first().click();
   await page.getByRole('searchbox').fill('Synthetic protocol');

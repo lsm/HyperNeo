@@ -18,7 +18,7 @@ export async function verifyWorkSearch(page, fixture, { evidence, touch = false 
   const use=control=>touch?control.tap():control.click();
   if(touch)await use(page.getByRole('button',{name:/^Your work/}));
   const work=page.locator('.neo-scene-list:visible');
-  await work.locator('[data-ask="ask-match"]').waitFor();
+  await work.locator('[data-ask="ask-match"]:visible, [data-human-queue]:visible').first().waitFor();
   const capture=async name=>{
     await work.evaluate(async element=>{
       await Promise.all(element.getAnimations({subtree:true}).filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished));
