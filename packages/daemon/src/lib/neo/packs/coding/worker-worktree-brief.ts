@@ -4,23 +4,40 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { readGithubBranchPrs } from './branch-prs.ts';
 
+const HANDOFF_SECTION_LIMIT = 6_000;
+const HANDOFF_COMMIT_LIMIT = 100;
+
+function bounded(text: string) {
+  return text.length > HANDOFF_SECTION_LIMIT
+    ? `${text.slice(0, HANDOFF_SECTION_LIMIT)}\n... truncated; inspect the checkout for the rest`
+    : text;
+}
+
 async function readHandoff(folder: string) {
   const git = simpleGit({ baseDir: folder, timeout: { block: 3000 } });
   try {
     const status = await git.status();
+    const comparison = status.tracking ? ['@{upstream}..HEAD'] : ['HEAD', '--not', '--remotes'];
     const commits = await git
-      .raw(['log', '--format=%h %s', '@{upstream}..HEAD'])
-      .catch(() => 'Upstream unavailable');
+      .raw(['log', `--max-count=${HANDOFF_COMMIT_LIMIT + 1}`, '--format=%h %s', ...comparison])
+      .catch(() => 'unavailable');
+    const lines = commits.trim().split('\n');
     const prs = status.current
       ? await readGithubBranchPrs({ cwd: folder, branch: status.current })
       : [];
     return {
       folder,
       branch: status.current ?? 'detached HEAD',
-      changes:
+      changes: bounded(
         status.files.map((file) => `${file.index}${file.working_dir} ${file.path}`).join('\n') ||
-        'none',
-      commits: commits.trim() || 'none',
+          'none'
+      ),
+      commits:
+        bounded(lines.slice(0, HANDOFF_COMMIT_LIMIT).join('\n') || 'none') +
+        (lines.length > HANDOFF_COMMIT_LIMIT
+          ? '\n... truncated; inspect the checkout for the rest'
+          : ''),
+      withoutUpstream: !status.tracking,
       prs,
     };
   } catch {
@@ -29,6 +46,7 @@ async function readHandoff(folder: string) {
       branch: 'unavailable',
       changes: 'unavailable',
       commits: 'unavailable',
+      withoutUpstream: false,
       prs: [] as string[],
     };
   }
@@ -44,7 +62,7 @@ const codingWorkerHandoff = (superpipe({})('neo.coding.worker-handoff') as Pipel
         `Folder: ${facts.folder}`,
         `Branch: ${facts.branch}`,
         `Uncommitted changes:\n${facts.changes}`,
-        `Unpushed commits:\n${facts.commits}`,
+        `Unpushed commits${facts.withoutUpstream ? ' (absent from local remote refs; these may be stale)' : ''}:\n${facts.commits}`,
         `Pull requests: ${facts.prs.join(', ') || 'none found'}`,
       ].join('\n'),
     'facts',
