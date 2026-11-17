@@ -23,14 +23,14 @@ import {
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
 type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
-type Pooled = { ref: WorkRef; name: string; held: boolean };
+type Pooled = { ref: WorkRef; name: string; held: boolean; terminalOnly: boolean };
 type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   strategySaved: boolean;
-  owner: { todoId: string; session: Pooled | null } | null;
-  feature: { todoId: string; session: Pooled | null } | null;
-  successors: { todoId: string; session: Pooled | null }[];
+  owner: { todoId: string; terminal: boolean; session: Pooled | null } | null;
+  feature: { todoId: string; terminal: boolean; session: Pooled | null } | null;
+  successors: { todoId: string; terminal: boolean; session: Pooled | null }[];
   pool: Pooled[];
 } | null;
 type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
@@ -43,7 +43,9 @@ const LIVE_BUSY = new Set(['queued', 'running', 'needs_you']);
 async function sessionState(session: Pooled, status: Status) {
   const outcome = await status(session.ref);
   const reply =
-    outcome.kind === 'completed' ? (outcome.value as { ok?: boolean; value?: unknown }) : null;
+    outcome.kind === 'completed'
+      ? (outcome.value as { ok?: boolean; reason?: string; value?: unknown })
+      : null;
   const live = reply?.ok ? WorkSummarySchema.safeParse(reply.value) : null;
   const state: 'available' | 'busy' | 'unknown' | 'archived' = !live?.success
     ? 'unknown'
@@ -55,6 +57,8 @@ async function sessionState(session: Pooled, status: Status) {
   return {
     ref: session.ref,
     name: session.name,
+    terminalOnly: session.terminalOnly,
+    missing: reply?.ok === false && reply.reason === 'not_found',
     state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
     line: {
       provider: (live?.success && live.data.provider) || '',
@@ -183,8 +187,10 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         if (!owner.session && owner.todoId !== todo.id) return { verb: 'held' };
         ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
       }
-      const archived = ownerState?.state === 'archived';
-      const assigned = archived ? undefined : ownerState;
+      const released =
+        ownerState?.state === 'archived' ||
+        (owner?.terminal && ownerState?.missing && facts.feature?.todoId === owner.todoId);
+      const assigned = released ? undefined : ownerState;
       const pool = assigned
         ? []
         : await routedPool(
@@ -193,14 +199,15 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
             () => lineScope(db, todo.id, facts.repo),
             workKind(todo)
           );
+      const eligiblePool = pool.filter((session) => !session.missing || !session.terminalOnly);
       return {
         ...planCodingSessionDispatch({
           strategy: facts.strategy,
           workType: (target.verb === 'start' && target.name) || 'dev',
           assigned,
-          pool,
+          pool: eligiblePool,
         }),
-        ...(archived && owner?.session
+        ...(released && owner?.session
           ? { takeover: { todoId: owner.todoId, ref: owner.session.ref } }
           : {}),
       };

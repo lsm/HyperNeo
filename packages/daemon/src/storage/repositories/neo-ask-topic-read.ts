@@ -1,6 +1,11 @@
 import type { NeoAsk } from '@hyperneo/shared/types/neo-ask';
 import { hostname } from 'node:os';
-import { neoAskTopic, neoAskTopicAliases, type NeoAskTopicTodo } from '../../lib/neo/ask-topic.ts';
+import {
+  neoAskTopic,
+  neoAskTopicAliases,
+  neoTopicPickKey,
+  type NeoAskTopicTodo,
+} from '../../lib/neo/ask-topic.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
@@ -86,4 +91,20 @@ export function readNeoTopicCounts(
       WHERE topic IS NOT NULL AND trim(topic) != '' AND created_at >= ? GROUP BY topic`
     )
     .all(since) as { topic: string; count: number }[];
+}
+
+export function rewriteNeoTopicPick(db: Database, from: string, to: string): number {
+  const key = neoTopicPickKey(from);
+  const names = (
+    db.prepare('SELECT DISTINCT topic FROM neo_asks WHERE topic IS NOT NULL').all() as {
+      topic: string;
+    }[]
+  )
+    .map((row) => row.topic)
+    .filter((topic) => neoTopicPickKey(topic) === key);
+  return names.length
+    ? db
+        .prepare('UPDATE neo_asks SET topic = ? WHERE topic IN (SELECT value FROM json_each(?))')
+        .run(to, json(names)).changes
+    : 0;
 }

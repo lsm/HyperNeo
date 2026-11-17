@@ -22,7 +22,7 @@ import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts'
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived' | 'interrupted';
+type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'gone' | 'archived' | 'interrupted';
 
 function setup() {
   const db = new Database(':memory:');
@@ -64,7 +64,12 @@ function setup() {
       ).run(added.id, inRepo);
     return added;
   };
-  const worked = (item: NeoTodo, session: string, name?: string, state?: 'doing' | 'done') => {
+  const worked = (
+    item: NeoTodo,
+    session: string,
+    name?: string,
+    state?: 'doing' | 'done' | 'removed'
+  ) => {
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
       item.id,
       JSON.stringify(name ? start(name) : { verb: 'send', ref: ref(session) }),
@@ -76,6 +81,7 @@ function setup() {
   const models: Record<string, { model: string; provider: string }> = {};
   const status = async (work: WorkRef): Promise<OperationOutcome> => {
     const state = live[work.id] ?? 'idle';
+    if (state === 'gone') return { kind: 'completed', value: { ok: false, reason: 'not_found' } };
     if (state === 'unreachable')
       return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'offline' };
     return {
@@ -361,6 +367,31 @@ describe('coding session target decision', () => {
     live['backend-1'] = 'unreachable';
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
   });
+
+  test('an unreachable session shared with active work still blocks a fresh start', async () => {
+    const { todo, worked, live, decide } = setup();
+    worked(todo('other'), 'shared', 'backend', 'done');
+    worked(todo('other'), 'shared', 'backend', 'doing');
+    live.shared = 'unreachable';
+    expect(await decide(todo(), start('backend'))).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test.each(['done', 'removed'] as const)(
+    'a %s owner keeps a live feature session but releases a missing one',
+    async (state) => {
+      const { todo, worked, live, decide } = setup();
+      const first = todo();
+      await decide(first, start('backend'));
+      worked(first, 'owner', 'backend', state);
+      expect(await decide(todo(), start('other'))).toEqual({
+        value: { verb: 'send', ref: ref('owner') },
+      });
+      live.owner = 'unreachable';
+      expect(await decide(todo(), start('other'))).toMatchObject({ reason: expect.any(String) });
+      live.owner = 'gone';
+      expect(await decide(todo(), start('other'))).toEqual({ value: start('other') });
+    }
+  );
 
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
     const { todo, worked, live, decide } = setup();
