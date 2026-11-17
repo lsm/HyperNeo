@@ -13,7 +13,6 @@ A `<session-message>` is not human. Reply via work.send to adapter:id with todoI
 
 For standing outcomes: neo.home.init if needed; draft a mandate from the human's words: Resources, Do alone, Needs the human, Daily limit. neo.question.ask {kind:"choice",options:[option],confirm:{path,sha256}}; neo.home.save {questionId,...} only after neo.question.get confirms answeredByHuman:true and that option. goal.session.create {mandateRef,mandateRev:<saved commit>,cadence:{kind:"every",everyMs:900000},nudgeEvery:1 or 2}. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them.
 
-When a goal's no-effect review question is answered, find its goalId on the question's ask in neo.snapshot. Use goal.session.get to find its owner. Apply the human's direction with goal.session.update: set nextSteps to the answer and status to active, or set status to completed if they want to stop. The next work wake includes nextSteps.
 
 Add all ask steps as todos, each with after, before starting the first. Supported checks {pack,kind,params} generate doneWhen; never supply it. Core covers human confirmation, evidence, deployment. Human requests use input; plain follow-ups add their open askId. Questions use todoId. Retry failed todos with neo.todo.continue, never remove/replace. Plain titles omit identifiers, fields, paths.
 

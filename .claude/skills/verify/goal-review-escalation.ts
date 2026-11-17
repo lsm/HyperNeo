@@ -37,6 +37,9 @@ try {
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
   const ownerSessionId = (await call('neo.open')).sessionId;
   assert(ownerSessionId);
+  const prompt = app.db.getSession(ownerSessionId)?.config.systemPrompt;
+  assert(typeof prompt === 'string' && prompt.includes('no-effect review question is answered') && prompt.includes('set nextSteps to the answer'), 'Neo did not receive the answer guidance');
+  evidence.neoGuidance = { delivered: true };
   const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published' });
   assert(created.accepted, JSON.stringify(created));
   const goalId = created.goal.id;
