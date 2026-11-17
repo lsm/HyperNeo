@@ -20,7 +20,12 @@ type Invoke = (
 ) => Promise<OperationOutcome>;
 type Released = { released: unknown };
 type Kept = {
-  kept: 'named_by_human' | 'bound_to_live_todo' | 'remote_worker' | 'worker_folder_unknown';
+  kept:
+    | 'named_by_human'
+    | 'bound_to_live_todo'
+    | 'remote_worker'
+    | 'worker_folder_unknown'
+    | 'not_started_by_us';
 };
 type Folder = { ref: WorkRef; directory: string | null; dirty: boolean; unpushed: number };
 type Pending = { pending: string };
@@ -108,7 +113,7 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
     async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
       const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
       if (fence === 'not_started_by_us') {
-        const kept = { kept: 'not_started_by_us' };
+        const kept: Kept = { kept: 'not_started_by_us' };
         await sessions.write('recordReleased', row.todoId, kept);
         return { reason: kept };
       }
