@@ -15,6 +15,7 @@ const aliases = new Map([
   [work('s2'), 'q'],
   [work('s3'), 'old'],
   [work('h1', 'hyperneo'), 'q'],
+  [work('neo:10000000-0000-4000-8000-000000000001', 'hyperneo'), 'p'],
   [`folder:${machine}\u0000/code/shop`, 'p'],
 ]);
 const ask = (patch: Partial<NeoAskTopicFacts['ask']> = {}) => ({
@@ -70,6 +71,9 @@ describe('neoAskTopic', () => {
       topicKey: 'p',
     });
     expect(neoAskTopic(facts({ todos: [request('h1')] })).topicKey).toBe('q');
+    expect(
+      neoAskTopic(facts({ todos: [request('neo:10000000-0000-4000-8000-000000000001')] })).topicKey
+    ).toBe('p');
   });
 
   test("a request from a session with no project, or on another daemon, keeps Neo's pick", () => {

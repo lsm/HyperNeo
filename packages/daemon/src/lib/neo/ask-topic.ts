@@ -2,6 +2,7 @@ import { NEO_OTHER_TOPIC, type NeoAsk } from '@hyperneo/shared/types/neo-ask';
 import { placeKey } from '../drivers/places.ts';
 import type { Place, WorkRef } from '../drivers/types.ts';
 import { NEO_INBOX_ID } from './inbox.ts';
+import { sessionWorkerRef } from './worker-identity.ts';
 
 export type NeoAskTopicTodo = {
   ref: WorkRef | null;
@@ -27,11 +28,8 @@ const workAlias = (machine: string, adapter: string, id: string) =>
   `work:${machine}\u0000${adapter}\u0000${id}`;
 
 function senderAlias(machine: string, sender: string): string | null {
-  if (sender.startsWith('daemon:')) return null;
-  const split = sender.indexOf(':');
-  return split < 0
-    ? workAlias(machine, 'hyperneo', sender)
-    : workAlias(machine, sender.slice(0, split), sender.slice(split + 1));
+  const ref = sessionWorkerRef(sender, false);
+  return ref.daemon ? null : workAlias(machine, ref.adapter, ref.id);
 }
 
 const targetAliases = (todo: NeoAskTopicTodo, machine: string) => [
