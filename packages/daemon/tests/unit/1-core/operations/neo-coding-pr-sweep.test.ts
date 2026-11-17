@@ -73,16 +73,6 @@ function setup() {
 }
 
 describe('PR sweep ladder', () => {
-  test('asks Neo to assign an author and review for unowned requested changes', async () => {
-    const { insert, told, woken, at, db } = setup();
-    insert(7, 'changes_requested', null);
-    await at(20);
-    expect(told).toEqual([]);
-    expect(woken).toHaveLength(1);
-    expect(woken[0].text).toContain('Assign an author');
-    expect(woken[0].text).toContain('cross-model review');
-    db.close();
-  });
   test('an idle approved PR tells its owner at 20 and 40 minutes, then wakes Neo once', async () => {
     const { insert, told, woken, at, db } = setup();
     insert(7, 'approved_green');

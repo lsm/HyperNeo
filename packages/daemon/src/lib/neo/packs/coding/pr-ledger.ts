@@ -291,7 +291,8 @@ export function planCodingLedgerRead(
         branch: pr.headRefName,
         head: pr.headRefOid,
         state:
-          unresolved.length && !['draft', 'dirty', 'failing', 'closed', 'merged'].includes(state)
+          unresolved.length &&
+          !['draft', 'dirty', 'failing', 'closed', 'merged', 'waiting_cross_review'].includes(state)
             ? ('changes_requested' as const)
             : state,
         ...(findings.length ? { findings } : {}),
@@ -503,7 +504,8 @@ export class CodingPrLedgerRepository {
     raw: unknown,
     now: number,
     observedAt: number,
-    seen: readonly string[]
+    seen: readonly string[],
+    failedThreads: readonly number[] = []
   ) {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
@@ -523,6 +525,20 @@ export class CodingPrLedgerRepository {
           now
         )
     );
+    if (planned && failedThreads.length) {
+      const previous = new Map(
+        (
+          this.db
+            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+            .all(planned.repo) as { number: number; state: CodingPrState }[]
+        ).map((row) => [row.number, row.state])
+      );
+      planned.rows = planned.rows.map((row) =>
+        failedThreads.includes(row.number) && previous.has(row.number)
+          ? { ...row, state: previous.get(row.number)! }
+          : row
+      );
+    }
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
     const health = this.recordHealth(repo, cycle);
@@ -1032,7 +1048,8 @@ export async function reconcileCodingPrLedger(
   now: number,
   refreshThreads?: (
     url: string,
-    cwd: string
+    cwd: string,
+    quota?: LedgerQuota
   ) => Promise<{ ok: boolean; data?: unknown; retryable?: boolean }>
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
@@ -1045,19 +1062,18 @@ export async function reconcileCodingPrLedger(
     const raw = await read(repo, context.health?.quota);
     const parsed = Response.safeParse(raw);
     const quota = context.health?.quota;
-    if (
-      refreshThreads &&
-      parsed.success &&
-      !parsed.data.errors?.length &&
-      (parsed.data.data.rateLimit.remaining ?? CODING_LEDGER_MIN_RATE) >= CODING_LEDGER_MIN_RATE &&
+    let canRefresh =
+      (parsed.success ? (parsed.data.data.rateLimit.remaining ?? CODING_LEDGER_MIN_RATE) : 0) >=
+        CODING_LEDGER_MIN_RATE &&
       !(quota?.retryAt && quota.retryAt > observedAt) &&
       !(
         quota?.resource === 'graphql' &&
         quota.remaining !== null &&
         quota.remaining < CODING_LEDGER_MIN_RATE &&
         (!quota.resetAt || quota.resetAt > observedAt)
-      )
-    ) {
+      );
+    const failedThreads: number[] = [];
+    if (refreshThreads && parsed.success && !parsed.data.errors?.length) {
       const canonical = parsed.data.data.repository.nameWithOwner.toLowerCase();
       for (const pr of parsed.data.data.repository.open.nodes) {
         const url = `https://${process.env.GH_HOST ?? 'github.com'}/${canonical}/pull/${pr.number}`;
@@ -1076,16 +1092,30 @@ export async function reconcileCodingPrLedger(
           !z.object({ headOid: z.string() }).safeParse(page.page.value).success ||
           (page.page.value as { headOid?: string }).headOid !== pr.headRefOid
         ) {
-          const refreshed = await refreshThreads(url, '');
+          if (!canRefresh) {
+            failedThreads.push(pr.number);
+            continue;
+          }
+          const refreshed = await refreshThreads(url, '', quota);
           const current = refreshed.ok
             ? z.object({ headOid: z.string() }).safeParse(refreshed.data)
             : null;
-          if ((!current?.success || current.data.headOid !== pr.headRefOid) && refreshed.retryable)
-            break;
+          if (!current?.success || current.data.headOid !== pr.headRefOid) {
+            failedThreads.push(pr.number);
+            if (refreshed.retryable) canRefresh = false;
+          }
         }
       }
     }
-    const observation = await ledger.write('observePoll', repo, raw, now, observedAt, [...seen]);
+    const observation = await ledger.write(
+      'observePoll',
+      repo,
+      raw,
+      now,
+      observedAt,
+      [...seen],
+      failedThreads
+    );
     if (observation.warning)
       log.warn('PR ledger coverage missed three eligible cycles', {
         repo,

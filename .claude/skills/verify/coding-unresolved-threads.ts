@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
 import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
 import { CodingPrLedgerRepository, reconcileCodingPrLedger } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
-import { CodingPrSweepRepository, sweepCodingPrs } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
+import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
@@ -157,6 +157,7 @@ try {
   ), true);
   const resolved = await sweep('thread resolved', 26);
   assert.equal(resolved.state, 'approved_green');
+  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = ?").run(repo);
   head = 'b'.repeat(40);
   const read = (remaining: number) => async () => ({
     data: { rateLimit: { remaining }, repository: { nameWithOwner: repo,
@@ -167,21 +168,23 @@ try {
   await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 27 * MIN, failedRefresh);
   assert.equal(refreshes, 1);
   assert.equal(ledger.list()[0].readAt, t0 + 27 * MIN);
+  assert.equal(ledger.list()[0].state, 'changes_requested');
   assert.equal(ledger.health.read(repo)?.misses, 0);
   await reconcileCodingPrLedger(ledger, [repo], read(499), t0 + 28 * MIN, failedRefresh);
   assert.equal(refreshes, 1);
   assert.equal(ledger.list()[0].readAt, t0 + 28 * MIN);
-  db.prepare("UPDATE pack_coding_pr_ledger SET state = 'changes_requested', owner = NULL, state_since = ?, read_at = ?, nudges = 0 WHERE repo = ?")
-    .run(t0, t0 + 28 * MIN, repo);
-  const unowned: string[] = [];
-  await sweepCodingPrs(new CodingPrSweepRepository(db), {
-    host: 'github.com',
-    tell: async () => { throw new Error('No author is assigned'); },
-    attend: async (event) => { unowned.push(String(event.facts.text)); return true; },
-  }, t0 + 28 * MIN);
-  assert.equal(unowned.length, 1);
-  assert.match(unowned[0], /Assign an author.*cross-model review/);
-  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, unowned }, null, 2));
+  assert.equal(ledger.pollFacts.record(
+    { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+    { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r2`] }, etag: null, next: null },
+    t0 + 29 * MIN, 2
+  ), true);
+  db.prepare("INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', ?, 'crossModelReview', 'true', 'human', 1)").run(repo);
+  db.exec("DELETE FROM neo_todo_sessions; UPDATE pack_coding_pr_ledger SET owner = NULL");
+  const cross = await sweep('unowned PR needs cross-model review', 30);
+  assert.equal(cross.state, 'waiting_cross_review');
+  const escalated = await sweep('cross-model review reminder', 50);
+  assert(escalated.woken.some((text) => text.includes('different model')));
+  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated }, null, 2));
 } finally {
   db.close();
 }

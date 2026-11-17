@@ -72,7 +72,7 @@ export function planCodingPrNudge(
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
   if (row.state === 'approved_green' && row.mergeBy === 'daemon') return null;
   if (!STATE_TEXT[row.state] || now - row.readAt > CODING_PR_FRESH_MS) return null;
-  if (!row.owner && !['waiting_cross_review', 'changes_requested'].includes(row.state)) return null;
+  if (!row.owner && row.state !== 'waiting_cross_review') return null;
   return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
 
@@ -107,8 +107,6 @@ export function codingPrEscalationText(row: CodingSweepRow): string {
   const since = new Date(row.stateSince).toISOString();
   if (row.state === 'waiting_cross_review')
     return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state]} since ${since} on head ${row.head.slice(0, 7)}. Assign a Review by a different model than its Agent line (a non-Claude reviewer for a Claude author) with neo.coding.assign.`;
-  if (!row.owner)
-    return `PR sweep: ${row.repo}#${row.number} "${row.title}" has requested changes on head ${row.head.slice(0, 7)}. Assign an author to address them and arrange cross-model review with neo.coding.assign if required.`;
   return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} since ${since} on head ${row.head.slice(0, 7)}, and its owner ${owned(row.owner!)} could not be reached or has made no progress. Reassign it to a free session.${row.state === 'approved_green' ? ' If its owner is gone, complete the required merge gates before a SHA-pinned manual merge.' : ''}`;
 }
 
@@ -125,7 +123,7 @@ export class CodingPrSweepRepository {
         .prepare(
           `SELECT repo, number, title, head, state, state_since AS stateSince, read_at AS readAt,
                   nudges, owner FROM pack_coding_pr_ledger
-            WHERE (owner IS NOT NULL OR state IN ('waiting_cross_review', 'changes_requested')) AND closed_at IS NULL`
+            WHERE (owner IS NOT NULL OR state = 'waiting_cross_review') AND closed_at IS NULL`
         )
         .all() as (Omit<CodingSweepRow, 'owner'> & { owner: string | null })[]
     )
@@ -187,7 +185,6 @@ export async function sweepCodingPrs(
     const told =
       nudge.kind === 'remind' &&
       row.state !== 'waiting_cross_review' &&
-      row.owner !== null &&
       (await deps
         .tell(
           row.owner!,
@@ -197,7 +194,7 @@ export async function sweepCodingPrs(
           row.findings
         )
         .catch(() => false));
-    if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review' && row.owner)
+    if (nudge.kind === 'remind' && row.state !== 'waiting_cross_review')
       log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       await repo.markLater(row, nudge.nudges, now);

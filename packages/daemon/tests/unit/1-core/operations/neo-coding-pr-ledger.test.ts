@@ -240,6 +240,19 @@ describe('planCodingLedgerRead', () => {
 });
 
 describe('PR ledger reconcile', () => {
+  test('preserves the previous PR state when its thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    const read = named(async () => response([node(1)]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100);
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x' AND number = 1"
+    ).run();
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 200, async () => ({ ok: false }));
+    expect(ledger.list().map((row) => [row.state, row.readAt])).toEqual([
+      ['changes_requested', 200],
+    ]);
+    db.close();
+  });
   test('keeps a successful repo poll when a thread refresh fails', async () => {
     const { db, ledger } = setup();
     const read = named(async () => response([node(1), node(2)]));
@@ -1225,6 +1238,20 @@ describe('planCodingLedgerRead cross-model review', () => {
     expect(state(true, [])).toBe('waiting_cross_review');
     expect(state(true, [review('claude-opus-5-5')])).toBe('waiting_cross_review');
     expect(state(true, [review('gpt-6.1-sol', 'h0')])).toBe('waiting_cross_review');
+  });
+
+  test('keeps waiting for cross-model review when a thread is unresolved', () => {
+    const planned = planCodingLedgerRead(
+      response([pr]),
+      0,
+      () => policy,
+      () => [],
+      () => ({
+        headOid: 'h1',
+        unresolvedThreadUrls: ['https://github.com/x/x/pull/1#discussion_r1'],
+      })
+    );
+    expect(planned?.rows[0].state).toBe('waiting_cross_review');
   });
 
   test('a failed review by a different model on the head asks for changes even with failing CI or conflicts', () => {
