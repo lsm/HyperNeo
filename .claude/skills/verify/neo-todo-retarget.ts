@@ -60,7 +60,8 @@ for (const phase of ['request', 'recovery']) {
       evidence.push({ phase, admittedStart: input });
       if (phase === 'request') {
         const message = String(input.message);
-        for (const expected of [workspace, 'handoff', head.slice(0, 7), 'https://github.com/example/repo/pull/12', 'truncated']) assert(message.includes(expected), `missing handoff fact: ${expected}`);
+        for (const expected of [workspace, 'handoff', head.slice(0, 7), 'https://github.com/example/repo/pull/12']) assert(message.includes(expected), `missing handoff fact: ${expected}`);
+        assert.match(message, /\.\.\. and \d+ more/);
       }
       const result = await op.execute(input, caller) as { ok: boolean; value?: { ref: { id: string } } };
       assert(result.ok && result.value, JSON.stringify(result));

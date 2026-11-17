@@ -54,6 +54,14 @@ describe('coding worker handoff', () => {
       });
       expect(neverPushed).toContain(head.slice(0, 7));
       expect(neverPushed).not.toContain('Upstream unavailable');
+      let latest = head;
+      for (let index = 0; index < 24; index++) latest = commit(latest);
+      git(['update-ref', 'refs/heads/handoff', latest]);
+      const manyCommits = await withCodingWorkerStartBrief('Continue.', {
+        replacedWorker: { folder: root },
+      });
+      expect(manyCommits).toContain(latest.slice(0, 7));
+      expect(manyCommits).toContain('... and 5 more');
     } finally {
       process.env.PATH = previousPath;
       rmSync(root, { recursive: true, force: true });
@@ -71,7 +79,11 @@ describe('coding worker handoff', () => {
         replacedWorker: { folder: root },
       });
       expect(brief.length).toBeLessThanOrEqual(100_000);
-      expect(brief).toContain('truncated');
+      const changes = brief.split('Uncommitted changes:\n')[1]?.split('\nUnpushed commits')[0];
+      const lines = changes?.split('\n') ?? [];
+      const remaining = Number(lines.at(-1)?.match(/\.\.\. and (\d+) more/)?.[1]);
+      expect(remaining).toBeGreaterThan(0);
+      expect(lines.length - 1 + remaining).toBe(700);
       expect(brief).toContain(instruction);
     } finally {
       rmSync(root, { recursive: true, force: true });
