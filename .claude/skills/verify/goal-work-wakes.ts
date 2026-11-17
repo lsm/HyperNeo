@@ -93,6 +93,7 @@ try {
   await fire!(app!.jobQueue.getJob(review.pending_job_id)!);
   const reviewWake = mailbox(`schedule:${review.id}:${review.next_run_at}`);
   assert(reviewWake?.includes('Journal entries since the previous review'), 'Review wake did not reach Neo mailbox');
+  assert(!reviewWake.includes('goal.journal.list'), 'An empty review suggested paging');
   const reviewId = /runId (goal-review:[^, ]+)/.exec(reviewWake)?.[1];
   assert(reviewId, 'Review wake did not include its snapshot run id');
   assert((await call('goal.journal.append', { ownerSessionId, goalId: created.goal.id, runId: reviewId, done: 'Reviewed the period', effect: 'yes', worked: 'Examples' })).accepted);

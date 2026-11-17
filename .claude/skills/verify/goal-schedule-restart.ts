@@ -51,8 +51,14 @@ try {
     await fire(app!.jobQueue.getJob(row.pending_job_id)!);
   }
   Date.now = clock;
+  const pausedGoal = await call('goal.session.create', { ownerSessionId, title: 'Synthetic paused schedules', doneTest: 'Done' });
+  assert(pausedGoal.accepted);
+  const pausedRows = db.prepare('SELECT id FROM session_schedules WHERE source_id = ?').all(pausedGoal.goal.id) as { id: string }[];
+  assert.equal(pausedRows.length, 2);
+  for (const row of pausedRows) assert((await call('schedule.session.pause', { scheduleId: row.id })).ok);
   const before = await call('schedule.session.list', { target: { adapter: 'hyperneo', id: ownerSessionId } });
   assert.equal(before.schedules.filter((row: { status: string }) => row.status === 'done').length, 2);
+  assert.equal(before.schedules.filter((row: { status: string }) => row.status === 'paused').length, 2);
   evidence.before = before;
   await transport!.close();
   await app!.cleanup();
@@ -62,7 +68,7 @@ try {
   const after = await call('schedule.session.list', { target: { adapter: 'hyperneo', id: ownerSessionId } });
   evidence.after = after;
   assert.deepEqual(after.schedules.map((row: { id: string; status: string; pendingJobId: string | null }) => [row.id, row.status, row.pendingJobId]), before.schedules.map((row: { id: string; status: string; pendingJobId: string | null }) => [row.id, row.status, row.pendingJobId]));
-  console.log('PASS: two completed one-shot goal schedules remain done after daemon restart; no jobs are rearmed.');
+  console.log('PASS: completed one-shot and individually paused goal schedules remain settled after daemon restart.');
 } finally {
   Date.now = clock;
   writeFileSync(join(run, 'evidence/goal-schedule-restart.json'), JSON.stringify(evidence, null, 2));

@@ -12,3 +12,5 @@ one-shot cadences, and fires each through the daemon's registered handler.
 It restarts the daemon against the same synthetic database and reads
 `schedule.session.list` over RPC. Both schedule IDs must remain done without
 pending jobs. Inspect `goal-schedule-restart.json` and the wrapper exit status.
+The helper also pauses both schedules of another active goal over RPC and checks
+that neither pause is undone by the restart.

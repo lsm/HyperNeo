@@ -80,7 +80,7 @@ export class SessionGoalSchedules implements ScheduleSource {
       });
       if (goal.status === 'paused' && reviewRow.status === 'active')
         this.scheduler.pause(reviewRow);
-      if (goal.status === 'active' && reviewRow.status === 'paused')
+      if (goal.status === 'active' && reviewRow.status === 'paused' && !reconciling)
         this.scheduler.resume(reviewRow);
     }
     if (goal.status === 'completed' || goal.status === 'archived') {
@@ -103,7 +103,8 @@ export class SessionGoalSchedules implements ScheduleSource {
         createdBySession: goal.ownerSessionId,
       });
     if (goal.status === 'paused' && row.status === 'active') this.scheduler.pause(row);
-    if (goal.status === 'active' && row.status === 'paused') this.scheduler.resume(row);
+    if (goal.status === 'active' && row.status === 'paused' && !reconciling)
+      this.scheduler.resume(row);
   }
 
   reconcile(goal: SessionGoal): void {
@@ -206,6 +207,9 @@ Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
       return null;
     const snapshot = await this.goals.journalSinceReview(id);
     const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}:${snapshot.cursor}`;
-    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review (newest 20):\n${JSON.stringify(snapshot.entries)}\n${snapshot.earlier} earlier entries: read them with goal.journal.list {goalId: "${id}", before: "${snapshot.entries[0]?.id ?? ''}", limit: 20}, paging until all earlier entries are read.\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
+    const paging = snapshot.earlier
+      ? `\n${snapshot.earlier} earlier entries: read them with goal.journal.list {goalId: "${id}", before: "${snapshot.entries[0]!.id}", limit: 20}, paging until all earlier entries are read.`
+      : '';
+    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review (newest 20):\n${JSON.stringify(snapshot.entries)}${paging}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
   }
 }
