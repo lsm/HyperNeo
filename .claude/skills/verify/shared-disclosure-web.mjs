@@ -55,9 +55,10 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
     assert.equal(await article.locator('[data-publication-details]').count(),0);
   }
   const human = page.locator('article[data-public-entry]').filter({hasText:'Synthetic human message'});
-  await human.getByRole('button',{name:'Show more',exact:true}).click();
+  // The human-message toggle is screen-reader-only until focused, so drive it by keyboard.
+  await human.getByRole('button',{name:'Show more',exact:true}).focus(); await page.keyboard.press('Enter');
   await position(human.getByRole('button',{name:'Show less',exact:true}), 'human-expanded');
-  await human.getByRole('button',{name:'Show less',exact:true}).click();
+  await human.getByRole('button',{name:'Show less',exact:true}).focus(); await page.keyboard.press('Enter');
   if (width === 390) await page.getByRole('button', { name:/^Your work/ }).click();
   const card = await revealAsk(page, 'collapse-card');
   const labels=await card.locator('button[aria-expanded]').evaluateAll(nodes=>nodes.map(node=>({visible:node.textContent.replace(/[▴▾]/g,'').trim(),name:node.getAttribute('aria-label')??node.textContent.trim()})));
@@ -65,7 +66,8 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
   if(phase==='after') for(const control of labels) assert(control.name.toLocaleLowerCase().includes(control.visible.toLocaleLowerCase()),JSON.stringify(control));
   const row = card.locator('[data-ask-todo="collapse-card-1"]');
   const todoLabel=(expanded)=>`${phase==='after'?(expanded?'less — ':'more — '):''}${expanded?'Hide':'Show'} details: Synthetic step 1`;
-  await row.getByText('Synthetic step 1', {exact:true}).click();
+  // A whole-row toggle now overlays the step text; click where a user would, through the overlay.
+  await row.getByText('Synthetic step 1', {exact:true}).click({ force:true });
   const toggledByBody = await row.locator('[data-todo-details]').count();
   record({ name:'todo-body-click',toggledByBody });
   if (phase === 'after') assert.equal(toggledByBody,0);
@@ -79,10 +81,13 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
   await row.getByRole('button',{name:todoLabel(true)}).click();
   const details = card.locator('[data-ask-details-toggle]');
   await details.click();
-  await card.getByText('Synthetic historical question with details.',{exact:true}).waitFor();
+  // Details now open the ask's All dialog rather than expanding inside the card.
+  const dialog = page.getByRole('dialog');
+  await dialog.getByText('Synthetic historical question with details.',{exact:true}).waitFor();
   if(phase==='after') { const name=await details.getAttribute('aria-label'); assert(name.includes('less')); record({name:'expanded-history-accessible-name',accessibleName:name}); }
   await page.screenshot({path:`${dir}/question-history-${width}.png`});
-  await details.click();
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state:'detached'});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth));
   return observed;
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { listedAsks } from './queue-ask.mjs';
 
 export async function verifyWorkSearch(page, fixture, { evidence, touch = false }) {
   let reads=0, failRead=false;
@@ -53,7 +54,9 @@ export async function verifyWorkSearch(page, fixture, { evidence, touch = false 
   await capture('empty');
   await input.press('Escape');
   await input.waitFor({state:'detached'});
-  assert.equal(await work.locator('[data-ask]').count(),fixture.cases.length);
+  assert.equal((await listedAsks(work)).length,fixture.cases.length);
+  // Opening queue states reads asks; let those finish before arming the failure.
+  for(let seen=-1;seen!==reads;){seen=reads;await page.waitForTimeout(500);}
   failRead=true;
   await use(work.getByRole('button',{name:'Search work',exact:true}));
   await input.fill('needle');

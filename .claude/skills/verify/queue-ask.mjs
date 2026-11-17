@@ -21,3 +21,14 @@ export async function revealAsk(page, askId) {
   await card.first().waitFor();
   return card;
 }
+
+export async function listedAsks(scope) {
+  const ids = new Set(await scope.locator('article[data-ask]:visible').evaluateAll((all) => all.map((card) => card.getAttribute('data-ask'))));
+  const queue = scope.locator('[data-human-queue]:visible');
+  if (await queue.count())
+    for (const state of await queue.locator('[data-queue-state]').all()) {
+      await state.click();
+      for (const id of await queue.locator('[data-queue-ask]').evaluateAll((all) => all.map((group) => group.getAttribute('data-queue-ask')))) ids.add(id);
+    }
+  return [...ids];
+}

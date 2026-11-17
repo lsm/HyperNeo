@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
-import { revealAsk } from './queue-ask.mjs';
+import { listedAsks, revealAsk } from './queue-ask.mjs';
 
 const [port, directory] = process.argv.slice(2);
 assert(port && directory, 'usage: node card-topics-web.mjs <port> <run-dir>');
@@ -36,16 +36,7 @@ try {
     await page.locator('[data-topic-chips]').waitFor({ timeout: 15000 });
   };
   const chips = () => page.locator('[data-topic-chips] button').allInnerTexts();
-  const cards = async () => {
-    const ids = new Set(await page.locator('article[data-ask]:visible').evaluateAll((all) => all.map((card) => card.getAttribute('data-ask'))));
-    const queue = page.locator('[data-human-queue]:visible');
-    if (await queue.count())
-      for (const state of await queue.locator('[data-queue-state]').all()) {
-        await state.click();
-        for (const id of await queue.locator('[data-queue-ask]').evaluateAll((all) => all.map((group) => group.getAttribute('data-queue-ask')))) ids.add(id);
-      }
-    return [...ids];
-  };
+  const cards = () => listedAsks(page);
   const card = (id) => revealAsk(page, id);
   await open();
   result.chips = (await chips()).map((text) => text.replace(/\s+/g, ' ').trim());
