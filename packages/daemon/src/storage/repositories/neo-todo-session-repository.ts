@@ -710,7 +710,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
-              json_extract(t.named, '$.session') IS NOT NULL AS humanNamed,
+              EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+                WHERE json_extract(ot.named, '$.session') IS NOT NULL
+                  AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
+              ) AS humanNamed,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
                 WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
