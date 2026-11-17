@@ -206,6 +206,55 @@ describe('SessionsSidebar', () => {
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
   });
 
+  it('archives every open chat after confirmation and then removes the project', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('open-1', 'Review one', '/workspace/neo-read'),
+      createMockSession('open-2', 'Review two', '/workspace/neo-read'),
+      createMockSession('old', 'Old review', '/workspace/neo-read', 'archived'),
+    ];
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/workspace/neo-read')]);
+    render(<SessionsSidebar />);
+    await waitFor(() => expect(mockGetWorkspaceHistory).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    expect(screen.getByText(/This archives 2 chats in this project/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+    expect(mockArchiveSession).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockRemoveWorkspaceFromHistory).toHaveBeenCalledWith('/workspace/neo-read')
+    );
+    expect(mockArchiveSession.mock.calls).toEqual([['open-1'], ['open-2']]);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the project when a chat needs its own archive decision', async () => {
+    mockSessionsSignal.value = [
+      createMockSession('clean', 'Clean', '/workspace/neo-read'),
+      createMockSession('dirty', 'Dirty', '/workspace/neo-read'),
+    ];
+    mockArchiveSession
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, requiresConfirmation: true, commitStatus: {} });
+    render(<SessionsSidebar />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project neo-read' }));
+    fireEvent.click(screen.getByTestId('project-remove-confirm'));
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith(
+        '1 chat still needs to be archived one by one before the project can be removed'
+      )
+    );
+    expect(mockArchiveSession).toHaveBeenCalledTimes(2);
+    expect(mockRemoveWorkspaceFromHistory).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('project-remove-confirm')).toBeNull();
+  });
+
   it('renders the empty chats state', () => {
     render(<SessionsSidebar />);
 

@@ -30,6 +30,7 @@ import { SessionProjectGroup } from '../components/SessionProjectGroup.tsx';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { CloneChoiceDialog } from '../components/CloneChoiceDialog.tsx';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
 
 interface SessionsSidebarProps {
   onSessionSelect?: () => void;
@@ -39,6 +40,14 @@ interface SessionsSidebarProps {
 function lastActive(session: Session): number {
   const time = new Date(session.lastActiveAt).getTime();
   return Number.isNaN(time) ? 0 : time;
+}
+
+function unarchived(sessionsList: Session[]): Session[] {
+  return sessionsList.filter((session) => session.status !== 'archived');
+}
+
+function chatCount(count: number): string {
+  return `${count} ${count === 1 ? 'chat' : 'chats'}`;
 }
 
 interface ProjectGroup {
@@ -127,6 +136,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     sessionId: string;
     clones: CloneSummary[];
   } | null>(null);
+  const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
+  const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -144,6 +155,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
   const hasContent = sessionsList.length > 0 || projects.length > 0;
   const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
+  const removeProjectTarget = projects.find((project) => project.path === removeProjectPath);
 
   const handleSessionClick = (sessionId: string) => {
     navigateToSession(sessionId);
@@ -218,6 +230,29 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     } finally {
       workspaceHistoryVersionSignal.value += 1;
     }
+  };
+
+  const handleConfirmRemoveProject = async () => {
+    if (!removeProjectTarget) return;
+    setRemoveProjectBusy(true);
+    let kept = 0;
+    for (const session of unarchived(removeProjectTarget.sessions)) {
+      try {
+        const result = await archiveSession(session.id);
+        if (!result.success) kept += 1;
+      } catch {
+        kept += 1;
+      }
+    }
+    setRemoveProjectBusy(false);
+    setRemoveProjectPath(null);
+    if (kept > 0) {
+      toast.error(
+        `${chatCount(kept)} still ${kept === 1 ? 'needs' : 'need'} to be archived one by one before the project can be removed`
+      );
+      return;
+    }
+    await handleRemoveProject(removeProjectTarget.folders);
   };
 
   const handleArchive = async (sessionId: string, children?: CloneChildrenChoice) => {
@@ -379,10 +414,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
-                  onRemove={
-                    project.sessions.length === 0
-                      ? () => handleRemoveProject(project.folders)
-                      : undefined
+                  onRemove={() =>
+                    unarchived(project.sessions).length === 0
+                      ? handleRemoveProject(project.folders)
+                      : setRemoveProjectPath(project.path)
                   }
                 />
               ))}
@@ -420,6 +455,19 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           busy={archiveBusy}
           onChoose={(choice) => handleArchive(cloneChoice.sessionId, choice)}
           onCancel={() => setCloneChoice(null)}
+        />
+      )}
+
+      {removeProjectTarget && (
+        <ConfirmModal
+          isOpen
+          onClose={() => setRemoveProjectPath(null)}
+          onConfirm={handleConfirmRemoveProject}
+          title={`Remove ${removeProjectTarget.name}?`}
+          message={`This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`}
+          confirmText="Archive chats and remove"
+          confirmTestId="project-remove-confirm"
+          isLoading={removeProjectBusy}
         />
       )}
 
