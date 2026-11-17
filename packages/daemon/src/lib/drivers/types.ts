@@ -134,6 +134,7 @@ export const WorkRejectionSchema = z.enum([
   'busy',
   'human_only',
   'live_todo',
+  'not_started_by_us',
   'todo_required',
 ]);
 

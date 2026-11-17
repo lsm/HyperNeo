@@ -21,11 +21,11 @@ type Invoke = (
 type Released = { released: unknown };
 type Kept = {
   kept:
-    | 'not_started_by_todo'
     | 'named_by_human'
     | 'bound_to_live_todo'
     | 'remote_worker'
-    | 'worker_folder_unknown';
+    | 'worker_folder_unknown'
+    | 'not_started_by_us';
 };
 type Folder = { ref: WorkRef; directory: string | null; dirty: boolean; unpushed: number };
 type Pending = { pending: string };
@@ -38,7 +38,6 @@ const daemon: OperationCaller = {
 };
 
 export function planNeoTodoRelease(row: FinishedWorker): { value: WorkRef } | { reason: Kept } {
-  if (row.target.verb !== 'start') return { reason: { kept: 'not_started_by_todo' } };
   if (row.humanNamed) return { reason: { kept: 'named_by_human' } };
   if (row.shared) return { reason: { kept: 'bound_to_live_todo' } };
   if (row.ref.daemon) return { reason: { kept: 'remote_worker' } };
@@ -81,8 +80,14 @@ export function readNeoTodoArchive(
 ): { value: Released } | { reason: Pending } {
   const result =
     outcome.kind === 'completed'
-      ? (outcome.value as { ok?: boolean; value?: { worktree?: { reason?: string } } })
+      ? (outcome.value as {
+          ok?: boolean;
+          reason?: string;
+          value?: { worktree?: { reason?: string } };
+        })
       : null;
+  if (result?.reason === 'not_started_by_us')
+    return { value: { released: { kept: 'not_started_by_us' } } };
   const kept = result?.value?.worktree?.reason;
   return result?.ok && kept !== WORKTREE_IN_USE && !kept?.startsWith(WORKTREE_UNVERIFIED)
     ? { value: { released: result } }
@@ -105,11 +110,18 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(
-    async (ref: WorkRef, sessions: NeoTodoSessionRepository) =>
-      (await sessions.write('fenceRelease', ref, Date.now()))
+    async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
+      const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
+      if (fence === 'not_started_by_us') {
+        const kept: Kept = { kept: 'not_started_by_us' };
+        await sessions.write('recordReleased', row.todoId, kept);
+        return { reason: kept };
+      }
+      return fence === 'fenced'
         ? { value: ref }
-        : { reason: { kept: 'bound_to_live_todo' as const } },
-    ['release', 'sessions'],
+        : { reason: { kept: 'bound_to_live_todo' as const } };
+    },
+    ['release', 'row', 'sessions'],
     'result:release'
   )
   .pipe(
