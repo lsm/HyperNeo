@@ -9,6 +9,7 @@ import { todoEvidenceFile, workerWorkLocations } from '../../../packages/daemon/
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import { recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -49,6 +50,7 @@ try {
       createdAt: now, lastActiveAt: now, status: key === 'live' || key === 'todo' ? 'active' : 'archived',
       config: { model: 'claude-sonnet-4-5-20250929', maxTokens: 8192, temperature: 1 },
       metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+    if (key === 'todo' || key === 'unsaved') recordWorkerStarted(raw, { adapter: 'hyperneo', id });
     if (key === 'todo') todoWorker = id;
   }
   const todos = new NeoAskTodoRepository(raw);
@@ -88,11 +90,11 @@ try {
   evidence.first = await rpc();
   const first = evidence.first as { reply: { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> } };
   assert.deepEqual(first.reply.removed.toSorted((a, b) => a.directory.localeCompare(b.directory)), [
-    { directory: trees.clean, reason: 'session archived' },
     { directory: trees.todo, reason: 'todo done' },
   ].toSorted((a, b) => a.directory.localeCompare(b.directory)));
   assert(first.reply.kept.error.includes(broken), 'listing failure is retained without aborting the sweep');
-  assert.equal(existsSync(trees.clean), false, JSON.stringify(evidence.first));
+  assert.equal(existsSync(trees.clean), true, JSON.stringify(evidence.first));
+  assert(first.reply.kept.not_started_by_us.includes(trees.clean));
   assert.equal(existsSync(trees.todo), false, JSON.stringify(evidence.first));
   assert(raw.prepare('SELECT released_at FROM work_started_sessions WHERE id = ?').get(todoWorker));
   assert(raw.prepare("SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'released'").get(todo.id));
@@ -103,6 +105,8 @@ try {
   assert(!receipt.includes(humanCodex));
   assert(!receipt.includes(humanClaude));
   evidence.second = await rpc();
+  assert.equal(existsSync(trees.clean), true);
+  assert((evidence.second as typeof first).reply.kept.not_started_by_us.includes(trees.clean));
   raw.prepare("UPDATE job_queue SET run_at = ? WHERE status = 'pending'").run(Date.now() + 2 * 86400000);
   const job = app.jobQueue.enqueue({ queue: 'work.cleanup.sweep', payload: {}, runAt: Date.now() });
   await app.jobProcessor.tick();
@@ -117,8 +121,8 @@ try {
   evidence.retainedEvidence = retainedEvidence;
   evidence.mailbox = raw.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes'").all();
   assert(JSON.stringify(evidence.mailbox).includes('Work cleanup:'), 'cleanup reaches the attention digest');
-  evidence.retained = [trees.unsaved, trees.live, unknown, humanCodex, humanClaude].length;
-  console.log('PASS: RPC removed 2 finished worktrees; retained 5 live, unsaved, unknown or human folders; attention digest delivered; repeat sweep and daily job completed with one next-day run scheduled.');
+  evidence.retained = [trees.clean, trees.unsaved, trees.live, unknown, humanCodex, humanClaude].length;
+  console.log('PASS: RPC removed one finished worker worktree; retained an unmarked archived worktree and 5 live, unsaved, unknown or human folders; attention digest delivered; repeat sweep and daily job completed with one next-day run scheduled.');
 } finally {
   await app.cleanup();
   writeFileSync(join(run, 'evidence/work-cleanup-sweep.json'), JSON.stringify(evidence, null, 2));
