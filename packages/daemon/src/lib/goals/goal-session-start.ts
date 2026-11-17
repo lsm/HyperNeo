@@ -7,7 +7,7 @@ import {
 type Deps = Pick<
   SpawnSessionCloneDependencies,
   'isGitRepo' | 'createSession' | 'addSpaceSession' | 'attachSpaceTools'
->;
+> & { readonly releaseSession: (sessionId: string) => Promise<void> };
 
 export async function startGoalSession(parent: Session, title: string, deps: Deps) {
   const params = await buildCloneParams(parent, { title }, deps);
@@ -21,8 +21,13 @@ export async function startGoalSession(parent: Session, title: string, deps: Dep
     ),
   });
   if (params.spaceId) {
-    await deps.addSpaceSession(params.spaceId, sessionId);
-    await deps.attachSpaceTools(sessionId);
+    try {
+      await deps.addSpaceSession(params.spaceId, sessionId);
+      await deps.attachSpaceTools(sessionId);
+    } catch (error) {
+      await deps.releaseSession(sessionId);
+      throw error;
+    }
   }
   return sessionId;
 }

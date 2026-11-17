@@ -25,6 +25,9 @@ export function registerSessionGoalOperations(
       !session.metadata?.movedUnderParent
     );
   };
+  const releaseSession = async (sessionId: string) => {
+    await context.deps.sessionManager.archiveSessionResources(sessionId, 'work_archive');
+  };
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(context.deps.db.getDatabase()),
@@ -51,11 +54,10 @@ export function registerSessionGoalOperations(
         addSpaceSession: async (spaceId, sessionId) =>
           context.sessionSpace?.addSession(spaceId, sessionId),
         attachSpaceTools: async (sessionId) => context.sessionSpace?.attachTools(sessionId),
+        releaseSession,
       });
     },
-    releaseSession: async (sessionId) => {
-      await context.deps.sessionManager.archiveSessionResources(sessionId, 'work_archive');
-    },
+    releaseSession,
     audit: (caller, toolName, summary) =>
       audit.createEntry({
         agentName: caller.agentName,
