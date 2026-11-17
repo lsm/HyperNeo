@@ -37,8 +37,11 @@ Goals get no exception. An ask opened in a goal cycle follows the same rule: wit
 
 An ask is **accepted** when it has a `human` or `relayed` source, or when it has a `neo` source and the human accepted its card.
 
+Asks that existed before this change have no source rows. They count as accepted, so their new todos and sessions keep working. No data is rewritten. The fact step marks an ask as existing before the change when it has no source rows and was created before the migration that adds the table. The migration records its own time for this.
+
 **3. New todos and sessions trace to an accepted ask.**
 
+- `neo.ask.open` can also record todos inline and start them. The admission check runs before its write step, so a `neo` ask that comes with todos is refused as a whole. The proposal is opened without todos.
 - `neo.todo.add` refuses a todo whose ask is not accepted. A proposal holds only its request until the human answers.
 - `work.start` needs a todo whose ask is accepted. A start with no todo, with a stale todo, or with a proposal's todo is refused.
 - Every refusal names what is missing.
@@ -80,7 +83,9 @@ The new checks are added as steps in these pipelines, not as checks beside them.
   - a relayed source with no quote of the human's words is refused;
   - a relayed card answer from any session is accepted when it has where, when and words, with no allow-list;
   - a todo whose ask is an open proposal is refused;
-  - a todo whose ask is accepted passes.
+  - a todo whose ask is accepted passes;
+  - an ask from before the change, with no source rows, passes;
+  - `neo.ask.open` with source `neo` and inline todos is refused, and nothing is written.
 - Neo opens an ask with source `neo`. The ask is not accepted and a card exists. Adding a todo to it is refused. After the card is accepted, a todo can be added and started. Today the todo is added and starts at once.
 - `work.start` with no `todoId` is refused. Today it starts.
 - An ask that names three human messages records three source rows.
