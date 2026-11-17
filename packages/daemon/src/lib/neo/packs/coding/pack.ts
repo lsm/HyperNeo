@@ -117,7 +117,12 @@ export function createCodingPack(deps: {
     prepareMerge: prepareCodingMerge,
     operations: [
       createCodingHumanMergeOperation(undefined, mergeSweep.invalidate),
-      createCodingRetryMergeOperation(deps.database, deps.prLedger),
+      createCodingRetryMergeOperation(
+        deps.database,
+        deps.prLedger,
+        undefined,
+        mergeSweep.invalidate
+      ),
       createCodingPrFileOperation(deps.database),
     ],
     tracker: createCodingIssueTracker({
@@ -246,8 +251,8 @@ export function createCodingPack(deps: {
         }),
       };
     },
-    workerTarget: (todo, target, status) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status, deps.lines),
+    workerTarget: (todo, target, status, askSetting) =>
+      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting, deps.lines),
     workerTargetRefused: (todo) =>
       gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
         todoId: todo.id,
