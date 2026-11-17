@@ -2,6 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { readStartedWork } from '../../storage/work-started-sessions.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -46,15 +47,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
       'live_todo',
       `Todo "${todo.title}" is still working in this session; finish or drop it first.`
     );
-  if (
-    !isLocalUser(caller) &&
-    !db
-      .getDatabase()
-      .prepare(
-        "SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND role = 'worker'"
-      )
-      .get(ref.adapter, ref.id)
-  )
+  if (!isLocalUser(caller) && readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
     return reject('not_started_by_us', 'This session was not started by the daemon.');
   return null;
 }
