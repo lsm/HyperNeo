@@ -462,6 +462,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
     workerNameSource: (read) => {
       neoService.workerNames = read;
     },
+    workAdapters: (read) => {
+      neoService.workAdapters = read;
+    },
     goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
     executionPreparations: () => neoService.packs(),
   };

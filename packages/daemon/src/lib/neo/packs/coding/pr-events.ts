@@ -12,7 +12,13 @@ import {
   type CodingPrTransition,
   planCodingLedgerTurnOwner,
 } from './pr-ledger.ts';
-import { CODING_MANUAL_MERGE_NEXT_STEP, codingPrUrl, type CodingSweepDeps } from './pr-sweep.ts';
+import {
+  CODING_MANUAL_MERGE_NEXT_STEP,
+  codingDeliveryKey,
+  codingReviewKey,
+  codingPrUrl,
+  type CodingSweepDeps,
+} from './pr-sweep.ts';
 import {
   codingPrMayBeInRunningTurn,
   planCodingUnclaimedPrs,
@@ -25,10 +31,16 @@ const log = new Logger('NeoPrSweep');
 const head = (row: CodingPrTransition) => row.head.slice(0, 7);
 const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}"`;
 
-export function planCodingPrEvent(row: CodingPrTransition): { key: string; text: string } | null {
+export function planCodingPrEvent(
+  row: CodingPrTransition
+): { key: string; text: string; findings?: string[] } | null {
+  const findings = row.state === 'changes_requested' ? (row.findings ?? []) : [];
   const owner = (text: string) => ({
-    key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
+    key: codingDeliveryKey(
+      `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(findings)}`
+    ),
     text: `${pr(row)} ${text}`,
+    ...(findings.length ? { findings } : {}),
   });
   if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
   if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
@@ -169,7 +181,7 @@ export async function deliverCodingPrEvents(
       if (!owner) continue;
       const told = event
         ? await deps
-            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row))
+            .tell(owner, event.key, event.text, codingPrUrl(deps.host, row), event.findings)
             .catch(() => false)
         : true;
       if (told) await repo.acceptEvent(row, owner);

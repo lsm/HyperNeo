@@ -117,6 +117,32 @@ describe('rankLines', () => {
     });
   });
 
+  test('a usage window whose reset has passed is not current evidence', () => {
+    const reset = {
+      result: {
+        supported: true as const,
+        provider: 'x',
+        windows: [
+          { label: 'week', used: 100, limit: 100, resetAt: new Date(NOW - 1).toISOString() },
+        ],
+      },
+      readAt: NOW - 60_000,
+    };
+    expect(rankLines(input({ candidates: [A], usage: { anthropic: reset } })).ranked).toEqual([
+      { line: A, reason: 'usage unknown' },
+    ]);
+  });
+
+  test('a repository route or rule applies whatever the case of the repository name', () => {
+    const scope = { repo: 'Owner/Repo' };
+    const routes = [{ kind: 'coding.write', repos: ['owner/repo'], lines: [C] }];
+    expect(rankLines(input({ scope, prefs: { routes, rules: [] } })).ranked[0].line).toEqual(C);
+    const rules = [{ line: A, never: { repos: ['owner/REPO'] } }];
+    expect(rankLines(input({ scope, prefs: { routes: [], rules } })).skipped).toEqual([
+      { line: A, reason: 'excluded by a rule' },
+    ]);
+  });
+
   test('is exhausted only when every candidate is skipped', () => {
     const ranking = rankLines(input({ availability: {} }));
     expect(ranking.ranked).toEqual([]);
@@ -224,6 +250,251 @@ describe('createModelRoutingPack', () => {
     expect((await pack.rankLines!('coding.write', [A, B, C], {})).ranked).toEqual([
       { line: C, reason: 'usage unknown' },
     ]);
+  });
+
+  test('a provider whose usage or sign-in read hangs cannot block ranking', async () => {
+    const never = () => new Promise<never>(() => {});
+    const providers: Record<string, Provider> = {
+      anthropic: { ...provider(true, null), getUsage: never } as unknown as Provider,
+      'anthropic-codex': provider(true, 10),
+      kimi: { ...provider(true, null), isAvailable: never } as unknown as Provider,
+    };
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: (id) => providers[id],
+      now: () => NOW,
+      readDeadlineMs: 20,
+    });
+    expect(await pack.rankLines!('coding.write', [A, B, C], {})).toEqual({
+      ranked: [{ line: A, reason: 'usage unknown' }, { line: B }],
+      skipped: [{ line: C, reason: 'availability unknown' }],
+      exhausted: false,
+    });
+  });
+
+  test('usage is read in parallel and a fresh reading is not read again', async () => {
+    let reads = 0;
+    let open = 0;
+    let most = 0;
+    const counted = {
+      ...provider(true, null),
+      getUsage: async () => {
+        reads += 1;
+        open += 1;
+        most = Math.max(most, open);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        open -= 1;
+        return { supported: true, provider: 'x', windows: [] };
+      },
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => counted,
+      now: () => NOW,
+    });
+    await pack.rankLines!('coding.write', [A, B, C], {});
+    await pack.rankLines!('coding.write', [A, B, C], {});
+    expect({ reads, most }).toEqual({ reads: 3, most: 3 });
+  });
+
+  test('a usage read that finishes after the deadline is still kept, and is read once', async () => {
+    let reads = 0;
+    const slow = {
+      ...provider(true, null),
+      getUsage: async () => {
+        reads += 1;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return {
+          supported: true,
+          provider: 'x',
+          windows: [{ label: 'week', used: 100, limit: 100, resetAt: null }],
+        };
+      },
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => slow,
+      now: () => NOW,
+      readDeadlineMs: 10,
+    });
+    const [first, overlapping] = await Promise.all([
+      pack.rankLines!('coding.write', [A], {}),
+      pack.rankLines!('coding.write', [A], {}),
+    ]);
+    expect([first.ranked, overlapping.ranked]).toEqual([
+      [{ line: A, reason: 'usage unknown' }],
+      [{ line: A, reason: 'usage unknown' }],
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    expect(reads).toBe(1);
+  });
+
+  test('a cached reading is read again once its window resets', async () => {
+    let clock = NOW;
+    const readings = [100, 0];
+    const resetting = {
+      ...provider(true, null),
+      getUsage: async () => ({
+        supported: true,
+        provider: 'x',
+        windows: [
+          {
+            label: 'week',
+            used: readings.shift() ?? 0,
+            limit: 100,
+            resetAt: new Date(NOW + 60_000).toISOString(),
+          },
+        ],
+      }),
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => resetting,
+      now: () => clock,
+    });
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    clock = NOW + 61_000;
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      ranked: [{ line: A }],
+      skipped: [],
+    });
+    expect(readings).toEqual([]);
+  });
+
+  test('a usage read that never settles is given up, and a late old read cannot overwrite a newer one', async () => {
+    let clock = NOW;
+    let settleFirst: (value: ProviderUsageResult) => void = () => {};
+    const window = (used: number) => ({
+      supported: true as const,
+      provider: 'x',
+      windows: [{ label: 'week', used, limit: 100, resetAt: null }],
+    });
+    const calls = [
+      () => new Promise<ProviderUsageResult>((resolve) => (settleFirst = resolve)),
+      async () => window(100),
+    ];
+    const hung = {
+      ...provider(true, null),
+      getUsage: () => (calls.shift() ?? (async () => window(100)))(),
+    } as unknown as Provider;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => hung,
+      now: () => clock,
+      readDeadlineMs: 10,
+    });
+    expect((await pack.rankLines!('coding.write', [A], {})).ranked).toEqual([
+      { line: A, reason: 'usage unknown' },
+    ]);
+    clock = NOW + USAGE_STALE_MS + 1;
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    settleFirst(window(0));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await pack.rankLines!('coding.write', [A], {})).toMatchObject({
+      skipped: [{ line: A, reason: 'usage exhausted' }],
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test('a manual-retry or sign-in hold keeps its line skipped after retryAt passes, while usage is unknown', async () => {
+    const seed = (id: string, model: string, state: Record<string, unknown>) =>
+      db
+        .prepare(
+          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, processing_state)
+           VALUES (?, 't', '/w', '2026-11-16', '2026-11-16', 'active', ?, '{}', ?)`
+        )
+        .run(
+          id,
+          JSON.stringify({ provider: 'anthropic', model }),
+          JSON.stringify({ status: 'rate_limit_cooldown', retryCount: 0, maxRetries: 0, ...state })
+        );
+    seed('manual', 'opus', { retryAt: NOW - 60_000, reason: 'limit', manualRetry: true });
+    seed('login', 'sonnet', { retryAt: NOW - 60_000, reason: 'login' });
+    seed('timed', 'haiku', { retryAt: NOW - 60_000, reason: 'limit' });
+    const lines = ['opus', 'sonnet', 'haiku'].map((model) => ({ ...A, model }));
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => provider(true, null),
+      now: () => NOW,
+    });
+    expect(await pack.rankLines!('coding.write', lines, {})).toEqual({
+      ranked: [{ line: lines[2], reason: 'usage unknown' }],
+      skipped: [
+        { line: lines[0], reason: 'held (limit) until the session is retried' },
+        { line: lines[1], reason: 'held (login) until the session is retried' },
+      ],
+      exhausted: false,
+    });
+  });
+
+  test('a provider replaced under the same id, or signed in to another account, is read again', async () => {
+    const reading = (used: number, email: string) =>
+      ({
+        isAvailable: async () => true,
+        getAuthStatus: async () => ({ isAuthenticated: true, user: { email } }),
+        getUsage: async () => ({
+          supported: true,
+          provider: 'x',
+          windows: [{ label: 'week', used, limit: 100, resetAt: null }],
+        }),
+      }) as unknown as Provider;
+    let current = reading(100, 'first@example.com');
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => current,
+      now: () => NOW,
+    });
+    expect((await pack.rankLines!('coding.write', [A], {})).skipped).toEqual([
+      { line: A, reason: 'usage exhausted' },
+    ]);
+    current = reading(0, 'first@example.com');
+    expect((await pack.rankLines!('coding.write', [A], {})).ranked).toEqual([{ line: A }]);
+    const account = current as unknown as { getAuthStatus: () => Promise<unknown> };
+    const exhausted = reading(100, 'second@example.com') as unknown as {
+      getUsage: () => Promise<unknown>;
+    };
+    account.getAuthStatus = async () => ({
+      isAuthenticated: true,
+      user: { email: 'second@example.com' },
+    });
+    (current as unknown as { getUsage: () => Promise<unknown> }).getUsage = exhausted.getUsage;
+    expect((await pack.rankLines!('coding.write', [A], {})).skipped).toEqual([
+      { line: A, reason: 'usage exhausted' },
+    ]);
+  });
+
+  test('a late usage read for a replaced provider cannot repopulate the cache', async () => {
+    let settleOld: (value: ProviderUsageResult) => void = () => {};
+    const slow = {
+      isAvailable: async () => true,
+      getAuthStatus: async () => ({ isAuthenticated: true }),
+      getUsage: () => new Promise<ProviderUsageResult>((resolve) => (settleOld = resolve)),
+    } as unknown as Provider;
+    const fresh = provider(true, 0);
+    let current = slow;
+    const pack = createModelRoutingPack({
+      database: () => db,
+      provider: () => current,
+      now: () => NOW,
+      readDeadlineMs: 10,
+    });
+    await pack.rankLines!('coding.write', [A], {});
+    current = fresh;
+    expect((await pack.rankLines!('coding.write', [A], {})).ranked).toEqual([{ line: A }]);
+    settleOld({
+      supported: true,
+      provider: 'x',
+      windows: [{ label: 'week', used: 100, limit: 100, resetAt: null }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect((await pack.rankLines!('coding.write', [A], {})).ranked).toEqual([{ line: A }]);
   });
 
   test('ignores holds left on archived and ended sessions', async () => {

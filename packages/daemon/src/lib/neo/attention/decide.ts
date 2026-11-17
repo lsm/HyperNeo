@@ -84,6 +84,7 @@ export const NEO_ATTENTION_KINDS: readonly NeoAttentionKind[] = [
         ? `Todo "${facts.title}" (${subject.id}) is a request from session ${facts.requestFrom} waiting for your answer. Answer it by closing this todo with neo.todo.done or neo.todo.remove and a reason; the daemon sends that reason to the requester.`
         : `Todo "${facts.title}" (${subject.id}) needs your next step: ${NEO_STEP[facts.reason as NeoStepReason](String(facts.detail ?? ''))}`,
   },
+  { id: 'todo.line_moved', render: carried, decide: always('digest') },
   { id: 'todo.stalled', render: carried, decide: always('wake'), ladder: [4 * HOUR] },
   { id: 'ask.idle', render: carried, decide: always('digest'), ladder: [DAY] },
   { id: 'worker.session_error', render: carried, decide: always('wake') },
