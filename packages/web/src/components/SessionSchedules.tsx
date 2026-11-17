@@ -246,9 +246,15 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
               )}
             </div>
             <p>
-              {row.cadence.kind === 'every'
-                ? t('schedules.every', { minutes: row.cadence.everyMs / 60000 })
-                : `${row.cadence.cron} · ${row.cadence.timezone}`}
+              {row.cadence.kind === 'every' ? (
+                t('schedules.every', { minutes: row.cadence.everyMs / 60000 })
+              ) : row.cadence.kind === 'once' ? (
+                <>
+                  {t('schedules.once')}: <RunTime at={row.cadence.at} />
+                </>
+              ) : (
+                `${row.cadence.cron} · ${row.cadence.timezone}`
+              )}
             </p>
             <p>{factLabel('status', row.status)}</p>
             <p>

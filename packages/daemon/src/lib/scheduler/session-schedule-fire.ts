@@ -116,7 +116,9 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         const current = scheduler.repo.get(schedule.id);
         if (current?.status !== 'active' || current.pendingJobId !== schedule.pendingJobId)
           return { outcome: 'superseded' };
-        const messageId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
+        const occurrence =
+          schedule.cadence.kind === 'once' ? schedule.cadence.at : schedule.nextRunAt;
+        const messageId = `schedule:${schedule.id}:${occurrence}`;
         const delivery = await deps.deliver(schedule, messageId, text);
         if (delivery === 'target_gone') return finish(schedule, 'target_gone').reason;
         if (delivery === 'unconfirmed')
