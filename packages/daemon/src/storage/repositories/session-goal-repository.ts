@@ -223,21 +223,15 @@ export class SessionGoalRepository {
       .run(JSON.stringify(config), id);
   }
 
-  inTransaction<T>(work: () => T): T {
-    return this.db.transaction(work)();
-  }
-
   recentReviewEffects(
     id: string,
     after: string | undefined,
     limit: number
   ): { id: string; effect: string }[] {
-    return this.db
-      .prepare(`SELECT id, effect FROM goal_journal WHERE goal_id = ?
-      AND run_id LIKE 'goal-review:%' AND rowid > COALESCE(
-        (SELECT rowid FROM goal_journal WHERE goal_id = ? AND id = ?), 0)
-      ORDER BY rowid DESC LIMIT ?`)
-      .all(id, id, after ?? null, limit) as { id: string; effect: string }[];
+    return this.listJournal(id, null, limit, after ?? null).map(({ id, effect }) => ({
+      id,
+      effect,
+    }));
   }
 
   recordFacts(id: string, lines: readonly string[]): void {
@@ -253,15 +247,29 @@ export class SessionGoalRepository {
     return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
   }
 
-  listJournal(goalId: string, before: string | null, limit: number): GoalJournalEntry[] {
+  listJournal(
+    goalId: string,
+    before: string | null,
+    limit: number,
+    reviewsAfter?: string | null
+  ): GoalJournalEntry[] {
     return (
       this.db
         .prepare(
-          `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
+          reviewsAfter !== undefined
+            ? `${JOURNAL_SELECT} WHERE goal_id = ?
+           AND run_id LIKE 'goal-review:%' AND rowid > COALESCE(
+             (SELECT rowid FROM goal_journal WHERE goal_id = ? AND id = ?), 0)
+           ORDER BY rowid DESC LIMIT ?`
+            : `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
              (SELECT created_at, rowid FROM goal_journal WHERE id = ?))
            ORDER BY created_at DESC, rowid DESC LIMIT ?`
         )
-        .all(goalId, before, before, limit) as JournalRow[]
+        .all(
+          goalId,
+          ...(reviewsAfter !== undefined ? [goalId, reviewsAfter] : [before, before]),
+          limit
+        ) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 

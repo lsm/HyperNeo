@@ -177,6 +177,30 @@ describe('goal work wakes', () => {
     expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
   });
 
+  test('a failed human question rolls back the review and keeps the schedules active', async () => {
+    const goal = await create({ noEffectReviewLimit: 1 });
+    const open = spyOn(NeoAskTodoRepository.prototype, 'openAsk').mockImplementationOnce(() => {
+      throw new Error('question storage unavailable');
+    });
+    try {
+      await expect(
+        call('goal.journal.append', {
+          goalId: goal.id,
+          runId: 'goal-review:synthetic:1',
+          done: 'Reviewed',
+          effect: 'no',
+          worked: 'Explore',
+        })
+      ).rejects.toThrow('question storage unavailable');
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toEqual([]);
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+      expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('active');
+      expect(new NeoAskTodoRepository(db).listGoalAsks(goal.id)).toEqual([]);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   test('review wakes carry new journal entries and note on every due time', async () => {
     const goal = await create();
     const review = () => scheduler.repo.getBySource('goal_review', goal.id)!;

@@ -473,7 +473,7 @@ export function createSessionGoalOperations({
         if (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
           await ensureNeo?.();
         audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
-        const result = goals.inTransaction(() => {
+        const result = schedules.inTransaction(() => {
           const entry = goals.appendJournal(
             goal.id,
             caller.sessionId ?? null,

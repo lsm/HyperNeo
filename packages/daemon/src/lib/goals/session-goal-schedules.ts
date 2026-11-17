@@ -132,6 +132,10 @@ export class SessionGoalSchedules implements ScheduleSource {
     return this.goals.get(id)?.dailyRunLimit ?? null;
   }
 
+  inTransaction<T>(work: () => T): T {
+    return this.asks.inTransaction(work);
+  }
+
   reviewResult(goal: SessionGoal): void {
     if (goal.status !== 'active') return;
     const config = this.goals.wakeSchedule(goal.id);
