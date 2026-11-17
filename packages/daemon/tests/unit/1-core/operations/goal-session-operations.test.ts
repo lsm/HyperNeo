@@ -1105,6 +1105,59 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('concurrent writes to one review keep the first metric point', async () => {
+    const { db, call, scheduler, goals } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const schedule = scheduler.repo.getBySource('goal_review', goal.id)!;
+    scheduler.repo.recordRun({ ...schedule, nextRunAt: 1 }, 'fired', 'message-1', 1);
+    const runId = `goal-review:${schedule.id}:1:none`;
+    const snapshot = goals.metricSnapshot.bind(goals);
+    let releaseSecond!: () => void;
+    let secondStarted!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    let calls = 0;
+    spyOn(goals, 'metricSnapshot').mockImplementation(async (...args) => {
+      calls++;
+      if (calls === 2) {
+        secondStarted();
+        await paused;
+      }
+      return snapshot(...args);
+    });
+    const append = (value: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+        metricPoint: { value, evidence: 'Synthetic count' },
+      });
+    const first = append(4);
+    const second = append(8);
+    await started;
+    expect((await first).accepted).toBe(true);
+    releaseSecond();
+    expect(await second).toEqual({
+      accepted: false,
+      reason: 'metric_review_recorded: a measured review cannot be replaced.',
+    });
+    const entries = (await call('goal.journal.list', { goalId: goal.id })).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].metricPoint.value).toBe(4);
+    db.close();
+  });
+
   test('metric goals require an owner with review wakes', async () => {
     const { db, call } = setup();
     const input = {
