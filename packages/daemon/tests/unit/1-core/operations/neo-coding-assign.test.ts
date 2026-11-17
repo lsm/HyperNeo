@@ -52,6 +52,14 @@ function fixture(
   execFileSync('git', ['-C', view, 'read-tree', '--empty']);
   const project = join(root, 'project');
   execFileSync('git', ['init', '-q', project]);
+  execFileSync('git', [
+    '-C',
+    project,
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/synthetic/actors.git',
+  ]);
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,

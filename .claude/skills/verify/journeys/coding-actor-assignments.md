@@ -39,7 +39,8 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
 - An actor starts and is prepared from the repository's project folder (the
   folder a Neo project with that repository records on this machine), never the
   daemon's read mirror or a candidate's folder. Without a known project folder,
-  assignment refuses and starts nobody.
+  assignment refuses and starts nobody. A second repository alias does not hide
+  the matching folder, and a checkout with a different origin is refused.
 - `evidence/read-view-place.json`: a real HyperNeo session created on the
   project folder (production `createDriverSession`) runs in its own managed
   worktree of that folder (its git common dir is the project's), not under the

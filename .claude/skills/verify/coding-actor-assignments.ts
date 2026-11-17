@@ -175,7 +175,7 @@ try {
         const before = attempts;
         const stored = assignments.read('session', 'https://github.com/synthetic/session/pull/8', head); assert(stored.review?.ref);
         const replay = await assign({ todoId: 'session', url: 'https://github.com/synthetic/session/pull/8', head, acceptanceContract: 'artifact:contract-session', stage: 'review', candidates: [] }); assert(replay.ok); assert.deepEqual(replay.assignment.ref, stored.review.ref); assert.equal(attempts, before);
-        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 6);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get().n, 8);
         assert(db.prepare('SELECT state FROM neo_todos').all().every((row: { state: string }) => row.state === 'doing'));
         assert.equal(git(source, 'rev-parse', 'HEAD'), baseHead); assert.equal(readFileSync(join(source, 'behavior.txt'), 'utf8'), 'preserve dirty author source');
         evidence.push({ phase, stored, todoStates: db.prepare('SELECT id,state FROM neo_todos').all() });

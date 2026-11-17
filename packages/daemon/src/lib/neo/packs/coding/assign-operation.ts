@@ -10,9 +10,9 @@ import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir, hostname } from 'node:os';
 import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
-import { neoProjectFolders } from '../../project-mirror.ts';
+import { neoProjectFolders, neoRepositoryIdentity } from '../../project-mirror.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -107,15 +107,43 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
   };
 }
 
-function repositoryProjectFolder(db: Database, name: string): string | null {
+async function repositoryProjectFolder(db: Database, name: string): Promise<string | null> {
   const projects = new NeoRepository(db);
   const view = getNeoReadCheckoutPath(...(name.split('/') as [string, string]));
-  for (const [projectId, repository] of projects.repositories()) {
-    if (repository.toLowerCase() !== name.toLowerCase()) continue;
-    const folder = neoProjectFolders(projects.workspaceAliases(projectId)).find(
-      (place) => place.machine === hostname() && place.folder !== view && existsSync(place.folder)
-    )?.folder;
-    if (folder) return folder;
+  const identity = `repository:github.com/${name.toLowerCase()}`;
+  const rows = db
+    .prepare(
+      "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp'"
+    )
+    .all() as { alias: string; project_id: string }[];
+  for (const row of rows) {
+    const alias = row.alias.toLowerCase();
+    if (alias !== identity && !alias.startsWith(`repo:${name.toLowerCase()}\u0000`)) continue;
+    for (const place of neoProjectFolders(projects.workspaceAliases(row.project_id))) {
+      if (place.machine !== hostname() || place.folder === view || !existsSync(place.folder))
+        continue;
+      try {
+        const root = spawnProcess(['git', 'rev-parse', '--show-toplevel'], {
+          cwd: place.folder,
+          stdout: 'pipe',
+          stderr: 'ignore',
+        });
+        const [rootPath, rootCode] = await Promise.all([
+          new Response(root.stdout).text(),
+          root.exited,
+        ]);
+        if (rootCode || realpathSync(rootPath.trim()) !== realpathSync(place.folder)) continue;
+        const git = spawnProcess(['git', 'config', '--local', '--get', 'remote.origin.url'], {
+          cwd: place.folder,
+          stdout: 'pipe',
+          stderr: 'ignore',
+        });
+        const [remote, code] = await Promise.all([new Response(git.stdout).text(), git.exited]);
+        if (!code && neoRepositoryIdentity(remote) === identity) return place.folder;
+      } catch {
+        continue;
+      }
+    }
   }
   return null;
 }
@@ -144,7 +172,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     if (!candidates.length)
       return refuse('Configure an available independent actor on this daemon.');
     const { owner, repo } = parsePrUrl(input.url)!;
-    const folder = repositoryProjectFolder(deps.db, `${owner}/${repo}`);
+    const folder = await repositoryProjectFolder(deps.db, `${owner}/${repo}`);
     if (!folder)
       return refuse(
         `${owner}/${repo} has no known project folder on this machine, so no actor was started; open the repository as a project here, then assign again.`
