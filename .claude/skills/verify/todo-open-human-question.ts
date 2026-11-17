@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
+
+const run = resolve(process.argv.at(-1)!);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+mkdirSync(join(run, 'evidence'), { recursive: true });
+const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
+await app.jobProcessor.stop();
+const service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as unknown as string[]);
+await new Promise<void>((ok, fail) => { ws.onopen = () => ok(); ws.onerror = () => fail(new Error('RPC unavailable')); });
+const rpc = (name: string, input: unknown) => new Promise<{ ok?: boolean; reason?: string; question: { id: string } }>((ok, fail) => {
+  const id = crypto.randomUUID();
+  const timer = setTimeout(() => fail(new Error(`${name} timed out`)), 15000);
+  ws.onmessage = (event) => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); ok(reply.error ? { error: reply.error } : (reply.data?.value ?? reply.data)); };
+  ws.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+});
+const evidence: unknown[] = [];
+try {
+  const sender = 'neo:10000000-0000-4000-8000-000000000002';
+  await app.db.createSession({ id: sender, title: 'Synthetic question proof', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  const db = app.db.getDatabase();
+  new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+  const store = service.todos;
+  store.openAsk({ id: 'ask', projectId: null, sessionId: sender, originMessageId: null, title: 'Synthetic question', request: 'Keep the answer visible', createdAt: 1 });
+  for (const id of ['live', 'legacy', 'removed']) store.addTodo(id, 'ask', { title: id, doneWhen: 'Complete', check: null, instruction: null, named: null }, 1);
+  const ask = async (todoId: string) => { const result = await rpc('neo.question.ask', { askId: 'ask', todoId, kind: 'reply', text: `Answer ${todoId}?`, retireWhen: { pack: 'core', kind: 'evidence', params: { path: join(run, 'absent') } } }); assert.equal(result.ok, true, JSON.stringify(result)); return result.question.id as string; };
+  const questionId = await ask('live');
+  const result = await rpc('neo.todo.done', { todoId: 'live', reason: 'Finished' });
+  const visible = await rpc('neo.ask.read', { askId: 'ask' });
+  evidence.push({ result, visible });
+  console.log('completion:', JSON.stringify(result));
+  console.log('question state:', store.getQuestion(questionId)?.state);
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert(String(result.reason).includes(questionId), JSON.stringify(result));
+  assert.equal(store.getQuestion(questionId)?.state, 'open');
+  assert(JSON.stringify(visible).includes(questionId));
+  const answer = await rpc('neo.question.answer', { questionId, answer: 'Yes' });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  const done = await rpc('neo.todo.done', { todoId: 'live', reason: 'Finished' });
+  assert.equal(done.ok, true, JSON.stringify(done));
+  const legacyId = await ask('legacy');
+  db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = 'legacy'").run();
+  store.updateTodo(store.getTodo('legacy')!, { instruction: 'Trigger prune' }, Date.now());
+  assert.equal(store.getQuestion(legacyId)?.state, 'open');
+  const removedId = await ask('removed');
+  const removed = await rpc('neo.todo.remove', { todoId: 'removed', reason: 'No longer needed' });
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  assert.equal(store.getQuestion(removedId)?.state, 'retired');
+  evidence.push({ answer, done, legacy: store.getQuestion(legacyId), removed: store.getQuestion(removedId) });
+  console.log('PASS: completion refused with question id; answer permits completion; legacy done keeps card; removal retires it.');
+} finally {
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+  ws.close();
+  await app.cleanup();
+}

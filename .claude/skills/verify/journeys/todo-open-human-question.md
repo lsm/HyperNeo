@@ -1,0 +1,13 @@
+# An unanswered human question keeps its todo open
+
+Run the isolated daemon proof with a fresh evidence directory:
+
+```sh
+bash .claude/skills/verify/proof-run.sh \
+  /absolute/fresh/evidence-directory .claude/skills/verify/todo-open-human-question.ts
+```
+
+The RPC completion request refuses with the question id and the public ask
+read retains the open card. Answering permits completion. A legacy done todo
+retains its card through pruning, while removing a todo retires its card.
+Evidence includes the RPC responses and observed question states.
