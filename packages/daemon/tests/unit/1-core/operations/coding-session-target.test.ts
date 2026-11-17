@@ -268,6 +268,27 @@ describe('coding session target decision', () => {
     });
   });
 
+  test('an idle worker whose status names no provider is ranked as the line it resolves to', async () => {
+    const { db, todo, models, decide } = setup();
+    const prior = todo('other');
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+      prior.id,
+      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
+      JSON.stringify({ adapter: 'hyperneo', id: 'old-worker' })
+    );
+    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
+    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
+      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'old-worker' } },
+    });
+    models['old-worker'] = { model: 'glm-6' } as { model: string; provider: string };
+    const rules = [
+      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
+      value: { verb: 'start', model: 'claude-opus-5-5' },
+    });
+  });
+
   test('a new feature does not reuse an idle worker on an excluded line; it starts on a usable one', async () => {
     const { db, todo, models, decide } = setup();
     const prior = todo('other');
