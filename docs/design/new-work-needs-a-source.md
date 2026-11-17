@@ -29,6 +29,8 @@ New work starts only from the human, and the human always acts on their own devi
 - A human message to Neo. This already opens an ask through `neo.todo.add` with `input` (`claimNeoInputAsk`).
 - Tapping Track on a session (`neo.session.track`).
 - "Do it" on a proposal card.
+- A goal's mandate the human confirmed on a card (`goal-cycle.md`). Neo's asks in that goal's cycle (`neo.ask.open` with `goalId`) are accepted, because the human already said yes to its "Do alone" section. Anything under "Needs the human" still goes to a card, as today.
+- The human's answer to a relayed session question (`neo.question.relaySession`, written through the Track path). That card is the proposal: its ask is accepted once the human answers it, and not before.
 
 **2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.open`, the same call asks a yes/no card on it ("Do it" / "Don't"). The card shows the request and why. This covers both Neo's own ideas and words another session relayed, which the card shows as a quote.
 
@@ -40,7 +42,7 @@ A session's request to Neo (`recordNeoRequestTodo`) still records its ask and it
 
 **3. Todos and sessions need an accepted ask.**
 
-- An ask is accepted unless it has a proposal card that is not yet answered "Do it", or unless it is a session-request ask.
+- An ask is accepted unless it has a proposal card that is not yet answered "Do it", or a relayed session question not yet answered, or unless it is a session-request ask.
 - Every existing ask has no proposal card, so it stays accepted. Asks from human messages, Track and the daemon's own home-conflict cards are accepted the same way. No data changes.
 - `neo.todo.add` refuses a todo on an ask that is not accepted.
 - `work.start` from an agent (Neo, a worker or another agent role) needs a todo on an accepted ask. Today's `todo_required` warning becomes a refusal.
@@ -72,6 +74,8 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 - `neo.ask.open` with todos for a new proposal is refused, and nothing is written. The same holds on retry.
 - A human message to Neo opens an accepted ask, and its todo starts.
 - An existing ask with no proposal card still takes todos.
+- An ask in a goal cycle whose mandate the human confirmed takes todos without a proposal card. An ask for a goal with no confirmed mandate is a proposal.
+- A relayed session question's ask takes no todos until the human answers its card.
 - A session request records its ask and reply todo. A work todo on that ask is refused.
 - `work.start` with no todo is refused from Neo and from a worker. It still starts from a human device and from an internal call.
 - `hyperneo relay` and relayed card answers no longer exist.
@@ -80,5 +84,5 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 
 Two PRs, as the human asked:
 
-1. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add` and `start-work`, the tests, and the matching tool text.
+1. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add` and `start-work`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`.
 2. **Remove relayed answers**: everything listed in rule 4.
