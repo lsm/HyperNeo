@@ -63,11 +63,12 @@ Neo's prompt text changes to match:
 
 Evidence admission already runs at four places, each a step on the add, edit and open paths: `todo-operations.ts`, `todo-mutation-operation.ts`, `ask-record-operations.ts` and `storage/repositories/neo-todo-add-write.ts`. Today each calls `neoEvidenceRefusal`.
 
-Rules 1 and 2 become one pure function in `core-todo-checks.ts`, and those four call sites use it instead. The function takes three facts:
+Rules 1 and 2 become one pure function in `core-todo-checks.ts`, and those four call sites use it instead. The function takes four facts:
 
 - the check;
 - whether the todo has a repository;
 - the previous check on edit, so an unchanged legacy check remains valid.
+- the daemon's data directory (`getDataDir()`), read by the caller and passed in.
 
 It returns a refusal or nothing, and it reads no database, clock or file system.
 
