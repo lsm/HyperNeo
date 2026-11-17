@@ -43,10 +43,11 @@ A session's request to Neo (`recordNeoRequestTodo`) still records its ask and it
 **3. Todos and sessions need an accepted ask.**
 
 - An ask is accepted unless it has a proposal card that is not yet answered "Do it", or a relayed session question not yet answered, or unless it is a session-request ask.
-- Every existing ask has no proposal card, so it stays accepted. Asks from human messages, Track and the daemon's own home-conflict cards are accepted the same way. No data changes.
+- Asks from human messages, Track and the daemon's own home-conflict cards are accepted. Existing asks stay accepted too, except two kinds that today's code already writes: session-request asks, and asks whose relayed session question is still unanswered. No data changes.
 - `neo.todo.add` refuses a todo on an ask that is not accepted.
 - `work.start` from an agent (Neo, a worker or another agent role) needs a todo on an accepted ask. Today's `todo_required` warning becomes a refusal.
-- Starts from the human's devices, internal daemon calls and starts forwarded from another daemon are unchanged.
+- `work.send` and `work.queue` from an agent to a worker follow the same rule: they name a todo on an accepted ask. `notice: true` without a todo is kept only for replying to a session that sent Neo a message.
+- Starts and sends from the human's devices, internal daemon calls and starts forwarded from another daemon are unchanged.
 
 **4. Cards are answered only on the human's devices.** Relayed card answers are removed, for the same reason: their sender cannot be trusted. That means:
 
@@ -64,25 +65,27 @@ The checks are pure functions added as steps in the existing superpipe pipelines
 
 - `neo.ask.open`;
 - `neo.todo.add`;
-- `start-work`, before `routeStart`.
+- `start-work`, before `routeStart`;
+- `work.send` and `work.queue`, beside `requireSendPurpose`.
 
-Each check takes facts and returns a `Gate`. The facts are the ask, its proposal card, whether it holds a session-request reply todo (`named.requestFrom`, written by `request-todo.ts`), and the caller. A fact step reads those facts first. No new table or column is added.
+Each check takes facts and returns a `Gate`. The facts are the ask, its proposal card, its relayed session question, whether its goal's `mandateRev` names a `neo.home.save` commit made with a confirm card the human answered (`goal-cycle.md`), whether it holds a session-request reply todo (`named.requestFrom`, written by `request-todo.ts`), the caller, and for a notice, whether the target session sent Neo a message. A fact step reads those facts first. No new table or column is added.
 
 ## Tests (written first)
 
 - `neo.ask.open` makes a proposal card. A todo on it is refused until "Do it", then accepted. "Don't" drops the ask.
 - `neo.ask.open` with todos for a new proposal is refused, and nothing is written. The same holds on retry.
 - A human message to Neo opens an accepted ask, and its todo starts.
-- An existing ask with no proposal card still takes todos.
+- An existing ask with no proposal card still takes todos, unless it is a session-request ask or has an unanswered relayed question.
 - An ask in a goal cycle whose mandate the human confirmed takes todos without a proposal card. An ask for a goal with no confirmed mandate is a proposal.
 - A relayed session question's ask takes no todos until the human answers its card.
 - A session request records its ask and reply todo. A work todo on that ask is refused.
 - `work.start` with no todo is refused from Neo and from a worker. It still starts from a human device and from an internal call.
+- A Neo `work.send` to a worker without a todo on an accepted ask is refused. A notice reply to a session that messaged Neo is still sent.
 - `hyperneo relay` and relayed card answers no longer exist.
 
 ## Slices
 
 Two PRs, as the human asked:
 
-1. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add` and `start-work`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`.
+1. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`.
 2. **Remove relayed answers**: everything listed in rule 4.
