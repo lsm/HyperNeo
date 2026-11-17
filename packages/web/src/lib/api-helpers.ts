@@ -355,6 +355,22 @@ export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
   return entries;
 }
 
+export interface SystemProject {
+  id: string;
+  name: string;
+  homePath: string | null;
+  folders: string[];
+  updatedAt: number;
+}
+
+export async function listSystemProjects(): Promise<SystemProject[]> {
+  const { projects } = await getHubOrThrow().request<{ projects: SystemProject[] }>(
+    'operation.invoke',
+    { name: 'neo.projects.list', input: {} }
+  );
+  return projects;
+}
+
 export async function addFolderToProject(projectPath: string, path: string): Promise<void> {
   const result = await getHubOrThrow().request<{ accepted: boolean; reason?: string }>(
     'operation.invoke',
