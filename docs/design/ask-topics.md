@@ -41,7 +41,11 @@ first of these that exists:
    tie the earliest todo's. The topic is the project's title.
 2. **Its origin, one step only.** For a follow-up ask, its parent (`parent_id`), which
    contributes only its rule 1 result or its stored pick, never its own origin. For a
-   request from a session, the sender session's project. One step keeps a read to at most
+   request from a session, the sender session's project. The sender is the request todo's
+   `named.requestFrom` (`adapter:id`, or a bare id for a HyperNeo session, adapter
+   `hyperneo`; written by `recordNeoRequestTodo`); it is a session on
+   this daemon, so its `work:` alias is this machine, that adapter and that id
+   (`packs/coding/project-mirror.ts`), looked up in the alias table. One step keeps a read to at most
    one other ask, so it cannot loop, and stops a topic from drifting down a chain of asks
    that each moved on to something else. A sender's earlier requests are not used: one
    session can ask about unrelated matters, so a sender with no project falls to rule 3.
@@ -87,7 +91,8 @@ first.
 
 1. **Derived topic.** Rules 1 to 4 of point 1 and point 3 in the ask read
    (`packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts`), as a pure
-   function over the ask, its todos' targets, at most one origin ask and the alias table.
+   function over the ask, its todos' targets and `named`, at most one origin ask, this
+   machine's name and the alias table.
    About 120 production lines.
 2. **Prompt and plan context.** The prompt line, the tool text of `neo.ask.open` and
    `neo.ask.topic`, and the 30-day topic list in `plan-context.ts`. About 40 production
