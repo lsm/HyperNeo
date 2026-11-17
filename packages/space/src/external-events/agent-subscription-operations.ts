@@ -262,7 +262,7 @@ export function createAgentSubscriptionOperations(
       inputSchema: ListInput,
       resultSchema: ListResultSchema,
       execute: agentPipeline(
-        superpipe({ deps })('list-agent-external-event-subscriptions'),
+        superpipe({ deps })('event.external.agent.subscription.list'),
         admitAgentSubscriptionReader,
         listAgentSubscriptionTopics
       ),

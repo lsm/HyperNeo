@@ -456,7 +456,7 @@ export function createSubscriptionOperations(
       description: `Subscribe a subject to external events matching a topic glob (e.g. github/lsm/neokai/pull_request/*.review_*), or pass prUrl instead of topicPattern to follow one GitHub pull request; exactly one of the two is required. A node subject registers the calling worker slot on its workflow run and returns { ok, topicPattern }; an agent subject upserts the stored long-horizon subscription, refreshes the live delivery trie, and returns the same { ok, topicPattern } with the stored record under subscription, rejecting refresh_failed when the trie could not be refreshed. A session outside any Space that subscribes to a GitHub repo topic gets { ok: false, error } naming the repo when its watch could not start, such as when the daemon's GitHub token can't read it; the subscription is kept, so subscribing again retries the watch. Both subjects answer in the same shape, so a caller reads ok without knowing which subject it passed. ${SUBJECT_DOC}`,
       inputSchema: SubscribeInput,
       resultSchema: z.union([AgentSubscribeOutcomeSchema, OutcomeSchema, SUBJECT_REJECTIONS]),
-      execute: subjectPipeline(superpipe({ subs })('subscribe-external-event'), subscribeSubject),
+      execute: subjectPipeline(superpipe({ subs })('event.external.subscribe'), subscribeSubject),
     }),
     defineOperation({
       name: 'event.external.unsubscribe',
@@ -465,7 +465,7 @@ export function createSubscriptionOperations(
       inputSchema: UnsubscribeInput,
       resultSchema: z.union([OutcomeSchema, SUBJECT_REJECTIONS]),
       execute: subjectPipeline(
-        superpipe({ subs })('unsubscribe-external-event'),
+        superpipe({ subs })('event.external.unsubscribe'),
         unsubscribeSubject
       ),
     }),
@@ -490,7 +490,7 @@ export function createSubscriptionOperations(
         z.object({ ok: z.literal(false), error: z.string() }),
         REJECTIONS,
       ]),
-      execute: (superpipe({ subs })('list-external-event-subscriptions') as PipelineAPI)
+      execute: (superpipe({ subs })('event.external.subscription.list') as PipelineAPI)
         .input(['input', 'caller'])
         .pipe(admitSubscriptionReader, ['input', 'caller', 'subs'], 'result:outcome')
         .pipe(readSubscriptions, ['outcome', 'input', 'subs'], 'outcome')

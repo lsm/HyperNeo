@@ -258,7 +258,7 @@ export function createSessionEventOperations(
       inputSchema: SubscribeInput,
       resultSchema: z.union([OutcomeSchema, TopicRejections]),
       execute: ownSessionPipeline(
-        superpipe({ deps })('subscribe-session-event'),
+        superpipe({ deps })('event.external.subscribe'),
         subscribeOwnSession
       ),
     }),
@@ -269,7 +269,7 @@ export function createSessionEventOperations(
       inputSchema: UnsubscribeInput,
       resultSchema: z.union([OutcomeSchema, TopicRejections]),
       execute: ownSessionPipeline(
-        superpipe({ deps })('unsubscribe-session-event'),
+        superpipe({ deps })('event.external.unsubscribe'),
         unsubscribeOwnSession
       ),
     }),
@@ -288,7 +288,7 @@ export function createSessionEventOperations(
         REJECTIONS,
       ]),
       execute: ownSessionPipeline(
-        superpipe({ deps })('list-session-event-subscriptions'),
+        superpipe({ deps })('event.external.subscription.list'),
         (sessionId) => listOwnSubscriptions(sessionId, deps)
       ),
     }),
@@ -301,7 +301,7 @@ export function createSessionEventOperations(
         z.object({ event: ExternalEventSchema, state: ExternalEventStateSchema }),
         z.enum(['caller_denied', 'session_inactive', 'event_not_found']),
       ]),
-      execute: ownSessionPipeline(superpipe({ deps })('get-session-event'), readSessionEvent),
+      execute: ownSessionPipeline(superpipe({ deps })('event.external.get'), readSessionEvent),
     }),
     defineOperation({
       name: 'event.external.delivery.list',
@@ -310,7 +310,7 @@ export function createSessionEventOperations(
       inputSchema: DeliveryListInput,
       resultSchema: z.union([z.object({ deliveries: z.array(DeliverySchema) }), REJECTIONS]),
       execute: ownSessionPipeline(
-        superpipe({ deps })('list-session-event-deliveries'),
+        superpipe({ deps })('event.external.delivery.list'),
         readSessionDeliveries
       ),
     }),
