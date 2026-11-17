@@ -114,15 +114,17 @@ async function repositoryProjectFolder(db: Database, name: string): Promise<stri
   const projects = new NeoRepository(db);
   const view = getNeoReadCheckoutPath(...(name.split('/') as [string, string]));
   const identity = `repository:github.com/${name.toLowerCase()}`;
-  const rows = db
-    .prepare(
-      "SELECT alias, project_id FROM neo_project_workspaces WHERE alias >= 'repo' AND alias < 'repp'"
+  const allProjects = projects.listProjects();
+  for (const project of allProjects) {
+    const aliases = projects.workspaceAliases(project.id, allProjects);
+    if (
+      !aliases.some((entry) => {
+        const alias = entry.toLowerCase();
+        return alias === identity || alias.startsWith(`repo:${name.toLowerCase()}\u0000`);
+      })
     )
-    .all() as { alias: string; project_id: string }[];
-  for (const row of rows) {
-    const alias = row.alias.toLowerCase();
-    if (alias !== identity && !alias.startsWith(`repo:${name.toLowerCase()}\u0000`)) continue;
-    for (const place of neoProjectFolders(projects.workspaceAliases(row.project_id))) {
+      continue;
+    for (const place of neoProjectFolders(aliases)) {
       if (place.machine !== hostname() || place.folder === view || !existsSync(place.folder))
         continue;
       try {
