@@ -50,6 +50,7 @@ describe('runNeoNightlyReorganize', () => {
     expect(mailbox.rowCount()).toBe(1);
     return mailbox.jobQueue.dequeue(NEO_TOPICS_REORGANIZE_NIGHTLY)[0];
   }
+  const idleTopics = { topics: () => [], wake: async () => true };
   const pending = () =>
     mailbox.jobQueue.listJobs({ queue: NEO_TOPICS_REORGANIZE_NIGHTLY, status: 'pending' });
 
@@ -70,6 +71,7 @@ describe('runNeoNightlyReorganize', () => {
           };
         },
         log: () => {},
+        ...idleTopics,
       }
     );
 
@@ -79,5 +81,43 @@ describe('runNeoNightlyReorganize', () => {
       scope: 'neo',
       lastRunAt: now - NEO_REORGANIZE_EVERY_MS,
     });
+  });
+
+  function due(topics: { topic: string; count: number }[]) {
+    const woken: { key: string; text: string }[] = [];
+    const deps = {
+      now: () => now,
+      lastHumanAt: () => null,
+      reorganize: async () => ({ cleanupPlanned: [], cleanupApplied: false, cleanupFailed: [] }),
+      log: () => {},
+      topics: () => topics,
+      wake: async (key: string, text: string) => {
+        woken.push({ key, text });
+        return true;
+      },
+    };
+    return { woken, deps };
+  }
+
+  test('gives Neo one turn with its picked topics and counts so it can fold one into another', async () => {
+    const { woken, deps } = due([
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 2 },
+      { topic: '孩子', count: 4 },
+    ]);
+    await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, deps);
+    expect(woken).toHaveLength(1);
+    expect(woken[0].key).toBe(`neo-topic-tidy:${now}`);
+    expect(woken[0].text).toContain('孩子 4, Kids 3');
+    expect(woken[0].text).toContain('neo.topic.merge');
+  });
+
+  test('skips the topic turn when there is nothing to fold', async () => {
+    const { woken, deps } = due([
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 2 },
+    ]);
+    await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, deps);
+    expect(woken).toEqual([]);
   });
 });

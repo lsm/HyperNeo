@@ -32,7 +32,7 @@ export function neoInputText(ask: { content?: unknown }): string {
 
 export type NeoTopicCount = { topic: string; count: number };
 
-function neoTopicListLine(topics: readonly NeoTopicCount[]): NeoPlanLine {
+export function neoTopicList(topics: readonly NeoTopicCount[]): string[] {
   const folded = new Map<string, { label: string; best: number; count: number }>();
   for (const { topic, count } of topics) {
     const key = neoTopicPickKey(topic);
@@ -43,14 +43,17 @@ function neoTopicListLine(topics: readonly NeoTopicCount[]): NeoPlanLine {
       count: known.count + count,
     });
   }
-  const list = [...folded.values()]
+  return [...folded.values()]
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
     .map((entry) => `${entry.label} ${entry.count}`);
+}
+
+function neoTopicListLine(topics: readonly NeoTopicCount[]): NeoPlanLine {
   return {
     kind: 'topics',
     id: 'topics',
     askId: '',
-    text: `Topics used in the last 30 days (asks open or settled): ${list.join(', ') || 'none'}`,
+    text: `Topics used in the last 30 days (asks open or settled): ${neoTopicList(topics).join(', ') || 'none'}`,
   };
 }
 
