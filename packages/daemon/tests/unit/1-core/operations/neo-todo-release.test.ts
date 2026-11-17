@@ -213,6 +213,35 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
+  test('does not fence an unowned session after work is sent to it', async () => {
+    const h = setup();
+    try {
+      const db = { getDatabase: () => h.db } as never;
+      h.setArchive(
+        (caller) =>
+          admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
+      );
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }));
+      h.db
+        .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
+        .run(worker.adapter, worker.id);
+      await h.refresh();
+      await h.refresh();
+      expect(
+        h.db
+          .prepare('SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ?')
+          .get(worker.adapter, worker.id)
+      ).toBeNull();
+      expect(h.archived).toEqual([]);
+      const fact = h.db
+        .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
+        .get() as { value_json: string };
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('archives a daemon-started worker after work was sent to it', async () => {
     const h = setup();
     try {
