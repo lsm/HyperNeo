@@ -330,6 +330,36 @@ describe('codingStartAlternatives with a shared id and a shared name', () => {
   });
 });
 
+describe('a provider reached only through its own provider alias', () => {
+  test('an explicit selector that resolves is kept, and the alias is offered as an alternative', async () => {
+    const shared = [
+      catalogModel('m-1', 'x', 'M'),
+      { ...catalogModel('m-1', 'y', 'M'), providerAliases: ['y-m-1'] },
+      catalogModel('n-1', 'z'),
+    ];
+    const lines = driverCodingLines(shared, {
+      holds: [
+        { provider: 'x', model: 'm-1', retryAt: 5_000 },
+        { provider: 'z', model: 'n-1', retryAt: 5_000 },
+      ],
+    });
+    const explicit = { adapter: 'hyperneo', place, model: 'y-m-1' };
+    expect(await codingCandidateLine(lines, explicit)).toEqual({
+      line: { provider: 'y', model: 'm-1', harness: 'hyperneo' },
+      target: explicit,
+    });
+    const target = { adapter: 'hyperneo', place, model: 'n-1' };
+    expect(
+      await rankCodingTargets(
+        lines,
+        'coding.write',
+        await codingStartAlternatives(target, lines),
+        {}
+      )
+    ).toMatchObject({ value: [{ ...target, model: 'y-m-1' }] });
+  });
+});
+
 describe('codingCandidateLine for a bare start whose default is the second provider of a shared id', () => {
   test('the start is pinned to a selector that still resolves to that provider', async () => {
     const shared = [catalogModel('m-1', 'x', 'M X'), catalogModel('m-1', 'y', 'M Y')];

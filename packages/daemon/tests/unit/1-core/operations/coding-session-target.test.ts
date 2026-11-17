@@ -68,6 +68,7 @@ function setup() {
     if (state) db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, item.id);
   };
   const live: Record<string, Live> = {};
+  const models: Record<string, { model: string; provider: string }> = {};
   const status = async (work: WorkRef): Promise<OperationOutcome> => {
     const state = live[work.id] ?? 'idle';
     if (state === 'unreachable')
@@ -87,6 +88,7 @@ function setup() {
                 ? 'stopped'
                 : state,
           ...(state === 'archived' ? { archived: true } : {}),
+          ...models[work.id],
           lastActivityAt: 1,
         },
       },
@@ -97,7 +99,7 @@ function setup() {
     target: Parameters<typeof decideCodingSessionTarget>[2],
     lines?: CodingLines
   ) => decideCodingSessionTarget(db, item, target, status, lines);
-  return { db, todo, worked, live, decide };
+  return { db, todo, worked, live, models, decide };
 }
 
 describe('coding session target decision', () => {
@@ -207,6 +209,27 @@ describe('coding session target decision', () => {
     saveWrite(other.db, 'retired-9', 'high');
     expect(await other.decide(other.todo(), bare, routingOff())).toEqual({
       value: { ...bare, effort: 'high' },
+    });
+  });
+
+  test('a new feature does not reuse an idle worker on an excluded line; it starts on a usable one', async () => {
+    const { db, todo, models, decide } = setup();
+    const prior = todo('other');
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+      prior.id,
+      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
+      JSON.stringify({ adapter: 'hyperneo', id: 'glm-worker' })
+    );
+    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
+    models['glm-worker'] = { model: 'glm-6', provider: 'glm' };
+    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
+      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'glm-worker' } },
+    });
+    const rules = [
+      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
+      value: { verb: 'start', adapter: 'hyperneo', model: 'claude-opus-5-5' },
     });
   });
 
