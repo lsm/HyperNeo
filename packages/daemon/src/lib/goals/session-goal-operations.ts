@@ -423,10 +423,12 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Update>) =>
-        input.status === 'active' && !schedules.requireAnsweredReview(goal)
-          ? refuse('review_question_open: wait for the human answer before resuming.')
-          : { value: goal },
+      (goal: SessionGoal, input: z.infer<typeof Update>) => {
+        if (input.status !== 'active' || schedules.requireAnsweredReview(goal))
+          return { value: goal };
+        if (schedules.reopenReviewQuestion(goal)) neoChanged();
+        return refuse('review_question_open: wait for the human answer before resuming.');
+      },
       ['outcome', 'input'],
       'result:outcome'
     )
@@ -558,7 +560,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
+        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. If its question was retired, attempting to resume opens a new question. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,

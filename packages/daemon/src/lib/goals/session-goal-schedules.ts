@@ -7,6 +7,7 @@ import type { SessionScheduleCadence } from '../../storage/repositories/session-
 import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 import { openHumanCard } from '../neo/human-card.ts';
+import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 
 export class SessionGoalSchedules implements ScheduleSource {
   readonly kind = 'goal';
@@ -179,8 +180,58 @@ export class SessionGoalSchedules implements ScheduleSource {
   }
 
   requireAnsweredReview(goal: SessionGoal): boolean {
-    const questionId = this.goals.wakeSchedule(goal.id)?.escalationQuestionId;
-    return !questionId || this.asks.getQuestion(questionId)?.state === 'answered';
+    const question = this.reviewQuestion(goal);
+    return question === null || question.state === 'answered';
+  }
+
+  private reviewQuestion(goal: SessionGoal): NeoQuestion | null {
+    const id = this.goals.wakeSchedule(goal.id)?.escalationQuestionId;
+    if (!id) return null;
+    let question = this.asks.getQuestion(id);
+    while (question?.state === 'retired' && question.replacedBy)
+      question = this.asks.getQuestion(question.replacedBy);
+    if (!question) throw new Error('Goal review question not found');
+    return question;
+  }
+
+  reopenReviewQuestion(goal: SessionGoal): boolean {
+    return this.asks.inTransaction(() => {
+      const question = this.reviewQuestion(goal);
+      if (!question || question.state !== 'retired') return false;
+      const config = this.goals.wakeSchedule(goal.id)!;
+      let ask = this.asks.getAsk(question.askId);
+      if (!ask || ask.status !== 'open') {
+        const neo = this.neoSession(goal.ownerSessionId);
+        if (!neo) throw new Error('Cannot ask the human without a Neo session');
+        ask = this.asks.openAsk({
+          id: crypto.randomUUID(),
+          goalId: goal.id,
+          sessionId: neo,
+          projectId: null,
+          originMessageId: null,
+          title: goal.title,
+          request: question.text,
+          createdAt: Date.now(),
+        });
+      }
+      const id = crypto.randomUUID();
+      openHumanCard(
+        this.asks,
+        id,
+        ask.id,
+        {
+          text: question.text,
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        Date.now()
+      );
+      this.goals.saveWakeSchedule(goal.id, { ...config, escalationQuestionId: id });
+      return true;
+    });
   }
 
   async facts(id: string) {
