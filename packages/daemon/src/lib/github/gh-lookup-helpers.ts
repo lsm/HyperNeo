@@ -324,13 +324,23 @@ export async function runGhJson(
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
     const errorText = stderrText || `gh exited with code ${exitCode}`;
-    if (isRateLimitError(errorText) || retryAfterMs !== null) {
+    if (
+      isRateLimitError(errorText) ||
+      retryAfterMs !== null ||
+      response?.status === 429 ||
+      (response?.status === 403 && remaining === 0)
+    ) {
       if (retryAfterMs !== null || isSecondaryRateLimitError(errorText)) {
+        const waitMs = retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
         return {
           ok: false,
           error: errorText,
           retryable: true,
-          retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
+          retryAfterMs:
+            remaining === 0 && reset !== null
+              ? Math.max(waitMs, computeRateLimitRetryMs(reset))
+              : waitMs,
+          rateLimited: true,
         };
       }
       const resetEpoch = response
@@ -349,6 +359,7 @@ export async function runGhJson(
         error: errorText,
         retryable: true,
         retryAfterMs: computeRateLimitRetryMs(resetEpoch),
+        rateLimited: true,
       };
     }
     if (timedOut || isTransientGhError(errorText)) {

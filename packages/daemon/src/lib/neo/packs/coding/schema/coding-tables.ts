@@ -47,6 +47,10 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     fact_json TEXT NOT NULL CHECK (json_valid(fact_json)),
     PRIMARY KEY (url, stage)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_review_comments (
+    url TEXT PRIMARY KEY,
+    marker TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_pr_ledger (
     repo TEXT NOT NULL,
     number INTEGER NOT NULL,
