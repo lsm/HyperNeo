@@ -1,6 +1,7 @@
 import type { GlobalSettings, ModelInfo } from '@hyperneo/shared';
 import type { Provider, ProviderUsageResult } from '@hyperneo/shared/provider';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
 import { initializeProviders } from '../../providers/factory.ts';
 import {
@@ -84,6 +85,18 @@ export async function readProviderUsage(
 }
 
 export function createProviderUsageOperations(deps: ProviderUsageDeps): OperationDefinition[] {
+  const usage = (superpipe({})('settings.provider.usage') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof ProviderUsageInput>, caller: OperationCaller) =>
+        admitDefaultModelCaller(caller) ? readProviderUsage(input, deps) : NEO_ONLY,
+      ['input', 'caller'],
+      'usage'
+    )
+    .endAsync('usage') as (
+    input: z.infer<typeof ProviderUsageInput>,
+    caller: OperationCaller
+  ) => Promise<ProviderUsageResult | typeof NEO_ONLY>;
   return [
     defineOperation({
       name: 'settings.provider.usage',
@@ -92,8 +105,7 @@ export function createProviderUsageOperations(deps: ProviderUsageDeps): Operatio
       inputSchema: ProviderUsageInput,
       resultSchema: z.union([NeoOnly, ProviderUsage]),
       policy: { safetyClass: 'read', roles: ['neo'] },
-      execute: async (input, caller) =>
-        admitDefaultModelCaller(caller) ? readProviderUsage(input, deps) : NEO_ONLY,
+      execute: (input, caller) => usage(input, caller),
     }),
   ];
 }
@@ -126,6 +138,29 @@ export function setDefaultModel(input: z.infer<typeof SetInput>, deps: DefaultMo
 }
 
 export function createDefaultModelOperations(deps: DefaultModelDeps): OperationDefinition[] {
+  const get = (superpipe({})('settings.model.get') as PipelineAPI)
+    .input(['caller'])
+    .pipe(
+      (caller: OperationCaller) =>
+        admitDefaultModelCaller(caller) ? readDefaultModel(deps) : NEO_ONLY,
+      ['caller'],
+      'model'
+    )
+    .endAsync('model') as (
+    caller: OperationCaller
+  ) => Promise<ReturnType<typeof readDefaultModel> | typeof NEO_ONLY>;
+  const set = (superpipe({})('settings.model.set') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof SetInput>, caller: OperationCaller) =>
+        admitDefaultModelCaller(caller) ? setDefaultModel(input, deps) : NEO_ONLY,
+      ['input', 'caller'],
+      'model'
+    )
+    .endAsync('model') as (
+    input: z.infer<typeof SetInput>,
+    caller: OperationCaller
+  ) => Promise<ReturnType<typeof setDefaultModel> | typeof NEO_ONLY>;
   return [
     defineOperation({
       name: 'settings.model.get',
@@ -134,8 +169,7 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
       inputSchema: z.object({}).default({}),
       resultSchema: z.union([NeoOnly, DefaultModel]),
       policy: { safetyClass: 'read', roles: ['neo'] },
-      execute: async (_input, caller) =>
-        admitDefaultModelCaller(caller) ? readDefaultModel(deps) : NEO_ONLY,
+      execute: (_input, caller) => get(caller),
     }),
     defineOperation({
       name: 'settings.model.set',
@@ -157,8 +191,7 @@ export function createDefaultModelOperations(deps: DefaultModelDeps): OperationD
         }),
       ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        admitDefaultModelCaller(caller) ? setDefaultModel(input, deps) : NEO_ONLY,
+      execute: (input, caller) => set(input, caller),
     }),
   ];
 }
