@@ -8,7 +8,12 @@ import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
 import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
 import { withOapRecovery } from './oap-recovery.ts';
-import { openOapSession, type OapReopenStore, type OapReopenEvents } from './oap-reopen.ts';
+import {
+  openOapSession,
+  sessionHarness,
+  type OapReopenStore,
+  type OapReopenEvents,
+} from './oap-reopen.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -18,11 +23,15 @@ function validateSession(session: Session): { sessionId: string; directory: stri
   return { sessionId: session.id, directory };
 }
 
-function openPlan(input: { sessionId: string; directory: string }, id: string): OpenPlan {
+function openPlan(
+  input: { sessionId: string; directory: string },
+  id: string,
+  session: Session
+): OpenPlan {
   return {
     ...input,
     request: {
-      adapter: 'codex',
+      adapter: sessionHarness(session).adapter,
       directory: input.directory,
       request: {
         protocol: 'open-agent-protocol',
@@ -39,7 +48,7 @@ function openPlan(input: { sessionId: string; directory: string }, id: string): 
 const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
   .input(['session', 'id'])
   .pipe(validateSession, 'session', 'placement')
-  .pipe(openPlan, ['placement', 'id'], 'plan')
+  .pipe(openPlan, ['placement', 'id', 'session'], 'plan')
   .end('plan') as (session: Session, id: string) => OpenPlan;
 
 type SessionSlot = {

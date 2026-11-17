@@ -4,10 +4,18 @@ import { signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGetWorkspaceHistory, mockGetGitBranches, mockAddFolderToProject } = vi.hoisted(() => ({
+const {
+  mockGetWorkspaceHistory,
+  mockGetGitBranches,
+  mockAddFolderToProject,
+  mockListProviders,
+  modelFixture,
+} = vi.hoisted(() => ({
   mockGetWorkspaceHistory: vi.fn(),
   mockGetGitBranches: vi.fn(),
   mockAddFolderToProject: vi.fn(),
+  mockListProviders: vi.fn(),
+  modelFixture: { models: [] },
 }));
 
 vi.mock('../../lib/state.ts', () => ({
@@ -22,23 +30,30 @@ vi.mock('../../lib/router.ts', () => ({
 
 vi.mock('../../lib/api-helpers.ts', () => ({
   createSession: vi.fn(),
+  listProviders: mockListProviders,
   getWorkspaceHistory: mockGetWorkspaceHistory,
   getGitBranches: mockGetGitBranches,
   addWorkspaceToHistory: vi.fn(),
   addFolderToProject: mockAddFolderToProject,
 }));
 
-vi.mock('../../hooks/useModelSwitcher.ts', () => ({
+vi.mock('../../hooks/useModelSwitcher.ts', async (importOriginal) => ({
+  ...(await importOriginal()),
   findDefaultModel: () => null,
-  useModelSwitcher: () => ({ availableModels: [], loading: false, reload: vi.fn() }),
+  useModelSwitcher: () => ({
+    availableModels: modelFixture.models,
+    loading: false,
+    reload: vi.fn(),
+  }),
 }));
 
-vi.mock('../../components/ModelPicker.tsx', () => ({
-  ModelPicker: () => null,
+vi.mock('../../lib/connection-manager.ts', () => ({
+  connectionManager: { getHubIfConnected: () => null },
 }));
 
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../../lib/signals';
 import { SessionsPage } from '../SessionsPage';
+import { createSession } from '../../lib/api-helpers.ts';
 
 function folderChip() {
   return screen.getAllByText(
@@ -50,6 +65,10 @@ describe('SessionsPage', () => {
   beforeEach(() => {
     cleanup();
     localStorage.clear();
+    vi.clearAllMocks();
+    vi.mocked(localStorage.getItem).mockReturnValue(null);
+    modelFixture.models = [];
+    mockListProviders.mockResolvedValue({ providers: [] });
     newChatProjectSignal.value = null;
     workspaceHistoryVersionSignal.value = 0;
     mockGetWorkspaceHistory.mockResolvedValue([
@@ -61,6 +80,117 @@ describe('SessionsPage', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('omits persisted thinking and sandbox for an OXAP provider', async () => {
+    modelFixture.models = [
+      {
+        id: 'codex',
+        name: 'Codex model',
+        alias: 'codex',
+        provider: 'anthropic-codex',
+        available: true,
+      },
+      {
+        id: 'sonnet',
+        name: 'Sonnet model',
+        alias: 'sonnet',
+        provider: 'anthropic',
+        available: true,
+      },
+    ];
+    mockListProviders.mockResolvedValue({
+      providers: [
+        { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },
+        { providerId: 'anthropic' },
+      ],
+    });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({
+        model: { id: 'codex', provider: 'anthropic-codex' },
+        thinkingLevel: 'off',
+        sandbox: true,
+      })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /Sonnet model/ }));
+    await waitFor(() => expect(screen.getByRole('slider')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Codex model/ }));
+    await waitFor(() => expect(screen.queryByRole('slider')).toBeNull());
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith({
+        config: { model: 'codex', provider: 'anthropic-codex' },
+      })
+    );
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sandbox' })).toBeNull();
+  });
+
+  it('shows an error when providers cannot be loaded', async () => {
+    mockListProviders.mockRejectedValue(new Error('Provider lookup failed'));
+    render(<SessionsPage />);
+    await waitFor(() => expect(screen.getByText(/Provider lookup failed/)).toBeTruthy());
+    mockListProviders.mockResolvedValue({ providers: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/Provider lookup failed/)).toBeNull());
+    expect(mockListProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps thinking and sandbox choices for SDK providers', async () => {
+    modelFixture.models = [
+      {
+        id: 'sonnet',
+        name: 'Sonnet model',
+        alias: 'sonnet',
+        provider: 'anthropic',
+        available: true,
+      },
+    ];
+    mockListProviders.mockResolvedValue({ providers: [{ providerId: 'anthropic' }] });
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({
+        model: { id: 'sonnet', provider: 'anthropic' },
+        thinkingLevel: 'off',
+        sandbox: true,
+      })
+    );
+    vi.mocked(createSession).mockReturnValue(new Promise(() => {}));
+    render(<SessionsPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model and thinking' }));
+    expect(screen.getByRole('slider')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sandbox' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    fireEvent.input(screen.getByPlaceholderText('Ask anything to start a new chat...'), {
+      target: { value: 'Hello' },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Start chat' }).disabled).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start chat' }));
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith({
+        config: {
+          model: 'sonnet',
+          provider: 'anthropic',
+          thinkingLevel: 'off',
+          sandbox: { enabled: true },
+        },
+      })
+    );
   });
 
   it('opens with the folder a sidebar project asked for', async () => {

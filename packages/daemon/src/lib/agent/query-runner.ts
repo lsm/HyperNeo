@@ -822,7 +822,13 @@ export class QueryRunner {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
         const refusal = codexSessionRefusal(
-          session.config,
+          {
+            systemPrompt: session.config.systemPrompt,
+            agent: session.config.agent,
+            agents: session.config.agents,
+            toolGuards: session.config.toolGuards,
+            workerOperations: session.config.workerOperations,
+          },
           !!session.context?.spaceId,
           !!neoCoordinatorBinding(this.ctx.db, session.id),
           !!this.ctx.toolGuards?.length

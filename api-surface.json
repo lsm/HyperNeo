@@ -47706,7 +47706,8 @@
                   "parent_required",
                   "parent_not_found",
                   "nested_clone",
-                  "parent_unavailable"
+                  "parent_unavailable",
+                  "harness_unsupported"
                 ],
                 "type": "string"
               }

@@ -1,7 +1,12 @@
 import type { SessionConfig } from '@hyperneo/shared';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { isDeepStrictEqual } from 'node:util';
-import { codexSessionRefusal, selectSessionEngine } from '../agent/session-engine.ts';
+import {
+  codexSessionRefusal,
+  decideSwitch,
+  thinkingRefusal,
+  type SessionEngine,
+} from '../agent/session-engine.ts';
 
 export type CreateSessionConfigFieldPolicy = 'derived' | 'carried' | 'creation-only' | 'rejected';
 
@@ -49,7 +54,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   operationTools: 'carried',
   workerOperations: 'carried',
 
-  harness: 'creation-only',
+  harness: 'rejected',
   cwd: 'rejected',
   env: 'rejected',
   executable: 'rejected',
@@ -129,10 +134,6 @@ export function admitCreateSessionConfig(
   requested: Partial<SessionConfig> | undefined
 ): Partial<SessionConfig> {
   if (!requested) return {};
-  if (requested.harness !== undefined && isOxapHarness(selectSessionEngine(requested.harness))) {
-    const refusal = codexSessionRefusal(requested, false, false);
-    if (refusal) throw new Error(refusal);
-  }
 
   const rejected = REJECTED_FIELDS.filter((field) => requested[field] !== undefined);
   if (rejected.length > 0) {
@@ -151,11 +152,22 @@ export function admitCreateSessionConfig(
 export function admitUpdateSessionConfig(
   requested: Partial<SessionConfig> | undefined,
   currentSelection?: SessionConfig['toolSelection'],
-  currentHarness?: SessionConfig['harness']
+  current?: Pick<SessionConfig, 'harness' | 'provider'>,
+  engineOf: (provider: string) => SessionEngine = () => 'sdk'
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
-  if (isOxapHarness(currentHarness)) {
-    const refusal = codexSessionRefusal(requested, false, false);
+  if (current && (requested.provider !== undefined || requested.model !== undefined)) {
+    const switched = decideSwitch(
+      current,
+      requested.provider,
+      requested.provider ? engineOf(requested.provider) : 'sdk'
+    );
+    if (switched !== true) throw new Error(switched);
+  }
+  if (isOxapHarness(current?.harness)) {
+    const refusal =
+      codexSessionRefusal(requested, false, false) ??
+      thinkingRefusal(current.harness, requested.thinkingLevel);
     if (refusal) throw new Error(refusal);
   }
 

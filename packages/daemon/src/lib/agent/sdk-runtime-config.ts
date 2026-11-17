@@ -8,6 +8,8 @@ import type { ContextTracker } from './context-tracker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import { DISABLE_THINKING_ENV } from './query-options-builder.ts';
 import { resolveSessionContextModelInfo } from '../model-service.ts';
+import { codexSessionRefusal } from './session-engine.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 
 export interface SDKRuntimeConfigContext {
   readonly session: Session;
@@ -37,8 +39,16 @@ interface McpServerStatus {
 export class SDKRuntimeConfig {
   constructor(private ctx: SDKRuntimeConfigContext) {}
 
+  private unenforced(config: Partial<Session['config']>): ConfigUpdateResult | undefined {
+    if (!isOxapHarness(this.ctx.session.config.harness)) return undefined;
+    const error = codexSessionRefusal(config, false, false);
+    return error ? { success: false, error } : undefined;
+  }
+
   async setMaxThinkingTokens(tokens: number | null): Promise<ConfigUpdateResult> {
     const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
+    const refused = this.unenforced({ maxThinkingTokens: tokens });
+    if (refused) return refused;
 
     try {
       if (!queryObject || !firstMessageReceived) {
@@ -88,6 +98,10 @@ export class SDKRuntimeConfig {
 
   async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
     const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
+    const refused = this.unenforced({
+      permissionMode: mode as Session['config']['permissionMode'],
+    });
+    if (refused) return refused;
 
     try {
       if (!queryObject || !firstMessageReceived) {
