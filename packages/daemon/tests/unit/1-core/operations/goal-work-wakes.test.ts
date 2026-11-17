@@ -199,6 +199,22 @@ describe('goal work wakes', () => {
     expect(messages[0]).toContain('goal.journal.list');
   });
 
+  test('an empty review wake does not suggest paging with an empty cursor', async () => {
+    const goal = await create();
+    const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+    now = row.nextRunAt!;
+    await createSessionScheduleFire({
+      scheduler,
+      status: async () => 'done',
+      deliver: async (_row, _id, text) => {
+        messages.push(text);
+      },
+    })(jobs.getJob(row.pendingJobId!)!);
+    expect(messages[0]).toContain('Journal entries since the previous review');
+    expect(messages[0]).not.toContain('goal.journal.list');
+    expect(messages[0]).not.toContain('before: ""');
+  });
+
   test('entries added while a review is in flight appear in the next review', async () => {
     const goal = await create();
     await call('goal.journal.append', {

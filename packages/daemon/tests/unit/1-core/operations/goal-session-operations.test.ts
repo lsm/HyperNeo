@@ -205,6 +205,23 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test('startup reconciliation preserves individually paused schedules', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Paused wakes', doneTest: 'Done' }))
+        .goal;
+      const ids = ['goal', 'goal_review'].map((kind) => {
+        const row = scheduler.repo.getBySource(kind, goal.id)!;
+        expect(scheduler.pause(row)?.status).toBe('paused');
+        return row.id;
+      });
+      for (const existing of await goals.listScheduled()) schedules.reconcile(existing);
+      for (const id of ids)
+        expect(scheduler.repo.get(id)).toMatchObject({ id, status: 'paused', pendingJobId: null });
+    } finally {
+      db.close();
+    }
+  });
   test('review cadence changes appear in the session audit log', async () => {
     const { db, call } = setup();
     try {
