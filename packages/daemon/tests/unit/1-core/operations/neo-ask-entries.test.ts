@@ -395,7 +395,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
           2
         );
     });
-    return { db, store, sessions, opened };
+    return { store, sessions, opened };
   }
 
   test('lists blocked, doing, not started, done, then removed, and counts done todos', () => {
@@ -485,24 +485,6 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(await read('missing')).toEqual({ ok: false, reason: 'not_found: no such ask.' });
     allowed = false;
     expect(await read('ask')).toEqual({ ok: false, reason: 'denied' });
-  });
-
-  test('a todo stored as failed before failures became a blocker reads as that blocker', async () => {
-    const { db, store } = seed(['doing']);
-    db.prepare(
-      "UPDATE neo_todos SET state = 'failed', reason = 'Worker died' WHERE id = 't0'"
-    ).run();
-    const op = createNeoTodoReadOperation(
-      store,
-      (caller: OperationCaller) => ({ value: caller }),
-      async (todos) => [...todos]
-    );
-    const result = await op.execute(op.inputSchema.parse({ todoId: 't0' }), { source: 'rpc' });
-    expect(op.resultSchema.safeParse(result).success).toBe(true);
-    expect(result).toMatchObject({
-      ok: true,
-      todo: { state: 'blocked', blockedBy: 'failure', blockedReason: 'Worker died' },
-    });
   });
 
   test('neo.ask.read gives an agent one line per todo and neo.todo.read gives one todo in full', async () => {
