@@ -22,6 +22,14 @@ The MCP `neo.todo.remove`
 operation must also remove adopted work and work whose real adapter cannot stop,
 preserving ordinary stop semantics. Evidence is `retarget.json`.
 
-Only the final `work.start` backend is a recording fixture: no model or native
-worker launches. This proves core move admission, not coding line selection.
+The real `work.start` backend records the replacement worker delivery in the
+isolated database. No model or native worker is required. This proves core move
+admission and delivery, not coding line selection.
 The production coding `chooseLine` wiring and held-line exclusion belong to step 5.
+
+The request case also uses the real coding handoff brief with a synthetic Git
+checkout and a stub PR lookup. The admitted start must name the inherited folder,
+branch, uncommitted file, unpushed commit and PR URL. The coding target selection
+is replaced by the stored target for this proof; model-line selection is separate.
+A start after the move has already reopened is an ordinary start without handoff
+facts and is covered by the focused regression.

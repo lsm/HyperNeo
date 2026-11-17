@@ -24,6 +24,8 @@ describe('coding worker handoff', () => {
       git(['update-ref', 'refs/heads/handoff', head]);
       git(['symbolic-ref', 'HEAD', 'refs/heads/handoff']);
       git(['update-ref', 'refs/remotes/origin/handoff', base]);
+      git(['config', 'remote.origin.url', 'https://github.com/example/repo.git']);
+      git(['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*']);
       git(['config', 'branch.handoff.remote', 'origin']);
       git(['config', 'branch.handoff.merge', 'refs/heads/handoff']);
       writeFileSync(join(root, 'unfinished.txt'), 'unfinished');

@@ -267,6 +267,11 @@ function parseDriverStatus(outcome: OperationOutcome): DriverStatus | null {
   return reply?.ok ? reply.value : null;
 }
 
+export function readDriverFolder(outcome: OperationOutcome): string | undefined {
+  const status = parseDriverStatus(outcome);
+  return status?.execution?.directory ?? status?.place?.folder;
+}
+
 export function readDriverLive(outcome: OperationOutcome): {
   status: WorkStatus;
   title?: string;
