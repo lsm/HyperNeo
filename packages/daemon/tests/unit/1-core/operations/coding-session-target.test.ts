@@ -374,7 +374,7 @@ describe('coding session target decision', () => {
       if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'owner'").run();
       const result = await decide(todo(), start());
       if (worker) expect(result).toEqual({ value: { verb: 'send', ref: ref('owner') } });
-      else expect(result).toMatchObject({ value: { verb: 'start' } });
+      else expect(result).toMatchObject({ value: { verb: 'start', name: 'dev' } });
     }
   });
 

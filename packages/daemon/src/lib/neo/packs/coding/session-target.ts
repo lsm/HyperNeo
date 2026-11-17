@@ -165,8 +165,16 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       if (!facts) return { verb: 'keep' };
       let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
+      const startInstead = (todoId: string, ref: WorkRef): Plan => ({
+        ...planCodingSessionDispatch({
+          strategy: facts.strategy,
+          workType: (target.verb === 'start' && target.name) || 'dev',
+          pool: [],
+        }),
+        takeover: { todoId, ref },
+      });
       if (target.verb === 'start' && owner?.session && !owner.worker)
-        return { verb: 'start', takeover: { todoId: owner.todoId, ref: owner.session.ref } };
+        return startInstead(owner.todoId, owner.session.ref);
       let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
       for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
         if (!next.session || next.todoId === owner?.todoId) continue;
@@ -186,7 +194,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
         ownerState = owner.session ? await sessionState(owner.session, status) : undefined;
       }
       if (target.verb === 'start' && owner?.session && !owner.worker)
-        return { verb: 'start', takeover: { todoId: owner.todoId, ref: owner.session.ref } };
+        return startInstead(owner.todoId, owner.session.ref);
       const archived = ownerState?.state === 'archived';
       const assigned = archived ? undefined : ownerState;
       const pool = assigned
