@@ -35,9 +35,9 @@ export function humanPickedApply(question: {
   options: readonly string[] | null;
   answer: unknown;
 }): boolean {
-  return question.kind === 'yesno'
-    ? question.answer === 'yes'
-    : question.kind === 'choice' && [question.answer].flat().join('\n') === question.options?.[0];
+  return (
+    question.kind === 'choice' && [question.answer].flat().join('\n') === question.options?.[0]
+  );
 }
 
 export function replaceHumanCard(
