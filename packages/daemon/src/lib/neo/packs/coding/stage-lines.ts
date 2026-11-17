@@ -31,7 +31,8 @@ export const CODING_WORK_KINDS: readonly NeoWorkKind[] = [
 
 async function pinnedModel(lines: CodingLines, adapter: string, provider: string, id: string) {
   const entry = lines.models().find((model) => model.id === id && model.provider === provider);
-  for (const model of [...new Set([id, entry?.name, entry?.alias].filter(Boolean))] as string[]) {
+  const selectors = [id, entry?.name, entry?.alias, ...(entry?.providerAliases ?? [])];
+  for (const model of [...new Set(selectors.filter(Boolean))] as string[]) {
     const again = await lines.resolve({ adapter, model }).catch(() => null);
     if (again?.ok && again.value.provider === provider && again.value.model === id) return model;
   }
@@ -46,9 +47,10 @@ export async function codingCandidateLine<T extends Candidate>(
   const value = resolved?.ok ? resolved.value : null;
   const model = value?.model ?? target.model;
   const pinned =
-    value?.model && value.model !== target.model
+    target.model ??
+    (value?.model
       ? await pinnedModel(lines, target.adapter, value.provider ?? '', value.model)
-      : target.model;
+      : undefined);
   return {
     line: {
       provider: (pinned && value?.provider) || '',

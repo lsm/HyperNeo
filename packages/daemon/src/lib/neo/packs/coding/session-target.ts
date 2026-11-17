@@ -55,7 +55,32 @@ async function sessionState(session: Pooled, status: Status) {
     ref: session.ref,
     name: session.name,
     state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
+    line: {
+      provider: (live?.success && live.data.provider) || '',
+      model: (live?.success && live.data.model) || '',
+      harness: session.ref.adapter,
+    },
   };
+}
+
+const workKind = (todo: NeoTodo) =>
+  typeof todo.named?.workKind === 'string' ? todo.named.workKind : 'coding.write';
+
+async function routedPool(
+  pool: Awaited<ReturnType<typeof sessionState>>[],
+  lines: CodingLines | undefined,
+  scope: () => ReturnType<typeof codingLineScope>,
+  kind: string
+) {
+  if (!lines?.active()) return pool;
+  return Promise.all(
+    pool.map(async (session) => {
+      const routed = session.ref.adapter === 'hyperneo' && !session.ref.daemon;
+      if (!routed || session.state !== 'available') return session;
+      const ranking = await lines.rank(kind, [session.line], scope());
+      return ranking.ranked.length ? session : { ...session, state: 'busy' as const };
+    })
+  );
 }
 
 const prUrl = (todo: NeoTodo) => {
@@ -79,7 +104,14 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
     'facts'
   )
   .pipe(
-    async (facts: Facts, todo: NeoTodo, target: NeoTodoTarget, status: Status): Promise<Plan> => {
+    async (
+      db: Database,
+      lines: CodingLines | undefined,
+      facts: Facts,
+      todo: NeoTodo,
+      target: NeoTodoTarget,
+      status: Status
+    ): Promise<Plan> => {
       if (!facts) return { verb: 'keep' };
       let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
@@ -105,7 +137,12 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       const assigned = archived ? undefined : ownerState;
       const pool = assigned
         ? []
-        : await Promise.all(facts.pool.map((s) => sessionState(s, status)));
+        : await routedPool(
+            await Promise.all(facts.pool.map((s) => sessionState(s, status))),
+            lines,
+            () => codingLineScope(db, todo.id, facts.repo),
+            workKind(todo)
+          );
       return {
         ...planCodingSessionDispatch({
           strategy: facts.strategy,
@@ -118,7 +155,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
           : {}),
       };
     },
-    ['facts', 'todo', 'target', 'status'],
+    ['db', 'lines', 'facts', 'todo', 'target', 'status'],
     'plan'
   )
   .pipe(
@@ -144,10 +181,9 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       };
       const start = { ...target, ...(await usable('model')), ...(await usable('effort')) };
       if (!lines) return { value: { target: start } };
-      const kind = todo.named?.workKind;
       const ranked = await rankCodingTargets(
         lines,
-        typeof kind === 'string' ? kind : 'coding.write',
+        workKind(todo),
         await codingStartAlternatives(start, lines),
         codingLineScope(db, todo.id, facts?.repo)
       );
