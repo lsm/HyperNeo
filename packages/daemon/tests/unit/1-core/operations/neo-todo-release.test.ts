@@ -58,6 +58,7 @@ function setup() {
   new JobQueueRepository(db).commitSubmissionReceipt('neo-turn-report:v2:cutoff', 'v2', () => 0);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
+  recordWorkerStarted(db, worker);
   store.openAsk({
     id: 'ask',
     projectId: null,
@@ -191,9 +192,17 @@ describe('neo todo runner refresh releases finished workers', () => {
           admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
       );
       await h.finishTodo(h.add(started));
+      h.db
+        .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
+        .run(worker.adapter, worker.id);
       await h.refresh();
       await h.refresh();
-      expect(h.archived).toEqual([worker]);
+      expect(h.archived).toEqual([]);
+      expect(
+        h.db
+          .prepare('SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ?')
+          .get(worker.adapter, worker.id)
+      ).toBeNull();
       expect(h.released()).toHaveLength(1);
       const fact = h.db
         .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
