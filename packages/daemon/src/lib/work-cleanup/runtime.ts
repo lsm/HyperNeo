@@ -107,16 +107,22 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       )
         throw new Error(`${folder} resolves outside the evidence folder; kept.`);
     };
+    const checked = new Set<string>();
+    let cited = new Set<string>();
     const evidenceOwner = async (folder: string): Promise<WorkFolderFacts> => {
       const name = basename(folder);
-      const facts = await db.gateway.call(workCleanupReads, 'evidence', name, folder);
+      const facts = await db.gateway.call(workCleanupReads, 'evidence', name);
+      const referenced = checked.has(folder)
+        ? (await db.gateway.call(workCleanupReads, 'referenced', [folder])).length > 0
+        : cited.has(folder);
+      checked.add(folder);
       const settled = { inUse: false, unsaved: false } as const;
       if (!/^hn-[0-9a-f]{12}$/.test(name))
         return facts.todo
           ? {
               ...settled,
               owner: { kind: 'todo', state: facts.todo.state, boundToLiveTodo: false },
-              evidence: { since: facts.todo.since, referenced: facts.referenced },
+              evidence: { since: facts.todo.since, referenced },
             }
           : { ...settled, owner: null };
       const paths = worktrees.get(name);
@@ -132,7 +138,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       return {
         ...settled,
         owner: { kind: 'worktree', present: false },
-        evidence: { since: facts.goneAt, referenced: facts.referenced },
+        evidence: { since: facts.goneAt, referenced },
       };
     };
     const readEvidence = async (folder: string): Promise<WorkFolderFacts> => {
@@ -226,8 +232,11 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
           const key = workerWorkKey(path);
           worktrees.set(key, [...(worktrees.get(key) ?? []), path]);
         }
+        const evidence = await list(evidenceRoot);
+        if (evidence.length)
+          cited = new Set(await db.gateway.call(workCleanupReads, 'referenced', evidence));
         return [
-          ...(await list(evidenceRoot)),
+          ...evidence,
           ...listWorkCleanupFolders(
             folders,
             owned.flatMap((row) => (row.path ? [{ path: row.path }] : [])),

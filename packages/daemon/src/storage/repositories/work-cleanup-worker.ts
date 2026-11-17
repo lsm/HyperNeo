@@ -123,13 +123,9 @@ class WorkCleanupRepository {
     ];
   }
 
-  evidence(
-    name: string,
-    path: string
-  ): {
+  evidence(name: string): {
     todo: { state: NeoTodo['state']; since: number } | null;
     goneAt: number | null;
-    referenced: boolean;
   } {
     const todo = this.db
       .prepare(
@@ -139,6 +135,10 @@ class WorkCleanupRepository {
     const gone = this.db
       .prepare('SELECT gone_at AS goneAt FROM work_cleanup_gone WHERE key = ?')
       .get(name) as { goneAt: number } | null;
+    return { todo, goneAt: gone?.goneAt ?? null };
+  }
+
+  referenced(paths: readonly string[]): string[] {
     const stored = [
       ...this.db
         .prepare(`SELECT ${QUESTION_COLUMNS} FROM neo_questions WHERE state = 'open'`)
@@ -148,11 +148,10 @@ class WorkCleanupRepository {
           `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')`
         )
         .all(),
-    ].flatMap((row) => Object.values(row as Record<string, unknown>));
-    const referenced = stored.some(
-      (value) => typeof value === 'string' && mentionsFolder(value, path)
-    );
-    return { todo, goneAt: gone?.goneAt ?? null, referenced };
+    ]
+      .flatMap((row) => Object.values(row as Record<string, unknown>))
+      .filter((value) => typeof value === 'string');
+    return paths.filter((path) => stored.some((value) => mentionsFolder(value, path)));
   }
 
   workerFolders(): string[] {
@@ -203,7 +202,7 @@ export const workCleanupReads = defineRepositoryOp(
   'work.cleanup.reads',
   'read',
   WorkCleanupRepository,
-  ['owners', 'liveBindings', 'evidence', 'workerFolders', 'gone']
+  ['owners', 'liveBindings', 'evidence', 'referenced', 'workerFolders', 'gone']
 );
 
 export const workCleanupWrites = defineRepositoryOp(
