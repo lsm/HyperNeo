@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session, SessionConfig } from '@hyperneo/shared';
-import { admitUpdateSessionConfig } from '../../../../src/lib/session/create-session-config';
-import { codexSessionRefusal } from '../../../../src/lib/agent/session-engine';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
 import {
@@ -129,46 +127,6 @@ describe('session config serialization in SQLite', () => {
       temperature: 0.7,
       thinkingLevel: 'think16k',
     });
-  });
-
-  test('explicitly clears legacy OXAP restrictions while preserving tool selection', () => {
-    const toolSelection = { version: 1, choices: {} } as const;
-    repository.createSession(
-      session({
-        config: {
-          model: 'gpt-5.5',
-          provider: 'anthropic-codex',
-          harness: 'oxap-codex',
-          maxTokens: 4096,
-          temperature: 0,
-          toolSelection,
-          tools: { disabledTools: ['Bash'] },
-          allowedTools: ['Read'],
-          disallowedTools: ['Write'],
-          sdkToolsPreset: ['Read'],
-          maxTurns: 2,
-          maxBudgetUsd: 1,
-          additionalDirectories: ['/other'],
-        } as unknown as SessionConfig,
-      })
-    );
-    const clear = {
-      tools: null,
-      allowedTools: null,
-      disallowedTools: null,
-      sdkToolsPreset: null,
-      maxTurns: null,
-      maxBudgetUsd: null,
-      additionalDirectories: null,
-    } as unknown as Partial<SessionConfig>;
-    const before = storedConfig();
-    expect(codexSessionRefusal(before, false, false)).toBeDefined();
-    const admitted = admitUpdateSessionConfig(clear, undefined, before);
-    repository.updateSession('s1', { config: admitted });
-    const after = storedConfig();
-    expect(after.toolSelection).toEqual(toolSelection);
-    for (const field of Object.keys(clear)) expect(after).not.toHaveProperty(field);
-    expect(codexSessionRefusal(after, false, false)).toBeUndefined();
   });
 
   test('updateSession keeps its failed-to-serialize wrapper text', () => {

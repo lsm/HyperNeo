@@ -8,7 +8,6 @@ import type {
 } from '@hyperneo/shared';
 import { initialSessionToolSelection } from './session-initial-tool-selection.ts';
 import type { SessionUpdate } from './session-status-write.ts';
-import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -428,12 +427,8 @@ export class SessionRepository {
           `updateSession: failed to serialize config for session "${id}": ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      const clearOxapTools =
-        isOxapHarness(existing?.config.harness) &&
-        'tools' in updates.config &&
-        updates.config.tools === undefined;
       fields.push(`config = CASE WHEN json_valid(config) AND json_type(config, '$.toolSelection') IS NOT NULL
-        THEN CASE WHEN json_type(config, '$.tools') IS NOT NULL AND ${clearOxapTools ? '0' : '1'}
+        THEN CASE WHEN json_type(config, '$.tools') IS NOT NULL
           THEN json_set(?, '$.toolSelection', json_extract(config, '$.toolSelection'), '$.tools', json_extract(config, '$.tools'))
           ELSE json_remove(json_set(?, '$.toolSelection', json_extract(config, '$.toolSelection')), '$.tools') END
         ELSE ? END`);
