@@ -60,6 +60,12 @@ try {
     evidence.push({ surface: 'coding pack workerTarget', label, target, decision });
     return decision;
   };
+  store.openAsk({ id: 'unowned', projectId: null, sessionId: 'neo', originMessageId: null, title: 'unowned', request: 'Synthetic', createdAt: 1 });
+  const person = await session('person');
+  const previous = worked('unowned', person, 'person');
+  db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), 'unowned', previous.id);
+  const nonworker = await decide('a reserved person session starts new work', todo('unowned'), { verb: 'start', adapter: 'hyperneo' });
+  assert.equal('value' in nonworker && nonworker.value.verb, 'start', JSON.stringify(nonworker));
   worked('earlier', front, 'frontend');
   worked('earlier', back, 'backend');
   const first = todo('feature');

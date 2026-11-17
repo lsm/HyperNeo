@@ -65,6 +65,9 @@ function setup() {
     return added;
   };
   const worked = (item: NeoTodo, session: string, name?: string, state?: 'doing' | 'done') => {
+    db.prepare(
+      "INSERT OR IGNORE INTO work_started_sessions (adapter, id, started_at, role) VALUES ('claude-desktop', ?, 1, 'worker')"
+    ).run(session);
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
       item.id,
       JSON.stringify(name ? start(name) : { verb: 'send', ref: ref(session) }),
@@ -360,6 +363,19 @@ describe('coding session target decision', () => {
     });
     live['backend-1'] = 'unreachable';
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test('a reservation reuses only a daemon-started worker', async () => {
+    for (const worker of [false, true]) {
+      const { db, todo, worked, decide } = setup();
+      const first = todo();
+      await decide(first, start('backend'));
+      worked(first, 'owner', 'backend', 'done');
+      if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'owner'").run();
+      const result = await decide(todo(), start());
+      if (worker) expect(result).toEqual({ value: { verb: 'send', ref: ref('owner') } });
+      else expect(result).toMatchObject({ value: { verb: 'start' } });
+    }
   });
 
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
