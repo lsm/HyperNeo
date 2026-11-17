@@ -21,13 +21,50 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
 
 /** @public */
 export function codingSessionStrategy(db: Database, repo: string): CodingSessionStrategy {
+  return savedCodingSessionStrategy(db, repo) ?? 'long_lived';
+}
+
+export function savedCodingSessionStrategy(db: Database, repo: string) {
   const saved = listPackPreferences(db, 'coding').filter((row) => row.key === 'sessionStrategy');
   const value = (
     saved.find(
       (row) => row.scope.kind === 'repo' && row.scope.key.toLowerCase() === repo.toLowerCase()
     ) ?? saved.find((row) => row.scope.kind === 'global')
   )?.value;
-  return STRATEGIES.find((strategy) => strategy === value) ?? 'long_lived';
+  return STRATEGIES.find((strategy) => strategy === value) ?? null;
+}
+
+export const codingSessionStrategyRequest = (repo: string) =>
+  `coding.sessionStrategy:${repo.toLowerCase()}:`;
+
+const strategyAlternatives = (repo: string) =>
+  STRATEGIES.map((value) => [
+    {
+      pack: 'coding',
+      scope: { kind: 'repo' as const, key: repo.toLowerCase() },
+      key: 'sessionStrategy',
+      value,
+    },
+  ]);
+
+export function planCodingStrategyQuestion(input: {
+  repo: string;
+  saved: boolean;
+  nonce: string;
+  questions: readonly { id: string; state: string; proposal: string }[];
+}) {
+  const alternatives = strategyAlternatives(input.repo);
+  const proposal = JSON.stringify({ alternatives, hold: false });
+  const [latest] = input.questions.filter((question) => question.proposal === proposal);
+  if (input.saved || latest?.state === 'answered') return null;
+  if (latest?.state === 'open') return { reuse: latest.id };
+  return {
+    ask: {
+      requestId: `${codingSessionStrategyRequest(input.repo)}${input.nonce}`,
+      hold: false as const,
+      alternatives,
+    },
+  };
 }
 
 type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' | 'archived' };
