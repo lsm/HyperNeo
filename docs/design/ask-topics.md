@@ -97,7 +97,7 @@ switches to `topicKey` and keeps `topic` only as the label: the chip counts
 (`packages/web/src/neo/NeoTopicChips.tsx`), and in `packages/web/src/neo/NeoLive.tsx` the
 selection, the saved filter (`neo:topic-filter` in local storage), the list filter and the
 card's topic button (`onTopic` in `NeoAskTodos.tsx`). A saved filter that holds an old label
-matches nothing and clears, as an unknown topic does today. The colour stays keyed by label.
+matches no ask and is ignored, as an unknown topic is today (`NeoLive.tsx` line 321). The colour stays keyed by label.
 
 Acceptance, as tests on the pure function and one integration case per row:
 
