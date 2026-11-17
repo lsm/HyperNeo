@@ -41,16 +41,16 @@ Core's defaults:
   when it is gone (archived, released or unusable) does a new one start.
 - **Different roles on one todo, different sessions.** A session never plays two roles
   on the same todo, so a reviewer is never the author and a verifier is neither.
-- **Only sessions the daemon started.** Reuse never picks a session outside
-  `work_started_sessions.role = 'worker'`, whatever any pack says.
+- **Only sessions the daemon started.** Reuse never picks a session without a start
+  record (below), whatever any pack says.
 
 A pack can loosen or tighten the second rule for its roles. For example, a life-admin
 pack may let `do` and `check` share one session for low-stakes errands; the coding pack
 keeps all three apart. A pack cannot loosen the third rule.
 
-## Step 1: roles in core, coding stops picking sessions
+## Step 1
 
-Two PRs, in this order.
+Three PRs, in this order.
 
 **PR 1: the coding pack stops picking sessions.** Mostly deletions.
 
@@ -62,40 +62,68 @@ Two PRs, in this order.
   picks daemon-started workers. This closes the misroute without a separate guard.
 - A PR's review findings and CI failures still reach the author through the PR sweep
   (`neo/packs/coding/pr-sweep.ts`, `deps.tell(row.owner, …)`). This is not dispatch.
-- Until PR 2 lands, a new review round may start a new reviewer. That is safe, only
+- Until PR 3 lands, a new review round may start a new reviewer. That is safe, only
   less economical.
 
-**PR 2: roles in core.**
+**PR 2: the start record.** A session counts as started by the daemon only when it has
+a start record. Today `work_started_sessions` keeps only `adapter, id, started_at,
+unusable_at, released_at, claimed_by, role`, so it cannot say for whom or on what a
+session was started. The daemon writes one record when `work.start` starts new work, in
+the same step that records the start today (`recordStarted` in
+`rpc-handlers/family-operations/drivers.ts`), and never for a session it found or was
+handed. The record holds:
 
-- `work.start` takes an optional `role` (a short label). With a `todoId`, core records
-  the session it starts or reuses in a new table `neo_todo_roles (todo_id, role, adapter,
-  id, at, preparation_pack, sandbox)`; the last two are null for an unprepared start. A
-  start without a role is role `do`. Existing todos seed `do` from `neo_todo_sessions`,
-  keeping only refs in `work_started_sessions` with `role = 'worker'`: `neo_todo_sessions`
-  also holds pack-chosen sessions the daemon never started (`queueOn`), which must not come
-  back through the seed.
+| Group | Fields |
+|---|---|
+| identity | `adapter` (the driver), `id` |
+| when and by whom | `started_at`; `started_by`: the caller's session id (Neo), or `daemon` for a daemon path |
+| for what | `ask_id`, `todo_id`, `role`, `title` at start |
+| where | `machine`, `folder` |
+| what runs | `harness`, `provider`, `model`, `effort` as the adapter confirmed them, not as requested |
+| how prepared | `preparation_pack`, `sandbox` (null when unprepared) |
+| end | `released_at` and `release_reason`, `unusable_at` and `unusable_reason`, `archived_at` |
+
+These are columns on `work_started_sessions`, so existing reads keep working. Its current
+`role = 'worker'` marks the kind of start and is renamed `kind`, to keep it apart from a
+todo role. Rows written before this PR have no `started_by` and are never reused or
+reclaimed on the record's say-so.
+
+Release, archive and reclaim check the record: the daemon closes or archives a session
+only when its record exists, and writes the reason and time into the record's end
+fields (`neo/todo-release.ts`, `neo/session-archive-operation.ts`). Reuse picks only
+sessions whose record exists and has no end.
+
+**PR 3: roles in core.**
+
+- `work.start` takes an optional `role` (a short label). A start without a role is role
+  `do`. With a `todoId`, core writes one row per assignment in a new table
+  `neo_todo_roles (todo_id, role, adapter, id, at, model, effort)`: the first start and
+  every later round that reuses the session, each with the model and effort it ran on.
+  Existing todos seed `do` from `neo_todo_sessions`, keeping only refs that have a start
+  record: `neo_todo_sessions` also holds pack-chosen sessions the daemon never started
+  (`queueOn`), which must not come back through the seed.
 - One superpipe decides a start's session, inside `reuseIdleWorker`: read facts (the
-  todo's role sessions, the free daemon-started workers, the pack's role rules), decide
-  with one pure function, then send, wait or start new. The decision:
+  todo's role sessions, the free sessions with a live start record, the pack's role
+  rules), decide with one pure function, then send, wait or start new. The decision:
   1. this todo already has a session for this role and it is usable → send there; if
      busy, wait for it (`todoWorker.wait`, extended to a todo that is already doing);
   2. otherwise today's core rule (free worker in the same folder, same ask first),
      skipping any session that plays another role on this todo unless the pack's rules
      allow sharing;
   3. otherwise start new.
-- A prepared start (worker sandbox on) reuses only a session that was started with the
-  same preparation pack and sandbox setting, read from those two columns. The round's
-  parameters (PR, head) go in the message, as the review brief already does.
+- A prepared start (worker sandbox on) reuses only a session whose start record has the
+  same `preparation_pack` and `sandbox`. The round's parameters (PR, head) go in the
+  message, as the review brief already does.
 - A start's model and effort still have to match for reuse
   (`workStartConfiguration.confirm`). The coding pack asks for the earlier reviewer's
-  model on a new round, read from its own assignment facts, so the same reviewer can be
-  kept when a new ranking would pick another line.
+  model on a new round, read from `neo_todo_roles`, so the same reviewer can be kept when
+  a new ranking would pick another line.
 - Pack role rules are data on the pack: `NeoPack.roles?: Record<string, { shareWith?:
   string[] }>`. The coding pack uses `do` for the author, plus `review` and `verify`, with
   no sharing, and passes the role on each start. Using core's `do` keeps an author seeded
-  before the upgrade. Its explicit `excludeRefs` for the author and earlier
-  stage actors (`assign-operation.ts`) become redundant and are removed;
-  `workerStartExclusions` stays for cross-todo exclusions.
+  before the upgrade. Its explicit `excludeRefs` for the author and earlier stage actors
+  (`assign-operation.ts`) become redundant and are removed; `workerStartExclusions` stays
+  for cross-todo exclusions.
 - The one-worker-per-todo claim (`claimWorker` in
   `packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) applies per
   role.
@@ -113,6 +141,8 @@ Acceptance, one integration case per row:
 | worker sandbox on, second review round | the first round's sandboxed reviewer is reused |
 | a pack declares `do` and `check` may share | `check` may reuse the `do` session |
 | a free session the daemon did not start | never reused, by any role |
+| a new start | its record names who started it, for which ask, todo and role, the machine and folder, and the confirmed harness, provider, model and effort |
+| a session with no start record | never released, archived or reclaimed by the daemon |
 | a non-coding todo started with role `check` | never the session that did it |
 
 ## Later, only when needed
