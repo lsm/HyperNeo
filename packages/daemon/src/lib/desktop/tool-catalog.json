@@ -135,7 +135,7 @@
   },
   {
     "name": "press_key",
-    "description": "Send a key to the authorized target window after checking the focused field and requested effect. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
+    "description": "Send a key to the authorized target window after checking the focused field and requested effect. On macOS, * is not a key name. For * and other shifted symbols, send the base key with shift in modifiers (for example, key 8 with shift for * on a US keyboard). Unknown key names return driver_error. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
