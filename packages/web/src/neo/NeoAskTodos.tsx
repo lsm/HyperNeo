@@ -418,7 +418,7 @@ function TodoRow({
               aria-label={t('todo.desktopOnTitle')}
               disabled={disabled}
               onClick={() => setConfirmDesktopOff(true)}
-              class="inline-flex shrink-0 items-center rounded-lg border border-transparent px-1.5 py-1 text-[light-dark(#2563eb,#6ea8fe)] hover:border-line focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+              class="inline-flex shrink-0 items-center rounded-lg border border-transparent px-1.5 py-1 text-[var(--neo-desktop-control)] hover:border-line focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               <NeoDesktopIcon />
             </button>

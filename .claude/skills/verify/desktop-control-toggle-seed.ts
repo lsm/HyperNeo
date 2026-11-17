@@ -26,5 +26,15 @@ for (const [position, id, title, worker] of [
     now,
   ]);
 }
+db.run(
+  `INSERT INTO neo_todos (id, ask_id, position, title, done_when, instruction, state, approved_at, created_at, updated_at, started_at, blocked_reason, blocked_by)
+   VALUES ('visa', 'desktop-ask', 2, 'Pay the visa fee', 'Paid on the site', 'Use the site', 'blocked', ?, ?, ?, ?, 'Waiting for the human to sign in', 'needs-human')`,
+  [now, now, now, now]
+);
+db.run(
+  `INSERT INTO neo_todos (id, ask_id, position, title, done_when, instruction, state, approved_at, created_at, updated_at)
+   VALUES ('passport', 'desktop-ask', 3, 'Renew the passport online', 'Renewed on the site', 'Use the site', 'todo', ?, ?, ?)`,
+  [now, now, now]
+);
 db.close();
-console.log(JSON.stringify({ todos: ['dentist', 'taxes'] }));
+console.log(JSON.stringify({ todos: ['dentist', 'taxes', 'visa', 'passport'] }));
