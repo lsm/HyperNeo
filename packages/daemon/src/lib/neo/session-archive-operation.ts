@@ -30,7 +30,7 @@ type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archi
 
 export const NEO_TODO_RELEASE_PRINCIPAL = 'neo.todo.release';
 
-export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
+function admitArchiveCaller(ref: WorkRef, caller: OperationCaller, db: Database) {
   const release = caller.source === 'internal' && caller.principal === NEO_TODO_RELEASE_PRINCIPAL;
   const binding = caller.sessionId
     ? new NeoRepository(db.getDatabase()).getBindingBySession(caller.sessionId)
@@ -47,10 +47,13 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
       'live_todo',
       `Todo "${todo.title}" is still working in this session; finish or drop it first.`
     );
-  if (
-    !isLocalUser(caller) &&
-    (ref.daemon || readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
-  )
+  return null;
+}
+
+export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
+  const refused = admitArchiveCaller(ref, caller, db);
+  if (refused) return refused;
+  if (!isLocalUser(caller) && readStartedWork(db.getDatabase(), null, undefined, ref).length === 0)
     return reject('not_started_by_us', 'This session was not started by the daemon.');
   return null;
 }
@@ -82,7 +85,7 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
   .input(['ref', 'caller', 'deps'])
   .pipe(
     (ref: WorkRef, caller: OperationCaller, deps: Deps) => {
-      const refused = admitSessionArchive(ref, caller, deps.db);
+      const refused = admitArchiveCaller(ref, caller, deps.db);
       return refused ? { reason: refused } : { value: ref };
     },
     ['ref', 'caller', 'deps'],
@@ -91,6 +94,14 @@ const runArchive = (superpipe({})('neo.session.archive') as PipelineAPI)
   .pipe(
     (ref: WorkRef, deps: Deps) => pickRoute('archive', ref, deps.adapters()),
     ['outcome', 'deps'],
+    'result:outcome'
+  )
+  .pipe(
+    (route: ArchiveRoute, ref: WorkRef, caller: OperationCaller, deps: Deps) => {
+      const refused = 'local' in route ? admitSessionArchive(ref, caller, deps.db) : null;
+      return refused ? { reason: refused } : { value: route };
+    },
+    ['outcome', 'ref', 'caller', 'deps'],
     'result:outcome'
   )
   .pipe(archiveSession, ['outcome', 'ref', 'caller', 'deps'], 'outcome')
