@@ -33,16 +33,13 @@ Today the code does the opposite:
 - `deployed` for a deploy;
 - `human_confirmed` for anything the human must try, such as an install on a phone.
 
-Adding or editing a coding todo with an `evidence` check is refused. The refusal names the kinds above.
+Adding a coding todo or changing its check to `evidence` is refused; unchanged legacy checks remain valid as described below. The refusal names the kinds above.
 
-**2. Other todos keep results where the human can see them.** A todo without a repository may use `evidence` only for:
+**2. Other todos keep results where the human can see them.** A todo without a repository may use `evidence` for an explicit absolute file path or a registered artifact already referenced by that todo, retaining the existing artifact admission policy. The human’s folder (`neoUserFolder` in `daemon/src/lib/neo/folder.ts`) is the default; a human may name another persistent directory. The prompts direct workers to put results in that chosen place, not the hidden work directory. Admission cannot establish whether an arbitrary path was named by the human, so it does not enforce that preference.
 
-- a file inside the human's folder (`neoUserFolder` in `daemon/src/lib/neo/folder.ts`: `~/HyperNeo` or the configured workspace root);
-- a registered artifact.
+A missing path is refused. The daemon no longer fills in a path.
 
-A missing path is refused, and so is a path outside that folder. The daemon no longer fills in a path.
-
-**3. Existing open todos keep working.** A todo that already has a check keeps it and completes as before. Only new adds and edits follow rules 1 and 2. No data is rewritten.
+**3. Existing open todos keep working.** A todo that already has a check keeps it and completes as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
 
 **4. The hidden path goes away.** Remove:
 
@@ -56,7 +53,10 @@ Builds and scratch stay as they are: temporary folders that clean themselves.
 Neo's prompt text changes to match:
 
 - the `root.md` line "Completion uses core.evidence {} separately";
-- the `neo.todo.add` tool text, which today calls an omitted path "preferred: the daemon assigns the path".
+- the `neo.todo.add` tool text, which today calls an omitted path "preferred: the daemon assigns the path";
+- `root-turn-end.md`, which directs todos to use an assigned path;
+- `life-admin/instructions.md`, which should continue to allow the human’s requested persistent directory while requiring an explicit path;
+- the `invalid_core_check` message in `core-todo-checks.ts`, which advertises the assigned path. Audit related prompt and error text for the same obsolete guidance.
 
 ## How it is built
 
@@ -66,7 +66,7 @@ Rules 1 and 2 become one pure function in `core-todo-checks.ts`, and those four 
 
 - the check;
 - whether the todo has a repository;
-- the human folder, already resolved by each caller (`userFolder`).
+- the previous check on edit, so an unchanged legacy check remains valid.
 
 It returns a refusal or nothing, and it reads no database, clock or file system.
 
@@ -74,10 +74,10 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 - A coding todo with an `evidence` check is refused. It is accepted today.
 - A todo with no repository and no evidence path is refused. Today the daemon fills in the hidden path.
-- A todo with no repository and a path under `<data>/work` is refused. It is accepted today.
+- A todo with no repository and a path in a human-named persistent directory outside the default folder is accepted.
 - A todo with no repository and a path inside the human's folder is accepted.
-- A todo with no repository and a registered artifact is accepted.
-- An open todo whose existing check names a hidden path still completes when the file exists.
+- A todo with no repository retains an existing registered artifact check; a new artifact check remains subject to the existing admission policy.
+- An open todo whose existing check names a hidden path still completes when the file exists; editing its title or resubmitting that unchanged check succeeds, while changing its check applies the new rule.
 
 ## Not in scope
 
@@ -86,5 +86,5 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Slices
 
-1. **Wire**: the pure rule replaces `neoEvidenceRefusal` at its four call sites, plus the prompt text and the tests above.
-2. **Delete**: `withAssignedEvidence`, `todoEvidenceFile`, `HYPERNEO_EVIDENCE`, the `work/evidence` location, the brief lines and the `ask-entries` helper. Removal only.
+1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt and error text and add the tests above in this slice, so it independently refuses missing paths. Keep the helper and location only where still needed for legacy display and worker briefs.
+2. **Delete**: remove unused assignment code, `todoEvidenceFile`, `HYPERNEO_EVIDENCE`, the `work/evidence` location, the brief lines and the `ask-entries` helper. Removal only.
