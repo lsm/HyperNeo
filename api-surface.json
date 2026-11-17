@@ -47916,7 +47916,8 @@
                   "self_parent",
                   "parent_is_child",
                   "has_children",
-                  "unsupported_session"
+                  "unsupported_session",
+                  "owns_goals"
                 ],
                 "type": "string"
               }

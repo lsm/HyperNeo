@@ -1,4 +1,5 @@
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { SessionGoalRepository } from '../../../storage/repositories/session-goal-repository.ts';
 import { Logger } from '../../logger.ts';
 import type { OperationDefinition } from '../../operations/registry.ts';
 import { createSpawnSessionCloneOperation } from '../../session/clone-operations.ts';
@@ -14,6 +15,7 @@ const log = new Logger('session-operations');
 export function registerSessionOperations(context: FamilyOperationContext): OperationDefinition[] {
   const space = context.sessionSpace;
   const getSession = (sessionId: string) => context.deps.db.getSession(sessionId);
+  const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
   const sessionSpaceId = (session: Session) => space?.sessionSpaceId(session);
   const getLiveSession = (sessionId: string) =>
     space?.liveSession(sessionId) ?? context.deps.sessionManager.getCachedSession(sessionId);
@@ -49,6 +51,7 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
     getSession,
     listChildren: (sessionId) => context.deps.db.listChildSessions(sessionId),
     sessionSpaceId: (session) => sessionSpaceId(session) ?? session.context?.spaceId,
+    ownsActiveGoal: (sessionId) => goals.list(sessionId, false).length > 0,
     setParent: async (sessionId, parentId) => {
       const current = context.deps.db.getSession(sessionId);
       if (current)

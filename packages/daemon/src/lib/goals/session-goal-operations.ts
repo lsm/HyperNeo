@@ -10,6 +10,7 @@ import {
   defineOperation,
   isAgentSessionCaller,
   type OperationCaller,
+  type OperationPolicy,
 } from '../operations/registry.ts';
 import {
   GOAL_READ_POLICY,
@@ -24,6 +25,15 @@ import { requireValidCadence } from '../scheduler/session-schedules.ts';
 import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 
 type Rejection = { accepted: false; reason: string };
+
+const OWNER_READ_POLICY = {
+  ...GOAL_READ_POLICY,
+  roles: [...GOAL_READ_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
+const OWNER_WRITE_POLICY = {
+  ...GOAL_WRITE_POLICY,
+  roles: [...GOAL_WRITE_POLICY.roles, 'universal_read'],
+} as const satisfies OperationPolicy;
 type Gate<T> = { value: T } | { reason: Rejection };
 
 const refuse = (reason: string): { reason: Rejection } => ({ reason: { accepted: false, reason } });
@@ -424,7 +434,7 @@ export function createSessionGoalOperations({
       name: 'goal.session.create',
       description:
         'Create a goal owned by a session, with one work wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Every due time wakes the owner to work, even when facts are unchanged, up to dailyRunLimit wakes in any 24 hours (default 24); later due times are skipped and the owner is told once. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. nudgeEvery is accepted for legacy compatibility only. Returns { accepted, goal } or { accepted: false, reason }.',
-      policy: GOAL_WRITE_POLICY,
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
       execute: async (input, caller) => (create as Run)(input, caller) as never,
@@ -432,7 +442,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.get',
       description: 'Read one goal owned by a session.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: GoalResult,
       execute: async (input, caller) => (get as Run)(input, caller) as never,
@@ -440,7 +450,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.list',
       description: 'List a session’s goals, active and paused unless includeClosed.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: List,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), goals: z.array(GoalSchema) }),
@@ -452,7 +462,7 @@ export function createSessionGoalOperations({
       name: 'goal.session.update',
       description:
         'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. worksNote summarizes the journal, advances its cursor and records journal_compacted without deleting entries. Each change is recorded as a goal event.',
-      policy: GOAL_WRITE_POLICY,
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
       execute: async (input, caller) => (update as Run)(input, caller) as never,
@@ -461,7 +471,7 @@ export function createSessionGoalOperations({
       name: 'goal.facts',
       description:
         'Read the same goal facts and changed-line summary as its scheduler, without consuming the changes. Closed goals return null facts.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Get,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({
@@ -478,7 +488,7 @@ export function createSessionGoalOperations({
       name: 'goal.journal.append',
       description:
         'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message.',
-      policy: GOAL_WRITE_POLICY,
+      policy: OWNER_WRITE_POLICY,
       inputSchema: Append,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), entry: EntrySchema }),
@@ -489,7 +499,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.list',
       description: 'Read a session goal’s journal, newest first.',
-      policy: GOAL_READ_POLICY,
+      policy: OWNER_READ_POLICY,
       inputSchema: Journal,
       resultSchema: z.discriminatedUnion('accepted', [
         z.object({ accepted: z.literal(true), entries: z.array(EntrySchema) }),
