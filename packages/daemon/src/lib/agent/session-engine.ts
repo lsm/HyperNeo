@@ -1,4 +1,4 @@
-import type { ProviderRecord, SessionConfig } from '@hyperneo/shared';
+import type { GlobalSettings, ProviderRecord, SessionConfig } from '@hyperneo/shared';
 import {
   isOxapHarness,
   OXAP_HARNESSES,
@@ -21,13 +21,45 @@ export function engineForProvider(
 ): SessionEngine {
   const rows: OxapHarness[] = Object.values(OXAP_HARNESSES);
   if (!rows.some((row) => row.providers.includes(providerId))) return 'sdk';
-  const harness = (JSON.parse(record()?.configJson ?? '{}') as { harness?: unknown }).harness;
+  let config: unknown;
+  try {
+    config = JSON.parse(record()?.configJson ?? '{}');
+  } catch {
+    throw new Error(`Provider ${providerId} has an unreadable config`);
+  }
+  const harness =
+    config && typeof config === 'object' ? (config as { harness?: unknown }).harness : undefined;
   if (harness === undefined) return 'sdk';
   if (isOxapHarness(harness) && oxapHarness(harness).providers.includes(providerId)) return harness;
   throw new Error(`Provider ${providerId} names an unsupported harness: ${String(harness)}`);
 }
 
-export const UNENFORCED_RESTRICTION =
+export function sdkFallbackProviders<T extends { id: string }>(
+  providers: T[],
+  record: (providerId: string) => Pick<ProviderRecord, 'configJson'> | null
+): T[] {
+  return providers.filter((provider) => {
+    try {
+      return engineForProvider(provider.id, () => record(provider.id)) === 'sdk';
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function effectiveOxapConfig(
+  config: Partial<SessionConfig>,
+  global: Pick<GlobalSettings, 'permissionMode' | 'sandbox' | 'coordinatorMode'>
+): Partial<SessionConfig> {
+  return {
+    ...config,
+    permissionMode: config.permissionMode ?? global.permissionMode,
+    sandbox: config.sandbox ?? global.sandbox,
+    coordinatorMode: config.coordinatorMode ?? global.coordinatorMode,
+  };
+}
+
+const UNENFORCED_RESTRICTION =
   'OXAP Codex runs with on-request approval in the workspace; this restriction is not supported';
 
 const isSet = (value: unknown) =>
@@ -40,6 +72,7 @@ function unenforced(config: Partial<SessionConfig>): boolean {
   const sandbox = config.sandbox;
   return (
     (config.permissionMode !== undefined && config.permissionMode !== 'default') ||
+    config.coordinatorMode === true ||
     (['tools', 'sdkToolsPreset', 'allowedTools', 'disallowedTools'] as const).some(
       (field) => config[field] !== undefined
     ) ||

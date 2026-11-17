@@ -441,7 +441,7 @@ describe('QueryRunner', () => {
       const hub = mock(() => ({ submit, events: async function* () {}, cancel: async () => {} }));
       const config = { model: 'unit', provider: providerId, harness: 'oxap-codex' as const };
       const ctx = createContext({
-        session: { ...mockSession, config: { ...config } },
+        session: { ...mockSession, config: { ...config } as Session['config'] },
         db: {
           ...mockDb,
           getGlobalSettings: () => ({ permissionMode: 'plan', sandbox: { enabled: false } }),
@@ -463,11 +463,10 @@ describe('QueryRunner', () => {
       expect((await send).message).toMatch(/this restriction is not supported/);
       expect(hub).not.toHaveBeenCalled();
       expect(submit).not.toHaveBeenCalled();
-      expect(ctx.session.config).toEqual(config);
-      expect(updateSessionSpy).not.toHaveBeenCalledWith(
-        ctx.session.id,
-        expect.objectContaining({ config: expect.anything() })
-      );
+      expect(ctx.session.config as unknown).toEqual(config);
+      expect(
+        updateSessionSpy.mock.calls.some((call) => JSON.stringify(call).includes('"config"'))
+      ).toBe(false);
     });
 
     async function completesWithin(promise: Promise<unknown>): Promise<boolean> {

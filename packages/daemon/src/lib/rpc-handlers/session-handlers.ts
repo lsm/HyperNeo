@@ -43,7 +43,6 @@ import {
   codexSessionRefusal,
   engineForProvider,
   thinkingRefusal,
-  UNENFORCED_RESTRICTION,
 } from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
@@ -713,8 +712,10 @@ export function setupSessionHandlers(
 
     const session = agentSession.getSessionData();
     const previousMode = session.config.coordinatorMode ?? false;
-    if (coordinatorMode && isOxapHarness(session.config.harness))
-      return { success: false, coordinatorMode: previousMode, error: UNENFORCED_RESTRICTION };
+    const refusal =
+      isOxapHarness(session.config.harness) &&
+      codexSessionRefusal({ coordinatorMode }, false, false);
+    if (refusal) return { success: false, coordinatorMode: previousMode, error: refusal };
 
     if (previousMode === coordinatorMode) {
       return { success: true, coordinatorMode };

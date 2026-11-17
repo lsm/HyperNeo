@@ -100,7 +100,11 @@ describe('raw session.update provider switches', () => {
       /this restriction is not supported/
     );
     expect(updateSession).not.toHaveBeenCalled();
-    expect(stored).toEqual({ model: 'gpt-5.5', provider: 'anthropic-codex', harness: 'oxap-codex' });
+    expect(stored).toEqual({
+      model: 'gpt-5.5',
+      provider: 'anthropic-codex',
+      harness: 'oxap-codex',
+    });
     await update({ coordinatorMode: false });
     expect(updateSession).toHaveBeenCalledWith('s1', { config: { coordinatorMode: false } });
   });

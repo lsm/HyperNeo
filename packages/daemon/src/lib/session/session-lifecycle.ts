@@ -28,7 +28,12 @@ import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-fi
 import type { WorktreeManager } from '../worktree-manager.ts';
 import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
-import { codexSessionRefusal, engineForProvider } from '../agent/session-engine.ts';
+import {
+  codexSessionRefusal,
+  effectiveOxapConfig,
+  engineForProvider,
+  thinkingRefusal,
+} from '../agent/session-engine.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
@@ -163,15 +168,15 @@ export class SessionLifecycle {
       this.db.providers.getProviderByProviderId(provider)
     );
     if (isOxapHarness(harness)) {
-      const refusal = codexSessionRefusal(
-        {
-          ...carriedConfig,
-          sandbox,
-          permissionMode: carriedConfig.permissionMode ?? globalSettings.permissionMode,
-        },
-        false,
-        false
-      );
+      const refusal =
+        codexSessionRefusal(
+          effectiveOxapConfig(
+            { ...carriedConfig, sandbox, coordinatorMode: params.config?.coordinatorMode },
+            globalSettings
+          ),
+          false,
+          false
+        ) ?? thinkingRefusal(harness, params.config?.thinkingLevel);
       if (refusal) throw new Error(refusal);
     }
 
