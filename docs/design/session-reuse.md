@@ -46,8 +46,11 @@ Neo's explicit `send` to a named session is unchanged; this setting only decides
 
 **Where it is stored.** A core preference `sessionReuse`, scope `project` (the todo's ask
 `projectId`), falling back to `global`, then to `long_lived`. It uses the existing
-preference store and the settings page; core declares it as pack id `core`
-(`neo/preference-operations.ts` reads declarations by pack id). No question is asked
+preference store; core declares it as pack id `core`
+(`neo/preference-operations.ts` reads declarations by pack id). The settings page today
+writes pack preferences only at global or repo scope
+(`packages/web/src/components/settings/PackSettings.tsx`), so it gains a session-reuse
+block that shows, sets and clears the global value and each project's value. No question is asked
 before first use.
 
 **The coding pack stops choosing sessions.** Its `workerTarget` keeps model-line ranking
@@ -73,7 +76,9 @@ Each slice is one PR from `dev`, failing tests first.
    candidates for `per_ask` and `per_todo`. About 60 production lines.
 2. **Coding pack.** Remove the session part of `workerTarget`, the strategy declaration,
    the reservation table and its reads/writes; move saved values. Mostly deletions.
-3. **Docs.** Replace the "Session strategy" section of `pack-preferences.md` with a link
+3. **Settings page.** The session-reuse block: global value plus one row per project,
+   each settable and clearable.
+4. **Docs.** Replace the "Session strategy" section of `pack-preferences.md` with a link
    here.
 
 Acceptance, one integration case per row:
