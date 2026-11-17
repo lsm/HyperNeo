@@ -21574,6 +21574,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -23027,6 +23030,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23562,6 +23568,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -24100,6 +24109,9 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "topicKey": {
+                        "type": "string"
                       },
                       "updatedAt": {
                         "type": "number"
@@ -25339,6 +25351,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -25874,6 +25889,9 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "topicKey": {
+                    "type": "string"
                   },
                   "updatedAt": {
                     "type": "number"
@@ -31067,6 +31085,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -39382,6 +39403,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"

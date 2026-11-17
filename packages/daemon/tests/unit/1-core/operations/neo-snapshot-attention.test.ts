@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
+import { NEO_OTHER_TOPIC } from '@hyperneo/shared/types/neo-ask';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoOperations } from '../../helpers/neo-service.ts';
@@ -119,12 +120,22 @@ test('history pages preserve same-time ordering, project scope, summaries and re
   expect(last.nextCursor).toBeNull();
 });
 
-test('snapshot asks carry their topic, null when unset', async () => {
-  ask('labelled');
+test("snapshot asks carry their project's topic, else Neo's pick, else the other topic", async () => {
+  ask('in-project');
+  ask('picked');
   ask('plain');
-  db.getDatabase().prepare("UPDATE neo_asks SET topic = 'OAP' WHERE id = 'labelled'").run();
+  db.getDatabase()
+    .prepare("UPDATE neo_asks SET topic = 'OAP' WHERE id IN ('in-project', 'picked')")
+    .run();
+  db.getDatabase()
+    .prepare("UPDATE neo_asks SET project_id = NULL WHERE id IN ('picked', 'plain')")
+    .run();
   const view = await snapshot();
-  const topic = (id: string) => view.todoAsks?.find((entry) => entry.ask.id === id)?.ask.topic;
-  expect(topic('labelled')).toBe('OAP');
-  expect(topic('plain')).toBeNull();
+  const topic = (id: string) => {
+    const found = view.todoAsks?.find((entry) => entry.ask.id === id)?.ask;
+    return [found?.topic, found?.topicKey];
+  };
+  expect(topic('in-project')).toEqual(['a', 'a']);
+  expect(topic('picked')).toEqual(['OAP', 'pick:oap']);
+  expect(topic('plain')).toEqual([NEO_OTHER_TOPIC, `pick:${NEO_OTHER_TOPIC}`]);
 });

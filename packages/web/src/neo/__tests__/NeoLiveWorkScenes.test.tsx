@@ -360,8 +360,12 @@ describe('Topic chips by topic key', () => {
     expect(listed(container)).toEqual(['shop-q']);
     fireEvent.click(screen.getByRole('button', { name: 'kids 2' }));
     expect(listed(container).sort()).toEqual(['lower', 'upper']);
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('neo:topic-filter', 'pick:kids');
 
     cleanup();
+    vi.spyOn(localStorage, 'getItem').mockImplementation((key) =>
+      key === 'neo:topic-filter' ? 'pick:kids' : null
+    );
     const reloaded = show().container;
     expect(screen.getByRole('button', { name: 'kids 2' }).getAttribute('aria-pressed')).toBe(
       'true'
