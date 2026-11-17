@@ -108,9 +108,10 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         throw new Error(`${folder} resolves outside the evidence folder; kept.`);
     };
     const checked = new Set<string>();
-    let cited = new Set<string>();
+    let cited: Set<string> | null = new Set<string>();
     const evidenceOwner = async (folder: string): Promise<WorkFolderFacts> => {
       const name = basename(folder);
+      if (!cited) throw new Error('Reference read failed');
       const facts = await db.gateway.call(workCleanupReads, 'evidence', name);
       const referenced = checked.has(folder)
         ? (await db.gateway.call(workCleanupReads, 'referenced', [folder])).length > 0
@@ -234,7 +235,10 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
         }
         const evidence = await list(evidenceRoot);
         if (evidence.length)
-          cited = new Set(await db.gateway.call(workCleanupReads, 'referenced', evidence));
+          cited = await db.gateway.call(workCleanupReads, 'referenced', evidence).then(
+            (paths) => new Set(paths),
+            () => null
+          );
         return [
           ...evidence,
           ...listWorkCleanupFolders(

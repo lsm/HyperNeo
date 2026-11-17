@@ -25,7 +25,7 @@ const decodedRun = (run: string) => {
 
 const cites = (text: string, folder: string) => {
   for (let at = text.indexOf(folder); at !== -1; at = text.indexOf(folder, at + 1))
-    if (!/^(?:[\w-]|\.\w)/.test(text.slice(at + folder.length))) return true;
+    if (!/^(?:[A-Za-z0-9-]|[._][A-Za-z0-9])/.test(text.slice(at + folder.length))) return true;
   return false;
 };
 
