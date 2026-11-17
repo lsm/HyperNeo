@@ -57,8 +57,10 @@ plan context gains one line listing every topic used in the last 30 days with it
 open or settled. Neo's pick only matters for asks with no project or origin, which are
 mostly personal ones.
 
-**3. Same names merge on their own.** Topics that differ only in case or spacing are one
-topic when read.
+**3. A topic has a key.** The read also returns `topicKey`: the project id for a project
+topic, and `pick:` plus the name with case and spacing folded for Neo's pick. Two projects
+with the same title stay two topics; two picks that differ only in case or spacing are one.
+The topic chips group by `topicKey` and show `topic`.
 
 **4. The daily pass tidies Neo's picks.** The existing daily reorganize pass
 (`reorganize-nightly.ts`) gives Neo one turn with Neo-picked topics and their counts, and
@@ -70,7 +72,7 @@ Project titles are not Neo's picks and are never rewritten this way.
 ## What does not change
 
 `neo.ask.open` and `neo.ask.topic` keep their inputs; the stored topic becomes Neo's pick.
-Projects, the project mirror, the topic chips and their colours. Asks without todos or origin
+Projects, the project mirror, and the chips' look and colours. Asks without todos or origin
 behave as today, apart from the prompt.
 
 ## Change plan
@@ -89,7 +91,9 @@ first.
    lines.
 
 `bun run system-map impact` on `neo-ask-todo-repository.ts`: 54 importers, 32 of them in
-`lib/neo`. `topic` keeps its type (`string | null`), so none is forced to change.
+`lib/neo`. `topic` keeps its type (`string | null`) and `topicKey` is a new optional field,
+so none is forced to change; the chips change in slice 1
+(`packages/web/src/neo/NeoTopicChips.tsx`).
 
 Acceptance, as tests on the pure function and one integration case per row:
 
@@ -98,8 +102,9 @@ Acceptance, as tests on the pure function and one integration case per row:
 | An ask whose todo runs in a session of project P, with Neo's pick "X" | topic is P's title |
 | Two asks in the same project with different Neo picks | the same topic |
 | A request from a session of project P | topic is P's title, with no Neo call |
-| A follow-up ask whose parent is in topic T | topic T |
-| An ask with no work and no origin, Neo pick "kids" while "Kids" exists | topic "Kids" |
+| A follow-up ask with no project, whose parent's project or stored pick is T | topic T |
+| Two projects both titled P | two topics named P |
+| Picks "kids" and "Kids" on asks with no project | one topic |
 | An ask with `project_id` P and no todos | topic is P's title |
 | A follow-up of a follow-up whose grandparent alone has a topic | "Other": one step only |
 | Neo merges "A" into "B" | every ask stored as "A" now stores "B"; "A" leaves the list |
