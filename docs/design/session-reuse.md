@@ -69,8 +69,11 @@ Two PRs, in this order.
 
 - `work.start` takes an optional `role` (a short label). With a `todoId`, core records
   the session it starts or reuses in a new table `neo_todo_roles (todo_id, role, adapter,
-  id, at)`. A start without a role is role `do`. Existing todos seed `do` from
-  `neo_todo_sessions`.
+  id, at, preparation_pack, sandbox)`; the last two are null for an unprepared start. A
+  start without a role is role `do`. Existing todos seed `do` from `neo_todo_sessions`,
+  keeping only refs in `work_started_sessions` with `role = 'worker'`: `neo_todo_sessions`
+  also holds pack-chosen sessions the daemon never started (`queueOn`), which must not come
+  back through the seed.
 - One superpipe decides a start's session, inside `reuseIdleWorker`: read facts (the
   todo's role sessions, the free daemon-started workers, the pack's role rules), decide
   with one pure function, then send, wait or start new. The decision:
@@ -81,15 +84,16 @@ Two PRs, in this order.
      allow sharing;
   3. otherwise start new.
 - A prepared start (worker sandbox on) reuses only a session that was started with the
-  same preparation pack and sandbox setting; `neo_todo_roles` records both. The round's
+  same preparation pack and sandbox setting, read from those two columns. The round's
   parameters (PR, head) go in the message, as the review brief already does.
 - A start's model and effort still have to match for reuse
   (`workStartConfiguration.confirm`). The coding pack asks for the earlier reviewer's
   model on a new round, read from its own assignment facts, so the same reviewer can be
   kept when a new ranking would pick another line.
 - Pack role rules are data on the pack: `NeoPack.roles?: Record<string, { shareWith?:
-  string[] }>`. The coding pack declares `write`, `review`, `verify` with no sharing and
-  passes the role on each start. Its explicit `excludeRefs` for the author and earlier
+  string[] }>`. The coding pack uses `do` for the author, plus `review` and `verify`, with
+  no sharing, and passes the role on each start. Using core's `do` keeps an author seeded
+  before the upgrade. Its explicit `excludeRefs` for the author and earlier
   stage actors (`assign-operation.ts`) become redundant and are removed;
   `workerStartExclusions` stays for cross-todo exclusions.
 - The one-worker-per-todo claim (`claimWorker` in
