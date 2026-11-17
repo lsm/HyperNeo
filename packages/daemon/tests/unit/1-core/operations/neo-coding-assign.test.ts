@@ -82,6 +82,9 @@ function fixture(
   projectAlias.run('repository:github.com/synthetic/actors', 'project');
   projectAlias.run(`folder:${hostname()}\u0000${project}`, 'project');
   db.exec(
+    "INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo', 'github.com/synthetic/actors')"
+  );
+  db.exec(
     "INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','neo-fixture','Actors','Actors',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Actors','Merged','doing',1,1)"
   );
   const ledger = new CodingPrLedgerRepository(db),
@@ -585,7 +588,7 @@ describe('review place', () => {
   const remote = { ...reviewer, place: { ...place, daemon: 'remote-daemon' } };
   test('the reviewer starts in the repository project folder, not the read mirror, and passes start-place admission', async () => {
     const f = fixture();
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
     expect(f.starts[0].place).toEqual({
       machine: hostname(),
       folder: f.project,
@@ -594,11 +597,19 @@ describe('review place', () => {
   });
   test('without a known project folder assignment refuses and starts nobody', async () => {
     const f = fixture();
-    f.db.prepare("DELETE FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").run();
+    const forget = () =>
+      f.db.prepare("DELETE FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").run();
     const unknown = { ok: false, reason: expect.stringContaining('has no known project folder') };
+    forget();
     expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(unknown);
-    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(unknown);
     expect(f.starts).toHaveLength(0);
+    f.db
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run(`folder:${hostname()}\u0000${f.project}`, 'project');
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
+    forget();
+    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(unknown);
+    expect(f.starts).toHaveLength(1);
   });
   test('a candidate on another daemon is never routed to', async () => {
     const f = fixture();

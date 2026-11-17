@@ -36,13 +36,15 @@ Observe `evidence/actor-assignments.json` and `gh.jsonl`:
   kickoff remains below the message limit and names the immutable acceptance ref.
 - Repeating both assignments and restarting the daemon reuse recorded refs without
   duplicate starts. Each synthetic work slice retains one todo and its author.
-- An actor starts and is prepared from the repository's read view under the
-  data dir, never a candidate's folder. Without a read view, assignment refuses
-  and starts nobody.
-- `evidence/read-view-place.json`: a real HyperNeo session created on the read
-  view (production `createDriverSession`) runs in its own managed worktree with
-  its own HEAD. A sync-style checkout in the read view leaves the actor HEAD, and
-  an actor checkout leaves the read view HEAD.
+- An actor starts and is prepared from the repository's project folder (the
+  folder a Neo project with that repository records on this machine), never the
+  daemon's read mirror or a candidate's folder. Without a known project folder,
+  assignment refuses and starts nobody.
+- `evidence/read-view-place.json`: a real HyperNeo session created on the
+  project folder (production `createDriverSession`) runs in its own managed
+  worktree of that folder (its git common dir is the project's), not under the
+  read mirror. A sync-style checkout in the read mirror leaves the actor HEAD,
+  and an actor checkout leaves the read mirror HEAD.
 - Explicit human Review starts no session; missing provenance refuses while an
   explicit provenance opt-out permits the default.
 - A preflight-unavailable preferred model falls back to the qualifying default

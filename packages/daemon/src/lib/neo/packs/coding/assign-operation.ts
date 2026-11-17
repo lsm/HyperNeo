@@ -9,7 +9,10 @@ import {
 import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir, hostname } from 'node:os';
-import { getNeoReadCheckoutPath, isReadyNeoReadCheckout } from './read-checkout-path.ts';
+import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
+import { existsSync } from 'node:fs';
+import { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
+import { neoProjectFolders } from '../../project-mirror.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -104,6 +107,19 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
   };
 }
 
+function repositoryProjectFolder(db: Database, name: string): string | null {
+  const projects = new NeoRepository(db);
+  const view = getNeoReadCheckoutPath(...(name.split('/') as [string, string]));
+  for (const [projectId, repository] of projects.repositories()) {
+    if (repository.toLowerCase() !== name.toLowerCase()) continue;
+    const folder = neoProjectFolders(projects.workspaceAliases(projectId)).find(
+      (place) => place.machine === hostname() && place.folder !== view && existsSync(place.folder)
+    )?.folder;
+    if (folder) return folder;
+  }
+  return null;
+}
+
 export function createCodingAssignmentOperation(deps: Deps) {
   const assignments = new CodingAssignmentsRepository(deps.db),
     running = new Set<string>();
@@ -128,12 +144,12 @@ export function createCodingAssignmentOperation(deps: Deps) {
     if (!candidates.length)
       return refuse('Configure an available independent actor on this daemon.');
     const { owner, repo } = parsePrUrl(input.url)!;
-    const view = getNeoReadCheckoutPath(owner, repo);
-    if (!isReadyNeoReadCheckout(view))
+    const folder = repositoryProjectFolder(deps.db, `${owner}/${repo}`);
+    if (!folder)
       return refuse(
-        `${owner}/${repo} has no read-only view yet, so no actor was started; assign again after the view syncs.`
+        `${owner}/${repo} has no known project folder on this machine, so no actor was started; open the repository as a project here, then assign again.`
       );
-    const place = { machine: hostname(), folder: view, name: `${owner}/${repo}` };
+    const place = { machine: hostname(), folder, name: `${owner}/${repo}` };
     const select = (candidates: Input['candidates']) =>
       assignments.planTargetCurrent({
         repo: repoName(input),
