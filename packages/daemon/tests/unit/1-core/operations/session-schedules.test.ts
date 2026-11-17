@@ -78,7 +78,8 @@ describe('session schedules', () => {
       goals,
       new NeoAskTodoRepository(db),
       scheduler,
-      () => []
+      () => [],
+      () => false
     );
     scheduler.registerSource(source);
     const goal = goals.create(
