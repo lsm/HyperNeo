@@ -18,6 +18,7 @@ import {
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { initializeProviders } from '../../../../src/lib/providers/factory';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -163,6 +164,7 @@ describe('QueryRunner', () => {
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
       getSession: () => mockSession,
+      getGlobalSettings: () => DEFAULT_GLOBAL_SETTINGS,
       saveSDKMessage: saveSDKMessageSpy,
       writeSDKMessage: mock(async () => []),
       updateSession: updateSessionSpy,
@@ -432,6 +434,40 @@ describe('QueryRunner', () => {
       expect(startup).not.toHaveBeenCalled();
       expect(trackAgentProcessSpy).not.toHaveBeenCalled();
       startup.mockRestore();
+    });
+
+    it('refuses an OXAP run before opening once the global permission mode becomes plan', async () => {
+      const submit = mock(async () => ({ runId: 'must-not-run' }));
+      const hub = mock(() => ({ submit, events: async function* () {}, cancel: async () => {} }));
+      const config = { model: 'unit', provider: providerId, harness: 'oxap-codex' as const };
+      const ctx = createContext({
+        session: { ...mockSession, config: { ...config } },
+        db: {
+          ...mockDb,
+          getGlobalSettings: () => ({ permissionMode: 'plan', sandbox: { enabled: false } }),
+        } as unknown as Database,
+        messageQueue: queue,
+        oap: {
+          openDirectorySupported: true,
+          get hub() {
+            return hub();
+          },
+        } as never,
+      });
+      const send = queue
+        .enqueueWithId('codex-plan', 'Synthetic prompt', false, { durable: true })
+        .catch((error) => error);
+      runner = new QueryRunner(ctx);
+      await runner.start();
+      await ctx.queryPromise;
+      expect((await send).message).toMatch(/this restriction is not supported/);
+      expect(hub).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+      expect(ctx.session.config).toEqual(config);
+      expect(updateSessionSpy).not.toHaveBeenCalledWith(
+        ctx.session.id,
+        expect.objectContaining({ config: expect.anything() })
+      );
     });
 
     async function completesWithin(promise: Promise<unknown>): Promise<boolean> {

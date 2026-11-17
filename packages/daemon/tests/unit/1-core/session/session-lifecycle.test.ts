@@ -1181,6 +1181,31 @@ describe('SessionLifecycle', () => {
       expect(createdSessions.map((session) => session.config.provider)).toEqual(['anthropic']);
     });
 
+    it('refuses an explicit thinking level for an OXAP chat but not the global default', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', thinkingLevel: 'think16k' },
+        })
+      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      expect(createdSessions).toHaveLength(0);
+      mockDb.getGlobalSettings = settings({ thinkingLevel: 'think16k' }) as never;
+      await lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } });
+      expect(createdSessions.map((session) => session.config.harness)).toEqual(['oxap-codex']);
+    });
+
+    it('refuses coordinator mode for an OXAP chat, explicit or from the global default', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', coordinatorMode: true },
+        })
+      ).rejects.toThrow(/this restriction is not supported/);
+      mockDb.getGlobalSettings = settings({ coordinatorMode: true }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/this restriction is not supported/);
+      expect(createdSessions).toHaveLength(0);
+    });
+
     it('refuses an OXAP chat whose merged sandbox enables enforcement', async () => {
       await expect(
         lifecycle.create({

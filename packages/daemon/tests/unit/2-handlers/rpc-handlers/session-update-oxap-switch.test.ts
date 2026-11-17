@@ -94,6 +94,17 @@ describe('raw session.update provider switches', () => {
     expect(updateSession).not.toHaveBeenCalled();
   });
 
+  it('refuses coordinator mode through a raw update without writing', async () => {
+    stored = { model: 'gpt-5.5', provider: 'anthropic-codex', harness: 'oxap-codex' };
+    await expect(update({ coordinatorMode: true })).rejects.toThrow(
+      /this restriction is not supported/
+    );
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(stored).toEqual({ model: 'gpt-5.5', provider: 'anthropic-codex', harness: 'oxap-codex' });
+    await update({ coordinatorMode: false });
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { coordinatorMode: false } });
+  });
+
   it('passes a same-provider update on an OXAP chat', async () => {
     stored = { model: 'gpt-5.5', provider: 'anthropic-codex', harness: 'oxap-codex' };
     await update({ provider: 'anthropic-codex', autoScroll: false });

@@ -3,7 +3,9 @@ import { isOxapHarness, OXAP_HARNESSES } from '@hyperneo/shared/types/oxap-harne
 import {
   codexSessionRefusal,
   decideSwitch,
+  effectiveOxapConfig,
   engineForProvider,
+  sdkFallbackProviders,
   selectSessionEngine,
   thinkingRefusal,
 } from '../../../../src/lib/agent/session-engine';
@@ -73,6 +75,62 @@ describe('engineForProvider', () => {
     expect(() => engineForProvider('anthropic-codex', record({ harness: 'codex' }))).toThrow(
       /unsupported harness/
     );
+  });
+
+  it('reads a null config as Claude Code and refuses an unreadable one clearly', () => {
+    expect(engineForProvider('anthropic-codex', () => ({ configJson: 'null' }))).toBe('sdk');
+    expect(() => engineForProvider('anthropic-codex', () => ({ configJson: '' }))).toThrow(
+      /Provider anthropic-codex has an unreadable config/
+    );
+  });
+});
+
+describe('sdkFallbackProviders', () => {
+  it('drops only the candidate whose provider record is unreadable or OXAP', () => {
+    const records: Record<string, string> = {
+      'anthropic-codex': '',
+      glm: '{"harness":"oxap-codex"}',
+    };
+    const providers = [{ id: 'anthropic' }, { id: 'anthropic-codex' }, { id: 'glm' }];
+    expect(
+      sdkFallbackProviders(providers, (id) =>
+        records[id] === undefined ? null : { configJson: records[id] }
+      ).map((provider) => provider.id)
+    ).toEqual(['anthropic', 'glm']);
+    expect(
+      sdkFallbackProviders(providers, (id) =>
+        id === 'anthropic-codex' ? { configJson: '{"harness":"oxap-codex"}' } : null
+      ).map((provider) => provider.id)
+    ).toEqual(['anthropic', 'glm']);
+  });
+});
+
+describe('effectiveOxapConfig', () => {
+  const global = { permissionMode: 'plan', sandbox: { enabled: true }, coordinatorMode: true };
+
+  it('fills permission, sandbox and coordinator mode from global settings when the chat has none', () => {
+    expect(effectiveOxapConfig({ model: 'm' }, global as never)).toEqual({
+      model: 'm',
+      permissionMode: 'plan',
+      sandbox: { enabled: true },
+      coordinatorMode: true,
+    });
+    expect(
+      effectiveOxapConfig(
+        { permissionMode: 'default', sandbox: { enabled: false }, coordinatorMode: false },
+        global as never
+      )
+    ).toEqual({ permissionMode: 'default', sandbox: { enabled: false }, coordinatorMode: false });
+  });
+
+  it('makes a global plan mode or coordinator mode a refusal', () => {
+    expect(codexSessionRefusal(effectiveOxapConfig({}, global as never), false, false)).toMatch(
+      /restriction is not supported/
+    );
+    expect(codexSessionRefusal({ coordinatorMode: true }, false, false)).toMatch(
+      /restriction is not supported/
+    );
+    expect(codexSessionRefusal({ coordinatorMode: false }, false, false)).toBeUndefined();
   });
 });
 
