@@ -3362,4 +3362,55 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
     expect(result).toEqual({ success: true, sandboxEnabled: false });
     expect(updateSession).not.toHaveBeenCalled();
   });
+
+  describe('on an OXAP chat', () => {
+    const stored = () => ({
+      model: 'gpt-5.5',
+      provider: 'anthropic-codex',
+      harness: 'oxap-codex',
+      sandbox: { enabled: false },
+    });
+    beforeEach(() => {
+      config = stored();
+    });
+
+    it('refuses turning the sandbox on before it saves', async () => {
+      const result = await messageHubData.handlers.get('session.sandbox.switch')!(
+        { sessionId: 's1', sandboxEnabled: true },
+        {}
+      );
+      expect(result).toEqual({
+        success: false,
+        sandboxEnabled: false,
+        error: expect.stringContaining('this restriction is not supported'),
+      });
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
+
+    it('refuses coordinator mode before it saves', async () => {
+      const result = await messageHubData.handlers.get('session.coordinator.switch')!(
+        { sessionId: 's1', coordinatorMode: true },
+        {}
+      );
+      expect(result).toEqual({
+        success: false,
+        coordinatorMode: false,
+        error: expect.stringContaining('this restriction is not supported'),
+      });
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
+
+    it('refuses a thinking level before it saves', async () => {
+      await expect(
+        messageHubData.handlers.get('session.thinking.set')!(
+          { sessionId: 's1', level: 'think16k' },
+          {}
+        )
+      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
+  });
 });

@@ -1132,6 +1132,71 @@ describe('SessionLifecycle', () => {
     });
   });
 
+  describe('create derives the harness from the provider', () => {
+    const codexModel: ModelInfo = {
+      ...mockKimiModels[0],
+      id: 'gpt-5.5',
+      name: 'GPT-5.5',
+      alias: 'gpt-5.5',
+      provider: 'anthropic-codex',
+      providerAliases: ['gpt-5.5'],
+    };
+    const settings = (overrides: Record<string, unknown> = {}) =>
+      mock(() => ({
+        ...DEFAULT_GLOBAL_SETTINGS,
+        settingSources: ['user', 'project', 'local'],
+        ...overrides,
+      }));
+
+    beforeEach(() => {
+      setModelsCache(new Map([['global', [...mockKimiModels, codexModel]]]));
+      (mockDb as unknown as { providers: unknown }).providers = {
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'anthropic-codex'
+            ? { configJson: JSON.stringify({ harness: 'oxap-codex' }) }
+            : null,
+      };
+    });
+
+    it('stores the provider harness on an OXAP chat and none on a Claude Code chat', async () => {
+      await lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } });
+      await lifecycle.create({ config: { provider: 'anthropic', model: 'sonnet' } });
+      expect(createdSessions[0].config.harness).toBe('oxap-codex');
+      expect(createdSessions[1].config).not.toHaveProperty('harness');
+    });
+
+    it('refuses a client-sent harness and creates nothing', async () => {
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic', harness: 'oxap-codex' } })
+      ).rejects.toThrow(/harness/);
+      expect(createdSessions).toHaveLength(0);
+    });
+
+    it('refuses a global plan permission mode for an OXAP chat with no session mode', async () => {
+      mockDb.getGlobalSettings = settings({ permissionMode: 'plan' }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/on-request approval in the workspace; this restriction is not supported/);
+      await lifecycle.create({ config: { provider: 'anthropic', model: 'sonnet' } });
+      expect(createdSessions.map((session) => session.config.provider)).toEqual(['anthropic']);
+    });
+
+    it('refuses an OXAP chat whose merged sandbox enables enforcement', async () => {
+      await expect(
+        lifecycle.create({
+          config: { provider: 'anthropic-codex', model: 'gpt-5.5', sandbox: { enabled: true } },
+        })
+      ).rejects.toThrow(/restriction is not supported/);
+      mockDb.getGlobalSettings = settings({
+        sandbox: { ...DEFAULT_GLOBAL_SETTINGS.sandbox, filesystem: { denyRead: ['/secret'] } },
+      }) as never;
+      await expect(
+        lifecycle.create({ config: { provider: 'anthropic-codex', model: 'gpt-5.5' } })
+      ).rejects.toThrow(/restriction is not supported/);
+      expect(createdSessions).toHaveLength(0);
+    });
+  });
+
   describe('update', () => {
     it('routes an absolute window edit through the cached session config handler', async () => {
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
