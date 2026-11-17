@@ -97,6 +97,8 @@ describe('createWorkCleanupRuntime', () => {
     todo('old-home', 'done', start - 8 * DAY);
     todo('live', 'doing', start, `Read ${evidence('old-live-ref')}`);
     todo('live-percent', 'doing', start, 'Inspect byte %FF in the dump');
+    todo('old-sib', 'done', start - 8 * DAY);
+    todo('old-late', 'done', start - 8 * DAY);
     const card = {
       options: null,
       multiple: false,
@@ -154,6 +156,12 @@ describe('createWorkCleanupRuntime', () => {
       'home',
       'ask',
       { ...card, kind: 'reply', text: 'See ~/work/evidence/old-home/result.md' },
+      start
+    );
+    todos.askQuestion(
+      'sibling',
+      'ask',
+      { ...card, kind: 'reply', text: `See ${evidence('old-sib-2')}/result.md` },
       start
     );
     mkdirSync(evidence('stranger'), { recursive: true });
@@ -253,6 +261,7 @@ describe('createWorkCleanupRuntime', () => {
     ]);
     const real = gatewayFor(db);
     let restoredRead = false;
+    let lateCard = false;
     const gateway = {
       ...real,
       call: (op: unknown, method: string, ...args: unknown[]) => {
@@ -260,7 +269,18 @@ describe('createWorkCleanupRuntime', () => {
           restoredRead = true;
           mkdirSync(restored, { recursive: true });
         }
-        return (real.call as (...all: unknown[]) => unknown)(op, method, ...args);
+        const result = (real.call as (...all: unknown[]) => unknown)(op, method, ...args);
+        if (method !== 'referenced' || lateCard) return result;
+        lateCard = true;
+        return Promise.resolve(result).then((value) => {
+          todos.askQuestion(
+            'late',
+            'ask',
+            { ...card, kind: 'reply', text: `See ${evidence('old-late')}/result.md` },
+            start
+          );
+          return value;
+        });
       },
     };
     context = {
@@ -301,6 +321,8 @@ describe('createWorkCleanupRuntime', () => {
     const sweep = () => runtime.execute({}, { source: 'rpc', principal: 'local' });
     await sweep();
     expect(existsSync(evidence('old-done'))).toBe(false);
+    expect(existsSync(evidence('old-sib'))).toBe(false);
+    expect(existsSync(evidence('old-late'))).toBe(true);
     for (const kept of [
       'fresh-done',
       'old-card',
