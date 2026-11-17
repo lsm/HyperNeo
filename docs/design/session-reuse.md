@@ -138,9 +138,12 @@ Each slice is one PR from `dev`, failing tests first.
    and the reservation table; pass the earlier reviewer's model on a new round; move saved
    values. Mostly deletions.
 4. **Settings page.** The session-reuse block: global value plus one row per project,
-   each settable and clearable.
-5. **Docs.** Replace the "Session strategy" section of `pack-preferences.md` with a link
-   here.
+   each settable and clearable. The store has no clear today
+   (`neo/preference-operations.ts` has set, get and list), so this slice adds
+   `pack.preferences.clear`, human-only like set, deleting one scope's row.
+5. **Docs.** Remove every `sessionStrategy` reference: the "Session strategy" section,
+   the settings-table row, the pre-answer fallback note, the acceptance line and the
+   slice plan in `pack-preferences.md`, and the mention in `model-lines.md`; link here.
 
 Acceptance, one integration case per row:
 
