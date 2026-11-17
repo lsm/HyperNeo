@@ -74,6 +74,8 @@ try {
   const failed = await call({ name: 'desktop.call', input: { tool: 'get_window_state', args: { pid: 123, window_id: 7 } } });
   const failure = JSON.parse(failed.content[0].text);
   assert.equal(failure.ok, false, JSON.stringify(failed));
+  assert.equal(failed.isError, true);
+  assert.notEqual(allowed.isError, true);
   assert.equal(failure.reason, 'driver_error');
   assert.deepEqual(failure.structuredContent, driverError.structuredContent);
   assert.deepEqual(failed.content.slice(1), driverError.content);

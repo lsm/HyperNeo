@@ -25,8 +25,14 @@ function mcpResult(value: unknown, isError = false): McpResult {
 }
 
 function desktopCallResult(value: unknown): McpResult {
-  const { content = [], ...rest } = value as { content?: CallToolResult['content'] };
-  return { content: [mcpResult(rest).content[0], ...content] };
+  const { content = [], ...rest } = value as {
+    content?: CallToolResult['content'];
+    reason?: unknown;
+  };
+  return {
+    content: [mcpResult(rest).content[0], ...content],
+    ...(rest.reason === 'driver_error' ? { isError: true } : {}),
+  };
 }
 
 export type OperationRefusal = { operation: string; reason: string; accepted?: true };
