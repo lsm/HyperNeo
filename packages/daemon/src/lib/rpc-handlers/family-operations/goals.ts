@@ -13,12 +13,20 @@ export function registerSessionGoalOperations(
   const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
   const isChildSession = (sessionId: string) =>
     !!context.deps.db.getSession(sessionId)?.parentSessionId;
+  const canReturn = (sessionId: string) => {
+    const session = context.deps.db.getSession(sessionId);
+    return (
+      !!session?.parentSessionId &&
+      !session.id.startsWith('neo:') &&
+      !session.metadata?.movedUnderParent
+    );
+  };
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(context.deps.db.getDatabase()),
     context.sessionScheduler,
     context.neoPacks,
-    isChildSession,
+    canReturn,
     context.goalMandateChange
   );
   context.sessionScheduler.registerSource(schedules);
@@ -27,6 +35,7 @@ export function registerSessionGoalOperations(
     schedules,
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
     isChildSession,
+    canReturn,
     startSession: (parentSessionId, title) =>
       context.deps.sessionManager.createSession({
         workspacePath: context.deps.db.getSession(parentSessionId)?.workspacePath,

@@ -194,7 +194,7 @@ const GoalResult = z.discriminatedUnion('accepted', [
 export function resolveGoalOwner(
   caller: OperationCaller,
   input: { ownerSessionId?: string },
-  isChildSession: (sessionId: string) => boolean
+  canReturn: (sessionId: string) => boolean
 ): Gate<string> {
   if (caller.source !== 'mcp')
     return input.ownerSessionId
@@ -203,7 +203,7 @@ export function resolveGoalOwner(
   if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
   if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
-  return isChildSession(caller.sessionId) &&
+  return canReturn(caller.sessionId) &&
     (!input.ownerSessionId || input.ownerSessionId === caller.sessionId)
     ? { value: caller.sessionId }
     : refuse('owner_denied: this session may only use goals it owns.');
@@ -258,6 +258,7 @@ export interface SessionGoalDependencies {
   readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
   readonly isChildSession: (sessionId: string) => boolean;
+  readonly canReturn: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly releaseSession: (sessionId: string) => Promise<void>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
@@ -268,6 +269,7 @@ export function createSessionGoalOperations({
   schedules,
   sessionExists,
   isChildSession,
+  canReturn,
   startSession,
   releaseSession,
   audit,
@@ -277,7 +279,7 @@ export function createSessionGoalOperations({
       .input(['input', 'caller'])
       .pipe(
         (caller: OperationCaller, input: { ownerSessionId?: string }) =>
-          resolveGoalOwner(caller, input, isChildSession),
+          resolveGoalOwner(caller, input, canReturn),
         ['caller', 'input'],
         'result:outcome'
       )

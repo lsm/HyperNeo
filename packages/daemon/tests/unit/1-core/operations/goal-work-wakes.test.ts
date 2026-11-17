@@ -40,6 +40,7 @@ describe('goal work wakes', () => {
       schedules,
       sessionExists: (sessionId) => sessionId === 'neo:root',
       isChildSession: () => false,
+      canReturn: () => false,
       releaseSession: async () => {},
       startSession: () => {
         throw new Error('work-wake tests never start a goal session');

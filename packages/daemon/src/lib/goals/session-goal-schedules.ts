@@ -15,7 +15,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     private readonly asks: NeoAskTodoRepository,
     private readonly scheduler: SessionScheduler,
     private readonly packs: () => readonly NeoPack[],
-    private readonly isChildSession: (sessionId: string) => boolean,
+    private readonly canReturn: (sessionId: string) => boolean,
     private readonly mandateChange: (
       ref: string,
       revision: string | null
@@ -137,7 +137,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     const runId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
     const state = this.goals.factState(id);
     const compact = change.nudge || state.entries - (state.through ?? 0) >= 10;
-    const own = this.isChildSession(goal.ownerSessionId);
+    const own = this.canReturn(goal.ownerSessionId);
     return `${own ? GOAL_SESSION_CYCLE : NEO_GOAL_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
 ${state.note ?? 'No what-works note yet.'}
