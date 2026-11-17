@@ -18,7 +18,9 @@ const tokenSchema = z.object({
 });
 type Token = z.infer<typeof tokenSchema>;
 const keySet = z.object({
-  keys: z.array(z.object({ kid: z.string(), issuer: z.string() }).passthrough()).max(100),
+  keys: z
+    .array(z.object({ kid: z.string(), issuer: z.string().optional() }).passthrough())
+    .max(100),
 });
 
 async function boundedJson(response: Response) {
@@ -67,7 +69,7 @@ async function validateIdentity(
     signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
   });
   const key = keySet.parse(await boundedJson(response)).keys.find((entry) => entry.kid === kid);
-  if (!key) throw new Error('Unknown signing key');
+  if (!key?.issuer) throw new Error('Unknown signing key');
   const { payload } = await jwtVerify(token.id_token, await importJWK(key as JWK, 'RS256'), {
     algorithms: ['RS256'],
     audience: client.clientId,
