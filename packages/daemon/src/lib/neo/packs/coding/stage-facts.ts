@@ -3,6 +3,10 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
+import {
+  readCodingReviewCommentMark,
+  recordCodingReviewCommentMark,
+} from './review-comment-marks-worker.ts';
 
 export const CodingActor = z.discriminatedUnion('kind', [
   z.object({
@@ -91,17 +95,11 @@ export class CodingStageFactsRepository {
   }
 
   postedMarker(url: string): string | null {
-    const row = this.db
-      .prepare('SELECT marker FROM pack_coding_review_comments WHERE url = ?')
-      .get(githubUrlKey(url)) as { marker: string } | undefined;
-    return row?.marker ?? null;
+    return readCodingReviewCommentMark(this.db, url);
   }
 
   markPosted(url: string, marker: string): void {
-    this.db
-      .prepare(`INSERT INTO pack_coding_review_comments (url, marker) VALUES (?, ?)
-      ON CONFLICT(url) DO UPDATE SET marker = excluded.marker`)
-      .run(githubUrlKey(url), marker);
+    recordCodingReviewCommentMark(this.db, url, marker);
   }
 
   commentHoldUntil(host: string): number | null {
