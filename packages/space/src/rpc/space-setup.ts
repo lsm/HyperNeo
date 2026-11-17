@@ -1,4 +1,3 @@
-import { SessionGoalRepository } from '../../../daemon/src/storage/repositories/session-goal-repository.ts';
 import { setupAgentMemoryHandlers } from '../../../daemon/src/lib/rpc-handlers/agent-memory-handlers.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../../../daemon/src/lib/tasks/recovery-executor.ts';
 import { recoverTaskExecution } from '../../../daemon/src/lib/tasks/recover-task-execution.ts';
@@ -925,8 +924,7 @@ async function setupSpaceServices(
   spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    ownsActiveGoal: (sessionId) =>
-      new SessionGoalRepository(deps.db.getDatabase()).list(sessionId, false).length > 0,
+    ownsActiveGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
     detach: async (sessionId) => {
       await deps.db.detachSessionFromParent(sessionId);
     },

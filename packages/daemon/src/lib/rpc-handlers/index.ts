@@ -1,4 +1,3 @@
-import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import type { NeoAttentionEvent } from '../neo/attention/decide.ts';
 import { createNeoFrontHandler } from '../neo/front-job.ts';
 import { readCodingTodoWorker } from '../neo/packs/coding/worker-read.ts';
@@ -387,8 +386,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
         space?.resolveClones ??
         createResolveClones({
           listChildren: (parentId) => deps.db.listChildSessions(parentId),
-          ownsActiveGoal: (sessionId) =>
-            new SessionGoalRepository(deps.db.getDatabase()).list(sessionId, false).length > 0,
+          ownsActiveGoal: (sessionId) => deps.db.ownsActiveGoal(sessionId),
           detach: (sessionId) => deps.db.detachSessionFromParent(sessionId),
           ...createCloneLifecycleEffects(
             deps.sessionManager,
