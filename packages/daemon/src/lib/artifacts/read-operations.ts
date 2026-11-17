@@ -165,7 +165,7 @@ export function createArtifactReadOperations(
       ? { accepted: true as const, sha256: row.sha256, ...prepared }
       : { accepted: false as const, reason: 'size_limit' as const };
   }
-  const get = (superpipe({})('artifact-file-get') as PipelineAPI)
+  const get = (superpipe({})('artifact.file.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(load, 'input', 'result:access')
     .pipe(authorizeRow, ['access', 'caller'], 'result:access')
@@ -174,18 +174,18 @@ export function createArtifactReadOperations(
     input: { artifactId: string },
     caller: OperationCaller
   ) => Promise<unknown>;
-  const list = (superpipe({})('artifact-file-list') as PipelineAPI)
+  const list = (superpipe({})('artifact.file.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(listContext, ['input', 'caller'], 'result:access')
     .pipe(page, ['access', 'input', 'caller'], 'access')
     .endAsync('access') as (input: List, caller: OperationCaller) => Promise<unknown>;
-  const read = (superpipe({})('artifact-file-read') as PipelineAPI)
+  const read = (superpipe({})('artifact.file.read') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(load, 'input', 'result:access')
     .pipe(authorizeRow, ['access', 'caller'], 'result:access')
     .pipe(bytes, ['access', 'input', 'caller'], 'access')
     .endAsync('access') as (input: ReadInput, caller: OperationCaller) => Promise<unknown>;
-  const preview = (superpipe({})('artifact-file-html') as PipelineAPI)
+  const preview = (superpipe({})('artifact.file.html') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(load, 'input', 'result:access')
     .pipe(authorizeRow, ['access', 'caller'], 'result:access')

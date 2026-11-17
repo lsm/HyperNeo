@@ -4,10 +4,15 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import superpipe from 'superpipe';
 import {
   ArtifactPrSummarySchema,
-  readArtifactPrSummary,
+  artifactPrSummaryReader,
 } from '../../../../src/lib/artifacts/pr-summary.ts';
+
+const readArtifactPrSummary = artifactPrSummaryReader(
+  superpipe({})('artifact.reference.resolve.pr')
+);
 
 describe('bound PR preview summaries', () => {
   test('rejects malformed summary contracts', () => {
