@@ -34,6 +34,8 @@ next due time is `fired`.
 The Neo-owned goal's separate review is then fired through the daemon handler.
 Its mailbox wake contains the journal review instruction, and a review result
 appended through RPC is readable through `goal.journal.list`.
+`operations.describe` for goal creation and updates also states that ordinary
+top-level session owners do not receive a review schedule.
 
 Inspect `goal-work-wakes.json` for each wake's outcome, delivery and text.
 Before the change the second due time is `skipped_unchanged` and nothing is

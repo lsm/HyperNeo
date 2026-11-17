@@ -35,6 +35,10 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: url => createLocalSocket(url, join(run, 'data/local-rpc.credential')) });
   hub.registerTransport(transport); await transport.initialize();
   const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
+  for (const name of ['goal.session.create', 'goal.session.update']) {
+    const description = await call('operations.describe', { name });
+    assert(description.found && description.description.includes('Ordinary top-level session owners have no review schedule'), `${name} omits the review schedule limitation`);
+  }
   const ownerSessionId = (await call('neo.open')).sessionId; assert(ownerSessionId);
   const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published', cadence: { kind: 'every', everyMs: 60_000 }, dailyRunLimit: 2 });
   assert(created.accepted, JSON.stringify(created));

@@ -60,6 +60,7 @@ assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`))
 const work = await until(() => transcript(owner).find(isWake), 'No work wake reached the goal session');
 evidence.workWake = work;
 assert(work.content.includes('This session owns the goal below.') && work.content.includes(`runId ${work.sdk_uuid}`) && !work.content.includes('neo.home.read') && !work.content.includes('Read the journal pages and rewrite'), 'First wake was not a plain goal-session work wake');
+assert(work.content.includes('using the delivery method named in the wake'), 'Goal cycle does not defer review routing to the wake');
 const workEntry = await journaled(work.sdk_uuid);
 evidence.workEntry = workEntry;
 assert(workEntry.session_id === owner, 'Work journal entry is not from the goal session');

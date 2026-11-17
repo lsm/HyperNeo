@@ -18,7 +18,8 @@ The scripted work turn remains active when the review is due. The review fires
 into the mailbox, contains the earlier work entry and asks the session to record
 its summary and effect.
 It also checks that a goal session under another parent journals its review and
-sends the summary to Neo.
+sends the summary to Neo. The work wake's cycle instructs the session to use
+the delivery method named in the review wake.
 
 The scripted model loads the deferred operations door with ToolSearch. It then
 acts as the goal session through the real MCP door. On a work wake it calls only

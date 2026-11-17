@@ -483,7 +483,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal with work and review schedules. Give metrics or a written doneTest. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. ownSession starts a dedicated goal session that reports reviews back with session.clone.return. Closing the goal stops both schedules. nudgeEvery is accepted for legacy compatibility only.',
+        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Give metrics or a written doneTest. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
@@ -511,7 +511,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal, including its reviewCadence. Paused pauses both schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
+        'Update a session-owned goal, including its reviewCadence. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
