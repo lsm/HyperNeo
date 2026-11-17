@@ -36,4 +36,6 @@ To check only that a yes on a yes/no card applies nothing, after building web ru
 `.claude/skills/verify/yesno-refusals.sh <port>`. It runs the rule and setting
 helper, the confirmed home save (`after`) and the home-repository card (`legacy`,
 then `verify`), each on its own fresh isolated daemon, prints one `exit=` line per
-run and exits non-zero if any fails.
+run and exits non-zero if any fails. Each run's evidence and daemon and mock logs
+are copied to its own folder. A run whose helper, evidence copy or daemon stop
+fails is kept, and its path is printed.
