@@ -117,7 +117,7 @@ try {
   const failed = ready('failed');
   reserve('failed', failed.id);
   db.prepare("UPDATE neo_todos SET state = 'removed' WHERE id = ?").run(failed.id);
-  const after = await decide('a sessionless removed owner no longer holds its feature', todo('failed'), { verb: 'start', adapter: 'hyperneo' });
+  const after = await decide('a sessionless removed owner no longer holds its feature', todo('failed'), { verb: 'start', adapter: 'hyperneo', name: 'frontend' });
   assert(!('reason' in after), JSON.stringify(after));
   assert(pack.workerTargetRefused, 'the coding pack declares workerTargetRefused');
   const refused = ready('refused');
