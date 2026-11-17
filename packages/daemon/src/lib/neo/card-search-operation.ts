@@ -26,7 +26,7 @@ export function createNeoCardSearchOperation(
   search: (query: string, cursor?: string, limit?: number) => Promise<NeoCardSearchPage>,
   admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection }
 ) {
-  const run = (superpipe({})('neo-ask-search') as PipelineAPI)
+  const run = (superpipe({})('neo.ask.search') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:outcome')
     .pipe(
