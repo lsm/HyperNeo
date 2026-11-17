@@ -161,7 +161,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     if (!plan.ok) return refuse(plan.reason);
     if (candidates.length < input.candidates.length)
       plan.fallback.unshift(
-        'Candidates on another daemon were skipped: the read checkout is resolved on this daemon.'
+        'Candidates on another daemon were skipped: the project folder is resolved on this daemon.'
       );
     const stage = input.stage === 'verify' ? 'Verify' : 'Review';
     const contract = input.stage === 'verify' ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT;
