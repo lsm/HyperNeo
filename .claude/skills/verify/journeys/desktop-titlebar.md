@@ -24,5 +24,6 @@ NODE_PATH=<Playwright modules> VERIFY_BROWSER=<headless Chromium> \
 ```
 
 Open the worker chat from its question and click Back to Neo. The back button
-must be below the titlebar and receive the pointer. Inspect the session and
+must be below the titlebar and receive the pointer. The top-level page proof
+also triggers and dismisses a validation toast below the titlebar. Inspect the session and
 settings drawer screenshots; keep `titlebar-overlay.json` and `cleanup.json`.

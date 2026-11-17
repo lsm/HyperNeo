@@ -1232,12 +1232,13 @@ a:focus-visible {
 
 html.tauri-desktop body {
   --safe-height: calc(100dvh - 52px);
-  padding-top: 52px;
+  height: var(--safe-height);
+  transform: translateY(52px);
 }
 
 html.tauri-desktop .desktop-drag-strip {
   position: fixed;
-  inset: 0 0 auto;
+  inset: -52px 0 auto;
   z-index: 100;
   height: 52px;
   background: var(--bg);

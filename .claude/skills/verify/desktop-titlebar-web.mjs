@@ -45,6 +45,23 @@ try {
       await page.screenshot({ path: join(evidence, `${phase}-${name}-${theme}.png`), mask: [page.getByTestId('chat-header-folder')], maskColor: '#888888' });
       results.push({ name, theme, expectedPath: route, ...measurement });
     }
+    await page.goto(`${base}/settings?tab=neo-model`);
+    const limit = page.getByRole('spinbutton', { name: 'Running steps in total' });
+    await limit.fill('0');
+    await limit.press('Tab');
+    const toast = page.getByRole('alert').filter({ hasText: 'Enter a whole number of at least 1' });
+    const dismiss = toast.getByRole('button', { name: 'Dismiss notification' });
+    await dismiss.waitFor();
+    await page.waitForTimeout(500);
+    const toastGeometry = await dismiss.evaluate(el => {
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return { top: box.top, hit: hit === el || el.contains(hit) };
+    });
+    await page.screenshot({ path: join(evidence, `${phase}-toast-${theme}.png`) });
+    assert(toastGeometry.top >= 52 && toastGeometry.hit, `Toast covered: ${JSON.stringify(toastGeometry)}`);
+    await dismiss.click();
+    await toast.waitFor({ state: 'detached' });
     await context.close();
   }
   const browserContext = await browser.newContext({ storageState, viewport: { width: 1280, height: 900 } });
