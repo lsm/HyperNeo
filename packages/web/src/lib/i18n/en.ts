@@ -103,6 +103,7 @@ export const en = {
   'schedules.reason.needs_you': 'Waiting on you',
   'schedules.reason.unchanged': 'No changes',
   'schedules.reason.delivery_unconfirmed': 'Delivery unconfirmed',
+  'schedules.reason.budget': 'Daily limit reached',
   'list.separator': ', ',
   'live.allTopics': 'All',
   'ask.state.waiting': 'Waiting on you',
