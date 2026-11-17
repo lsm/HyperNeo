@@ -51,7 +51,6 @@ export function refuseSecondLineRanker(
     : null;
 }
 
-/** @public */
 export async function chooseLine(
   packs: readonly NeoPack[],
   kind: string,

@@ -47,6 +47,7 @@ import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
+import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
@@ -72,6 +73,7 @@ export function createCodingPack(deps: {
   attend: CodingAttend;
   projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
+  lines?: CodingLines;
   postReviewComments?: (
     read: () => Promise<readonly CodingStageFact[]>,
     posted: (fact: CodingStageFact, marker: string) => Promise<void>,
@@ -153,6 +155,7 @@ export function createCodingPack(deps: {
             planCodingIssueHome([{ repo: preference.scope.key }]) === repo
         )?.value === true,
     }),
+    workKinds: CODING_WORK_KINDS,
     preferences: {
       mirror_issues: {
         label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': '把计划同步到 GitHub Issues' },
@@ -261,7 +264,7 @@ export function createCodingPack(deps: {
       };
     },
     workerTarget: (todo, target, status, askSetting) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting),
+      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting, deps.lines),
     workerTargetRefused: (todo) =>
       gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
         todoId: todo.id,
