@@ -1,6 +1,7 @@
 export type SessionScheduleCadence =
   | { kind: 'every'; everyMs: number }
-  | { kind: 'cron'; cron: string; timezone: string };
+  | { kind: 'cron'; cron: string; timezone: string }
+  | { kind: 'once'; at: number };
 
 export type SessionScheduleStatus = 'active' | 'paused' | 'done';
 
