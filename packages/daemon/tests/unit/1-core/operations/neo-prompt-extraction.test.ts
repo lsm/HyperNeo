@@ -67,6 +67,7 @@ const extractedToolDescriptions = {
     'neo.ask.outcome',
     'neo.ask.topic',
     'neo.ask.settle',
+    'neo.topic.merge',
   ],
   'conversation-ask-read-operation.ts': [
     'neo.conversation.asks.read',

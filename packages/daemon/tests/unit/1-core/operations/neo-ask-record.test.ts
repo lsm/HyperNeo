@@ -675,4 +675,43 @@ describe('ask topics', () => {
     expect(h.store.getAsk(opened.ask.id)?.topic).toBe('OAP');
     expect(h.ops['neo.ask.topic'].policy?.roles).toEqual(['neo']);
   });
+
+  test('neo.topic.merge rewrites every ask picked under the old name and drops it from the list', async () => {
+    const h = setup();
+    const open = async (topic: string, id: string) => {
+      const opened = await h.call('neo.ask.open', { title: id, request: id, topic }, turn(id));
+      if (!opened.ok) throw new Error(opened.reason);
+      return opened.ask;
+    };
+    const kids = await open('Kids', 'm1');
+    const lower = await open('k ids', 'm2');
+    const settled = await open('Kids', 'm3');
+    const home = await open('Home', 'm4');
+    h.store.settleAsk(h.store.getAsk(settled.id)!, 'done', 'Done', 5);
+    const before = h.store.getAsk(settled.id)!.updatedAt;
+
+    expect(await h.call('neo.topic.merge', { from: 'kids', to: '孩子' }, turn('m5'))).toEqual({
+      ok: true,
+      merged: 3,
+    });
+    expect([kids, lower, settled, home].map((ask) => h.store.getAsk(ask.id)?.topic)).toEqual([
+      '孩子',
+      '孩子',
+      '孩子',
+      'Home',
+    ]);
+    expect(h.store.getAsk(settled.id)?.updatedAt).toBe(before);
+    expect(h.store.planContext().topics).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ topic: 'Kids' })])
+    );
+    expect(
+      await h.call(
+        'neo.topic.merge',
+        { from: 'Home', to: '家' },
+        { source: 'mcp', role: 'neo', sessionId: 'stranger' }
+      )
+    ).toMatchObject({ ok: false });
+    expect(h.store.getAsk(home.id)?.topic).toBe('Home');
+    expect(h.ops['neo.topic.merge'].policy?.roles).toEqual(['neo']);
+  });
 });
