@@ -34,14 +34,16 @@ a title (`neo_concerns.title`).
 **1. An ask's topic is derived when it is read.** The read that builds `NeoAsk` returns the
 first of these that exists:
 
-1. **The project of its work.** The project linked to the targets of the ask's todos
+1. **Its project.** The ask's own `project_id` when it names a project other than the
+   inbox. Otherwise the project linked to the targets of the ask's todos
    (`neo_todo_sessions.target`: the session ref through its `work:` alias, or the start
-   place through its `folder:` alias). With several projects, the one with the most todos;
-   on a tie, the earliest todo's. The topic is the project's title.
-2. **Its origin.** A follow-up ask takes its parent's topic (`parent_id`). A request from a
-   session takes the project of the sender session; failing that, the topic of that
-   sender's previous request ask.
-3. **Neo's pick:** the stored `topic`, after merges (point 4).
+   place through its `folder:` alias); with several, the one with the most todos, and on a
+   tie the earliest todo's. The topic is the project's title.
+2. **Its origin, one step only.** For a follow-up ask, its parent (`parent_id`); for a
+   request from a session, the sender session's project, else that sender's most recent
+   earlier request ask. The origin ask contributes only its rule 1 result or its stored
+   pick, never its own origin, so a read looks at most one other ask and cannot loop.
+3. **Neo's pick:** the stored `topic`.
 4. Otherwise "Other".
 
 Nothing is backfilled: every existing ask is grouped by the same rule the next time it is
@@ -60,9 +62,10 @@ topic when read.
 
 **4. The daily pass tidies Neo's picks.** The existing daily reorganize pass
 (`reorganize-nightly.ts`) gives Neo one turn with Neo-picked topics and their counts, and
-Neo may merge one into another with a new `neo.topic.merge {from, to}`. A merge is stored
-(`neo_topic_merges`: from, to) and applies when asks are read and when Neo later picks the
-merged name. Project topics are never merged this way; projects keep their own merge.
+Neo may fold one into another with a new `neo.topic.merge {from, to}`. It rewrites the
+stored `topic` from `from` to `to` on every ask, open or settled, in one update; nothing
+else is stored. The 30-day list then no longer shows `from`, so later picks reuse `to`.
+Project titles are not Neo's picks and are never rewritten this way.
 
 ## What does not change
 
@@ -76,13 +79,14 @@ Each slice is one PR from `dev` (the repository's default and target branch), fa
 first.
 
 1. **Derived topic.** Rules 1 to 4 of point 1 and point 3 in the ask read
-   (`neo-ask-todo-repository.ts`), as a pure function over the ask, its todos' targets and
-   the alias table. About 120 production lines.
+   (`packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts`), as a pure
+   function over the ask, its todos' targets, at most one origin ask and the alias table.
+   About 120 production lines.
 2. **Prompt and plan context.** The prompt line, the tool text of `neo.ask.open` and
    `neo.ask.topic`, and the 30-day topic list in `plan-context.ts`. About 40 production
    lines.
-3. **Daily tidy.** `neo_topic_merges`, `neo.topic.merge`, and the turn in the daily pass.
-   About 120 production lines.
+3. **Daily tidy.** `neo.topic.merge` and the turn in the daily pass. About 80 production
+   lines.
 
 `bun run system-map impact` on `neo-ask-todo-repository.ts`: 54 importers, 32 of them in
 `lib/neo`. `topic` keeps its type (`string | null`), so none is forced to change.
@@ -96,7 +100,9 @@ Acceptance, as tests on the pure function and one integration case per row:
 | A request from a session of project P | topic is P's title, with no Neo call |
 | A follow-up ask whose parent is in topic T | topic T |
 | An ask with no work and no origin, Neo pick "kids" while "Kids" exists | topic "Kids" |
-| Neo merges "A" into "B" | every ask with pick "A" reads as "B"; a later pick "A" reads as "B" |
+| An ask with `project_id` P and no todos | topic is P's title |
+| A follow-up of a follow-up whose grandparent alone has a topic | "Other": one step only |
+| Neo merges "A" into "B" | every ask stored as "A" now stores "B"; "A" leaves the list |
 | An ask with nothing at all | "Other" |
 
 ## Risks
