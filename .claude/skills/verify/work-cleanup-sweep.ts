@@ -94,7 +94,7 @@ try {
   ].toSorted((a, b) => a.directory.localeCompare(b.directory)));
   assert(first.reply.kept.error.includes(broken), 'listing failure is retained without aborting the sweep');
   assert.equal(existsSync(trees.clean), true, JSON.stringify(evidence.first));
-  assert(first.reply.kept['This session was not started by the daemon.'].includes(trees.clean));
+  assert(first.reply.kept.not_started_by_us.includes(trees.clean));
   assert.equal(existsSync(trees.todo), false, JSON.stringify(evidence.first));
   assert(raw.prepare('SELECT released_at FROM work_started_sessions WHERE id = ?').get(todoWorker));
   assert(raw.prepare("SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'released'").get(todo.id));
@@ -106,7 +106,7 @@ try {
   assert(!receipt.includes(humanClaude));
   evidence.second = await rpc();
   assert.equal(existsSync(trees.clean), true);
-  assert((evidence.second as typeof first).reply.kept['This session was not started by the daemon.'].includes(trees.clean));
+  assert((evidence.second as typeof first).reply.kept.not_started_by_us.includes(trees.clean));
   raw.prepare("UPDATE job_queue SET run_at = ? WHERE status = 'pending'").run(Date.now() + 2 * 86400000);
   const job = app.jobQueue.enqueue({ queue: 'work.cleanup.sweep', payload: {}, runAt: Date.now() });
   await app.jobProcessor.tick();

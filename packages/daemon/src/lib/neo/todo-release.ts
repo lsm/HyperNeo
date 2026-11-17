@@ -105,11 +105,18 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(
-    async (ref: WorkRef, sessions: NeoTodoSessionRepository) =>
-      (await sessions.write('fenceRelease', ref, Date.now()))
+    async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
+      const fence = await sessions.write('fenceWorkerRelease', ref, Date.now());
+      if (fence === 'not_started_by_us') {
+        const kept = { kept: 'not_started_by_us' };
+        await sessions.write('recordReleased', row.todoId, kept);
+        return { reason: kept };
+      }
+      return fence === 'fenced'
         ? { value: ref }
-        : { reason: { kept: 'bound_to_live_todo' as const } },
-    ['release', 'sessions'],
+        : { reason: { kept: 'bound_to_live_todo' as const } };
+    },
+    ['release', 'row', 'sessions'],
     'result:release'
   )
   .pipe(
