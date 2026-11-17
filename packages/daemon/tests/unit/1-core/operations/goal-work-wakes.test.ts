@@ -114,6 +114,143 @@ describe('goal work wakes', () => {
     expect(review()?.cadence).toEqual({ kind: 'every', everyMs: 180_000 });
   });
 
+  test('consecutive reviews without effect pause the goal and open one human question', async () => {
+    const goal = await create();
+    const asks = new NeoAskTodoRepository(db);
+    const review = async (run: number, effect: 'yes' | 'no') =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId: `goal-review:synthetic:${run}`,
+        done: 'Reviewed the outcome',
+        effect,
+        worked: 'Keep exploring',
+      });
+    await review(1, 'no');
+    await review(2, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(0);
+    await review(3, 'yes');
+    await review(4, 'no');
+    await review(5, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    await review(6, 'no');
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('paused');
+    const goalAsks = asks.listGoalAsks(goal.id);
+    expect(goalAsks).toHaveLength(1);
+    expect(asks.listQuestions(goalAsks[0]!.id)).toEqual([
+      expect.objectContaining({ state: 'open', text: expect.stringContaining('effect') }),
+    ]);
+    expect(await call('goal.session.update', { goalId: goal.id, status: 'active' })).toMatchObject({
+      accepted: false,
+      reason: expect.stringContaining('review_question_open'),
+    });
+    const question = asks.listQuestions(goalAsks[0]!.id)[0]!;
+    asks.answerQuestion(question, 'Try a new audience', 'button', now);
+    expect(
+      await call('goal.session.update', {
+        goalId: goal.id,
+        status: 'active',
+        nextSteps: ['Try a new audience'],
+      })
+    ).toMatchObject({ accepted: true });
+    expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
+    expect(messages.at(-1)).toContain('Try a new audience');
+    await review(7, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(1);
+  });
+
+  test('the no-effect review threshold is configurable on the goal', async () => {
+    const goal = await create({ noEffectReviewLimit: 2 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(2);
+    await call('goal.session.update', { goalId: goal.id, noEffectReviewLimit: 1 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(1);
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: 'goal-review:synthetic:1',
+      done: 'Reviewed',
+      effect: 'no',
+      worked: 'Explore',
+    });
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+  });
+
+  test('a failed human question rolls back the review and keeps the schedules active', async () => {
+    const goal = await create({ noEffectReviewLimit: 1 });
+    const open = spyOn(NeoAskTodoRepository.prototype, 'openAsk').mockImplementationOnce(() => {
+      throw new Error('question storage unavailable');
+    });
+    try {
+      await expect(
+        call('goal.journal.append', {
+          goalId: goal.id,
+          runId: 'goal-review:synthetic:1',
+          done: 'Reviewed',
+          effect: 'no',
+          worked: 'Explore',
+        })
+      ).rejects.toThrow('question storage unavailable');
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toEqual([]);
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+      expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('active');
+      expect(new NeoAskTodoRepository(db).listGoalAsks(goal.id)).toEqual([]);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  test.each(['retired', 'settled', 'replaced'] as const)(
+    'an escalation question that is %s does not strand the goal',
+    async (state) => {
+      const goal = await create({ noEffectReviewLimit: 1 });
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId: 'goal-review:synthetic:1',
+        done: 'Reviewed',
+        effect: 'no',
+        worked: 'Explore',
+      });
+      const asks = new NeoAskTodoRepository(db);
+      const ask = asks.listGoalAsks(goal.id)[0]!;
+      const original = asks.listQuestions(ask.id)[0]!;
+      if (state === 'settled') asks.settleAsk(ask, 'done', 'Closed', now);
+      else if (state === 'retired') asks.retireQuestion(original, 'No longer current', null, now);
+      else
+        asks.replaceQuestion(
+          original,
+          'replacement',
+          {
+            text: 'What should change?',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+          },
+          now
+        );
+      expect(
+        await call('goal.session.update', { goalId: goal.id, status: 'active' })
+      ).toMatchObject({ accepted: false, reason: expect.stringContaining('review_question_open') });
+      const open = asks
+        .listGoalAsks(goal.id)
+        .flatMap((item) => asks.listQuestions(item.id))
+        .filter((question) => question.state === 'open');
+      expect(open).toHaveLength(1);
+      asks.answerQuestion(open[0]!, 'Try a new audience', 'button', now);
+      expect(
+        await call('goal.session.update', {
+          goalId: goal.id,
+          status: 'active',
+          nextSteps: ['Try a new audience'],
+        })
+      ).toMatchObject({ accepted: true });
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    }
+  );
+
   test('review wakes carry new journal entries and note on every due time', async () => {
     const goal = await create();
     const review = () => scheduler.repo.getBySource('goal_review', goal.id)!;

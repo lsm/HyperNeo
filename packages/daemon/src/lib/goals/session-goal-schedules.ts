@@ -6,6 +6,8 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { SessionScheduleCadence } from '../../storage/repositories/session-schedule-repository.ts';
 import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
+import { openHumanCard } from '../neo/human-card.ts';
+import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
 
 export class SessionGoalSchedules implements ScheduleSource {
   readonly kind = 'goal';
@@ -21,7 +23,9 @@ export class SessionGoalSchedules implements ScheduleSource {
       revision: string | null
     ) => Promise<string | null> = async () => null,
     private readonly reviewReport: (sessionId: string) => string = (sessionId) =>
-      this.canReturn(sessionId) ? ' Send Neo the review summary with session.clone.return.' : ''
+      this.canReturn(sessionId) ? ' Send Neo the review summary with session.clone.return.' : '',
+    private readonly neoSession: (owner: string) => string | undefined = (owner) =>
+      owner.startsWith('neo:') ? owner : undefined
   ) {
     scheduler.registerSource({
       kind: 'goal_review',
@@ -47,7 +51,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     let known = this.scheduler.repo.getBySource(this.kind, goal.id);
     const previous = this.goals.wakeSchedule(goal.id);
     const config = known
-      ? { cadence: known.cadence, nudgeEvery: known.nudgeEvery }
+      ? { ...previous, cadence: known.cadence, nudgeEvery: known.nudgeEvery }
       : ((cadence ? { cadence, nudgeEvery } : previous) ?? {
           cadence: { kind: 'every' as const, everyMs: 3_600_000 },
           nudgeEvery: 4,
@@ -129,6 +133,107 @@ export class SessionGoalSchedules implements ScheduleSource {
     return this.goals.get(id)?.dailyRunLimit ?? null;
   }
 
+  inTransaction<T>(work: () => T): T {
+    return this.asks.inTransaction(work);
+  }
+
+  reviewResult(goal: SessionGoal): void {
+    if (goal.status !== 'active') return;
+    const config = this.goals.wakeSchedule(goal.id);
+    if (!config) return;
+    const limit = config.noEffectReviewLimit ?? 3;
+    const effects = this.goals.recentReviewEffects(goal.id, config.escalationReviewId, 100);
+    const firstEffect = effects.findIndex(({ effect }) => effect !== 'no');
+    const count = firstEffect < 0 ? effects.length : firstEffect;
+    this.goals.saveWakeSchedule(goal.id, { ...config, noEffectReviewCount: count });
+    if (count < limit) return;
+    const neo = this.neoSession(goal.ownerSessionId);
+    if (!neo) throw new Error('Cannot ask the human without a Neo session');
+    const askId = crypto.randomUUID();
+    const questionId = crypto.randomUUID();
+    const text = `The goal "${goal.title}" had ${limit} reviews without effect. What should change, or should it stop?`;
+    const now = Date.now();
+    this.asks.openAsk({
+      id: askId,
+      goalId: goal.id,
+      sessionId: neo,
+      projectId: null,
+      originMessageId: null,
+      title: goal.title,
+      request: text,
+      createdAt: now,
+    });
+    openHumanCard(
+      this.asks,
+      questionId,
+      askId,
+      { text, kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null },
+      now
+    );
+    this.goals.saveWakeSchedule(goal.id, {
+      ...config,
+      noEffectReviewCount: count,
+      escalationReviewId: effects[0]!.id,
+      escalationQuestionId: questionId,
+    });
+    this.goals.update(goal, { status: 'paused' }, now, (updated) => this.sync(updated));
+  }
+
+  requireAnsweredReview(goal: SessionGoal): boolean {
+    const question = this.reviewQuestion(goal);
+    return question === null || question.state === 'answered';
+  }
+
+  private reviewQuestion(goal: SessionGoal): NeoQuestion | null {
+    const id = this.goals.wakeSchedule(goal.id)?.escalationQuestionId;
+    if (!id) return null;
+    let question = this.asks.getQuestion(id);
+    while (question?.state === 'retired' && question.replacedBy)
+      question = this.asks.getQuestion(question.replacedBy);
+    if (!question) throw new Error('Goal review question not found');
+    return question;
+  }
+
+  reopenReviewQuestion(goal: SessionGoal): boolean {
+    return this.asks.inTransaction(() => {
+      const question = this.reviewQuestion(goal);
+      if (!question || question.state !== 'retired') return false;
+      const config = this.goals.wakeSchedule(goal.id)!;
+      let ask = this.asks.getAsk(question.askId);
+      if (!ask || ask.status !== 'open') {
+        const neo = this.neoSession(goal.ownerSessionId);
+        if (!neo) throw new Error('Cannot ask the human without a Neo session');
+        ask = this.asks.openAsk({
+          id: crypto.randomUUID(),
+          goalId: goal.id,
+          sessionId: neo,
+          projectId: null,
+          originMessageId: null,
+          title: goal.title,
+          request: question.text,
+          createdAt: Date.now(),
+        });
+      }
+      const id = crypto.randomUUID();
+      openHumanCard(
+        this.asks,
+        id,
+        ask.id,
+        {
+          text: question.text,
+          kind: 'reply',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+        },
+        Date.now()
+      );
+      this.goals.saveWakeSchedule(goal.id, { ...config, escalationQuestionId: id });
+      return true;
+    });
+  }
+
   async facts(id: string) {
     const goal = this.goals.get(id);
     if (!goal || goal.status === 'completed' || goal.status === 'archived') return null;
@@ -204,6 +309,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     const state = this.goals.factState(id);
     const own = this.canReturn(goal.ownerSessionId);
     return `${own ? GOAL_SESSION_CYCLE : NEO_GOAL_CYCLE}\n\nGoal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
+Next steps: ${goal.nextSteps.join('; ') || 'None'}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
 ${state.note ?? 'No what-works note yet.'}
 Act using the usual tools${own ? '' : `; new asks in this cycle carry goalId ${id}`}.

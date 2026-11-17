@@ -93,6 +93,7 @@ const Create = z
       kind: 'every',
       everyMs: 86_400_000,
     }),
+    noEffectReviewLimit: z.number().int().min(1).max(100).default(3),
     nudgeEvery: z
       .number()
       .int()
@@ -117,6 +118,7 @@ const Update = z
     title: z.string().min(1).optional(),
     status: GoalStatusSchema.optional(),
     reviewCadence: SessionScheduleCadenceSchema.optional(),
+    noEffectReviewLimit: z.number().int().min(1).max(100).optional(),
     worksNote: z
       .string()
       .optional()
@@ -191,6 +193,7 @@ const GoalSchema = z.object({
   mandateRef: z.string().nullable(),
   mandateRev: z.string().nullable(),
   dailyRunLimit: z.number(),
+  noEffectReviewLimit: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
   completedAt: z.number().nullable(),
@@ -262,6 +265,7 @@ function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
     goalId: _goalId,
     ownerSessionId: _owner,
     reviewCadence: _reviewCadence,
+    noEffectReviewLimit: _noEffectReviewLimit,
     ...patch
   } = input;
   return Object.fromEntries(
@@ -277,6 +281,8 @@ export interface SessionGoalDependencies {
   readonly canReturn: (sessionId: string) => boolean;
   readonly startSession: (parentSessionId: string, title: string) => Promise<string>;
   readonly releaseSession: (sessionId: string) => Promise<void>;
+  readonly neoChanged?: () => void;
+  readonly ensureNeo?: () => Promise<string>;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
@@ -288,6 +294,8 @@ export function createSessionGoalOperations({
   canReturn,
   startSession,
   releaseSession,
+  neoChanged = () => {},
+  ensureNeo,
   audit,
 }: SessionGoalDependencies) {
   const canOwn = (sessionId: string) =>
@@ -311,7 +319,14 @@ export function createSessionGoalOperations({
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
       .pipe(requireExistingGoal, 'goal', 'result:outcome')
       .pipe(requireGoalAccess, ['outcome', 'caller'], 'result:outcome');
-  const done = (result: SessionGoal) => ({ accepted: true as const, goal: result });
+  const withReviewLimit = (goal: SessionGoal) => ({
+    ...goal,
+    noEffectReviewLimit: goals.wakeSchedule(goal.id)?.noEffectReviewLimit ?? 3,
+  });
+  const done = (result: SessionGoal) => ({
+    accepted: true as const,
+    goal: withReviewLimit(result),
+  });
 
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)
     .pipe(requireGoalDoneTest, ['outcome', 'input'], 'result:outcome')
@@ -342,6 +357,7 @@ export function createSessionGoalOperations({
           ownerSessionId: _owner,
           cadence,
           reviewCadence,
+          noEffectReviewLimit,
           nudgeEvery,
           ownSession,
           ...draft
@@ -349,9 +365,13 @@ export function createSessionGoalOperations({
         const owned = ownSession ? await startSession(parent, `Goal: ${input.title}`) : parent;
         let goal: SessionGoal;
         try {
-          goal = goals.create(owned, draft, Date.now(), (created) =>
-            schedules.sync(created, cadence, nudgeEvery, reviewCadence)
-          );
+          goal = goals.create(owned, draft, Date.now(), (created) => {
+            schedules.sync(created, cadence, nudgeEvery, reviewCadence);
+            goals.saveWakeSchedule(created.id, {
+              ...goals.wakeSchedule(created.id)!,
+              noEffectReviewLimit,
+            });
+          });
         } catch (error) {
           if (ownSession) await releaseSession(owned);
           throw error;
@@ -372,7 +392,7 @@ export function createSessionGoalOperations({
     .pipe(
       (owned: string, input: z.infer<typeof List>) => ({
         accepted: true as const,
-        goals: goals.list(owned, input.includeClosed),
+        goals: goals.list(owned, input.includeClosed).map(withReviewLimit),
       }),
       ['outcome', 'input'],
       'outcome'
@@ -382,7 +402,9 @@ export function createSessionGoalOperations({
   const update = owned(superpipe({})('goal.session.update') as PipelineAPI)
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>) =>
-        input.reviewCadence ? { value: goal } : requireGoalChange(goal, patchOf(input)),
+        input.reviewCadence || input.noEffectReviewLimit !== undefined
+          ? { value: goal }
+          : requireGoalChange(goal, patchOf(input)),
       ['outcome', 'input'],
       'result:outcome'
     )
@@ -401,16 +423,35 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) => {
+        if (input.status !== 'active' || schedules.requireAnsweredReview(goal))
+          return { value: goal };
+        if (schedules.reopenReviewQuestion(goal)) neoChanged();
+        return refuse('review_question_open: wait for the human answer before resuming.');
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
         const patch = patchOf(input);
         audit(caller, 'goal.session.update', {
           goalId: goal.id,
-          fields: [...Object.keys(patch), ...(input.reviewCadence ? ['reviewCadence'] : [])],
+          fields: [
+            ...Object.keys(patch),
+            ...(input.reviewCadence ? ['reviewCadence'] : []),
+            ...(input.noEffectReviewLimit !== undefined ? ['noEffectReviewLimit'] : []),
+          ],
         });
         return done(
           goals.update(goal, patch, Date.now(), (updated) => {
             if (patch.status || input.reviewCadence)
               schedules.sync(updated, undefined, undefined, input.reviewCadence);
+            if (input.noEffectReviewLimit !== undefined)
+              goals.saveWakeSchedule(goal.id, {
+                ...goals.wakeSchedule(goal.id)!,
+                noEffectReviewLimit: input.noEffectReviewLimit,
+              });
           })
         );
       },
@@ -429,18 +470,23 @@ export function createSessionGoalOperations({
       'result:outcome'
     )
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
+      async (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
         const { goalId: _goalId, ownerSessionId: _owner, ...draft } = input;
+        if (input.runId?.startsWith('goal-review:') && !goal.ownerSessionId.startsWith('neo:'))
+          await ensureNeo?.();
         audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
-        return {
-          accepted: true as const,
-          entry: goals.appendJournal(
+        const result = schedules.inTransaction(() => {
+          const entry = goals.appendJournal(
             goal.id,
             caller.sessionId ?? null,
             draft as GoalJournalDraft,
             Date.now()
-          ),
-        };
+          );
+          if (input.runId?.startsWith('goal-review:')) schedules.reviewResult(goals.get(goal.id)!);
+          return { accepted: true as const, entry };
+        });
+        if (input.runId?.startsWith('goal-review:')) neoChanged();
+        return result;
       },
       ['outcome', 'input', 'caller'],
       'outcome'
@@ -486,7 +532,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Give metrics or a written doneTest. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
+        'Create a goal with a work schedule and, for Neo-owned goals and goal sessions, a review schedule. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Give metrics or a written doneTest. cadence defaults to hourly and reviewCadence to daily. Work wakes are limited by dailyRunLimit (default 24); reviews are independent of that limit. noEffectReviewLimit defaults to 3; consecutive reviews with no effect pause the goal and ask the human. ownSession starts a dedicated goal session that reports reviews using the method named in the wake. Closing the goal stops its schedules. nudgeEvery is accepted for legacy compatibility only.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
@@ -514,7 +560,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal, including its reviewCadence. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
+        'Update a session-owned goal, including reviewCadence and noEffectReviewLimit. A goal paused for a no-effect review question can resume after the human answers; put their direction in nextSteps. If its question was retired, attempting to resume opens a new question. Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them. Paused pauses its schedules, active resumes them, and completed or archived removes them. worksNote updates the what-works note without deleting journal entries.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
@@ -540,7 +586,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.journal.append',
       description:
-        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message.',
+        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message. A no-effect review may pause the goal and ask the human.',
       policy: OWNER_WRITE_POLICY,
       inputSchema: Append,
       resultSchema: z.discriminatedUnion('accepted', [

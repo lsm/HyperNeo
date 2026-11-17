@@ -42,7 +42,8 @@ export function registerSessionGoalOperations(
       return context.deps.db.getSession(owner)?.parentSessionId === neo
         ? ' Send Neo the review summary with session.clone.return.'
         : ` Send Neo the review summary with message.send to ${neo}, kind done.`;
-    }
+    },
+    (owner) => context.defaultNeoSession?.() ?? (owner.startsWith('neo:') ? owner : undefined)
   );
   context.sessionScheduler.registerSource(schedules);
   context.startupTasks?.push(
@@ -71,6 +72,8 @@ export function registerSessionGoalOperations(
       });
     },
     releaseSession,
+    neoChanged: context.neoChanged,
+    ensureNeo: context.ensureNeo,
     audit: (caller, toolName, summary) =>
       audit.createEntry({
         agentName: caller.agentName,

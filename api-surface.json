@@ -17807,6 +17807,12 @@
             },
             "type": "array"
           },
+          "noEffectReviewLimit": {
+            "default": 3,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
           "nudgeEvery": {
             "default": 4,
             "description": "Legacy compatibility only; ignored.",
@@ -17976,6 +17982,9 @@
                     },
                     "type": "array"
                   },
+                  "noEffectReviewLimit": {
+                    "type": "number"
+                  },
                   "ownerSessionId": {
                     "type": "string"
                   },
@@ -18044,6 +18053,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18168,6 +18178,9 @@
                     },
                     "type": "array"
                   },
+                  "noEffectReviewLimit": {
+                    "type": "number"
+                  },
                   "ownerSessionId": {
                     "type": "string"
                   },
@@ -18236,6 +18249,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18358,6 +18372,9 @@
                       },
                       "type": "array"
                     },
+                    "noEffectReviewLimit": {
+                      "type": "number"
+                    },
                     "ownerSessionId": {
                       "type": "string"
                     },
@@ -18426,6 +18443,7 @@
                     "mandateRef",
                     "mandateRev",
                     "dailyRunLimit",
+                    "noEffectReviewLimit",
                     "createdAt",
                     "updatedAt",
                     "completedAt",
@@ -18526,6 +18544,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "noEffectReviewLimit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
           },
           "ownerSessionId": {
             "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
@@ -18693,6 +18716,9 @@
                     },
                     "type": "array"
                   },
+                  "noEffectReviewLimit": {
+                    "type": "number"
+                  },
                   "ownerSessionId": {
                     "type": "string"
                   },
@@ -18761,6 +18787,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
