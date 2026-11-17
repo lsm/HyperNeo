@@ -108,7 +108,7 @@ function projectRuntimeSettings(
   };
 }
 
-const readSessionRuntimeSettings = (superpipe({})('read-session-runtime-settings') as PipelineAPI)
+const readSessionRuntimeSettings = (superpipe({})('session.runtimeSettings.read') as PipelineAPI)
   .input(['sessionId', 'caller', 'deps'])
   .pipe(gateCallerScope, ['caller', 'deps'], 'result:read')
   .pipe(resolveTarget, ['sessionId', 'deps'], 'result:read')
