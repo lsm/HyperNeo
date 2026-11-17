@@ -411,6 +411,19 @@ describe('coding session target decision', () => {
     }
   });
 
+  test('a non-worker PR holder replaces the existing feature reservation', async () => {
+    const { db, todo, worked, decide } = setup();
+    const reserved = todo();
+    await decide(reserved, start('backend'));
+    worked(reserved, 'reserved-worker', 'backend', 'done');
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    worked(todo('other', repo, url), 'person', 'person', 'done');
+    db.prepare("DELETE FROM work_started_sessions WHERE id = 'person'").run();
+    expect(await decide(todo('feature', repo, url), start('backend'))).toMatchObject({
+      value: { verb: 'start' },
+    });
+  });
+
   test('an explicit send to the reserved session remains available', async () => {
     const { db, todo, worked, decide } = setup();
     const first = todo();

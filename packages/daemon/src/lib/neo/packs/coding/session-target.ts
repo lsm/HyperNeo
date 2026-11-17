@@ -171,7 +171,9 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
           workType: (target.verb === 'start' && target.name) || 'dev',
           pool: [],
         }),
-        takeover: { todoId, ref },
+        takeover: facts.feature?.session
+          ? { todoId: facts.feature.todoId, ref: facts.feature.session.ref }
+          : { todoId, ref },
       });
       if (target.verb === 'start' && owner?.session && !owner.worker)
         return startInstead(owner.todoId, owner.session.ref);
