@@ -5,6 +5,10 @@ when one of them changes. It stops with a non-zero exit at the first failed call
 diffs the whole transcript against the expected one below, exiting non-zero on any difference.
 It also fails when the daemon does not shut down cleanly (a non-zero exit, or no
 `Graceful shutdown complete` in its log), and keeps the run with its `daemon.log` whenever it fails.
+Every request has a deadline: a daemon that never answers HTTP fails as `daemon not ready`,
+and one still running 15s after TERM is reported by pid and left with its run for you to stop.
+The RPC helpers run in the scrubbed environment, so a `VERIFY_CREDENTIAL` or `VERIFY_ORIGIN`
+left in your shell is ignored.
 The second command proves the RPC check: it renames the `device.list` call to an unknown
 operation, so the daemon's error reply goes through the same outcome check as every call. It
 passes only if that check printed `RPC error`, the journey stopped at that step and the daemon

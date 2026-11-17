@@ -21,6 +21,15 @@ finish() {
   local status=$? daemon=0
   trap - EXIT INT TERM
   kill -TERM "$PID" 2>/dev/null || true
+  for _ in $(seq 1 150); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$PID" 2>/dev/null; then
+    echo "daemon shutdown failed: pid $PID still running 15s after TERM; stop it before removing the run" >&2
+    echo "kept the run and its daemon.log: $RUN" >&2
+    exit 1
+  fi
   wait "$PID" || daemon=$?
   if [ "$daemon" -ne 0 ] && [ "$daemon" -ne 143 ]; then
     echo "daemon shutdown failed: exit $daemon" >&2
@@ -35,14 +44,22 @@ finish() {
 trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-for _ in $(seq 1 120); do curl -fs -o /dev/null "http://127.0.0.1:$PORT/" && break; sleep 1; done
+deadline() { perl -e 'alarm shift; exec @ARGV or exit 127' "$@"; }
+ready=
+for _ in $(seq 1 120); do
+  code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" || true)
+  [ "${code:-000}" != 000 ] && { ready=1; break; }
+  sleep 1
+done
+[ -n "$ready" ] || { echo "daemon not ready: no HTTP answer on port $PORT within its deadline" >&2; exit 1; }
 for _ in $(seq 1 30); do [ -S "$RUN/data/session-door.sock" ] && break; sleep 1; done
-cli() { "${ENV[@]}" HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" bun run packages/cli/main.ts "$@"; }
+[ -S "$RUN/data/session-door.sock" ] || { echo "daemon not ready: no session door socket" >&2; exit 1; }
+cli() { deadline 60 "${ENV[@]}" HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" bun run packages/cli/main.ts "$@"; }
 field() { python3 -c "import json,sys;print(json.load(sys.stdin)$1)"; }
-pair() { curl -s -o "$RUN/pair.json" -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/pair" \
+pair() { curl -s --max-time 30 -o "$RUN/pair.json" -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/pair" \
   -H 'content-type: application/json' -d "{\"code\":\"$1\",\"name\":\"$2\"}"; }
-rpc() { HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=$PORT VERIFY_CREDENTIAL=$LAPTOP bun .claude/skills/verify/rpc.ts "$@"; }
-terminal() { HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT=$PORT bun .claude/skills/verify/rpc.ts "$@"; }
+rpc() { deadline 60 "${ENV[@]}" VERIFY_PORT="$PORT" VERIFY_CREDENTIAL="$LAPTOP" bun .claude/skills/verify/rpc.ts "$@"; }
+terminal() { deadline 60 "${ENV[@]}" VERIFY_PORT="$PORT" bun .claude/skills/verify/rpc.ts "$@"; }
 outcome() { python3 -c "
 import json,sys
 r=json.load(sys.stdin)['reply']
