@@ -236,6 +236,26 @@ describe('goal work wakes', () => {
     await fireReview();
     expect(messages[1]).toContain('During review');
     expect(messages[1]).not.toContain('Before snapshot');
+    const secondRun = messages[1].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: secondRun,
+      done: 'Second review',
+      effect: 'yes',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[2]).not.toContain('During review');
+    const emptyRun = messages[2].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: emptyRun,
+      done: 'Empty review',
+      effect: 'no',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[3]).not.toContain('During review');
   });
 
   test('a due review is delivered to the mailbox while the owner is busy', async () => {

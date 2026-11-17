@@ -204,8 +204,8 @@ Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
     const schedule = this.scheduler.repo.getBySource('goal_review', id);
     if (!goal || !schedule || goal.status === 'completed' || goal.status === 'archived')
       return null;
-    const entries = await this.goals.journalSinceReview(id);
-    const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}`;
-    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review:\n${JSON.stringify(entries)}\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
+    const snapshot = await this.goals.journalSinceReview(id);
+    const runId = `goal-review:${schedule.id}:${schedule.nextRunAt}:${snapshot.cursor}`;
+    return `${this.canReturn(goal.ownerSessionId) ? 'This session owns the goal below. ' : ''}Review goal "${goal.title}". Journal entries since the previous review (newest 20):\n${JSON.stringify(snapshot.entries)}\n${snapshot.earlier} earlier entries: read them with goal.journal.list {goalId: "${id}", before: "${snapshot.entries[0]?.id ?? ''}", limit: 20}, paging until all earlier entries are read.\nCurrent what-works note: ${goal.worksNote ?? 'None'}\nSummarize what worked and failed and whether this period had an effect (yes or no). Append the review through goal.journal.append with goalId ${id}, runId ${runId}, the summary in done, and yes or no in effect. Then update the what-works note with goal.session.update {goalId, worksNote}, retaining routines within the goal definition's limits.${this.reviewReport(goal.ownerSessionId)}`;
   }
 }

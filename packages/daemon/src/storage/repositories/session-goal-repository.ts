@@ -244,7 +244,9 @@ export class SessionGoalRepository {
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 
-  async journalSinceReview(goalId: string): Promise<GoalJournalEntry[]> {
+  async journalSinceReview(
+    goalId: string
+  ): Promise<{ entries: GoalJournalEntry[]; earlier: number; cursor: string }> {
     return gatewayFor(this.db).call(sessionGoalReviewReads, 'journal', goalId);
   }
 }
