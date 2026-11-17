@@ -68,8 +68,8 @@ describe('neoPlanLines', () => {
       { ...asks[1], topic: null },
     ];
     const lines = neoPlanLines(labelled, [], []);
-    expect(lines[0].text).toContain('topic=邮件');
-    expect(lines[1].text).toContain('topic=none');
+    expect(lines[1].text).toContain('topic=邮件');
+    expect(lines[2].text).toContain('topic=none');
   });
   test('lists the topics of the last 30 days first, folded for case and spacing', () => {
     const topics = [
@@ -106,16 +106,16 @@ describe('neoPlanLines', () => {
       []
     );
     const fitted = fitNeoPlanLines(lines, 400);
-    expect(fitted.map((line) => line.id)).toEqual(asks.map((ask) => ask.id));
+    expect(fitted.map((line) => line.id)).toEqual(['topics', ...asks.map((ask) => ask.id)]);
     for (const ask of asks)
       expect(fitted.find((line) => line.id === ask.id)?.text).toContain(`neo.ask.read ${ask.id}`);
-    expect(lines.filter((line) => line.id !== line.askId)).toHaveLength(12);
+    expect(lines.filter((line) => line.kind === 'todo')).toHaveLength(12);
   });
   test('retains details under budget and counts encoded bytes', () => {
     const lines = neoPlanLines(asks.slice(0, 1), [todo('first', { title: '亮'.repeat(50) })], []);
     expect(fitNeoPlanLines(lines, 10000)).toEqual(lines);
     const text = lines.map((line) => line.text).join('\n');
-    expect(fitNeoPlanLines(lines, text.length)).toHaveLength(1);
+    expect(fitNeoPlanLines(lines, text.length).map((line) => line.kind)).toEqual(['topics', 'ask']);
   });
 });
 
@@ -145,7 +145,13 @@ describe('planNeoPlanContext', () => {
     const delta = planNeoPlanContext(lines, changed, 'prompt');
     expect(delta).toContain('doing');
     expect(delta).not.toContain('ask-11');
-    expect(planNeoPlanContext(lines, changed.slice(1), 'prompt')).toContain('ask-0');
+    expect(
+      planNeoPlanContext(
+        lines,
+        changed.filter((line) => line.id !== 'ask-0'),
+        'prompt'
+      )
+    ).toContain('ask-0');
   });
 });
 

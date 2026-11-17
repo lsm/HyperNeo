@@ -72,10 +72,9 @@ function ownProject(
   );
 }
 
-const pick = (topic: string): NeoAskTopic => ({
-  topic,
-  topicKey: `pick:${topic.toLowerCase().replace(/\s+/g, '')}`,
-});
+export const neoTopicPickKey = (topic: string) => `pick:${topic.toLowerCase().replace(/\s+/g, '')}`;
+
+const pick = (topic: string): NeoAskTopic => ({ topic, topicKey: neoTopicPickKey(topic) });
 
 const stored = (ask: TopicAsk) => (ask.topic?.trim() ? pick(ask.topic) : null);
 
