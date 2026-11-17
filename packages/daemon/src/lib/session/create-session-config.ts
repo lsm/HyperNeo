@@ -156,6 +156,22 @@ export function admitUpdateSessionConfig(
   engineOf: (provider: string) => SessionEngine = () => 'sdk'
 ): Partial<SessionConfig> | undefined {
   if (!requested) return requested;
+  if (isOxapHarness(current?.harness)) {
+    requested = { ...requested };
+    for (const field of [
+      'tools',
+      'sdkToolsPreset',
+      'allowedTools',
+      'disallowedTools',
+      'maxTurns',
+      'maxBudgetUsd',
+      'mcpServers',
+      'additionalDirectories',
+      'maxThinkingTokens',
+    ] as const) {
+      if (requested[field] === null) Object.assign(requested, { [field]: undefined });
+    }
+  }
   if (current && (requested.provider !== undefined || requested.model !== undefined)) {
     const switched = decideSwitch(
       current,
