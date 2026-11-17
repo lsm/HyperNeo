@@ -150,6 +150,9 @@ jobs:
       - name: Test main-thread DB ratchet CLI
         run: bun run test:db-main-thread
 
+      - name: Test getDatabase ratchet CLI
+        run: bun run test:get-database
+
       - name: Test test-type ratchet CLI
         run: bun run test:test-types
 
