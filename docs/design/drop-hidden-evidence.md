@@ -4,7 +4,7 @@ Status: proposal, 2026-11-17, tracked in #10953. Design only. Paths without a pr
 
 ## Why
 
-Most todos end when a file exists at `<data>/work/evidence/<todoId>/result.md`. The human never sees that folder, and nobody reads it. Workers put simulator results, screenshots, copied source, scripts and logs there, and it only grows. On one long-running install it holds more than 9 GB in about 1,750 folders.
+Most todos end when a file exists at `<data>/work/evidence/<todoId>/result.md`. The human never sees that folder. Workers put simulator results, screenshots, copied source, scripts and logs there. A daily cleanup normally removes finished, unreferenced todo evidence after seven days and retains referenced or in-use evidence; even with that retention, one long-running install holds more than 9 GB in about 1,750 folders.
 
 Over one recent week of todos on that install:
 
@@ -84,10 +84,10 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Not in scope
 
-- Deleting the existing `work/evidence` folder on an install. That is an operator decision, made after this ships.
+- Bulk deletion of existing `work/evidence` folders. The existing cleanup sweep continues to reclaim eligible evidence under its retention and reference rules.
 - Builds and scratch folders.
 
 ## Slices
 
-1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt, error text and worker brief, including the legacy-check instruction, and add the tests above in this slice, so it independently refuses missing paths and gives consistent instructions. Retain legacy path lookup and redaction.
-2. **Delete**: remove unused assignment code and `HYPERNEO_EVIDENCE` environment plumbing. Retain the legacy path lookup and redaction. Removal only.
+1. **Wire**: remove `withAssignedEvidence` from all admission paths before applying the pure rule in place of `neoEvidenceRefusal` at its four call sites. Update the prompt, error text and worker brief, including the legacy-check instruction, and add the tests above in this slice, so it independently refuses missing paths and gives consistent instructions. Retain legacy path lookup and redaction. Update `neo-todo-evidence-path.test.ts` and `human-report-locations.test.ts` for admission and briefs, and keep legacy projection coverage in `neo-ask-entries.test.ts`. Update and run the `human-report-locations` verify journey and its executable proof to exercise new checks and legacy redaction.
+2. **Delete**: remove unused assignment code and `HYPERNEO_EVIDENCE` environment plumbing. Retain the legacy path lookup and redaction. Update the affected assertions in `worker-local-binding.test.ts`, `worker-sandbox.test.ts`, `worker-sandbox-release.test.ts`, `codex-desktop-start.test.ts`, `query-options-builder.test.ts` and `safe-process-env.test.ts`. Update and run the `worker-sandbox` verify journey and `worker-sandbox.ts` proof without the removed variable; update the `work-cleanup-sweep.ts` proof where it assumes worker evidence locations, while retaining coverage of cleanup for existing evidence. Production changes in this slice are removal only.
