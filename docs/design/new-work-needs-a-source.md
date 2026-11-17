@@ -26,7 +26,7 @@ Only the creation of new work changes. New work means opening an ask, adding a t
 **1. Every ask records its source.** A source is one of these:
 
 - **human**: one or more human message ids. Each must be a human message delivered into Neo's own session: a user turn stored with input kind `human`. The human often talks about one matter across several messages, and all of them can be attached to one ask.
-- **relayed**: one or more session message ids. Each must be a message that another session delivered to Neo's session (a `neo_session_messages` row with Neo's session as `to_session`), for example a session passing on what the human said. It must quote the human's own words, and the ask stores that quote. No list of allowed senders exists (see section 4).
+- **relayed**: one or more session message ids. Each must be a message that another session delivered to Neo's session (a `neo_session_messages` row with Neo's session as `to_session`), for example a session passing on what the human said. It must quote the human's own words, and the ask stores that quote. No list of allowed senders exists (see section 4). The human decided this: a relay is trusted when it quotes them, and they do not want to confirm each one. Since the stored quote is shown with the ask, the human can see what was relayed in their name.
 - **neo**: Neo came up with it.
 
 Goals get no exception. An ask opened in a goal cycle follows the same rule: without a `human` or `relayed` message for that ask, it is a proposal.
@@ -43,7 +43,7 @@ Asks that existed before this change have no source rows. They count as accepted
 
 - `neo.ask.open` can also record todos inline and start them. The admission check runs before its write step, so a `neo` ask that comes with todos is refused as a whole. The proposal is opened without todos.
 - `neo.todo.add` refuses a todo whose ask is not accepted. A proposal holds only its request until the human answers.
-- `work.start` needs a todo whose ask is accepted. A start with no todo, with a stale todo, or with a proposal's todo is refused.
+- `work.start` from Neo needs a todo whose ask is accepted. A start with no todo, with a stale todo, or with a proposal's todo is refused. This applies to the callers that get today's `todo_required` warning (`neoTodoRecords` in `work-operations.ts`: role `neo`, not an internal caller), and the warning becomes a refusal. Starts by the human's devices, by other roles, and starts forwarded from another daemon are unchanged. The forwarding daemon already ran the check for its own Neo.
 - Every refusal names what is missing.
 
 **4. Remove the relay-sender list.** The human does not choose which sessions may speak for them. A relay is accepted when it quotes the human's own words, for a new ask and for a card answer alike. Delete all of it:
@@ -89,7 +89,8 @@ The new checks are added as steps in these pipelines, not as checks beside them.
   - `neo.ask.open` with a `human` source and inline todos records the ask and its source rows and starts the todos;
   - a new ask with no source rows, created after the migration, is refused for new todos and starts.
 - Neo opens an ask with source `neo`. The ask is not accepted and a card exists. Adding a todo to it is refused. After the card is accepted, a todo can be added and started. Today the todo is added and starts at once.
-- `work.start` with no `todoId` is refused. Today it starts.
+- `work.start` from Neo with no `todoId` is refused. Today it starts with a warning.
+- `work.start` with no `todoId` from a human device, from another role, or forwarded from another daemon still starts.
 - An ask that names three human messages records three source rows.
 
 ## Not in scope
