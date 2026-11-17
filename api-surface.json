@@ -16046,6 +16046,23 @@
             "minLength": 1,
             "type": "string"
           },
+          "metricPoint": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "value",
+              "evidence"
+            ],
+            "type": "object"
+          },
           "ownerSessionId": {
             "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
@@ -16136,6 +16153,34 @@
                   "id": {
                     "type": "string"
                   },
+                  "metricPoint": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "evidence": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "number"
+                          },
+                          "value": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "evidence",
+                          "time"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "runId": {
                     "type": [
                       "string",
@@ -16165,6 +16210,9 @@
                   "createdAt"
                 ],
                 "type": "object"
+              },
+              "metricReached": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -16290,6 +16338,34 @@
                     },
                     "id": {
                       "type": "string"
+                    },
+                    "metricPoint": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidence": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "time": {
+                              "type": "number"
+                            },
+                            "value": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "evidence",
+                            "time"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "runId": {
                       "type": [
@@ -17786,6 +17862,35 @@
               "null"
             ]
           },
+          "metric": {
+            "additionalProperties": false,
+            "properties": {
+              "baseline": {
+                "type": "number"
+              },
+              "direction": {
+                "enum": [
+                  "increase",
+                  "decrease"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "target",
+              "direction",
+              "baseline"
+            ],
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "type": [
@@ -17962,6 +18067,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18045,6 +18186,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
@@ -18158,6 +18300,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18241,6 +18419,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
@@ -18352,6 +18531,42 @@
                         "null"
                       ]
                     },
+                    "metric": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "baseline": {
+                              "type": "number"
+                            },
+                            "direction": {
+                              "enum": [
+                                "increase",
+                                "decrease"
+                              ],
+                              "type": "string"
+                            },
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "target": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "target",
+                            "direction",
+                            "baseline"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "metrics": {
                       "additionalProperties": {
                         "type": [
@@ -18435,6 +18650,7 @@
                     "type",
                     "priority",
                     "metrics",
+                    "metric",
                     "doneTest",
                     "summary",
                     "worksNote",
@@ -18696,6 +18912,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18779,6 +19031,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
