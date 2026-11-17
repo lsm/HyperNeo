@@ -103,6 +103,8 @@ try {
         git(run, 'clone', '-q', origin, join(run, 'data/worktrees', repo, 'neo-read'));
         if (project) {
           const folder = join(run, 'projects', repo); git(run, 'clone', '-q', origin, folder);
+          git(folder, 'remote', 'set-url', 'origin', `https://github.com/${repo}.git`);
+          git(folder, 'config', `url.${origin}.insteadOf`, `https://github.com/${repo}.git`);
           db.prepare("INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES (?,?,'','',1,1,1)").run(`project-${name}`, repo);
           for (const alias of [`repository:github.com/${repo}`, `folder:${hostname()}\u0000${folder}`]) db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(alias, `project-${name}`);
         }
@@ -118,6 +120,16 @@ try {
       const assign = (input: unknown) => rpc('neo.coding.assign', input) as Promise<{ ok: boolean; reason?: string; assignment: { actor: { kind: string; id: string; model: string; harness: string }; ref: { adapter: string; id: string }; fallback: string[]; bot?: string; effort?: string } }>;
       assert.equal((await rpc('operations.describe', { name: 'neo.coding.result' }) as { found: boolean }).found, true);
       if (phase === 'initial') {
+        const wrong = await seed('wrong', 22, 'synthetic/wrong');
+        const wrongFolder = join(run, 'projects/synthetic/wrong');
+        git(wrongFolder, 'remote', 'set-url', 'origin', 'https://github.com/synthetic/different.git');
+        git(wrongFolder, 'config', '--add', `url.${origin}.insteadOf`, 'https://github.com/synthetic/different.git');
+        const beforeWrong = attempts;
+        assert.match((await assign({ ...wrong, stage: 'review', candidates: [defaultTarget] })).reason ?? '', /has no known project folder/);
+        assert.equal(attempts, beforeWrong, 'A checkout of another repository must not start an actor');
+        const alias = await seed('alias', 21, 'synthetic/alias');
+        db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run('repository:github.com/synthetic/zother', 'project-alias');
+        assert((await assign({ ...alias, stage: 'review', candidates: [defaultTarget] })).ok, 'A second repository alias must not hide the matching checkout');
         const bot = await seed('bot', 7, 'synthetic/bot'); await setting('synthetic/bot', 'reviewBot', 'fixture-bot');
         const beforeBot = attempts;
         assert.equal((await assign({ ...bot, stage: 'review', candidates: [], human: 'unused-human' })).assignment.bot, 'fixture-bot');
