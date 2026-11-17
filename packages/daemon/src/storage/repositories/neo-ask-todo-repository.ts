@@ -39,7 +39,7 @@ import {
   neoAskInputReads,
   neoAskInputWrites,
 } from './neo-ask-input-worker.ts';
-import { readNeoAskTopics } from './neo-ask-topic-read.ts';
+import { readNeoAskTopics, readNeoTopicCounts } from './neo-ask-topic-read.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoQuestionAnswerRepository } from './neo-question-answer-repository.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
@@ -367,6 +367,7 @@ export class NeoAskTodoRepository {
       asks,
       todos: [...new Map(todos.map((todo) => [todo.id, todo])).values()],
       questions: this.listQuestionsForAsks(asks.map((ask) => ask.id)),
+      topics: readNeoTopicCounts(this.db, Date.now() - 30 * 24 * 60 * 60 * 1000),
       ...(withUnanswered ? { unanswered: this.listUnansweredInputs() } : {}),
     };
   }

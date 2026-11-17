@@ -41,6 +41,11 @@ the section including its heading and overflow line at 8 kB, newest entries are
 kept, and anything left over is announced with a pointer to
 `neo.conversation.read`.
 
+The run also seeds two settled asks opened now with Neo's picks `kids` and
+`Kids`. The compact `SessionStart` context must carry one line
+`Topics used in the last 30 days (asks open or settled): kids 2` (either
+spelling), read on the reader with zero main-thread target reads.
+
 Before the fix, run the identical helper in before mode on the baseline. It must
 fail the real MCP open-owner assertion, retaining observed.json with the smaller
 owner list. The wrapper saves evidence and removes the temporary daemon data
