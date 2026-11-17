@@ -18,6 +18,7 @@ const Ask = z
     requestId: z.string().min(1),
     values: Values.optional(),
     alternatives: z.array(Values).min(2).max(5).optional(),
+    hold: z.literal(false).optional(),
   })
   .strict()
   .refine((input) => !input.values !== !input.alternatives, 'values_or_alternatives');
@@ -60,7 +61,11 @@ export function createPackPreferenceQuestions(
       (input: z.infer<typeof Ask>) =>
         db.transaction(() => {
           const json = JSON.stringify(
-            input.alternatives ? { alternatives: input.alternatives } : input.values
+            input.hold === false
+              ? { values: input.values, alternatives: input.alternatives, hold: false }
+              : input.alternatives
+                ? { alternatives: input.alternatives }
+                : input.values
           );
           const prior = db
             .prepare(`SELECT p.question_id, p.values_json, q.ask_id, q.state FROM neo_pack_preference_proposals p
@@ -84,7 +89,14 @@ export function createPackPreferenceQuestions(
           if (new Set(options).size !== options.length)
             return { ok: false as const, reason: 'duplicate_alternative' };
           const { text } = card;
-          openHumanCard(store, questionId, input.askId, choiceCard(text, options), Date.now());
+          const draft = choiceCard(text, options);
+          openHumanCard(
+            store,
+            questionId,
+            input.askId,
+            input.hold === false ? { ...draft, todos: [] } : draft,
+            Date.now()
+          );
           db.prepare(`INSERT INTO neo_pack_preference_proposals (question_id, request_id, values_json, question_text)
         VALUES (?, ?, ?, ?)`).run(questionId, input.requestId, json, text);
           return { ok: true as const, questionId };

@@ -119,6 +119,7 @@ independent of merge policy; selecting a session never grants permission to merg
 choice question generated from its declaration, offering `long_lived` first.
 Repeated dispatches reuse the same open question. While unanswered, dispatch
 uses `long_lived`; it neither writes a preference nor claims the human answered.
+The question is asked with `hold: false`, so it holds no todo while it waits.
 A human answer persists through the settings-question answer path. Later human
 changes use the same human-only settings rules. A strategy change affects future
 assignments, never moves a task already running or splits its active PR ownership.
