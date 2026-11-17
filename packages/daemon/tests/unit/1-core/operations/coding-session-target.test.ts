@@ -333,7 +333,7 @@ describe('coding session target decision', () => {
     const { todo, worked, decide } = setup();
     const first = todo();
     await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
+    worked(first, 'backend-1', 'backend', 'doing');
     const kinds: string[] = [];
     expect(await decide(todo(), start(), routed(kinds, true))).toEqual({
       value: { verb: 'send', ref: ref('backend-1') },
@@ -350,7 +350,7 @@ describe('coding session target decision', () => {
     const { todo, worked, live, decide } = setup();
     const first = todo();
     expect(await decide(first, start('backend'))).toEqual({ value: start('backend') });
-    worked(first, 'backend-1', 'backend', 'done');
+    worked(first, 'backend-1', 'backend', 'doing');
     expect(await decide(todo(), start())).toEqual({
       value: { verb: 'send', ref: ref('backend-1') },
     });
@@ -360,6 +360,14 @@ describe('coding session target decision', () => {
     });
     live['backend-1'] = 'unreachable';
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test('an unreachable session shared with active work still blocks a fresh start', async () => {
+    const { todo, worked, live, decide } = setup();
+    worked(todo('other'), 'shared', 'backend', 'done');
+    worked(todo('other'), 'shared', 'backend', 'doing');
+    live.shared = 'unreachable';
+    expect(await decide(todo(), start('backend'))).toMatchObject({ reason: expect.any(String) });
   });
 
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
@@ -617,7 +625,7 @@ describe('coding session target decision', () => {
     live['backend-1'] = 'archived';
     const next = todo();
     expect(await decide(next, start())).toMatchObject({ value: { verb: 'start' } });
-    worked(next, 'backend-2', 'backend', 'done');
+    worked(next, 'backend-2', 'backend', 'doing');
     expect(await decide(todo(), start())).toEqual({
       value: { verb: 'send', ref: ref('backend-2') },
     });
@@ -675,7 +683,7 @@ describe('coding session target decision', () => {
     const { todo, worked, live, decide } = setup();
     const first = todo();
     await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
+    worked(first, 'backend-1', 'backend', 'doing');
     worked(todo('other'), 'spare', 'backend-2', 'done');
     worked(todo('other'), 'gone', 'backend-3', 'done');
     live['backend-1'] = 'interrupted';

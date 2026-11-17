@@ -16,7 +16,7 @@ export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = 
   scope: 'repo',
   type: { kind: 'enum', values: STRATEGIES },
   default: 'long_lived',
-  ask: 'How should Neo reuse sessions in this repository? Long-lived reuses work-type sessions and keeps a feature in one session; per-task and per-PR start one session each. Until answered, Neo uses long-lived without saving a preference.',
+  ask: 'How should Neo reuse sessions in this repository? Long-lived reuses work-type sessions and keeps active feature work together; per-task and per-PR start one session each. Until answered, Neo uses long-lived without saving a preference.',
 };
 
 /** @public */

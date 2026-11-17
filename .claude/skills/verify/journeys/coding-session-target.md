@@ -34,6 +34,8 @@ Last, it checks reservations that never got a session:
   reservation, and leaves a started todo's reservation in place.
 - when a done or removed owner has an unreachable session, its next slice
   dispatches to a live session and takes over the reservation.
+- with no live alternative, the next slice selects a fresh start; an
+  unreachable session held by active work still causes a wait.
 
 Then it archives both sessions over RPC (`session.archive`):
 

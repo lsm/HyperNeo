@@ -23,7 +23,7 @@ import {
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
 type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
-type Pooled = { ref: WorkRef; name: string; held: boolean };
+type Pooled = { ref: WorkRef; name: string; held: boolean; terminalOnly: boolean };
 type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
@@ -55,6 +55,7 @@ async function sessionState(session: Pooled, status: Status) {
   return {
     ref: session.ref,
     name: session.name,
+    terminalOnly: session.terminalOnly,
     state: session.held && state !== 'unknown' && state !== 'archived' ? ('busy' as const) : state,
     line: {
       provider: (live?.success && live.data.provider) || '',
@@ -193,12 +194,15 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
             () => lineScope(db, todo.id, facts.repo),
             workKind(todo)
           );
+      const eligiblePool = pool.filter(
+        (session) => session.state !== 'unknown' || !session.terminalOnly
+      );
       return {
         ...planCodingSessionDispatch({
           strategy: facts.strategy,
           workType: (target.verb === 'start' && target.name) || 'dev',
           assigned,
-          pool,
+          pool: eligiblePool,
         }),
         ...(archived && owner?.session
           ? { takeover: { todoId: owner.todoId, ref: owner.session.ref } }

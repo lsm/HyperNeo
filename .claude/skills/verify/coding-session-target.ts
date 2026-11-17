@@ -111,6 +111,16 @@ try {
     assert.deepEqual(result.ref, available);
     assert.deepEqual(reserved(askId), [{ todoId: successor.id }]);
     await rpc('session.archive', { sessionId: available.id, confirmed: true });
+    const isolatedAsk = `terminal-alone-${state}`;
+    store.openAsk({ id: isolatedAsk, projectId: null, sessionId: 'neo', originMessageId: null, title: isolatedAsk, request: 'Synthetic', createdAt: 1 });
+    const loneOwner = worked(isolatedAsk, missing);
+    const loneSuccessor = todo(isolatedAsk);
+    const isolatedRepo = `synthetic/${isolatedAsk}`;
+    for (const item of [loneOwner, loneSuccessor]) db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(isolatedRepo, item.id);
+    db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, loneOwner.id);
+    db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(isolatedRepo, isolatedAsk, loneOwner.id);
+    const loneDecision = await decide(`${state} owner with no live alternative starts fresh`, loneSuccessor, { verb: 'start', adapter: 'hyperneo' });
+    assert.equal('value' in loneDecision && loneDecision.value.verb, 'start', JSON.stringify(loneDecision));
   }
   for (const id of ['failed', 'refused'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
