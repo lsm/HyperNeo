@@ -36,6 +36,8 @@ Its mailbox wake contains the journal review instruction, and a review result
 appended through RPC is readable through `goal.journal.list`.
 `operations.describe` for goal creation and updates also states that ordinary
 top-level session owners do not receive a review schedule.
+The opened Neo session's actual system prompt states the same exclusion. This
+does not exercise an SDK model turn.
 
 Inspect `goal-work-wakes.json` for each wake's outcome, delivery and text.
 Before the change the second due time is `skipped_unchanged` and nothing is

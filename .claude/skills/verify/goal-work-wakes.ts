@@ -40,6 +40,9 @@ try {
     assert(description.found && description.description.includes('Ordinary top-level session owners have no review schedule'), `${name} omits the review schedule limitation`);
   }
   const ownerSessionId = (await call('neo.open')).sessionId; assert(ownerSessionId);
+  const prompt = app.db.getSession(ownerSessionId)?.config.systemPrompt;
+  assert(typeof prompt === 'string' && prompt.includes('Ordinary top-level session owners have no review schedule; reviewCadence has no effect for them.'), 'Neo did not receive the review schedule limitation');
+  evidence.neoGuidance = { includesReviewExclusion: true };
   const created = await call('goal.session.create', { ownerSessionId, title: 'Explore the guide', doneTest: 'Guide published', cadence: { kind: 'every', everyMs: 60_000 }, dailyRunLimit: 2 });
   assert(created.accepted, JSON.stringify(created));
   evidence.goal = created.goal;
