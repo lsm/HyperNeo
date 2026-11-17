@@ -53,6 +53,16 @@ function fixture(
   const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
   execFileSync('git', ['init', '-q', view]);
   execFileSync('git', ['-C', view, 'read-tree', '--empty']);
+  const project = join(root, 'project');
+  execFileSync('git', ['init', '-q', project]);
+  execFileSync('git', [
+    '-C',
+    project,
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/synthetic/actors.git',
+  ]);
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -75,7 +85,18 @@ function fixture(
     rmSync(root, { recursive: true, force: true });
   });
   db.exec(
+    "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('project','Actors','','',1,1,1)"
+  );
+  const projectAlias = db.prepare(
+    'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+  );
+  projectAlias.run('repository:github.com/synthetic/actors', 'project');
+  projectAlias.run(`folder:${hostname()}\u0000${project}`, 'project');
+  db.exec(
     "INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','neo-fixture','Actors','Actors',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Actors','Merged','doing',1,1)"
+  );
+  db.exec(
+    "INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo', 'github.com/synthetic/actors')"
   );
   const ledger = new CodingPrLedgerRepository(db),
     todos = new CodingTodoPrRepository(db),
@@ -172,6 +193,7 @@ function fixture(
     set,
     success,
     view,
+    project,
   };
 }
 
@@ -656,31 +678,29 @@ describe('coding actor assignments', () => {
 describe('review place', () => {
   const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
   const remote = { ...reviewer, place: { ...place, daemon: 'remote-daemon' } };
-  test('the reviewer starts in the read view and passes start-place admission', async () => {
+  test('the reviewer starts in the repository project folder, not the read mirror, and passes start-place admission', async () => {
     const f = fixture();
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
     expect(f.starts[0].place).toEqual({
       machine: hostname(),
-      folder: f.view,
+      folder: f.project,
       name: 'synthetic/actors',
     });
   });
-  test('without a read view assignment refuses and starts nobody', async () => {
+  test('without a known project folder assignment refuses and starts nobody', async () => {
     const f = fixture();
-    rmSync(join(f.view, '.git', 'index'));
-    const notReady = { ok: false, reason: expect.stringContaining('has no read-only view yet') };
-    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
+    const forget = () =>
+      f.db.prepare("DELETE FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").run();
+    const unknown = { ok: false, reason: expect.stringContaining('has no known project folder') };
+    forget();
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(unknown);
     expect(f.starts).toHaveLength(0);
-    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
-    rmSync(join(f.view, '.git', 'HEAD'));
-    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
-    expect(f.starts).toHaveLength(0);
-    rmSync(f.view, { recursive: true, force: true });
-    execFileSync('git', ['init', '-q', f.view]);
-    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
-    rmSync(f.view, { recursive: true, force: true });
-    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(notReady);
+    f.db
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run(`folder:${hostname()}\u0000${f.project}`, 'project');
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
+    forget();
+    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(unknown);
     expect(f.starts).toHaveLength(1);
   });
   test('a candidate on another daemon is never routed to', async () => {

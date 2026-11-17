@@ -57,7 +57,7 @@ export type NeoStartPlacePolicy = (
   todo: NeoTodo | null,
   ask: NeoAsk | null,
   folder?: string
-) => 'explicit' | 'shared-home';
+) => 'explicit' | 'shared-home' | { refused: string };
 
 export function neoStartPlace(deps: {
   db: Database;
@@ -74,7 +74,9 @@ export function neoStartPlace(deps: {
       candidate?.sessionId === caller.sessionId && candidate?.status === 'open' ? candidate : null;
     const repo = new NeoRepository(deps.db);
     const here = input.place && !input.place.daemon && input.place.machine === deps.machine;
-    const explicit = deps.policy(todo, ask, here ? input.place?.folder : undefined) === 'explicit';
+    const decision = deps.policy(todo, ask, here ? input.place?.folder : undefined);
+    if (typeof decision === 'object') return { reason: reject('invalid_place', decision.refused) };
+    const explicit = decision === 'explicit';
     if (explicit && input.place) return { value: { ...input, place: input.place } };
     const home = neoUserFolder(deps.workspaceRoot);
     const place =

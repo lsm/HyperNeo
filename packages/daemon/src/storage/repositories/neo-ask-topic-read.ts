@@ -75,3 +75,15 @@ export function readNeoAskTopics(
     };
   });
 }
+
+export function readNeoTopicCounts(
+  db: Database,
+  since: number
+): { topic: string; count: number }[] {
+  return db
+    .prepare(
+      `SELECT topic, COUNT(*) AS count FROM neo_asks
+      WHERE topic IS NOT NULL AND trim(topic) != '' AND created_at >= ? GROUP BY topic`
+    )
+    .all(since) as { topic: string; count: number }[];
+}

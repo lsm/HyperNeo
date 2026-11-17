@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { getNeoReadCheckoutPath } from '../../../../src/lib/neo/packs/coding/read-checkout-path.ts';
+import {
+  getNeoReadCheckoutPath,
+  isNeoReadCheckoutPath,
+} from '../../../../src/lib/neo/packs/coding/read-checkout-path.ts';
 
 const priorDataDir = process.env.HYPERNEO_DATA_DIR;
 
@@ -33,6 +36,23 @@ describe('Neo read checkout paths', () => {
     expect(getNeoReadCheckoutPath('lsm', 'research')).toBe(
       join(process.env.HYPERNEO_DATA_DIR, 'worktrees', 'lsm', 'research', 'neo-read')
     );
+  });
+
+  test('recognises the read mirror and any folder inside it, and nothing else', () => {
+    const data = '/synthetic/data';
+    for (const folder of [
+      '/synthetic/data/worktrees/lsm/hyperneo/neo-read',
+      '/synthetic/data/worktrees/lsm/hyperneo/neo-read/packages',
+    ])
+      expect(isNeoReadCheckoutPath(folder, data)).toBe(true);
+    for (const folder of [
+      '/synthetic/data/worktrees/lsm/hyperneo',
+      '/synthetic/data/worktrees/lsm/hyperneo/fix-branch',
+      '/synthetic/elsewhere/lsm/hyperneo/neo-read',
+      '/synthetic/data/worktrees/../other/lsm/neo-read',
+      '/projects/hyperneo',
+    ])
+      expect(isNeoReadCheckoutPath(folder, data)).toBe(false);
   });
 
   test('cannot turn a repository identifier into an ancestor or sibling grant', () => {
