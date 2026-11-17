@@ -49,6 +49,8 @@ describe('createWorkCleanupRuntime', () => {
   const attempts: string[] = [];
   let deliver = true;
   let unsavedReason = UNCOMMITTED;
+  let archives = 0;
+  let rejectReferenced = false;
   let statusCalls = 0;
   let failStatusFrom = Number.POSITIVE_INFINITY;
   let busy: ChildProcess | undefined;
@@ -99,6 +101,15 @@ describe('createWorkCleanupRuntime', () => {
     todo('live-percent', 'doing', start, 'Inspect byte %FF in the dump');
     todo('old-sib', 'done', start - 8 * DAY);
     todo('old-late', 'done', start - 8 * DAY);
+    todo('old-em', 'done', start - 8 * DAY);
+    todo('old-strong', 'done', start - 8 * DAY);
+    const rejected = todos.addTodo(
+      'old-reject',
+      'ask',
+      { title: 'old-reject', doneWhen: 'Done', instruction: null, named: null, check: null },
+      1
+    );
+    todos.updateTodo(rejected, { state: 'done', finishedAt: start - 8 * DAY }, start - 8 * DAY);
     const card = {
       options: null,
       multiple: false,
@@ -162,6 +173,16 @@ describe('createWorkCleanupRuntime', () => {
       'sibling',
       'ask',
       { ...card, kind: 'reply', text: `See ${evidence('old-sib-2')}/result.md` },
+      start
+    );
+    todos.askQuestion(
+      'emphasis',
+      'ask',
+      {
+        ...card,
+        kind: 'reply',
+        text: `Review _${evidence('old-em')}_ and __${evidence('old-strong')}__`,
+      },
       start
     );
     mkdirSync(evidence('stranger'), { recursive: true });
@@ -244,7 +265,7 @@ describe('createWorkCleanupRuntime', () => {
         inputSchema: z.object({ ref: WorkRefSchema }),
         resultSchema: z.unknown(),
         execute: async ({ ref }) => ({
-          ok: true,
+          ok: (archives++, true),
           value: {
             archived: true,
             worktree: {
@@ -269,6 +290,8 @@ describe('createWorkCleanupRuntime', () => {
           restoredRead = true;
           mkdirSync(restored, { recursive: true });
         }
+        if (method === 'referenced' && rejectReferenced)
+          return Promise.reject(new Error('reference read failed'));
         const result = (real.call as (...all: unknown[]) => unknown)(op, method, ...args);
         if (method !== 'referenced' || lateCard) return result;
         lateCard = true;
@@ -333,6 +356,8 @@ describe('createWorkCleanupRuntime', () => {
       'old"quote',
       'old file',
       'old-home',
+      'old-em',
+      'old-strong',
       'live',
       'stranger',
     ])
@@ -398,11 +423,30 @@ describe('createWorkCleanupRuntime', () => {
       'old"quote',
       'old file',
       'old-home',
+      'old-em',
+      'old-strong',
       'stranger',
     ])
       expect(existsSync(evidence(kept))).toBe(true);
     expect(existsSync(unsaved)).toBe(true);
     expect(existsSync(unverifiable)).toBe(true);
+  });
+
+  test('a failed reference read keeps all evidence and still sweeps worktrees', async () => {
+    mkdirSync(evidence('old-reject'), { recursive: true });
+    rejectReferenced = true;
+    const before = archives;
+    try {
+      const digest = (await createWorkCleanupRuntime(context).execute(
+        {},
+        { source: 'rpc', principal: 'local' }
+      )) as { kept: Record<string, string[]> };
+      expect(digest.kept.error).toContain(evidence('old-reject'));
+    } finally {
+      rejectReferenced = false;
+    }
+    expect(existsSync(evidence('old-reject'))).toBe(true);
+    expect(archives).toBeGreaterThan(before);
   });
 
   test('keeps evidence whose folder resolves outside the data directory', async () => {
