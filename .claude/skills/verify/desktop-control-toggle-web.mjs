@@ -22,11 +22,6 @@ const pair = JSON.parse(
 ).reply;
 assert(pair.ok, JSON.stringify(pair));
 const observations = [];
-const expand = async (row, title) => {
-  const show = row.getByRole('button', { name: `Show details: ${title}` });
-  await row.getByRole('button', { name: new RegExp(`(Show|Hide) details: ${title}`) }).waitFor();
-  if (await show.count()) await show.click();
-};
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'en-US', reducedMotion: 'reduce' });
   await context.route('**/*', (route) =>
@@ -37,37 +32,27 @@ try {
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/neo`);
-  const row = page.locator('[data-ask-todo="dentist"]').first();
-  await expand(row, 'Book the dentist on the clinic site');
-  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
-  const box = row.getByRole('checkbox', { name: 'Let the agent use this computer' });
-  await box.waitFor();
-  const card = page.locator('[data-ask-todo="dentist"]').first().locator('xpath=ancestor::article[1]');
+  const row = () => page.locator('[data-ask-todo="dentist"]').first();
+  const lit = (id) => page.locator(`[data-ask-todo="${id}"] [data-todo-desktop]`);
+  await row().waitFor();
+  const card = row().locator('xpath=ancestor::article[1]');
   const shot = async (name) => {
     await page.waitForTimeout(400);
-    await ((await card.count()) ? card : row).screenshot({ path: join(out, name) });
+    await card.screenshot({ path: join(out, name) });
   };
-  observations.push({ todo: 'dentist', checkedBefore: await box.isChecked() });
+  observations.push({ todo: 'dentist', litBefore: await lit('dentist').count() });
   await shot('todo-off.png');
-  await box.click();
-  await page.waitForFunction(
-    () => document.querySelector('[data-ask-todo="dentist"] input[type=checkbox]')?.checked === true
-  );
+  await row().getByRole('button', { name: 'Step actions: Book the dentist on the clinic site' }).click();
+  await page.getByText('Let it use this computer', { exact: true }).click();
+  await lit('dentist').first().waitFor();
   await page.reload();
-  const again = page.locator('[data-ask-todo="dentist"]').first();
-  await expand(again, 'Book the dentist on the clinic site');
-  await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
-  const reloaded = again.getByRole('checkbox', { name: 'Let the agent use this computer' });
-  await reloaded.waitFor();
-  observations.push({ todo: 'dentist', checkedAfterReload: await reloaded.isChecked() });
+  await lit('dentist').first().waitFor();
+  observations.push({ todo: 'dentist', litAfterReload: await lit('dentist').count() });
   await shot('todo-on.png');
   await page.emulateMedia({ colorScheme: 'dark' });
   await shot('todo-on-dark.png');
   await page.emulateMedia({ colorScheme: 'light' });
-  observations.push({
-    todo: 'taxes',
-    checked: await page.locator('[data-ask-todo="taxes"]').first().getByRole('checkbox', { name: 'Let the agent use this computer' }).isChecked(),
-  });
+  observations.push({ todo: 'taxes', lit: await lit('taxes').count() });
 } finally {
   writeFileSync(join(out, 'web-observations.json'), JSON.stringify(observations, null, 2) + '\n');
   await browser.close();

@@ -445,13 +445,22 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
   });
 
-  test('the snapshot summary keeps the request marker on a request todo only', () => {
+  test('the snapshot summary keeps only the request marker and a granted computer', () => {
     const { store, sessions, opened } = seed(['todo']);
     const draft = { doneWhen: 'Answered', check: null, instruction: null };
     store.addTodo('req', 'ask', { ...draft, title: 'Q', named: { requestFrom: 'worker-1' } }, 1);
     store.addTodo('repo', 'ask', { ...draft, title: 'R', named: { repository: 'o/r' } }, 1);
     store.addTodo('flag', 'ask', { ...draft, title: 'F', named: { requestFrom: true } }, 1);
     store.addTodo('obj', 'ask', { ...draft, title: 'O', named: { requestFrom: { id: 'x' } } }, 1);
+    store.addTodo('pc', 'ask', { ...draft, title: 'P', named: null }, 1);
+    store.addTodo('off', 'ask', { ...draft, title: 'N', named: null }, 1);
+    store.addTodo('both', 'ask', { ...draft, title: 'B', named: { requestFrom: 'worker-2' } }, 1);
+    for (const [id, named] of [
+      ['pc', { desktopControl: true }],
+      ['off', { desktopControl: false }],
+      ['both', { requestFrom: 'worker-2', desktopControl: true }],
+    ] as const)
+      store.updateTodo(store.getTodo(id)!, { named }, 2);
     const [entry] = projectNeoAskEntries([opened], facts(store, sessions, [opened]), []);
     const named = Object.fromEntries(
       summarizeNeoAskEntry(entry).todos.map((todo) => [todo.id, todo.named])
@@ -462,6 +471,9 @@ describe('projectNeoAskEntries todo order and done todos', () => {
       repo: null,
       flag: null,
       obj: null,
+      pc: { desktopControl: true },
+      off: null,
+      both: { requestFrom: 'worker-2', desktopControl: true },
     });
   });
 

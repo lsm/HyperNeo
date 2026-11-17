@@ -1,4 +1,3 @@
-import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import { FileReferenceCards } from '../components/artifacts/FileReferenceCards.tsx';
@@ -22,6 +21,7 @@ import {
 } from './todo-controls.ts';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Modal } from '../components/ui/Modal.tsx';
+import { ConfirmModal } from '../components/ui/ConfirmModal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import {
@@ -49,7 +49,7 @@ import {
   neoTodoStatus,
 } from './todo-status.ts';
 import { neoTopicColor } from './topic-color.ts';
-import { FORM_CHECKBOX_CLASS } from '../components/ui/FormField.tsx';
+import { workerEngine } from '@hyperneo/shared/types/worker-identity';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning', 'font-semibold'],
@@ -62,7 +62,7 @@ const states = {
 const marks = {
   todo: ['○', 'text-fg-faint'],
   doing: ['●', 'text-accent'],
-  blocked: ['!', 'text-warning'],
+  blocked: ['●', 'text-warning'],
   done: ['✓', 'text-success'],
   removed: ['', 'text-fg-faint'],
 } as const;
@@ -156,6 +156,26 @@ function CardFileText({
   );
 }
 
+const PLAIN_STATUS = new Set(['todo.doing', 'todo.done', 'todo.notStarted']);
+
+function NeoDesktopIcon() {
+  return (
+    <svg
+      class="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.75"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="12" rx="1.5" />
+      <path d="M8 20h8M12 16v4" />
+    </svg>
+  );
+}
+
 const PRIORITY_LABELS: Record<NeoTodoPriority, MessageKey> = {
   urgent: 'todo.priority.urgent',
   high: 'todo.priority.high',
@@ -190,6 +210,7 @@ function TodoRow({
     ? (['‖', 'text-warning'] as const)
     : marks[todo.state];
   const [controlError, setControlError] = useState<string | null>(null);
+  const [confirmDesktopOff, setConfirmDesktopOff] = useState(false);
   const control = (choice: NeoTodoControl) => {
     setControlError(null);
     void onControl?.(choice).catch((cause: unknown) =>
@@ -207,18 +228,65 @@ function TodoRow({
       { at: todo.createdAt, label: 'time.created' },
     ] satisfies { at: number | null; label: MessageKey }[]
   ).find(({ at }) => neoRelativeTime(at, neoNow.peek(), locale.peek()));
+  const plainStatus =
+    number === undefined &&
+    todo.statusCodes?.length === 1 &&
+    PLAIN_STATUS.has(todo.statusCodes[0].code);
+  const desktopEditable =
+    number === undefined &&
+    !!onDesktopControl &&
+    !todo.worker?.daemon &&
+    ['todo', 'doing', 'blocked'].includes(todo.state);
+  const desktopOn = desktopEditable && todo.named?.desktopControl === true;
+  const setDesktop = (on: boolean) => onDesktopControl?.(todo.id, on);
+  const menu = [
+    ...(desktopEditable
+      ? [
+          {
+            label: t(desktopOn ? 'todo.desktopOff' : 'todo.desktopOn'),
+            onClick: () => setDesktop(!desktopOn),
+            disabled,
+          },
+          ...(controls ? [{ type: 'divider' as const }] : []),
+        ]
+      : []),
+    ...(controls
+      ? [
+          { label: t('todo.markDone'), onClick: () => control({ kind: 'done' }), disabled },
+          ...(neoTodoHoldable(todo)
+            ? [
+                {
+                  label: t(todo.startedAt === null ? 'todo.hold' : 'todo.pause'),
+                  onClick: () => control({ kind: 'hold' }),
+                  disabled,
+                },
+              ]
+            : []),
+          { type: 'divider' as const },
+          ...NEO_TODO_PRIORITIES.map((priority) => ({
+            label: t('todo.priorityItem', { priority: t(PRIORITY_LABELS[priority]) }),
+            icon: <span aria-hidden="true">{priority === todo.priority ? '✓' : ''}</span>,
+            onClick: () =>
+              priority === todo.priority ? undefined : control({ kind: 'priority', priority }),
+            disabled,
+          })),
+          { type: 'divider' as const },
+          {
+            label: t('todo.cancel'),
+            onClick: () => control({ kind: 'cancel' }),
+            danger: true,
+            disabled,
+          },
+        ]
+      : []),
+  ];
   const head = (
     <>
       <span
-        class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+        class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'font-medium text-fg'} ${number === undefined ? 'text-base' : ''}`}
       >
         <CardFileText text={todo.title} kind="todo" id={todo.id} />
       </span>
-      {todo.addedAfterStart && todo.state !== 'removed' && (
-        <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
-          {t('todo.new')}
-        </span>
-      )}
       {todo.priority !== 'normal' && neoTodoControllable(todo) && (
         <span
           data-todo-priority={todo.priority}
@@ -228,26 +296,32 @@ function TodoRow({
         </span>
       )}
       {todo.worker && (
-        <span data-worker-label class="block break-words text-xs text-fg-muted">
-          {todo.worker.label}
+        <span
+          data-worker-label
+          title={todo.worker.label}
+          class="block break-words text-xs text-fg-muted"
+        >
+          {workerEngine(todo.worker.adapter)} · {todo.worker.daemon ?? t('worker.thisMachine')}
         </span>
       )}
-      <span
-        data-todo-status
-        class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
-      >
-        <CardFileText
-          kind="todo"
-          id={todo.id}
-          text={
-            number === undefined
-              ? neoTodoStatus(todo)
-              : todo.doneWhen
-                ? t('todo.doneWhen', { doneWhen: todo.doneWhen })
-                : ''
-          }
-        />
-      </span>
+      {!plainStatus && (
+        <span
+          data-todo-status
+          class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+        >
+          <CardFileText
+            kind="todo"
+            id={todo.id}
+            text={
+              number === undefined
+                ? neoTodoStatus(todo)
+                : todo.doneWhen
+                  ? t('todo.doneWhen', { doneWhen: todo.doneWhen })
+                  : ''
+            }
+          />
+        </span>
+      )}
     </>
   );
   return (
@@ -255,10 +329,21 @@ function TodoRow({
       id={`${anchorPrefix}neo-ref-todo-${todo.id}`}
       data-ask-todo={todo.id}
       data-todo-state={todo.state}
-      class={`grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2.5 text-sm ${number === undefined ? 'border-t border-line py-2 first:border-t-0' : 'py-1'}`}
+      class={`${todo.state === 'done' ? 'opacity-60 ' : ''}grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2.5 text-sm ${number === undefined ? 'py-2.5' : 'py-1'}`}
     >
-      <span aria-hidden="true" class={`w-4 shrink-0 text-center font-semibold ${color}`}>
-        {number ?? mark}
+      <span
+        aria-hidden="true"
+        data-todo-mark
+        class={`flex w-4 shrink-0 items-center justify-center font-semibold ${number === undefined ? 'h-6 text-xs' : 'h-5'} ${color}`}
+      >
+        {number ??
+          (mark === '●' ? (
+            <span class="h-2 w-2 rounded-full bg-current" />
+          ) : mark === '○' ? (
+            <span class="h-2 w-2 rounded-full border-[1.5px] border-current" />
+          ) : (
+            mark
+          ))}
       </span>
       <div class="min-w-0 flex-1">
         {onToggle ? (
@@ -272,17 +357,8 @@ function TodoRow({
               })}
               onClick={onToggle}
               class="absolute inset-0 block w-full rounded text-left focus-visible:outline-accent"
-            >
-              <ChevronRightGlyph
-                aria-hidden="true"
-                data-todo-hint
-                class={`absolute left-0 top-1 h-3.5 w-3.5 text-fg-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              />
-            </button>
-            <div data-todo-head class="pointer-events-none relative min-w-0 pl-4">
+            />
+            <div data-todo-head class="pointer-events-none relative min-w-0">
               {head}
             </div>
           </div>
@@ -304,22 +380,6 @@ function TodoRow({
                   </p>
                 ))}
               <ArtifactCards artifacts={todo.artifacts} />
-              {number === undefined &&
-                onDesktopControl &&
-                !todo.worker?.daemon &&
-                ['todo', 'doing', 'blocked'].includes(todo.state) && (
-                  <label class="mt-1 flex w-fit items-center gap-2 text-xs text-fg-muted">
-                    <input
-                      type="checkbox"
-                      class={`${FORM_CHECKBOX_CLASS} accent-accent`}
-                      checked={todo.named?.desktopControl === true}
-                      onChange={(event) =>
-                        onDesktopControl(todo.id, (event.target as HTMLInputElement).checked)
-                      }
-                    />
-                    {t('todo.desktopControl')}
-                  </label>
-                )}
               {number === undefined && nextAction && (
                 <span data-todo-next-action class="block break-words text-xs text-fg-muted">
                   <CardFileText
@@ -348,8 +408,36 @@ function TodoRow({
           </p>
         )}
       </div>
-      {((todo.link && todo.state !== 'removed' && onOpen) || controls) && (
+      {((todo.link && todo.state !== 'removed' && onOpen) || menu.length > 0 || desktopOn) && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
+          {desktopOn && (
+            <button
+              type="button"
+              data-todo-desktop
+              title={t('todo.desktopOnTitle')}
+              aria-label={t('todo.desktopOnTitle')}
+              disabled={disabled}
+              onClick={() => setConfirmDesktopOff(true)}
+              class="inline-flex shrink-0 items-center rounded-lg border border-transparent px-1.5 py-1 text-[light-dark(#2563eb,#6ea8fe)] hover:border-line focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <NeoDesktopIcon />
+            </button>
+          )}
+          {confirmDesktopOff && (
+            <ConfirmModal
+              isOpen
+              onClose={() => setConfirmDesktopOff(false)}
+              onConfirm={() => {
+                setConfirmDesktopOff(false);
+                setDesktop(false);
+              }}
+              title={t('todo.desktopOffConfirmTitle')}
+              message={t('todo.desktopOffConfirmBody', { title: todo.title })}
+              confirmText={t('todo.desktopOffConfirm')}
+              cancelText={t('artifact.cancel')}
+              confirmButtonVariant="primary"
+            />
+          )}
           {todo.link && todo.state !== 'removed' && onOpen && (
             <NeoSessionOpen
               kind={neoSessionKind(todo.worker?.adapter, todo.link)}
@@ -357,38 +445,10 @@ function TodoRow({
               onOpen={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
             />
           )}
-          {controls && (
+          {menu.length > 0 && (
             <Dropdown
               position="right"
-              items={[
-                { label: t('todo.markDone'), onClick: () => control({ kind: 'done' }), disabled },
-                ...(neoTodoHoldable(todo)
-                  ? [
-                      {
-                        label: t(todo.startedAt === null ? 'todo.hold' : 'todo.pause'),
-                        onClick: () => control({ kind: 'hold' }),
-                        disabled,
-                      },
-                    ]
-                  : []),
-                { type: 'divider' as const },
-                ...NEO_TODO_PRIORITIES.map((priority) => ({
-                  label: t('todo.priorityItem', { priority: t(PRIORITY_LABELS[priority]) }),
-                  icon: <span aria-hidden="true">{priority === todo.priority ? '✓' : ''}</span>,
-                  onClick: () =>
-                    priority === todo.priority
-                      ? undefined
-                      : control({ kind: 'priority', priority }),
-                  disabled,
-                })),
-                { type: 'divider' as const },
-                {
-                  label: t('todo.cancel'),
-                  onClick: () => control({ kind: 'cancel' }),
-                  danger: true,
-                  disabled,
-                },
-              ]}
+              items={menu}
               trigger={
                 <IconButton
                   title={t('todo.actions', { title: todo.title })}
@@ -891,6 +951,14 @@ export function NeoAskTodos({
     />
   );
   const [label, tone, weight] = states[entry.state];
+  const created = neoRelativeTime(ask.createdAt, neoNow.value, locale.value);
+  const todoCount =
+    received.summary?.todoCount ??
+    todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done').length +
+      entry.doneCount;
+  const openQuestions =
+    received.summary?.openQuestionCount ??
+    entry.questions.filter((question) => question.state === 'open').length;
   return (
     <article
       ref={cardRef}
@@ -900,29 +968,24 @@ export function NeoAskTodos({
       data-ask-state={entry.state}
       class={neoCardClass}
     >
-      <div class="flex min-h-7 items-center gap-2">
-        {ask.topic && (
-          <button
-            type="button"
-            disabled={!onTopic}
-            onClick={() => onTopic?.(ask.topic!)}
-            class="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-fg enabled:hover:underline"
-          >
-            <span
+      <div class="flex items-start gap-3">
+        <div class="flex min-w-0 flex-1 items-start gap-2">
+          <h3 class="line-clamp-3 min-w-0 break-words text-lg font-semibold leading-snug">
+            {ask.title}
+          </h3>
+          {ask.topic && (
+            <button
+              type="button"
+              disabled={!onTopic}
+              onClick={() => onTopic?.(ask.topic!)}
               data-topic-swatch
-              aria-hidden="true"
-              class="h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: neoTopicColor(ask.topic) }}
-            />
-            <span class="truncate">{ask.topic}</span>
-          </button>
-        )}
-        <span class="flex-1" />
-        <span data-ask-status class={`flex shrink-0 items-center gap-1.5 text-xs ${tone}`}>
-          <span data-status-dot aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current" />
-          <span class={weight}>{t(label)}</span>
-        </span>
-        <NeoTime at={ask.createdAt} settledAt={ask.status === 'open' ? null : ask.settledAt} />
+              class="mt-0.5 max-w-[40%] shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium enabled:hover:opacity-80"
+              style={{ borderColor: neoTopicColor(ask.topic), color: neoTopicColor(ask.topic) }}
+            >
+              <span class="block truncate">{ask.topic}</span>
+            </button>
+          )}
+        </div>
         <Dropdown
           position="right"
           items={[
@@ -953,25 +1016,22 @@ export function NeoAskTodos({
           }
         />
       </div>
-      <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
-        {ask.title}
-      </h3>
       {detailError && !open && (
         <p role="alert" class="mt-2 text-sm text-danger">
           {detailError}
         </p>
       )}
-      {entry.summary && (
-        <p class="mt-1 text-xs text-fg-muted">
-          {t('ask.todos')} · {entry.summary.todoCount}
-          {entry.summary.openQuestionCount > 0 && (
-            <>
-              {' '}
-              · {t('ask.state.waiting')} · {entry.summary.openQuestionCount}
-            </>
-          )}
-        </p>
-      )}
+      <p
+        data-ask-status
+        title={created ? `${t('time.created')} · ${created.full}` : undefined}
+        class="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-fg-muted"
+      >
+        <span class={`${tone} ${weight}`}>{t(label)}</span>
+        {todoCount > 0 && <span>· {t('ask.todoCount', { count: String(todoCount) })}</span>}
+        {openQuestions > 0 && (
+          <span>· {t('ask.questionsWaiting', { count: String(openQuestions) })}</span>
+        )}
+      </p>
       {ask.focusedSession && (
         <div class="mt-2 flex flex-wrap items-center justify-end gap-2" data-ask-focused-session>
           <span class="min-w-0 break-words text-right text-xs text-fg-muted">
@@ -1039,6 +1099,7 @@ export function NeoAskTodos({
           isOpen
           onClose={closeAll}
           title={ask.title}
+          titleClass="text-lg leading-snug"
           size="xl"
           data-testid={`neo-ask-all-${ask.id}`}
         >
@@ -1053,8 +1114,8 @@ export function NeoAskTodos({
           ].map(
             (group) =>
               group.count > 0 && (
-                <section key={group.label} aria-label={group.label} class="mt-4 first:mt-0">
-                  <h3 class="text-xs font-medium text-fg-muted">
+                <section key={group.label} aria-label={group.label} class="mt-8 first:mt-0">
+                  <h3 class="mb-1 text-xs font-medium text-fg-muted">
                     {group.label} · {group.count}
                   </h3>
                   {group.todos.map((todo) => renderTodo(todo, group.prefix))}
@@ -1078,9 +1139,11 @@ export function NeoAskTodos({
           )}
 
           {removed.length > 0 && (
-            <div class="mt-4">
-              <p class="text-xs font-medium text-fg-faint">{t('ask.removed')}</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.removed')}>
+            <div class="mt-8">
+              <p class="text-xs font-medium text-fg-muted">
+                {t('ask.removed')} · {removed.length}
+              </p>
+              <ul class="mt-3 space-y-2 text-sm text-fg-muted" aria-label={t('ask.removed')}>
                 {removed.map((todo) => (
                   <li
                     key={todo.id}
@@ -1097,17 +1160,27 @@ export function NeoAskTodos({
             </div>
           )}
           {answered.length > 0 && (
-            <div class="mt-4">
-              <p class="text-xs font-medium text-fg-faint">{t('ask.answered')}</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
+            <div class="mt-8">
+              <p class="text-xs font-medium text-fg-muted">
+                {t('ask.answered')} · {answered.length}
+              </p>
+              <ul class="mt-3 space-y-5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    <div class="neo-time-line neo-question-time">
-                      <span>{t('ask.answered')}</span>
-                      <NeoTime at={question.createdAt} />
+                    <div class="font-medium text-fg [&_.neo-markdown]:text-base">
+                      <SettledQuestionBody question={question} />
                     </div>
-                    <SettledQuestionBody question={question} />
-                    <p>— {neoQuestionAnswerLabel(question, todos)}</p>
+                    <p data-question-answer class="mt-1.5 pl-6 text-sm text-fg-muted">
+                      → {neoQuestionAnswerLabel(question, todos)}
+                      {!!neoRelativeTime(question.answeredAt, neoNow.peek(), locale.value) && (
+                        <span
+                          data-answered-time
+                          class="ml-2 inline-block align-baseline text-xs font-normal text-fg-faint [&_.neo-time-popover]:inset-x-auto [&_.neo-time-popover]:start-0 [&_.neo-time]:inline-block"
+                        >
+                          <NeoTime at={question.answeredAt} label="time.answered" />
+                        </span>
+                      )}
+                    </p>
                     {question.answerProvenance && (
                       <div class="mt-2 space-y-1 border-l-2 border-line pl-3">
                         <p class="text-xs font-medium text-fg-soft">
@@ -1124,21 +1197,17 @@ export function NeoAskTodos({
                         </p>
                       </div>
                     )}
-                    {!!neoRelativeTime(question.answeredAt, neoNow.peek(), locale.value) && (
-                      <div class="neo-time-line">
-                        {t('time.answered')} ·{' '}
-                        <NeoTime at={question.answeredAt} label="time.answered" />
-                      </div>
-                    )}
                   </li>
                 ))}
               </ul>
             </div>
           )}
           {retired.length > 0 && (
-            <div class="mt-4">
-              <p class="text-xs font-medium text-fg-faint">{t('ask.retired')}</p>
-              <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
+            <div class="mt-8">
+              <p class="text-xs font-medium text-fg-muted">
+                {t('ask.retired')} · {retired.length}
+              </p>
+              <ul class="mt-3 space-y-5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
                     <div class="neo-time-line neo-question-time">
@@ -1155,8 +1224,8 @@ export function NeoAskTodos({
             </div>
           )}
           {ask.outcome && (
-            <div class="mt-4">
-              <p class="text-xs font-medium text-fg-faint">{t('ask.outcome')}</p>
+            <div class="mt-8">
+              <p class="text-xs font-medium text-fg-muted">{t('ask.outcome')}</p>
               <MarkdownRenderer
                 content={ask.outcome}
                 class="neo-markdown neo-markdown-assistant mt-1 min-w-0 text-sm leading-relaxed"

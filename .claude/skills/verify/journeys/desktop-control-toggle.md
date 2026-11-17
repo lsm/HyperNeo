@@ -1,8 +1,8 @@
 # Turn desktop control on for one todo
 
 Desktop control is off for every todo until the human turns it on for one.
-An expanded todo row on the Neo page shows the switch, and the daemon reads it
-as that worker's opt-in.
+The todo's ⋯ menu on the Neo page holds the switch; once on, the row shows a lit
+computer icon, and the daemon reads it as that worker's opt-in.
 
 Run from the worktree root with a fresh web build:
 
@@ -19,8 +19,8 @@ No HyperNeo Desktop or driver runs.
 Pass means:
 
 - `status-before.json` lists both workers as `off`;
-- `web-observations.json` shows the dentist checkbox unchecked, then checked
-  after a reload, and the taxes checkbox still unchecked;
+- `web-observations.json` shows no lit computer on the dentist row, then one
+  after turning it on from the menu and reloading, and none on the taxes row;
 - `status-after.json` reads `unavailable` for the dentist worker (opted in, no
   Desktop running) and `off` for the taxes worker;
 - `named.txt` shows `{"desktopControl":true}` on the dentist todo only;
