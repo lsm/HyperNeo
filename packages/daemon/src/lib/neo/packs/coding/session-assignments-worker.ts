@@ -142,6 +142,14 @@ class CodingSessionAssignments {
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,
+        worker:
+          !!owner.ref &&
+          !owner.ref.daemon &&
+          !!this.db
+            .prepare(
+              "SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ? AND role = 'worker'"
+            )
+            .get(owner.ref.adapter, owner.ref.id),
         session:
           owner.ref && (pool.get(workKey(owner.ref)) ?? { ref: owner.ref, name: '', held: false }),
       };

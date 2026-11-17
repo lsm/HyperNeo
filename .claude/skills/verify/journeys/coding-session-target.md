@@ -12,6 +12,7 @@ worked in them as `frontend` and `backend`. It then asks the coding pack's
 `workerTarget` hook, with live status from the daemon's own `work.status`
 operation:
 
+- a reservation pointing to a non-worker starts a new session;
 - unrelated work that asks to start a `backend` session is sent to the idle
   backend session instead;
 - a later slice of the same feature follows it there;

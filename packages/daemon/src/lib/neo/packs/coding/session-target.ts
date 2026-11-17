@@ -28,9 +28,9 @@ type Facts = {
   repo: string;
   strategy: Parameters<typeof planCodingSessionDispatch>[0]['strategy'];
   strategySaved: boolean;
-  owner: { todoId: string; session: Pooled | null } | null;
-  feature: { todoId: string; session: Pooled | null } | null;
-  successors: { todoId: string; session: Pooled | null }[];
+  owner: { todoId: string; session: Pooled | null; worker: boolean } | null;
+  feature: { todoId: string; session: Pooled | null; worker: boolean } | null;
+  successors: { todoId: string; session: Pooled | null; worker: boolean }[];
   pool: Pooled[];
 } | null;
 type Plan = (ReturnType<typeof planCodingSessionDispatch> | { verb: 'keep' } | { verb: 'held' }) & {
@@ -165,6 +165,8 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
       if (!facts) return { verb: 'keep' };
       let { owner } = facts;
       if (owner && !owner.session && owner.todoId !== todo.id) return { verb: 'held' };
+      if (owner?.session && owner.todoId === facts.feature?.todoId && !owner.worker)
+        return { verb: 'start', takeover: { todoId: owner.todoId, ref: owner.session.ref } };
       let ownerState = owner?.session ? await sessionState(owner.session, status) : undefined;
       for (const next of ownerState?.state === 'archived' ? facts.successors : []) {
         if (!next.session || next.todoId === owner?.todoId) continue;
