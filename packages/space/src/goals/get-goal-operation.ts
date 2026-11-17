@@ -43,7 +43,7 @@ const DESCRIPTION =
   'Get one goal with rolling state, active task pointers, next check-in, metrics, and next steps. A goal outside the caller Space reads as goal_not_found. Returns { accepted: true, goal } or { accepted: false, reason }.';
 
 export function createGetGoalOperation(deps: GetGoalDependencies) {
-  const getGoal = (superpipe({ deps })('goal-get') as PipelineAPI)
+  const getGoal = (superpipe({ deps })('goal.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalRead, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(presentGoal, 'outcome', 'outcome')
