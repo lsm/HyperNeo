@@ -31,8 +31,7 @@ export type NeoStepOwner =
   | { owner: 'human' | 'nobody' | 'prerequisite' | 'daemon' | 'worker' | 'pack' }
   | { owner: 'neo'; reason: NeoStepReason; since: number };
 
-const failed = (todo: Step) =>
-  todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+const failed = (todo: Step) => todo.state === 'blocked' && todo.blockedBy === 'failure';
 const finished = (todo: Step) => todo.state === 'done';
 const latest = (...times: (number | null | undefined)[]) =>
   Math.max(...times.map((time) => time ?? 0));

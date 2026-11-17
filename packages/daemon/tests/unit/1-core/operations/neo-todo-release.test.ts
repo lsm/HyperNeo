@@ -513,7 +513,9 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
       await h.finishTodo(h.add(started));
       const failed = h.add(started);
       h.queueOn(failed.id);
-      h.db.prepare("UPDATE neo_todos SET state = 'failed' WHERE id = ?").run(failed.id);
+      h.db
+        .prepare("UPDATE neo_todos SET state = 'blocked', blocked_by = 'failure' WHERE id = ?")
+        .run(failed.id);
       await h.refresh();
       expect(h.archived).toEqual([]);
       const db = { getDatabase: () => h.db } as never;

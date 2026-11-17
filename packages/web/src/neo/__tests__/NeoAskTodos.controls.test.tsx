@@ -132,7 +132,14 @@ describe('NeoAskTodos step controls', () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
-          todos: [todo('failed', { state: 'failed', startedAt: 2, status: 'Not done' })],
+          todos: [
+            todo('failed', {
+              state: 'blocked',
+              blockedBy: 'failure',
+              startedAt: 2,
+              status: 'Not done',
+            }),
+          ],
         })}
         onAnswer={vi.fn()}
         onControl={vi.fn(async () => {})}
@@ -204,7 +211,7 @@ describe('neoTodoHoldable', () => {
     expect(at({ state: 'blocked', blockedBy: 'question' })).toBe(true);
     expect(at({ state: 'doing', startedAt: 2 })).toBe(true);
     expect(at({ state: 'blocked', blockedBy: 'needs-human', startedAt: 2 })).toBe(true);
-    expect(at({ state: 'failed', startedAt: 2 })).toBe(false);
+    expect(at({ state: 'blocked', blockedBy: 'failure', startedAt: 2 })).toBe(false);
     expect(at({ state: 'blocked', blockedBy: 'worker', startedAt: 2 })).toBe(false);
     expect(at({ state: 'blocked', blockedBy: 'check' })).toBe(false);
     expect(at({ statusCodes: [{ code: 'todo.held', params: {} }] })).toBe(false);

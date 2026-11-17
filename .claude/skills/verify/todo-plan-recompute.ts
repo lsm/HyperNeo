@@ -380,7 +380,7 @@ try {
       evidence.generalQuestion = await rpc('neo.question.get', { questionId: general.question.id });
       assert.equal(evidence.generalQuestion.question.state, 'open');
       const failed = store.getTodo('after-restart')!;
-      store.updateTodo(failed, { state: 'failed', reason: 'Synthetic worker failure' }, Date.now());
+      store.updateTodo(failed, { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic worker failure' }, Date.now());
       const previousInputs = sessions.inputs.list(failed.id);
       const beforeRetry = starts();
       evidence.retryReceipt = await rpc('neo.todo.continue', { todoId: failed.id });

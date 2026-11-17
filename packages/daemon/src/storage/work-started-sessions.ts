@@ -107,7 +107,7 @@ export function readStartedWork(
            WHERE json_extract(bound.ref, '$.adapter') = worker.adapter
              AND json_extract(bound.ref, '$.id') = worker.id
              AND ask.status = 'open'
-             AND todo.state NOT IN ('done', 'failed', 'removed')))`
+             AND todo.state NOT IN ('done', 'removed')))`
     )
     .all(
       freeOn,

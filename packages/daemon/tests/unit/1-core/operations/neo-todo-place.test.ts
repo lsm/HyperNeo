@@ -46,19 +46,18 @@ describe('neoTodoPlace', () => {
       step('blocked', { blockedBy: 'check', startedAt: 5 }),
       step('blocked', { blockedBy: 'question' }),
       step('blocked', { blockedBy: 'question', startedAt: 5 }),
-      step('failed', { startedAt: 5 }),
       step('done', { startedAt: 5 }),
       step('removed'),
     ];
     const places = (cards: ReturnType<typeof card>[]) =>
       rows.map((row) => neoTodoPlace(row, cards));
     expect(places([card('open', ['other', 'step'])])).toEqual([
-      ...Array.from({ length: 6 }, () => 'waiting' as const),
+      ...Array.from({ length: 5 }, () => 'waiting' as const),
       null,
       null,
     ]);
     expect(places([card('answered', ['step']), card('open', ['other']), card('open', [])])).toEqual(
-      ['queued', 'running', null, 'queued', 'running', null, null, null]
+      ['queued', 'running', null, 'queued', 'running', null, null]
     );
   });
 });

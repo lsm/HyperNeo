@@ -299,7 +299,11 @@ describe('todo and ask bookkeeping records through MCP', () => {
   test('refused settlement preserves failure diagnostics and keeps the ask open', async () => {
     const h = setup();
     try {
-      h.store.updateTodo(h.todo, { state: 'failed', reason: 'check_failed: build exited 7' }, 2);
+      h.store.updateTodo(
+        h.todo,
+        { state: 'blocked', blockedBy: 'failure', blockedReason: 'check_failed: build exited 7' },
+        2
+      );
       const before = h.store.getTodo(h.todo.id);
       expect(
         await h.call('neo.ask.settle', { askId: h.ask.id, status: 'done', outcome: 'Too soon' })
