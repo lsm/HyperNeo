@@ -19,7 +19,12 @@ import {
 } from './pr-ledger.ts';
 import type { CodingPrEventRepository } from './pr-events.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
-import { readCodingDaemonMergeFacts, readCodingRequiredChecks } from './daemon-merge-facts.ts';
+import {
+  codingMergeFactReadFailed,
+  readCodingDaemonMergeFacts,
+  readCodingLocalMergeFacts,
+  readCodingRequiredChecks,
+} from './daemon-merge-facts.ts';
 import {
   codingNoChecksNeedsHuman,
   decideCodingHumanHandoff,
@@ -28,6 +33,7 @@ import {
 import { codingMergeGithubSchemas } from './merge-operation.ts';
 
 const log = new Logger('CodingDaemonMerge');
+const CODING_MERGE_REREAD_MS = 600_000;
 const prUrl = (row: { repo: string; number: number }) =>
   `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`.toLowerCase();
 
@@ -38,6 +44,7 @@ type Candidate = {
   policy: CodingMergePolicy;
   ledgerState: CodingPrState;
   stateSince: number;
+  readKey?: string;
 };
 type Observed = Candidate & { facts: Awaited<ReturnType<typeof readCodingDaemonMergeFacts>> };
 const admit = (observed: Observed) => {
@@ -72,6 +79,24 @@ export function createCodingDaemonMergeSweep(
   const actor = 'daemon:coding-sweep';
   let holdRevision = 0;
   const signoffHolds = new Map<string, { key: string; at: number }>();
+  const lastRead = new Map<string, { key: string; at: number; facts: Observed['facts'] }>();
+  const remember = (
+    url: string,
+    key: string | undefined,
+    facts: Observed['facts'],
+    at: number,
+    revision: number
+  ) => {
+    if (
+      facts.ok &&
+      facts.mergeable !== 'UNKNOWN' &&
+      facts.files !== null &&
+      key &&
+      revision === holdRevision
+    )
+      lastRead.set(url, { key, at, facts });
+    else lastRead.delete(url);
+  };
   const record = (change: Parameters<CodingPrLedgerRepository['daemonMerge']>[0]) =>
     ledger.write('daemonMerge', change);
   const read = async (url: string, human = false) => {
@@ -178,7 +203,9 @@ export function createCodingDaemonMergeSweep(
         const { owner, repo } = parsePrUrl(receipt.url)!;
         let admitted = false;
         try {
+          const revision = holdRevision;
           observed = { ...observed, facts: await read(receipt.url) };
+          remember(receipt.url, observed.readKey, observed.facts, now, revision);
           const fresh = admit({ ...observed, policy: ledger.policy(`${owner}/${repo}`) });
           if ('reason' in fresh) return fresh.reason;
           admitted = true;
@@ -220,6 +247,14 @@ export function createCodingDaemonMergeSweep(
           reviewHolds,
           url,
           head,
+          readKey: JSON.stringify([
+            head,
+            state,
+            stateSince,
+            row.updatedAt ?? null,
+            policy,
+            reviewHolds,
+          ]),
           holdKey: JSON.stringify([
             head,
             state,
@@ -266,8 +301,41 @@ export function createCodingDaemonMergeSweep(
         )
       ),
     ];
+    for (const [url, prior] of lastRead)
+      if (
+        now - prior.at >= CODING_MERGE_REREAD_MS ||
+        !candidates.some((row) => row.url === url && row.policy.mergeBy === 'daemon')
+      )
+        lastRead.delete(url);
+    const observedAt = new Map<string, number>();
+    const unchanged = (url: string) => {
+      const prior = lastRead.get(url);
+      const row = candidates.find((candidate) => candidate.url === url);
+      return prior && row?.readKey === prior.key && now - prior.at < CODING_MERGE_REREAD_MS
+        ? prior
+        : null;
+    };
     const facts = new Map(
-      await Promise.all(pending.map(async (url) => [url, await read(url)] as const))
+      await Promise.all(
+        pending.map(async (url) => {
+          if (!receipts.some((receipt) => receipt.url === url)) {
+            const cached = unchanged(url);
+            if (cached) {
+              observedAt.set(url, cached.at);
+              const local = await readCodingLocalMergeFacts(database(), url, cached.facts).catch(
+                () => codingMergeFactReadFailed
+              );
+              if (!local.ok) log.warn('Daemon merge held', { url, reason: local.reason });
+              return [url, local] as const;
+            }
+          }
+          const fresh = await read(url);
+          observedAt.set(url, now);
+          const key = candidates.find((candidate) => candidate.url === url)?.readKey;
+          remember(url, key, fresh, now, revision);
+          return [url, fresh] as const;
+        })
+      )
     );
     for (const receipt of receipts) {
       if (!facts.get(receipt.url)!.ok) continue;
@@ -309,9 +377,13 @@ export function createCodingDaemonMergeSweep(
       }
       if (candidate.policy.mergeBy !== 'daemon') continue;
       const outcome = await merge({ ...candidate, facts: current }, now);
+      if (outcome === 'attempted' || outcome === 'read_failure') lastRead.delete(candidate.url);
       signoffHolds.delete(candidate.url);
       if (outcome === 'needs_human_signoff' && revision === holdRevision)
-        signoffHolds.set(candidate.url, { key: candidate.holdKey, at: now });
+        signoffHolds.set(candidate.url, {
+          key: candidate.holdKey,
+          at: observedAt.get(candidate.url) ?? now,
+        });
       if (
         typeof outcome === 'string' &&
         !['attempted', 'read_failure', 'already_attempted'].includes(outcome)
@@ -340,6 +412,7 @@ export function createCodingDaemonMergeSweep(
     invalidate: (url: string) => {
       holdRevision++;
       signoffHolds.delete(url.toLowerCase());
+      lastRead.delete(url.toLowerCase());
     },
   });
 }

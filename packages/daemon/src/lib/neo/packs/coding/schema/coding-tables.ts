@@ -176,18 +176,18 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
       'ALTER TABLE pack_coding_poll_facts ADD COLUMN http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json))'
     );
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
-  if (!ledger.some((column) => column.name === 'terminal_event_json'))
-    db.exec(
-      'ALTER TABLE pack_coding_pr_ledger ADD COLUMN terminal_event_json TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))'
-    );
-  if (!ledger.some((column) => column.name === 'reply_at'))
-    db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
-  if (!ledger.some((column) => column.name === 'created_at'))
-    db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN created_at INTEGER');
-  if (!ledger.some((column) => column.name === 'author_is_bot'))
-    db.exec(
-      'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
-    );
+  for (const [column, definition] of [
+    [
+      'terminal_event_json',
+      'TEXT CHECK (terminal_event_json IS NULL OR json_valid(terminal_event_json))',
+    ],
+    ['reply_at', 'INTEGER'],
+    ['created_at', 'INTEGER'],
+    ['author_is_bot', 'INTEGER NOT NULL DEFAULT 1'],
+    ['updated_at', 'TEXT'],
+  ])
+    if (!ledger.some((item) => item.name === column))
+      db.exec(`ALTER TABLE pack_coding_pr_ledger ADD COLUMN ${column} ${definition}`);
   const has = (table: string, column: string) =>
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
       ({ name }) => name === column
