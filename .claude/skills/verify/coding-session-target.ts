@@ -61,6 +61,21 @@ try {
     evidence.push({ surface: 'coding pack workerTarget', label, target, decision });
     return decision;
   };
+  for (const id of ['pr-owner', 'pr-next', 'bound'])
+    store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
+  const personForPr = await session('pr-person');
+  const prOwner = worked('pr-owner', personForPr, 'person', false);
+  const prNext = todo('pr-next');
+  const pr = JSON.stringify([{ url: 'https://github.com/synthetic/sessions/pull/9', state: 'OPEN', checks: 'passing', review: 'none' }]);
+  for (const item of [prOwner, prNext]) db.prepare('INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, 1)').run(item.id, pr);
+  const prDecision = await decide('a non-worker PR holder starts new work', { ...prNext, check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/sessions/pull/9'] } } }, { verb: 'start', adapter: 'hyperneo' });
+  db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`).run(repo);
+  const boundPerson = await session('bound-person');
+  const bound = worked('bound', boundPerson, 'person', false);
+  const boundDecision = await decide('a non-worker bound session starts new work', bound, { verb: 'start', adapter: 'hyperneo' });
+  db.prepare("DELETE FROM neo_pack_preferences WHERE pack = 'coding' AND scope_key = ? AND key = 'sessionStrategy'").run(repo);
+  assert.equal('value' in prDecision && prDecision.value.verb, 'start', JSON.stringify(prDecision));
+  assert.equal('value' in boundDecision && boundDecision.value.verb, 'start', JSON.stringify(boundDecision));
   store.openAsk({ id: 'unowned', projectId: null, sessionId: 'neo', originMessageId: null, title: 'unowned', request: 'Synthetic', createdAt: 1 });
   const person = await session('person');
   const previous = worked('unowned', person, 'person', false);

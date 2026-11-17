@@ -378,6 +378,39 @@ describe('coding session target decision', () => {
     }
   });
 
+  test('a PR holder is reused only when it is a worker for every strategy', async () => {
+    for (const strategy of ['long_lived', 'per_pr', 'per_task']) {
+      for (const worker of [false, true]) {
+        const { db, todo, worked, decide } = setup();
+        db.prepare(
+          `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', ?, 'human', 1)`
+        ).run(repo, JSON.stringify(strategy));
+        const url = 'https://github.com/synthetic/repo/pull/9';
+        worked(todo('other', repo, url), 'holder', 'backend', 'done');
+        if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'holder'").run();
+        const result = await decide(todo('feature', repo, url), start('backend'));
+        expect(result).toMatchObject(
+          worker ? { value: { verb: 'send', ref: ref('holder') } } : { value: { verb: 'start' } }
+        );
+      }
+    }
+  });
+
+  test('per-task work reuses its bound session only when it is a worker', async () => {
+    for (const worker of [false, true]) {
+      const { db, todo, worked, decide } = setup();
+      db.prepare(
+        `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`
+      ).run(repo);
+      const item = todo();
+      worked(item, 'bound', 'backend', 'done');
+      if (!worker) db.prepare("DELETE FROM work_started_sessions WHERE id = 'bound'").run();
+      expect(await decide(item, start())).toMatchObject(
+        worker ? { value: { verb: 'send', ref: ref('bound') } } : { value: { verb: 'start' } }
+      );
+    }
+  });
+
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
     const { todo, worked, live, decide } = setup();
     worked(todo('other'), 'front', 'frontend', 'done');
