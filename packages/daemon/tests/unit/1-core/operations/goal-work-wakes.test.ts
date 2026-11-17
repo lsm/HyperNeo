@@ -89,6 +89,26 @@ describe('goal work wakes', () => {
     expect(messages[1]).toContain('Nothing moved; check what can advance.');
   });
 
+  test('a goal has an independently configured review schedule that follows its lifecycle', async () => {
+    const goal = await create({ reviewCadence: { kind: 'every', everyMs: 120_000 } });
+    const review = () => scheduler.repo.getBySource('goal_review', goal.id);
+    expect(review()).toMatchObject({
+      cadence: { kind: 'every', everyMs: 120_000 },
+      status: 'active',
+    });
+    await call('goal.session.update', { goalId: goal.id, status: 'paused' });
+    expect(review()?.status).toBe('paused');
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(review()?.status).toBe('active');
+    await call('goal.session.update', { goalId: goal.id, status: 'completed' });
+    expect(review()).toBeNull();
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(review()).toMatchObject({
+      cadence: { kind: 'every', everyMs: 120_000 },
+      status: 'active',
+    });
+  });
+
   test('the 25th due time in a day is skipped for the budget and the owner is told once', async () => {
     const goal = await create();
     expect(goal.dailyRunLimit).toBe(24);
