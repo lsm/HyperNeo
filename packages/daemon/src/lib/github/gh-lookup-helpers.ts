@@ -161,19 +161,30 @@ export async function fetchRateLimitResetEpoch(
   return pickRateLimitResetEpoch(parsed, resource);
 }
 
-let coreBudget: { remaining: number; limit: number; resetAt: number } | null = null;
-export function recordGithubBudget(headers: Headers): void {
+const coreBudgets = new Map<string, { remaining: number; limit: number; resetAt: number }>();
+const ghHost = (args: string[]) =>
+  (
+    (args.includes('--hostname') ? args[args.indexOf('--hostname') + 1] : undefined) ??
+    args.find((arg) => arg.startsWith('https://'))?.split('/')[2] ??
+    process.env.GH_HOST ??
+    'github.com'
+  ).toLowerCase();
+export function recordGithubBudget(headers: Headers, host = 'github.com'): void {
   const [remaining, limit, reset] = ['remaining', 'limit', 'reset'].map((name) => {
     const value = headers.get(`x-ratelimit-${name}`);
     return value && /^\d+$/.test(value) ? Number(value) : null;
   });
   if (headers.get('x-ratelimit-resource') === 'core' && remaining !== null && limit && reset)
-    coreBudget = { remaining, limit, resetAt: reset * 1000 };
+    coreBudgets.set(host, { remaining, limit, resetAt: reset * 1000 });
 }
-export function readGithubBudget(now = Date.now()): {
+export function readGithubBudget(
+  now = Date.now(),
+  host = process.env.GH_HOST?.toLowerCase() ?? 'github.com'
+): {
   level: 'ok' | 'low' | 'critical';
   resetAt: number | null;
 } {
+  const coreBudget = coreBudgets.get(host);
   if (!coreBudget || now >= coreBudget.resetAt) return { level: 'ok', resetAt: null };
   const share = coreBudget.remaining / coreBudget.limit;
   const level = share < 0.05 ? 'critical' : share < 0.2 ? 'low' : 'ok';
@@ -226,7 +237,7 @@ export async function runGhJson(
     if (!more) return { ok: true, data: [page.data] };
   }
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
-  const key = isRestGet(args) ? JSON.stringify(args) : null;
+  const key = isRestGet(args) ? JSON.stringify([ghHost(args), args]) : null;
   const cached = key ? conditional.get(key) : undefined;
 
   log.info('gh lookup', {
@@ -303,7 +314,7 @@ export async function runGhJson(
       retryAfterMs,
       requestId: response.headers.get('x-github-request-id'),
     });
-    recordGithubBudget(response.headers);
+    recordGithubBudget(response.headers, ghHost(args));
     options?.onLink?.(
       cached && response.status === 304 ? cached.link : response.headers.get('link')
     );
