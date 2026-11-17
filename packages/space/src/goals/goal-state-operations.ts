@@ -79,7 +79,7 @@ function stateWritePipeline<Result>(
 }
 
 export function createTriggerGoalTaskOperation(deps: GoalStateDependencies) {
-  const trigger = stateWritePipeline(superpipe({ deps })('goal-trigger-task'), applyGoalTrigger);
+  const trigger = stateWritePipeline(superpipe({ deps })('goal.task.trigger'), applyGoalTrigger);
   return defineOperation({
     name: 'goal.task.trigger',
     description:

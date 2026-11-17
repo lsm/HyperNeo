@@ -261,7 +261,7 @@ const RESOLVE_DESCRIPTION =
   'Terminalize one goal-outcome notification with a disposition (acknowledge, reject, supersede), or acknowledge it while persisting goal-state updates (summary, nextSteps, metrics, observations, progress). notificationId, goalId and taskId are all required and come from goal.outcome.list; the outcome wake names the goal and task in prose but carries none of the three identities. Goal-state updates require the acknowledge disposition. Only the goal owner identity resolved from the calling session may claim; the reviewing actor is never taken from input. Claims are single-owner and idempotent, so a retry of the same claim returns already_applied without duplicating effects.';
 
 export function createListGoalOutcomeNotificationsOperation(deps: ReviewGoalOutcomeDependencies) {
-  const list = (superpipe({ deps })('goal-outcome-list') as PipelineAPI)
+  const list = (superpipe({ deps })('goal.outcome.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitOutcomeReviewer, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(listOutcomeNotifications, ['outcome', 'caller', 'deps'], 'outcome')
@@ -290,7 +290,7 @@ export function createListGoalOutcomeNotificationsOperation(deps: ReviewGoalOutc
 }
 
 export function createResolveGoalOutcomeOperation(deps: ReviewGoalOutcomeDependencies) {
-  const resolve = (superpipe({ deps })('goal-outcome-resolve') as PipelineAPI)
+  const resolve = (superpipe({ deps })('goal.outcome.resolve') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitOutcomeReviewer, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(routeOutcomeClaim, ['outcome', 'input', 'deps'], 'result:outcome')
