@@ -17,3 +17,4 @@ The helper also checks that a failed thread refresh preserves a successful ledge
 poll, low quota prevents refresh, and unowned cross-model review reaches Neo.
 When a closed PR reopens during a failed thread refresh, the ledger reports its
 open state.
+Draft, conflict and failing CI also take precedence when thread refresh fails.

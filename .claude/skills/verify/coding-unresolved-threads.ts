@@ -184,6 +184,22 @@ try {
   assert.equal(cross.state, 'waiting_cross_review');
   const escalated = await sweep('cross-model review reminder', 50);
   assert(escalated.woken.some((text) => text.includes('different model')));
+  for (const [newHead, newDraft, newMergeable, newCi, expected] of [
+    ['d', true, 'MERGEABLE', 'SUCCESS', 'draft'],
+    ['e', false, 'CONFLICTING', 'SUCCESS', 'dirty'],
+    ['f', false, 'MERGEABLE', 'FAILURE', 'failing'],
+  ] as const) {
+    head = newHead.repeat(40);
+    draft = newDraft;
+    mergeable = newMergeable;
+    ci = newCi;
+    db.prepare("UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = ?").run(repo);
+    await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 50 * MIN, failedRefresh);
+    assert.equal(ledger.list()[0].state, expected);
+  }
+  draft = false;
+  mergeable = 'MERGEABLE';
+  ci = 'SUCCESS';
   const closed = async () => ({ data: { rateLimit: { remaining: 4000 }, repository: {
     nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] },
     done: { nodes: [{ ...pr(), state: 'CLOSED', closedAt: new Date(t0 + 51 * MIN).toISOString() }] },

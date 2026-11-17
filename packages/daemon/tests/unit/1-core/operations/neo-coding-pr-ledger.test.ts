@@ -167,6 +167,29 @@ describe('planCodingLedgerRead', () => {
       ).toBe('waiting_human');
     }
   );
+  test('keeps fresh cross-model review state when thread refresh fails', async () => {
+    const { db, ledger } = setup();
+    for (const [key, value] of Object.entries({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+      crossModelReview: true,
+    }))
+      db.prepare(
+        "INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', 'x/x', ?, ?, 'human', 1)"
+      ).run(key, JSON.stringify(value));
+    const pr = node(1, {
+      body: 'Agent: claude-opus-5-5 (effort: medium) via Claude',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
+    });
+    const read = named(async () => response([pr]));
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 100);
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x'"
+    ).run();
+    await reconcileCodingPrLedger(ledger, ['x/x'], read, 200, async () => ({ ok: false }));
+    expect(ledger.list()[0].state).toBe('waiting_cross_review');
+    db.close();
+  });
 
   test.each(['review_bot', 'ci_only'] as const)(
     'checks actual labels for %s signoff',
@@ -240,6 +263,31 @@ describe('planCodingLedgerRead', () => {
 });
 
 describe('PR ledger reconcile', () => {
+  test.each([
+    [{ isDraft: true }, 'SUCCESS', 'draft'],
+    [{ mergeable: 'CONFLICTING' }, 'SUCCESS', 'dirty'],
+    [{}, 'FAILURE', 'failing'],
+  ] as const)('uses fresh PR state when a thread refresh fails', async (more, ci, expected) => {
+    const { db, ledger } = setup();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1)])),
+      100
+    );
+    db.prepare(
+      "UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = 'x/x'"
+    ).run();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['x/x'],
+      named(async () => response([node(1, more, ci)])),
+      200,
+      async () => ({ ok: false })
+    );
+    expect(ledger.list()[0].state).toBe(expected);
+    db.close();
+  });
   test.each(['CLOSED', 'MERGED'] as const)(
     'shows a reopened PR after thread refresh fails following %s',
     async (state) => {

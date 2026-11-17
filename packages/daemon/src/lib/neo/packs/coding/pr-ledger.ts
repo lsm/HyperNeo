@@ -69,6 +69,15 @@ export type CodingPrState =
   | 'merged'
   | 'closed';
 
+const THREAD_STATE_PRECEDENCE: readonly CodingPrState[] = [
+  'draft',
+  'dirty',
+  'failing',
+  'closed',
+  'merged',
+  'waiting_cross_review',
+];
+
 export const CODING_LEDGER_MIN_RATE = 500;
 export const CODING_LEDGER_KEEP_MS = 7 * 24 * 60 * 60_000;
 export const CODING_LEDGER_WARN_SKIPS = 3;
@@ -291,8 +300,7 @@ export function planCodingLedgerRead(
         branch: pr.headRefName,
         head: pr.headRefOid,
         state:
-          unresolved.length &&
-          !['draft', 'dirty', 'failing', 'closed', 'merged', 'waiting_cross_review'].includes(state)
+          unresolved.length && !THREAD_STATE_PRECEDENCE.includes(state)
             ? ('changes_requested' as const)
             : state,
         ...(findings.length ? { findings } : {}),
@@ -708,7 +716,8 @@ export class CodingPrLedgerRepository {
       rows = rows.map((row) =>
         failedThreads.includes(row.number) &&
         before.has(row.number) &&
-        !['closed', 'merged'].includes(before.get(row.number)!)
+        !['closed', 'merged'].includes(before.get(row.number)!) &&
+        !THREAD_STATE_PRECEDENCE.includes(row.state)
           ? { ...row, state: before.get(row.number)! }
           : row
       );
