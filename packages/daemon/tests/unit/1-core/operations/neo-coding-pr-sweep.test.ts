@@ -2,6 +2,7 @@ import { createNeoPackPreferencesTable } from '../../../../src/storage/schema/m4
 import { describe, expect, test } from 'bun:test';
 import {
   CodingPrSweepRepository,
+  codingFindingsText,
   codingPrNudgeText,
   planCodingPrNudge,
   sweepCodingPrs,
@@ -500,4 +501,52 @@ describe('sweepCodingPrs acknowledgement after a late review fail', () => {
       db.close();
     }
   );
+});
+
+describe('codingFindingsText', () => {
+  test('a truncated report never splits a character in two', () => {
+    const findings = ['\u{1F600}'.repeat(40)];
+    const full = codingFindingsText(findings);
+    const truncated = codingFindingsText(findings, full.length - 1);
+    expect(truncated.length).toBeLessThan(full.length);
+    for (let budget = 80; budget < full.length; budget++)
+      expect(codingFindingsText(findings, budget).isWellFormed()).toBe(true);
+    expect(truncated.isWellFormed()).toBe(true);
+  });
+});
+
+describe('CodingPrLedgerRepository.recordStage', () => {
+  test('a failed ledger refresh leaves no review fail recorded, so a retry refreshes it', () => {
+    const { db, insert } = setup();
+    insert(12, 'changes_requested');
+    const url = 'https://github.com/lsm/hyperneo/pull/12';
+    db.prepare('INSERT INTO pack_coding_stage_heads (url, head, observed_at) VALUES (?, ?, 0)').run(
+      url,
+      'abc1234def'
+    );
+    db.exec(
+      "CREATE TRIGGER fail_refresh BEFORE UPDATE ON pack_coding_pr_ledger BEGIN SELECT RAISE(ABORT, 'busy'); END"
+    );
+    const ledger = new CodingPrLedgerRepository(db);
+    const fail = () =>
+      ledger.recordStage(
+        {
+          url,
+          head: 'abc1234def',
+          stage: 'review',
+          actor: { kind: 'agent', id: 'reviewer', model: 'gpt-6.1-sol', harness: 'Codex' },
+          verdict: 'fail',
+          acceptanceContract: 'contract',
+          evidence: ['P1 the retry loop never stops.'],
+        },
+        500
+      );
+    expect(fail).toThrow('busy');
+    db.exec('DROP TRIGGER fail_refresh');
+    expect(fail()).toBe(true);
+    expect(
+      db.prepare('SELECT state_since AS since FROM pack_coding_pr_ledger WHERE number = 12').get()
+    ).toEqual({ since: 500 });
+    db.close();
+  });
 });
