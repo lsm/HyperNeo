@@ -183,7 +183,8 @@ const GoalResult = z.discriminatedUnion('accepted', [
 
 export function resolveGoalOwner(
   caller: OperationCaller,
-  input: { ownerSessionId?: string }
+  input: { ownerSessionId?: string },
+  isChildSession: (sessionId: string) => boolean
 ): Gate<string> {
   if (caller.source !== 'mcp')
     return input.ownerSessionId
@@ -192,7 +193,8 @@ export function resolveGoalOwner(
   if (!caller.sessionId)
     return refuse('owner_denied: an agent session caller needs its session id to own goals.');
   if (isAgentSessionCaller(caller)) return { value: input.ownerSessionId ?? caller.sessionId };
-  return !input.ownerSessionId || input.ownerSessionId === caller.sessionId
+  return isChildSession(caller.sessionId) &&
+    (!input.ownerSessionId || input.ownerSessionId === caller.sessionId)
     ? { value: caller.sessionId }
     : refuse('owner_denied: this session may only use goals it owns.');
 }
@@ -263,7 +265,12 @@ export function createSessionGoalOperations({
   const owner = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
-      .pipe(resolveGoalOwner, ['caller', 'input'], 'result:outcome')
+      .pipe(
+        (caller: OperationCaller, input: { ownerSessionId?: string }) =>
+          resolveGoalOwner(caller, input, isChildSession),
+        ['caller', 'input'],
+        'result:outcome'
+      )
       .pipe(
         (owned: string) => requireKnownOwner(owned, sessionExists(owned)),
         'outcome',

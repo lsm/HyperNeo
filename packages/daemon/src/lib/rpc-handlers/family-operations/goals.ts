@@ -11,11 +11,14 @@ export function registerSessionGoalOperations(
 ): OperationDefinition[] {
   const audit = new McpAuditLogRepository(context.deps.db.getDatabase());
   const goals = new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb);
+  const isChildSession = (sessionId: string) =>
+    !!context.deps.db.getSession(sessionId)?.parentSessionId;
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(context.deps.db.getDatabase()),
     context.sessionScheduler,
     context.neoPacks,
+    isChildSession,
     context.goalMandateChange
   );
   context.sessionScheduler.registerSource(schedules);
@@ -23,7 +26,7 @@ export function registerSessionGoalOperations(
     goals,
     schedules,
     sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
-    isChildSession: (sessionId) => !!context.deps.db.getSession(sessionId)?.parentSessionId,
+    isChildSession,
     startSession: (parentSessionId, title) =>
       context.deps.sessionManager.createSession({
         workspacePath: context.deps.db.getSession(parentSessionId)?.workspacePath,
