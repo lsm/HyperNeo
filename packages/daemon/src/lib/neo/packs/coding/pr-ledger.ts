@@ -525,29 +525,13 @@ export class CodingPrLedgerRepository {
           now
         )
     );
-    if (planned && failedThreads.length) {
-      const previous = new Map(
-        (
-          this.db
-            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
-            .all(planned.repo) as { number: number; state: CodingPrState }[]
-        ).map((row) => [row.number, row.state])
-      );
-      planned.rows = planned.rows.map((row) =>
-        failedThreads.includes(row.number) &&
-        previous.has(row.number) &&
-        !['closed', 'merged'].includes(previous.get(row.number)!)
-          ? { ...row, state: previous.get(row.number)! }
-          : row
-      );
-    }
     const cycle = planLedgerHealth(raw, planned !== null, now);
     if (planned) this.recordAlias(repo.toLowerCase(), planned.repo);
     const health = this.recordHealth(repo, cycle);
     if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
     const transitions =
       planned && !seen.includes(planned.repo)
-        ? this.replace(planned.repo, planned.rows, now, observedAt)
+        ? this.replace(planned.repo, planned.rows, now, observedAt, failedThreads)
         : [];
     return {
       canonical: planned?.repo ?? null,
@@ -710,9 +694,24 @@ export class CodingPrLedgerRepository {
     repo: string,
     rows: readonly CodingLedgerRow[],
     now: number,
-    observedAt = now
+    observedAt = now,
+    failedThreads: readonly number[] = []
   ): CodingPrTransition[] {
     return this.db.transaction(() => {
+      const before = new Map(
+        (
+          this.db
+            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+            .all(repo) as { number: number; state: CodingPrState }[]
+        ).map((row) => [row.number, row.state])
+      );
+      rows = rows.map((row) =>
+        failedThreads.includes(row.number) &&
+        before.has(row.number) &&
+        !['closed', 'merged'].includes(before.get(row.number)!)
+          ? { ...row, state: before.get(row.number)! }
+          : row
+      );
       const handedOff = this.humanHandoffs();
       rows = rows.map((row) =>
         ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state) &&
@@ -723,13 +722,6 @@ export class CodingPrLedgerRepository {
         )
           ? { ...row, state: 'waiting_human' }
           : row
-      );
-      const before = new Map(
-        (
-          this.db
-            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
-            .all(repo) as { number: number; state: CodingPrState }[]
-        ).map((row) => [row.number, row.state])
       );
       this.upsert(rows, now, observedAt);
       this.db
