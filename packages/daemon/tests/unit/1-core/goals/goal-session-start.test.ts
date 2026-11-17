@@ -27,7 +27,11 @@ function harness(isGit: boolean) {
   const created: CreateSessionParams[] = [];
   const joined: string[] = [];
   const attached: string[] = [];
+  const released: string[] = [];
   const deps = {
+    releaseSession: async (sessionId: string) => {
+      released.push(sessionId);
+    },
     isGitRepo: async () => isGit,
     createSession: async (params: CreateSessionParams) => {
       created.push(params);
@@ -40,7 +44,7 @@ function harness(isGit: boolean) {
       attached.push(sessionId);
     },
   };
-  return { created, joined, attached, deps };
+  return { created, joined, attached, released, deps };
 }
 
 describe('starting a goal session', () => {
@@ -92,5 +96,20 @@ describe('starting a goal session', () => {
     expect(h.created[0].spaceId).toBe('space-1');
     expect(h.joined).toEqual(['space-1:goal-1']);
     expect(h.attached).toEqual(['goal-1']);
+  });
+
+  test('a Space that refuses the new session releases it', async () => {
+    const h = harness(false);
+    h.deps.addSpaceSession = async () => {
+      throw new Error('space paused');
+    };
+    await expect(
+      startGoalSession(
+        parent({ context: { spaceId: 'space-1' } } as Partial<Session>),
+        'Goal: Grow',
+        h.deps
+      )
+    ).rejects.toThrow('space paused');
+    expect(h.released).toEqual(['goal-1']);
   });
 });
