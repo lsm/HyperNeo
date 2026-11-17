@@ -5,6 +5,7 @@ import {
   neoPlanLines,
   planNeoPlanContext,
   type NeoPlanLine,
+  type NeoTopicCount,
   type NeoUnansweredInput,
 } from './plan-context.ts';
 
@@ -12,6 +13,7 @@ export type NeoPlanFacts = {
   asks: NeoAsk[];
   todos: NeoTodo[];
   questions: NeoQuestion[];
+  topics?: NeoTopicCount[];
   unanswered?: NeoUnansweredInput[];
 };
 
@@ -29,7 +31,10 @@ export function createNeoPlanContext(
     )
     .pipe(
       (facts: NeoPlanFacts) =>
-        fitNeoPlanLines(neoPlanLines(facts.asks, facts.todos, facts.questions), budget),
+        fitNeoPlanLines(
+          neoPlanLines(facts.asks, facts.todos, facts.questions, facts.topics),
+          budget
+        ),
       'facts',
       'lines'
     )

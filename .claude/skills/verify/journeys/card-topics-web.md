@@ -10,15 +10,20 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test bun .claude/skills/verify/car
 HYPERNEO_DATA_DIR="$RUN/data" NODE_PATH=<playwright> node .claude/skills/verify/card-topics-web.mjs <port> "$RUN"
 ```
 
-The seed opens seven synthetic asks: two 家长控制, one each of OAP, Countersign, 邮件 and
-其他, and one without a topic; states todo, doing, done and dropped. No key or model is used.
+The seed opens eleven synthetic asks: two 家长控制, one each of OAP, Countersign, 邮件 and
+其他, one without a topic, picks `kids` and `Kids`, and one done ask in each of two projects
+both titled `Shop` (each linked through its todo's worker session). States are todo, doing,
+done and dropped. No key or model is used.
 
 End state, in `$RUN/evidence/`:
 
-- `card-topics.json` has `passed: true` and chips `全部 7`, `家长控制 2`, …, `其他 1` last.
+- `card-topics.json` has `passed: true` and chips `全部 11`, `家长控制 2`, one `kids 2`,
+  two `Shop 1`, and `其他 2` last.
 - Cards show the topic with its color square at left, and a state dot and word at right,
-  with no pill. The untopiced card shows no topic.
+  with no pill. The untopiced card shows 其他.
+- Each `Shop` chip shows only its own project's card; the `kids` chip shows both picks and
+  survives reload; a card's topic button selects the same set as its chip.
 - Tapping a chip filters, the filter survives reload, and a second tap clears it. Tapping a
   card's topic filters the same way, and during a work search it clears the search first.
-- `topics-1280-{light,dark}.png`, `topics-1280-filtered.png` and `topics-390-{light,dark}.png`:
+- `topics-1280-{light,dark}.png`, `topics-1280-kids.png`, `topics-1280-filtered.png` and `topics-390-{light,dark}.png`:
   at 390 px the chip row stays inside the screen and scrolls sideways.

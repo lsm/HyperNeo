@@ -414,32 +414,32 @@ export function createSessionOperations(deps: SessionOperationDependencies): Ope
   const write = { deps, admission: WRITE_ADMISSION };
 
   const list = sessionPipeline<ListSessionsInput, SessionListResult>(
-    superpipe(read)('session-list'),
+    superpipe(read)('session.list'),
     (pipeline) => pipeline.pipe(listSpaceSessions, ['outcome', 'input', 'deps'], 'outcome')
   );
   const detail = sessionPipeline<SessionRefInput, SessionDetailResult>(
-    superpipe(read)('session-get'),
+    superpipe(read)('session.get'),
     (pipeline) =>
       pipeline
         .pipe(requireSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(readSessionDetail, ['outcome', 'deps'], 'outcome')
   );
   const messages = sessionPipeline<SessionMessagesInput, SessionMessagesResult>(
-    superpipe(read)('session-messages-list'),
+    superpipe(read)('session.message.list'),
     (pipeline) =>
       pipeline
         .pipe(requireSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(readSessionMessages, ['outcome', 'input', 'deps'], 'outcome')
   );
   const updateState = sessionPipeline<UpdateSessionStateInput, SessionStateResult>(
-    superpipe(write)('session-state-update'),
+    superpipe(write)('session.state.update'),
     (pipeline) =>
       pipeline
         .pipe(requireMutableSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(applySessionState, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   );
   const interrupt = sessionPipeline<InterruptSessionInput, SessionInterruptResult>(
-    superpipe(write)('session-interrupt'),
+    superpipe(write)('session.interrupt'),
     (pipeline) =>
       pipeline
         .pipe(requireMutableSpaceSessionRow, ['outcome', 'input', 'deps'], 'result:outcome')

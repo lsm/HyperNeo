@@ -25,7 +25,7 @@ export function createCodingSmokeOperation(
   assignments: CodingAssignmentsRepository,
   readDeploys: NeoDeployReader
 ) {
-  const record = (superpipe({})('coding.record-assigned-smoke') as PipelineAPI)
+  const record = (superpipe({})('neo.coding.smoke') as PipelineAPI)
     .input(['input'])
     .pipe((input: Input) => assignments.smokeAssignmentCurrent(input), 'input', 'result:result')
     .pipe(

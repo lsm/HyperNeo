@@ -67,7 +67,6 @@ try {
     [0, 'yesno', false, 'yes', 'todo'],
     [1, 'choice', false, ['Delete the approved synthetic leftovers'], 'blocked'],
     [2, 'reply', true, 'The synthetic plan is approved.', 'doing'],
-    [3, 'yesno', true, 'Yes, go ahead with this plan.', 'failed'],
     [5, 'yesno', true, 'no', 'todo'],
   ] as const) {
     const askId = `ask-${index}`, id = `approval-${index}`, questionId = `question-${index}`, next = `next-${index}`;

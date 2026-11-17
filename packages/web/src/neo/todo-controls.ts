@@ -11,7 +11,7 @@ export type NeoTodoControl =
 export const NEO_TODO_PRIORITIES: readonly NeoTodoPriority[] = ['urgent', 'high', 'normal', 'low'];
 
 export const neoTodoControllable = (todo: Pick<NeoTodo, 'state'>) =>
-  ['todo', 'doing', 'blocked', 'failed'].includes(todo.state);
+  ['todo', 'doing', 'blocked'].includes(todo.state);
 
 export const neoTodoHoldable = (
   todo: Pick<NeoTodoEntry, 'state' | 'blockedBy' | 'startedAt' | 'statusCodes'>

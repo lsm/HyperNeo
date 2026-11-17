@@ -336,23 +336,23 @@ export function createScheduleOperations(
   const read = { deps, admission: READ_ADMISSION };
 
   const create = schedulePipeline<CreateScheduleInput, ScheduleResult>(
-    superpipe(write)('schedule-create'),
+    superpipe(write)('schedule.create'),
     (pipeline) =>
       pipeline.pipe(createScheduleRecord, ['outcome', 'input', 'caller', 'deps'], 'outcome')
   );
   const list = schedulePipeline<ListSchedulesInput, ScheduleListResult>(
-    superpipe(read)('schedule-list'),
+    superpipe(read)('schedule.list'),
     (pipeline) => pipeline.pipe(listScheduleRecords, ['outcome', 'input', 'deps'], 'outcome')
   );
   const get = schedulePipeline<ScheduleRefInput, ScheduleResult>(
-    superpipe(read)('schedule-get'),
+    superpipe(read)('schedule.get'),
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
         .pipe(readScheduleRecord, 'outcome', 'outcome')
   );
   const update = schedulePipeline<UpdateScheduleInput, ScheduleResult>(
-    superpipe({ ...write, operationName: 'schedule.update' })('schedule-update'),
+    superpipe({ ...write, operationName: 'schedule.update' })('schedule.update'),
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')
@@ -364,7 +364,7 @@ export function createScheduleOperations(
         )
   );
   const remove = schedulePipeline<ScheduleRefInput, ScheduleDeleteResult>(
-    superpipe(write)('schedule-delete'),
+    superpipe(write)('schedule.delete'),
     (pipeline) =>
       pipeline
         .pipe(requireScheduleInSpace, ['outcome', 'input', 'deps'], 'result:outcome')

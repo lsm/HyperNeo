@@ -11,7 +11,7 @@ import {
 
 type Owner = { todoId: string; ref: WorkRef | null };
 type Holder = Owner & { assignedAt: number };
-type PoolSession = { ref: WorkRef; name: string; held: boolean };
+type PoolSession = { ref: WorkRef; name: string; held: boolean; terminalOnly: boolean };
 const workKey = (ref: WorkRef) => `${ref.adapter}:${ref.daemon ?? ''}:${ref.id}`;
 
 const SESSION_OF = `COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref`;
@@ -132,9 +132,10 @@ class CodingSessionAssignments {
     for (const row of rows) {
       if (!row.ref) continue;
       const ref = JSON.parse(row.ref) as WorkRef;
-      const known = pool.get(workKey(ref)) ?? { ref, name: '', held: false };
+      const known = pool.get(workKey(ref)) ?? { ref, name: '', held: false, terminalOnly: true };
       known.name ||= row.name ?? '';
-      known.held ||= row.id !== input.todoId && ['doing', 'blocked', 'failed'].includes(row.state);
+      known.held ||= row.id !== input.todoId && ['doing', 'blocked'].includes(row.state);
+      known.terminalOnly &&= ['done', 'removed'].includes(row.state);
       pool.set(workKey(ref), known);
     }
     const holders = input.prUrl ? this.prHolders(input.prUrl) : [];
@@ -142,8 +143,17 @@ class CodingSessionAssignments {
     const pooled = (owner: Owner | null) =>
       owner && {
         todoId: owner.todoId,
+        terminal: rows.some(
+          (row) => row.id === owner.todoId && ['done', 'removed'].includes(row.state)
+        ),
         session:
-          owner.ref && (pool.get(workKey(owner.ref)) ?? { ref: owner.ref, name: '', held: false }),
+          owner.ref &&
+          (pool.get(workKey(owner.ref)) ?? {
+            ref: owner.ref,
+            name: '',
+            held: false,
+            terminalOnly: false,
+          }),
       };
     return {
       repo,

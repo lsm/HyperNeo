@@ -113,7 +113,7 @@ for (const factory of factories)
       );
     });
 
-    test.each(['done', 'failed', 'removed'] as const)(
+    test.each(['done', 'removed'] as const)(
       'a %s peer releases named and recorded ownership',
       (state) => {
         const peer = todo('owner', [url(2)]);

@@ -206,6 +206,11 @@ export const codingReviewerPolicy = (superpipe({})('coding.reviewer-provenance')
 
 export const codingHasAuthorLine = (body: string) => !!parseAuthor(body);
 
+export const codingCrossModelFindings = (head: string, facts: readonly CodingStageFact[]) =>
+  facts.flatMap((fact) =>
+    fact.stage === 'review' && fact.verdict === 'fail' && fact.head === head ? fact.evidence : []
+  );
+
 export const codingCrossModelReviewed = (
   body: string,
   head: string,

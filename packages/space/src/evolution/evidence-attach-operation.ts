@@ -211,7 +211,7 @@ export function attachEvolutionEvidence(
 export function createEvolutionEvidenceAttachOperation(
   evolution: EvolutionEvidenceAttachDependencies
 ) {
-  const attach = (superpipe({ evolution })('evolution-evidence-attach') as PipelineAPI)
+  const attach = (superpipe({ evolution })('evolution.evidence.attach') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionEvidenceSubject, ['input', 'outcome', 'evolution'], 'result:outcome')

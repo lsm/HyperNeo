@@ -217,7 +217,7 @@ function projectUpdate(target: Target, input: Input, deps: RuntimeSettingsDepend
   };
 }
 
-const updateSettings = (superpipe({})('update-session-runtime-settings') as PipelineAPI)
+const updateSettings = (superpipe({})('session.runtimeSettings.update') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(captureTarget, ['input', 'caller', 'deps'], 'result:update')
   .pipe(gateReady, ['update', 'input', 'deps'], 'result:update')

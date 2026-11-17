@@ -356,7 +356,7 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
-  state: z.enum(['todo', 'doing', 'blocked', 'done', 'failed', 'removed']),
+  state: z.enum(['todo', 'doing', 'blocked', 'done', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
   nextAction: z.string().nullable(),
@@ -527,7 +527,7 @@ export function planNeoTodoDone(
   input: z.infer<typeof Done>,
   now = Date.now()
 ): Gate<TodoPlan> {
-  if (!['todo', 'doing', 'blocked', 'failed'].includes(todo.state))
+  if (!['todo', 'doing', 'blocked'].includes(todo.state))
     return fail(`todo_not_live: this todo is ${todo.state}.`);
   return {
     value: {

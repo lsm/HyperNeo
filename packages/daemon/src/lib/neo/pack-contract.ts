@@ -81,7 +81,7 @@ export function neoTodoRepository(
 export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
 
 type WorkerStartExclusions = { value: readonly WorkRef[] } | { reason: string };
-export type NeoWorkerTargetDecision = { value: NeoTodoTarget } | { reason: string };
+export type NeoWorkerTargetDecision = { value: NeoTodoTarget; note?: string } | { reason: string };
 
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;
@@ -165,7 +165,10 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     }) => Promise<OperationOutcome>
   ): Promise<NeoWorkerTargetDecision>;
   workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
-  workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;
+  workerStartBrief?(
+    instruction: string,
+    parameters?: Record<string, unknown>
+  ): string | Promise<string>;
   workerBrief?(
     instruction: string,
     identity: {

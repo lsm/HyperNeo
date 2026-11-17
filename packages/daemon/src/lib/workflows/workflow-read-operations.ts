@@ -96,13 +96,13 @@ const GET_DESCRIPTION =
 export function createWorkflowReadOperations(
   deps: WorkflowReadDependencies
 ): OperationDefinition[] {
-  const list = (superpipe({ deps })('list-space-workflows') as PipelineAPI)
+  const list = (superpipe({ deps })('workflow.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitReader, ['input', 'caller'], 'result:outcome')
     .pipe(listSummaries, ['outcome', 'input', 'deps'], 'outcome')
     .end('outcome') as (input: ListInput, caller: OperationCaller) => ListResult;
 
-  const get = (superpipe({ deps })('get-space-workflow') as PipelineAPI)
+  const get = (superpipe({ deps })('workflow.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitReader, ['input', 'caller'], 'result:outcome')
     .pipe(resolveWorkflowRef, ['input', 'outcome', 'deps'], 'result:outcome')

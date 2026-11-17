@@ -25,6 +25,7 @@ import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { workCleanupReads } from '../../../../src/storage/repositories/work-cleanup-worker.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
 
 test.each(
   process.env.HYPERNEO_CLEANUP_FIXTURE
@@ -129,6 +130,7 @@ test.each(
     const paths = new Map<string, string>();
     for (let index = 0; index < 14; index++) {
       const id = `worker-${index}`;
+      recordWorkerStarted(db, { adapter: index < 8 ? 'hyperneo' : 'codex-desktop', id });
       const path =
         folders[index] ??
         (index < 8 ? join(root, 'worktrees', id) : join(root, `missing-${index}`));

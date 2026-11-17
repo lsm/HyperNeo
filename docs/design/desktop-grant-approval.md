@@ -11,7 +11,7 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 ## Flow
 
 1. A worker call resolves to a verified app and action class with no grant. The host refuses it with `app_action_not_authorized`.
-2. The host opens one modal dialog for that app and class, unless one is already open. The dialog names the app's bundle ID and the action. "Don't Allow" is the default button.
+2. The host opens one modal dialog for that app and class, unless one is already open. The dialog names the app's bundle ID and the action. Its buttons follow macOS: "Allow" is the rightmost default button (Return) and "Don't Allow" sits to its left (Escape).
 3. Only a click on "Allow" records the grant in the host's private keychain group. A declined, dismissed or failed dialog records nothing. After a decline, the host shows no new dialog for that app and class for 10 minutes and refuses with `app_action_declined`, so worker retries cannot flood the owner.
 4. The worker's refusal says approval is waiting on the Mac. The worker reports that through its normal blocker, so the Neo card only points the human to the Mac.
 5. The next ordinary call checks the grant and every other guard again. Approval never runs input by itself.

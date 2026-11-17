@@ -139,7 +139,7 @@ const DESCRIPTION =
   'Create a long-horizon goal, optionally scheduling recurring check-ins or triggering the first task immediately. ownerAgentId names the primary owner and defaults to the calling agent; naming someone else requires Space authority. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.';
 
 export function createCreateGoalOperation(deps: CreateGoalDependencies) {
-  const create = (superpipe({ deps })('goal-create') as PipelineAPI)
+  const create = (superpipe({ deps })('goal.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalCreation, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(resolveCreateGoalOwner, ['outcome', 'input', 'caller', 'deps'], 'result:outcome')

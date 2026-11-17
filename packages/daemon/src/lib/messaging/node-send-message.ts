@@ -295,7 +295,7 @@ const SEND_MESSAGE_DESCRIPTION =
   'Send a DM by agent name, fan out by node name, multicast by array, or broadcast with "*"; validates against channel topology. The sender identity — agent name, session, task, workflow run and node — is resolved from the calling node-agent session, never from input, and only workflow worker sessions with an active session are admitted. Workflow send_message hooks run around the delivery and may patch, block, queue or emit follow-ups. Rejects not_a_node_agent when the caller is not a live node-agent session and node_caller_denied when the caller is not an active workflow worker in the run Space.';
 
 export function createNodeSendMessageOperation(deps: NodeMessagingDependencies) {
-  const run = (superpipe({ deps })('node-send-message') as PipelineAPI)
+  const run = (superpipe({ deps })('send_message') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitNodeCaller, 'caller', 'result:outcome')
     .pipe(resolveNodeContext, ['outcome', 'caller', 'deps'], 'result:outcome')

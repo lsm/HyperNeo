@@ -67,9 +67,9 @@ try {
   await hub.request('system.health',{});
   db.exec('ROLLBACK'); held=false;
   const receipt=await pending; record=false;
-  assert.equal(receipt.recovery?.todo.state,'failed'); assert.equal(receipt.recovery?.todo.report,report); assert(receipt.changed);
+  assert.equal(receipt.recovery?.todo.state,'blocked'); assert.equal(receipt.recovery?.todo.blockedBy,'failure'); assert.equal(receipt.recovery?.todo.report,report); assert(receipt.changed);
   assert.equal(sessions.readStartInterrupted('recover'),true);
-  assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='failed' && todo.report===report));
+  assert((await visible()).entry.todos.some(todo=>todo.id==='recover' && todo.state==='blocked' && todo.report===report));
   assert(tables.includes('neo_todo_sessions')); assert(tables.includes('neo_questions'));
   const retry=await hub.request<{ok:boolean;reason:string}>('operation.invoke',{name:'neo.todo.continue',input:{todoId:'recover'}});
   assert(!retry.ok && retry.reason.startsWith('start_uncertain:'));

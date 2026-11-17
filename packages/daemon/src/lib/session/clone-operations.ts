@@ -84,7 +84,7 @@ export function resolveParentId(
 
 export function loadParent(
   parentId: string,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSession'>
 ): { value: Session } | { reason: SpawnRejection } {
   const parent = deps.getSession(parentId);
   if (!parent) return { reason: reject('parent_not_found', `Session not found: ${parentId}`) };
@@ -106,7 +106,7 @@ export function loadParent(
 
 export async function admitSpaceParent(
   parent: Session,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSpace' | 'resolveRole'>
 ): Promise<{ value: Session } | { reason: SpawnRejection }> {
   const spaceId = parent.context?.spaceId;
   if (!spaceId) return { value: parent };
@@ -123,7 +123,7 @@ export async function admitSpaceParent(
 export async function buildCloneParams(
   parent: Session,
   input: SpawnInput,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'isGitRepo'>
 ): Promise<CreateSessionParams> {
   const workspacePath = parent.worktree?.mainRepoPath ?? parent.workspacePath;
   const isGit = workspacePath ? await deps.isGitRepo(workspacePath) : false;
@@ -187,7 +187,7 @@ const SPAWN_DESCRIPTION =
   'Spawn a 分身 (clone) of a session: a new session with the same configuration and workspace (its own git worktree when the workspace is a repository) but none of the conversation, optionally with a different model or thinking level. A brief, when given, becomes the first message and asks the clone to report back through session.clone.return. An agent or session calling through invoke clones itself; the RPC door names parentSessionId. A clone of a Space agent session acts as that agent. Rejects nested_clone (clones cannot clone), parent_unavailable (inactive session, task or workflow worker, or a paused, stopped or archived Space), parent_not_found and caller_denied.';
 
 export function createSpawnSessionCloneOperation(deps: SpawnSessionCloneDependencies) {
-  const spawn = (superpipe({ deps })('spawn-session-clone') as PipelineAPI)
+  const spawn = (superpipe({ deps })('session.clone.spawn') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(resolveParentId, ['input', 'caller'], 'result:outcome')
     .pipe(loadParent, ['outcome', 'deps'], 'result:outcome')

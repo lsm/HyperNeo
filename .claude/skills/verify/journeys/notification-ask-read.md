@@ -12,7 +12,7 @@ env -i HOME="$RUN/home" PATH="$PATH" TMPDIR=/tmp NODE_ENV=test \
 ```
 
 The helper starts its own ephemeral daemon, seeds 101 synthetic asks and an old
-failed todo/question, and proves the target really is absent from neo.snapshot.
+removed todo with its failure report and a question, and proves the target really is absent from neo.snapshot.
 It then reads that exact ask through neo.ask.read over the real WebSocket,
 checks todo/question identities and full failure evidence, and checks a missing
 ask returns not_found. Instrumentation must observe zero main-connection reads

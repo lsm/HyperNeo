@@ -23,6 +23,15 @@ describe('planWorkQueue', () => {
       reasons: { new: '2 workers running; total limit is 2' },
     });
   });
+
+  test('a disk hold queues every new start with its reason', () => {
+    const limits = { running: 4, perGroup: 4, hold: 'the disk is below its free-space floor' };
+    expect(planWorkQueue([item('a', 'urgent', 1), item('b', 'normal', 2)], [], limits)).toEqual({
+      start: [],
+      queued: ['a', 'b'],
+      reasons: { a: limits.hold, b: limits.hold },
+    });
+  });
 });
 
 for (const [name, running, limits, reason] of [

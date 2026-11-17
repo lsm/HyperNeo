@@ -15,7 +15,7 @@ describe('planWorkRelease', () => {
   });
 
   test('a live or unreadable owner keeps the folder', () => {
-    for (const state of ['todo', 'doing', 'blocked', 'failed'] as const)
+    for (const state of ['todo', 'doing', 'blocked'] as const)
       expect(planWorkRelease({ ...clean, owner: { ...done, state } }, now)).toEqual({
         keep: 'live',
       });

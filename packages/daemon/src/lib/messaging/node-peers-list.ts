@@ -252,7 +252,7 @@ const LIST_PEERS_DESCRIPTION =
   'List node-group peers with statuses, session ids, permitted direct-message targets, and saved output state. The calling node-agent session identifies the workflow run and node; only workflow worker sessions are admitted. Rejects not_a_node_agent when the caller is not a live node-agent session and node_caller_denied when the caller is not a workflow worker or belongs to another Space.';
 
 export function createListNodePeersOperation(deps: NodeMessagingDependencies) {
-  const run = (superpipe({ deps })('list-node-peers') as PipelineAPI)
+  const run = (superpipe({ deps })('workflow.run.peer.list') as PipelineAPI)
     .input(['caller'])
     .pipe(admitNodeCaller, 'caller', 'result:outcome')
     .pipe(resolveNodeContext, ['outcome', 'caller', 'deps'], 'result:outcome')

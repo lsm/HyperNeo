@@ -369,7 +369,7 @@ export function applyEvolutionMetricAdd(
 }
 
 export function createEvolutionScopeOperations(evolution: EvolutionScopeOperationDependencies) {
-  const create = (superpipe({ evolution })('evolution-scope-create') as PipelineAPI)
+  const create = (superpipe({ evolution })('evolution.scope.create') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionSpace, 'outcome', 'result:outcome')
@@ -377,14 +377,14 @@ export function createEvolutionScopeOperations(evolution: EvolutionScopeOperatio
     .pipe(applyEvolutionScopeCreate, ['outcome', 'caller', 'evolution'], 'outcome')
     .endAsync('outcome');
 
-  const list = (superpipe({ evolution })('evolution-scope-list') as PipelineAPI)
+  const list = (superpipe({ evolution })('evolution.scope.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionReader, ['input', 'caller'], 'result:outcome')
     .pipe(requireEvolutionSpace, 'outcome', 'result:outcome')
     .pipe(readEvolutionScopeList, ['input', 'outcome', 'evolution'], 'result:outcome')
     .endAsync('outcome');
 
-  const update = (superpipe({ evolution })('evolution-scope-update') as PipelineAPI)
+  const update = (superpipe({ evolution })('evolution.scope.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionScope, ['input', 'outcome', 'evolution'], 'result:outcome')
@@ -401,7 +401,7 @@ export function createEvolutionScopeOperations(evolution: EvolutionScopeOperatio
     )
     .endAsync('outcome');
 
-  const metricAdd = (superpipe({ evolution })('evolution-metric-add') as PipelineAPI)
+  const metricAdd = (superpipe({ evolution })('evolution.metric.add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitEvolutionMutator, ['input', 'caller', 'evolution'], 'result:outcome')
     .pipe(requireEvolutionScope, ['input', 'outcome', 'evolution'], 'result:outcome')

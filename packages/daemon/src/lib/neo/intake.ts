@@ -511,7 +511,7 @@ function admitNeoIntakeTarget(
   return 'ok' in read ? { reason: read } : { value: read };
 }
 
-const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
+const runIntake = (superpipe({})('neo.message.send') as PipelineAPI)
   .input(['input', 'caller', 'db', 'repo', 'notify', 'store'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
   .pipe(

@@ -45,7 +45,7 @@ export function createNeoConversationReadOperation(
   presentPublications: (items: NeoPublication[]) => Promise<NeoPublication[]> = async (items) =>
     items
 ) {
-  const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
+  const read = (superpipe({})('neo.conversation.read') as PipelineAPI)
     .input(['page', 'caller'])
     .pipe(
       (caller: OperationCaller) =>

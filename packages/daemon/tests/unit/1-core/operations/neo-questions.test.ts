@@ -944,7 +944,7 @@ describe('todo-owned question cards', () => {
       const other = h.seeded('Which style?', h.rows.id);
       const general = h.seeded('Anything else?');
       expect(bound).toMatchObject({ todoId: h.fix.id });
-      h.store.updateTodo(h.fix, { state: 'failed' }, 3);
+      h.store.updateTodo(h.fix, { state: 'blocked', blockedBy: 'failure' }, 3);
       expect(h.store.getQuestion(bound.id)?.state).toBe('open');
       h.store.updateTodo(h.fix, { state: 'done' }, 4);
       expect(h.store.getQuestion(bound.id)?.state).toBe('retired');

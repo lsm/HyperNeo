@@ -886,7 +886,7 @@ function resolveStartPlace(
   );
 }
 
-const runStartWork = (superpipe({})('start-work') as PipelineAPI)
+const runStartWork = (superpipe({})('work.start') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(neoTodoRecords, ['input', 'caller', 'deps'], 'records')
   .pipe(resolveStartPlace, ['input', 'caller', 'deps'], 'result:outcome')
@@ -963,7 +963,7 @@ async function queueOrdinaryInput<Value>(
   return { reason: { ok: true, value: { delivered: false, inputId } } };
 }
 
-const runSendWork = (superpipe({})('send-work') as PipelineAPI)
+const runSendWork = (superpipe({})('work.send') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
@@ -993,7 +993,7 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   deps: WorkVerbDeps
 ) => Promise<SendResult>;
 
-const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
+const runWorkStatus = (superpipe({})('work.status') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeStatus, ['input', 'deps'], 'result:outcome')
   .pipe(readWorkStatus, ['outcome', 'input', 'deps'], 'outcome')
@@ -1003,7 +1003,7 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
 type TurnsInput = z.infer<typeof WorkTurnsInputSchema>;
 type TurnsResult = z.infer<typeof WorkTurnsResultSchema>;
 
-const runWorkTurns = (superpipe({})('work-turns') as PipelineAPI)
+const runWorkTurns = (superpipe({})('work.turns') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(
     (input: TurnsInput, deps: WorkVerbDeps) => pickRoute('turns', input.ref, deps.adapters()),
@@ -1120,7 +1120,7 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   deps: WorkVerbDeps
 ) => Promise<QueuedResult>;
 
-const runRenameWork = (superpipe({})('rename-work') as PipelineAPI)
+const runRenameWork = (superpipe({})('work.rename') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(
     (input: RenameInput, deps: WorkVerbDeps) => pickRoute('rename', input.ref, deps.adapters()),
@@ -1153,7 +1153,7 @@ const runRenameWork = (superpipe({})('rename-work') as PipelineAPI)
   deps: WorkVerbDeps
 ) => Promise<z.infer<typeof RenameWorkResultSchema>>;
 
-const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
+const runStopWork = (superpipe({})('work.stop') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
@@ -1195,6 +1195,11 @@ async function listWorkAdapters(
   };
 }
 
+const runWorkAdapters = (superpipe({})('work.adapters') as PipelineAPI)
+  .input(['daemon', 'deps'])
+  .pipe(listWorkAdapters, ['daemon', 'deps'], 'outcome')
+  .endAsync('outcome') as typeof listWorkAdapters;
+
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
@@ -1213,7 +1218,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
-      execute: ({ daemon }) => listWorkAdapters(daemon, deps),
+      execute: ({ daemon }) => runWorkAdapters(daemon, deps),
     }),
     defineOperation({
       name: 'work.start',

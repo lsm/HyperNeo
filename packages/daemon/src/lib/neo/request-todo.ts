@@ -9,7 +9,7 @@ export const neoRequestAskId = (incident: string) => neoDerivedId(`neo-request-a
 
 export function closedNeoRequest(store: NeoAskTodoRepository, incident: string): string | null {
   const todo = store.getTodo(requestTodoId(incident));
-  return todo && ['done', 'removed', 'failed'].includes(todo.state) ? todo.id : null;
+  return todo && ['done', 'removed'].includes(todo.state) ? todo.id : null;
 }
 
 export function recordNeoRequestTodo(

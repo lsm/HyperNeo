@@ -79,8 +79,7 @@ export const NEO_DAEMON_CAUSES = Object.keys(OPTIONS);
 
 const isCause = (cause: string | null | undefined): cause is Cause => !!cause && cause in OPTIONS;
 
-const live = (todo: Pick<NeoTodo, 'state'>) =>
-  ['todo', 'doing', 'blocked', 'failed'].includes(todo.state);
+const live = (todo: Pick<NeoTodo, 'state'>) => ['todo', 'doing', 'blocked'].includes(todo.state);
 
 const quoted = (todos: readonly Pick<Row, 'title'>[]) =>
   todos.map((todo) => `"${todo.title}"`).join(', ');
@@ -251,10 +250,7 @@ export function planNeoDaemonCardActions(card: Card, todos: readonly Row[]): Neo
   if (picked !== RETRY) return [];
   const answeredAt = card.answeredAt;
   return covered
-    .filter(
-      (todo) =>
-        todo.updatedAt <= answeredAt && (todo.state === 'failed' || todo.state === 'blocked')
-    )
+    .filter((todo) => todo.updatedAt <= answeredAt && todo.state === 'blocked')
     .map((todo) => ({ todoId: todo.id, name: 'neo.todo.continue', input: { todoId: todo.id } }));
 }
 
