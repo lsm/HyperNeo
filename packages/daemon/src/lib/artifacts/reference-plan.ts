@@ -171,7 +171,7 @@ function target(
       };
 }
 
-export const planStoredReference = (superpipe({})('artifact-stored-reference-plan') as PipelineAPI)
+export const planStoredReference = (superpipe({})('artifact.reference.resolve.plan') as PipelineAPI)
   .input(['request', 'caller', 'deps'])
   .pipe(stored, ['request', 'deps'], 'result:plan')
   .pipe(choose, ['plan', 'request', 'caller', 'deps'], 'result:plan')
