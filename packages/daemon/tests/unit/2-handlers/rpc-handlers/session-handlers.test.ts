@@ -1641,6 +1641,34 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
   });
 });
 
+describe('session.update legacy OXAP restriction clears', () => {
+  it('sends an explicit tools clear to storage instead of the preference writer', async () => {
+    const hub = createMockMessageHub();
+    const updateSession = mock(async () => {});
+    const writeToolPreferences = mock(async () => ({ ok: false, reason: 'harness_unsupported' }));
+    const manager = {
+      getSession: mock(() => null),
+      getSessionFromDB: mock(() => ({
+        config: { model: 'gpt-5.5', provider: 'anthropic-codex', harness: 'oxap-codex' },
+      })),
+      updateSession,
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(hub.hub, manager, createMockInternalEventBus(), undefined, undefined, {
+      writeToolPreferences,
+    } as never);
+    const result = await hub.handlers.get('session.update')!(
+      { sessionId: 's1', config: { tools: null } },
+      {}
+    );
+    expect(result).toEqual({ success: true });
+    expect(writeToolPreferences).not.toHaveBeenCalled();
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { tools: undefined } });
+  });
+});
+
 describe('Session RPC Handlers — session.update model curation', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
