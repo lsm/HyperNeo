@@ -13,6 +13,7 @@ import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/s
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
 import { catalogModel, driverCodingLines } from '../../helpers/coding-lines.ts';
 import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
@@ -266,6 +267,24 @@ describe('coding session target decision', () => {
     expect(await other.decide(other.todo(), bare, routingOff())).toEqual({
       value: { ...bare, effort: 'high' },
     });
+  });
+
+  test('a ranked start reads its saved write values and line scope through the stage-target read op', async () => {
+    const { db, todo, decide } = setup();
+    const gateway = gatewayFor(db);
+    const call = gateway.call.bind(gateway);
+    const seen: string[] = [];
+    gateway.call = ((op: { name: string }, method: string, ...rest: unknown[]) => {
+      seen.push(`${op.name}.${method}`);
+      return (call as (...args: unknown[]) => unknown)(op, method, ...rest);
+    }) as typeof gateway.call;
+    expect(await decide(todo(), glm, driverCodingLines(catalog))).toEqual({ value: glm });
+    expect(seen).toEqual(
+      expect.arrayContaining([
+        'coding.stageTarget.reads.stagePreference',
+        'coding.stageTarget.reads.lineScope',
+      ])
+    );
   });
 
   test('an idle worker whose status names no provider is ranked as the line it resolves to', async () => {

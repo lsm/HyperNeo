@@ -212,6 +212,30 @@ describe('coding actor assignments', () => {
     expect(await external.assign()).toMatchObject({ ok: true });
     expect(calls).toHaveLength(1);
   });
+  test('when a route reorders the candidates, the fallback notes are the started candidate own', async () => {
+    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5', effort: 'high' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    const lines: CodingLines = {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
+      rank: async (_kind, candidates) => ({
+        ranked: [...candidates].reverse().map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      }),
+    };
+    const f = fixture(undefined, lines);
+    f.set('review.effort', 'high');
+    expect(await f.assign({ candidates: [author, opus, sonnet] })).toMatchObject({
+      ok: true,
+      assignment: {
+        actor: { model: 'claude-opus-5-5' },
+        fallback: ['Preferred effort "high" is unavailable for this selection; using "default".'],
+      },
+    });
+  });
+
   test('a review whose every candidate is refused names the skip reasons and starts nothing', async () => {
     const f = fixture(undefined, {
       models: () => [],
