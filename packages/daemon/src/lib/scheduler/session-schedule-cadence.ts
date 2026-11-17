@@ -2,6 +2,7 @@ import type { SessionScheduleCadence } from '../../storage/repositories/session-
 import { getNextRunAt } from './cron-utils.ts';
 
 export function nextScheduleRun(cadence: SessionScheduleCadence, after: number): number | null {
+  if (cadence.kind === 'once') return Math.max(cadence.at, after);
   return cadence.kind === 'every'
     ? after + cadence.everyMs
     : getNextRunAt(cadence.cron, cadence.timezone, after);

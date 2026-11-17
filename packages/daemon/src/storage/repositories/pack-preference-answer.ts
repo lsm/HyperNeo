@@ -25,16 +25,18 @@ export function applyPackPreferenceAnswer(db: Database, questionId: string) {
     if (row.applied_at !== null) return { ok: true as const, applied: false };
     const stored = JSON.parse(row.values_json) as
       | NeoPackSetting[]
-      | { alternatives: NeoPackSetting[][] };
+      | { values?: NeoPackSetting[]; alternatives?: NeoPackSetting[][] };
     const question = {
       kind: row.kind,
       options: JSON.parse(row.options ?? 'null') as string[] | null,
       answer: JSON.parse(row.answer ?? 'null'),
     };
-    const values = Array.isArray(stored)
-      ? humanPickedApply(question) && stored
+    const single = Array.isArray(stored) ? stored : stored.values;
+    const values = single
+      ? humanPickedApply(question) && single
       : question.kind === 'choice' &&
-        stored.alternatives[question.options?.indexOf([question.answer].flat().join('\n')) ?? -1];
+        !Array.isArray(stored) &&
+        stored.alternatives?.[question.options?.indexOf([question.answer].flat().join('\n')) ?? -1];
     if (row.state !== 'answered' || !values || !['button', 'chat'].includes(row.answered_by ?? ''))
       return { ok: false as const, reason: 'human_apply_required' };
     if (row.text !== row.question_text) throw new Error('proposal_question_changed');

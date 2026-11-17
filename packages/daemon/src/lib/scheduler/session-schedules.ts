@@ -31,6 +31,10 @@ export function requireValidCadence(cadence: SessionScheduleCadence): Gate<Sessi
     return cadence.everyMs >= MIN_EVERY_MS
       ? { value: cadence }
       : { reason: 'invalid_cadence: every must be at least one minute.' };
+  if (cadence.kind === 'once')
+    return cadence.at > Date.now()
+      ? { value: cadence }
+      : { reason: 'invalid_cadence: a one-shot time must be in the future.' };
   return isValidCronExpression(cadence.cron) && nextScheduleRun(cadence, Date.now()) !== null
     ? { value: cadence }
     : { reason: `invalid_cadence: "${cadence.cron}" in ${cadence.timezone} has no next run.` };
@@ -196,10 +200,17 @@ export class SessionScheduler {
         );
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
       if (outcome === 'fired' || outcome === 'skipped_unchanged') commit?.();
+      const once = schedule.cadence.kind === 'once';
+      const settled =
+        outcome === 'fired' ||
+        (outcome === 'skipped_delivery_unconfirmed' &&
+          !(messageId && this.repo.deliveryReceipt(schedule.id, messageId)));
       const next =
-        outcome === 'source_gone' || outcome === 'target_gone'
+        outcome === 'source_gone' || outcome === 'target_gone' || (once && settled)
           ? null
-          : nextScheduleRun(schedule.cadence, now);
+          : once
+            ? now + MIN_EVERY_MS
+            : nextScheduleRun(schedule.cadence, now);
       const backedOff =
         next !== null && outcome === 'skipped_unchanged'
           ? now +

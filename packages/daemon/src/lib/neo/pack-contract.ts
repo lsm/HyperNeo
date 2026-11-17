@@ -8,6 +8,8 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
 import type { NeoAttentionEvent, NeoAttentionKind } from './attention/decide.ts';
+import type { z } from 'zod';
+import type { PackPreferenceInput } from './preference-operations.ts';
 import type { NeoStepFacts } from './attention/owner.ts';
 
 export interface NeoPackBrief {
@@ -155,7 +157,12 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   workerTarget?(
     todo: NeoTodo,
     target: NeoTodoTarget,
-    status: (ref: WorkRef) => Promise<OperationOutcome>
+    status: (ref: WorkRef) => Promise<OperationOutcome>,
+    askSetting: (input: {
+      requestId: string;
+      hold?: false;
+      alternatives: z.infer<typeof PackPreferenceInput>[][];
+    }) => Promise<OperationOutcome>
   ): Promise<NeoWorkerTargetDecision>;
   workerTargetRefused?(todo: NeoTodo): void | Promise<void>;
   workerStartBrief?(instruction: string, parameters?: Record<string, unknown>): string;

@@ -22,7 +22,7 @@ another external submission. Evidence: `evidence/neo-home-github-<mode>.json` an
 `evidence/home-gh.log`.
 
 In separate fresh runs, `chat` approves by the letter `A` in chat, `legacy` turns the card into a
-pre-upgrade yes/no card and approves with yes, `decline` verifies Keep local stays local and reuses its
+yes/no card, answers yes and verifies nothing is created, `decline` verifies Keep local stays local and reuses its
 question, and `unavailable` verifies failed auth is probed once with no question or
 creation. On pre-feature dev, `before` records the unknown-operation baseline.
 Focused contracts additionally refuse agent answers, foreign/retired/unrelated
