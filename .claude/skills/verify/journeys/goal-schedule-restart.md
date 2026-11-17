@@ -14,3 +14,5 @@ It restarts the daemon against the same synthetic database and reads
 pending jobs. Inspect `goal-schedule-restart.json` and the wrapper exit status.
 The helper also pauses both schedules of another active goal over RPC and checks
 that neither pause is undone by the restart.
+For two more active goals it deletes a work schedule and a review schedule over
+RPC, then checks that neither returns after restart.

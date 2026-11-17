@@ -334,6 +334,25 @@ describe('goal-owned schedules', () => {
       db.close();
     }
   });
+  test('a failed first review schedule creation is retried on startup', async () => {
+    const { db, call, scheduler, goals, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Legacy', doneTest: 'Done' })).goal;
+      scheduler.delete(scheduler.repo.getBySource('goal_review', goal.id)!);
+      db.prepare(
+        "UPDATE neo_goals SET wake_schedule = json_remove(wake_schedule, '$.reviewCadence') WHERE id = ?"
+      ).run(goal.id);
+      db.exec(
+        "CREATE TRIGGER fail_review BEFORE INSERT ON session_schedules WHEN NEW.source_kind = 'goal_review' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
+      );
+      expect(() => schedules.reconcile(goal)).toThrow('synthetic failure');
+      db.exec('DROP TRIGGER fail_review');
+      schedules.reconcile(goal);
+      expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('active');
+    } finally {
+      db.close();
+    }
+  });
   test('puts the full cycle only in goal wake content, preserving cadence and identity', async () => {
     const { db, call, scheduler, schedules } = setup();
     try {

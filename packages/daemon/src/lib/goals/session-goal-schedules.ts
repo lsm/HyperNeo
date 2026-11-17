@@ -45,16 +45,15 @@ export class SessionGoalSchedules implements ScheduleSource {
     reconciling = false
   ): void {
     let known = this.scheduler.repo.getBySource(this.kind, goal.id);
+    const previous = this.goals.wakeSchedule(goal.id);
     const config = known
       ? { cadence: known.cadence, nudgeEvery: known.nudgeEvery }
-      : ((cadence ? { cadence, nudgeEvery } : this.goals.wakeSchedule(goal.id)) ?? {
+      : ((cadence ? { cadence, nudgeEvery } : previous) ?? {
           cadence: { kind: 'every' as const, everyMs: 3_600_000 },
           nudgeEvery: 4,
         });
-    const previous = this.goals.wakeSchedule(goal.id);
     const review = reviewCadence ??
       previous?.reviewCadence ?? { kind: 'every' as const, everyMs: 86_400_000 };
-    this.goals.saveWakeSchedule(goal.id, { ...config, reviewCadence: review });
     const canReview = goal.ownerSessionId.startsWith('neo:') || this.canReturn(goal.ownerSessionId);
     let reviewRow = this.scheduler.repo.getBySource('goal_review', goal.id);
     if (
@@ -68,7 +67,12 @@ export class SessionGoalSchedules implements ScheduleSource {
       this.scheduler.delete(reviewRow);
       reviewRow = null;
     }
-    if (canReview && goal.status !== 'completed' && goal.status !== 'archived') {
+    if (
+      canReview &&
+      goal.status !== 'completed' &&
+      goal.status !== 'archived' &&
+      !(reconciling && !reviewRow && previous?.reviewCadence)
+    ) {
       reviewRow ??= this.scheduler.create({
         target: { adapter: 'hyperneo', id: goal.ownerSessionId },
         sourceKind: 'goal_review',
@@ -85,11 +89,16 @@ export class SessionGoalSchedules implements ScheduleSource {
     }
     if (goal.status === 'completed' || goal.status === 'archived') {
       if (known) this.scheduler.delete(known);
+      this.goals.saveWakeSchedule(goal.id, { ...config, reviewCadence: review });
       return;
     }
     if (goal.status === 'active' && known?.status === 'done' && !reconciling) {
       this.scheduler.delete(known);
       known = null;
+    }
+    if (reconciling && !known && previous) {
+      this.goals.saveWakeSchedule(goal.id, { ...config, reviewCadence: review });
+      return;
     }
     const row =
       known ??
@@ -105,6 +114,7 @@ export class SessionGoalSchedules implements ScheduleSource {
     if (goal.status === 'paused' && row.status === 'active') this.scheduler.pause(row);
     if (goal.status === 'active' && row.status === 'paused' && !reconciling)
       this.scheduler.resume(row);
+    this.goals.saveWakeSchedule(goal.id, { ...config, reviewCadence: review });
   }
 
   reconcile(goal: SessionGoal): void {
