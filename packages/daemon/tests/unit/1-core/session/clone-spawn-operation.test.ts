@@ -227,8 +227,12 @@ describe('session.clone.spawn', () => {
     );
     await run(h, {});
     expect(h.created[0]?.config).toEqual({ model: 'gpt-5.5', provider: 'anthropic-codex' });
-    await run(h, { thinkingLevel: 'think16k' });
-    expect(h.created[1]?.config?.thinkingLevel).toBe('think16k');
+    expect(await run(h, { thinkingLevel: 'think16k' })).toEqual({
+      accepted: false,
+      reason: 'harness_unsupported',
+      message: 'OXAP Codex does not take a thinking level.',
+    });
+    expect(h.created).toHaveLength(1);
   });
 
   test('the input schema accepts the Ultra thinking level and rejects unknown ones', () => {
