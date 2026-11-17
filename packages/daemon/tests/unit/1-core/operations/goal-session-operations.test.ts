@@ -1108,6 +1108,47 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('metric goals require an owner with review wakes', async () => {
+    const { db, call } = setup();
+    const input = {
+      ownerSessionId: 'plain',
+      title: 'Grow',
+      metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+    };
+    expect(await call('goal.session.create', input)).toEqual({
+      accepted: false,
+      reason:
+        'metric_review_unavailable: use a goal session or a Neo owner for a structured metric.',
+    });
+    expect(await call('goal.session.create', { ...input, ownSession: true })).toMatchObject({
+      accepted: true,
+    });
+    db.close();
+  });
+
+  test('a metric review without a point tells the owner what is missing', async () => {
+    const { db, call } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    expect(
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId: 'goal-review:synthetic',
+        done: 'Reviewed',
+        effect: 'yes',
+        worked: 'Guide',
+      })
+    ).toEqual({
+      accepted: false,
+      reason: 'metric_point_required: reviews of a metric goal must include metricPoint.',
+    });
+    db.close();
+  });
+
   test('concurrent metric reviews do not lose the previous measurement', async () => {
     const { db, call, scheduler } = setup();
     const goal = (
