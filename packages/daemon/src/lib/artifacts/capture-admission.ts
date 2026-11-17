@@ -1,5 +1,5 @@
 import type { ArtifactLimits, ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import type { PipelineAPI, SuperPipeFactory } from 'superpipe';
 
 type Gate =
   | { value: number }
@@ -29,13 +29,15 @@ export function gateArtifactQuota(
     : { reason: { accepted: false, reason: 'quota_full' } };
 }
 
-export const admitArtifactStorage = (superpipe({})('artifact-storage-admission') as PipelineAPI)
-  .input(['byteLength', 'limits', 'used', 'reserved'])
-  .pipe(gateArtifactSize, ['byteLength', 'limits'], 'result:admission')
-  .pipe(gateArtifactQuota, ['admission', 'limits', 'used', 'reserved'], 'result:admission')
-  .end('admission') as (
-  byteLength: number,
-  limits: ArtifactLimits,
-  used: number,
-  reserved: number
-) => number | ArtifactRefusal;
+export const artifactStorageAdmission = (pipeline: ReturnType<SuperPipeFactory>) =>
+  (pipeline as PipelineAPI)
+    .input(['byteLength', 'limits', 'used', 'reserved'])
+    .pipe(gateArtifactSize, ['byteLength', 'limits'], 'result:admission')
+    .pipe(gateArtifactQuota, ['admission', 'limits', 'used', 'reserved'], 'result:admission')
+    .end('admission') as (
+    byteLength: number,
+    limits: ArtifactLimits,
+    used: number,
+    reserved: number
+  ) => number | ArtifactRefusal;
+export type StorageAdmission = ReturnType<typeof artifactStorageAdmission>;

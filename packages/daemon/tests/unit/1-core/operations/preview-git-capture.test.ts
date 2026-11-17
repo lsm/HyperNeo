@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readBoundGitBlob } from '../../../../src/lib/artifacts/git-blob.ts';
+import { resolveGitBlob as readBoundGitBlob } from '../../../../src/lib/artifacts/resolve-operation.ts';
 
 describe('immutable bound Git capture', () => {
   test('refuses moving revisions before lookup', async () => {

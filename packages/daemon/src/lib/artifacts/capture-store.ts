@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 import { ArtifactLimitsSchema } from './file-contracts.ts';
-import { admitArtifactStorage } from './capture-admission.ts';
+import type { StorageAdmission } from './capture-admission.ts';
 
 const readDescriptor = promisify(read);
 async function syncDirectory(path: string) {
@@ -87,7 +87,7 @@ export async function createArtifactCaptureStore(
         entries: (await inventory(root)).entries,
       };
     },
-    async capture(source: Uint8Array) {
+    async capture(source: Uint8Array, admitArtifactStorage: StorageAdmission) {
       const admission = admitArtifactStorage(source.byteLength, limits, used, reserved);
       if (typeof admission !== 'number') return admission;
       const bytes = Buffer.from(source);
