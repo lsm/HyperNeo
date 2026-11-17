@@ -26,8 +26,11 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 ## Design
 
 1. **Mark a server as OAuth.** An `http` row gets one nullable `auth` JSON
-   column: `{kind: 'oauth', preset, clientId?}`. No new table. The preset (code,
-   not data) fixes the URL and the scope set. A client secret
+   column: `{kind: 'oauth', preset, clientId?, generation, active}`. No new
+   table. The repository refuses `auth` on any other `sourceType`. The preset
+   (code, not data) fixes the URL, the scope set and the expected
+   authorization-server issuer. `generation` and `active` are the durable
+   admission state (item 5). A client secret
    (Slack needs one) goes to the vault, never into this column. Static
    `headers` stay for the servers that use them and are ignored on OAuth rows.
 2. **Store grants in the existing vault.** `ConnectionVault` gains a second
@@ -37,8 +40,10 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    URI-encoded. Account slot: `["<server row id>","main"]`. The registry row ID
    is the account ID: one grant per server per instance. MCP has no standard
    user-identity call, so we key no remote identity, and reconnect replaces that
-   server's grant. The bundle holds the tokens, the registered client info, and
-   the resource it is bound to. `connectionStatus` and the Google table stay
+   server's grant. The bundle holds the tokens, the granted scopes, the
+   registered client info, the generation it was saved under, and its binding:
+   the resource, the issuer, and that issuer's metadata (token endpoint
+   included), all fixed at connect. `connectionStatus` and the Google table stay
    unchanged.
 3. **Sign in with the SDK, not our own OAuth code.** A vault-backed
    `OAuthClientProvider` gives the SDK `auth()` the stored tokens and client info,
@@ -46,6 +51,25 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    Google login (`127.0.0.1`, random port, one-use state, timeout). Registration
    prefers pre-registered `clientId`, then CIMD, then DCR. Connect is a
    human-only operation that returns the authorize URL; a session never starts it.
+   **Credentials are bound to one issuer.** Without cached discovery state, the
+   SDK follows any `resource_metadata` a 401 names. It sends the stored refresh
+   token and client secret to that server's token endpoint before
+   `redirectToAuthorization` is reached. So connect refuses an issuer other than
+   the preset's and stores the binding in the bundle. Outside a connect attempt,
+   the provider's `discoveryState()` returns that stored binding, so the SDK
+   skips discovery. `saveDiscoveryState` throws on a different issuer, and the
+   provider returns no tokens or client info for a bundle whose binding no
+   longer matches. The bounded fetch (item 7) is the last check: it refuses any
+   request carrying a code, verifier, refresh token or client secret unless it
+   goes to the bound token endpoint. It also refuses any request carrying the
+   bearer unless it goes to the row's URL.
+   **Connect and reconnect run on attempt-only state.** If a refresh token is
+   stored, the SDK refreshes and returns `AUTHORIZED` without ever opening
+   consent. So each human attempt gets its own provider. Its `tokens()` returns
+   nothing, and it keeps the client info, verifier and returned tokens in
+   memory. The current grant stays in the vault and in use until the attempt
+   succeeds and commits as described in item 5. A failed or cancelled attempt
+   changes nothing.
    **The preset's scope set is a hard maximum.** By itself the SDK widens it: with
    no explicit scope it requests the server's whole `scopes_supported`, and the
    transport retries a 403 `insufficient_scope` with the scope from the
@@ -60,11 +84,22 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    unknown fields. Slack's `oauth.v2.user.access` puts the granted scopes in
    `authed_user.scope`, comma-separated, and reports errors as `{ok: false,
    error}`. So the `fetchFn` the daemon passes to `auth()` normalizes each
-   preset's token-endpoint reply. The Slack preset turns `ok: false` into an
-   OAuth error body, moves `authed_user.scope` to a space-separated top-level
-   `scope`, and sets `token_type: Bearer`. Other presets pass through. A
-   response with no `scope` means the requested scope (RFC 6749). The
-   over-broad check runs on the normalized scope.
+   preset's token-endpoint reply. The SDK raises an error only on a non-2xx
+   status. So the Slack preset turns `ok: false` into a non-2xx OAuth error:
+   - `invalid_refresh_token`, `token_revoked`, `token_expired`,
+     `account_inactive` and `invalid_code` become 400 `invalid_grant`, which
+     ends the grant.
+   - `bad_client_secret` and `invalid_client_id` become 401 `invalid_client`.
+   - `ratelimited`, `internal_error`, `fatal_error`, `service_unavailable` and
+     `request_timeout` become 503 `temporarily_unavailable`, which backs off and
+     keeps the grant.
+   - Any other code becomes 400 `invalid_request`.
+
+   On success it moves `authed_user.scope` to a space-separated top-level
+   `scope` and sets `token_type: Bearer`. Other presets pass through. When a
+   reply has no `scope` (RFC 6749), a code exchange means the requested scope
+   and a refresh keeps the prior grant's scopes. The over-broad check runs on
+   the result.
 4. **Inject outside registry headers.** For an OAuth row the daemon itself is the
    MCP client: SDK `Client` plus `StreamableHTTPClientTransport` with the
    provider above. Sessions get an in-process SDK server (`createSdkMcpServer`,
@@ -86,12 +121,21 @@ a URL, a scope set and, where the vendor requires it, a client ID.
 5. **Health and refresh.** Refresh goes through the SDK provider, serialized per
    server like the Google `token-access` flight. On `invalid_grant` the provider
    clears the tokens and the server shows **Reconnect needed**; its tools drop
-   out of new sessions. Server health is derived from the vault bundle, so we
-   record no second copy.
+   out of new sessions. **Admission is durable.** The provider serves tokens
+   only when the row's `auth.active` is true and the bundle's generation equals
+   `auth.generation`. Health comes from the row and the bundle together:
+   inactive means disconnected, a matching bundle means healthy, anything else
+   means Reconnect needed. A connect commits, under the per-server lock, by
+   writing the new bundle under the next generation, then setting the row active
+   at that generation. A stop between the two writes leaves a bundle that is
+   never admitted.
    **Disconnect is fenced, as for Google** ([lifecycle][google-lifecycle]). It
-   aborts the pending login, refresh and in-flight calls first. Then it runs on
-   the same per-server lock as every token save, bumps the server's generation,
-   and erases the bundle. A save carrying an older generation is dropped, so a
+   aborts the pending login, refresh and in-flight calls first. Then, on the
+   same per-server lock as every token save, it persists the tombstone: row
+   inactive, generation bumped. Only then does it erase the bundle. If the erase
+   fails or the daemon stops, the old bundle stays unadmitted after restart, and
+   the next connect overwrites it. A save carrying an older generation is
+   dropped, so a
    late refresh or login callback cannot bring tokens back. Existing proxies
    check the generation on each call, refuse after disconnect without contacting
    the server, and close their client.
@@ -101,9 +145,10 @@ a URL, a scope set and, where the vendor requires it, a client ID.
    erases the bundle, and only then deletes the row. If the daemon stops between
    the two steps, the row is left without tokens and shows Reconnect needed. The
    `mcp.registry.delete` RPC routes an OAuth row to that operation. A change to
-   an OAuth row's `url` or `auth`, through `mcp.registry.update`, also
-   disconnects first. The registry repository's plain `delete`, and any plain
-   `update` of `url` or `auth`, refuses a row with `auth` set. Only the remove
+   an OAuth row's `url`, `sourceType` or `auth`, through `mcp.registry.update`,
+   also disconnects first, and a change away from `http` also clears `auth`. The
+   registry repository's plain `delete`, and any plain `update` of `url`,
+   `sourceType` or `auth`, refuses a row with `auth` set. Only the remove
    and replace operations use the separate repository method that may touch
    such a row. That covers the other writers: the MCP import service, which
    creates, updates and deletes the rows it imports, and built-in seeding in
@@ -148,6 +193,7 @@ call was attempted.
 | --- | --- | --- | --- |
 | Server | `https://mcp.atlassian.com/v2/mcp`, official ([docs][atl]) | `https://mcp.slack.com/mcp`, official ([docs][slack]) | `https://mcp.basecamp.com/mcp`, served from the vendor's own domain |
 | Resource metadata | `/.well-known/oauth-protected-resource/v2/mcp` | root `/.well-known/oauth-protected-resource` (the path form returns 404) | `/.well-known/oauth-protected-resource/mcp` |
+| Issuer (pinned by preset) | `https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3` | `https://mcp.slack.com` | `https://app.basecamp.com` |
 | Registration | DCR endpoint and `client_id_metadata_document_supported: true` | No DCR (per docs). Needs our own Slack app's ID and secret, `client_secret_post`. Only directory-published or internal apps may use MCP | DCR endpoint and `client_id_metadata_document_supported: true` |
 | PKCE | S256 | S256 | S256 |
 | Read-only scopes | `read:jira:agent-interface`, `search:jira:agent-interface` (+ `offline_access`) | `search:read.*`, `channels:history`, `users:read` and other `*:read` | `read` (also `mcp`, `full`) |
@@ -183,7 +229,7 @@ rejects a missing or expired bearer. It has one read tool and one write tool. Th
 write tool needs a write scope and counts every mutation it applies. It records
 every authorize request's scope, can advertise every scope in its metadata, can
 answer with a 403 `insufficient_scope` challenge naming a write scope, and can
-delay any token response. It can also return oversized bodies, SSE events,
+delay any token response. It can run a second authorization server and answer a 401 whose `resource_metadata` points there. It can omit `scope` from a refresh reply. It can also return oversized bodies, SSE events,
 catalogs and results, and echo the caller's bearer in a result or an error.
 Switches cover the vendor shapes above: no DCR plus a required client secret
 and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
@@ -191,8 +237,8 @@ and Slack's token reply (`ok`, comma-separated `authed_user.scope`,
 
 | Order | Slice | Proof against the fake server |
 | --- | --- | --- |
-| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. Oversized metadata or token bodies fail with `response_too_large`. |
-| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID, and an existing proxy refuses calls. The import service cannot delete or retarget an OAuth row. |
+| 1 | Fake server fixture; vault MCP address; vault-backed `OAuthClientProvider` with the scope maximum | `auth()` completes discovery, DCR and PKCE; the bundle is in the vault under the MCP address, survives a restart, and is absent from DB rows and registry reads. Two servers, and two instances, cannot read each other's bundles. Wrong state and replay are refused. With all scopes advertised, the authorize request carries only the maximum. A grant wider than the maximum is not stored, including a Slack-shaped reply whose over-broad scopes are only in `authed_user.scope`. A Slack `ok: false` reply fails as a login error. A Slack `invalid_refresh_token` gives Reconnect needed with no retry, and `ratelimited` keeps the grant and backs off. A 401 that points at the second authorization server sends nothing to it: no refresh token, no client secret, no code. A refresh reply without `scope` keeps the prior scopes. Oversized metadata or token bodies fail with `response_too_large`. |
+| 2 | `auth` column, preset table (test preset only), human-only connect, reconnect and disconnect | RPC connect reaches a healthy state. The Slack shape works with a pre-registered client and secret. A login callback or refresh response delayed until after disconnect leaves the vault empty and health disconnected. If the vault erase fails, or the daemon restarts between the tombstone and the erase, the old bundle is never served. Reconnect on a healthy grant opens consent instead of refreshing. The old grant keeps working until the new one commits, and a cancelled reconnect leaves it unchanged. Changing `sourceType` away from `http` disconnects first and clears `auth`. Setting `auth` on a non-`http` row is refused. Deleting the row through `mcp.registry.delete`, or changing its URL, while a token save is delayed leaves no bundle under that row ID, and an existing proxy refuses calls. The import service cannot delete or retarget an OAuth row. |
 | 3 | Daemon-held client and in-process tool proxy, wired in query options for OAuth rows | A real session lists and calls the fake read tool. A running session gains the tools on connect and loses them on disconnect without a restart. Session config has no `Authorization`. An expired token refreshes once under concurrent calls. `invalid_grant` gives Reconnect needed and removes the tools. A write tool call ends with zero mutations on the fake. A write-scope challenge during a call records no new authorize request. A call after disconnect is refused with no request reaching the fake. An oversized catalog is refused, an oversized result arrives truncated with the marker, and an oversized response or SSE event fails with `response_too_large`. A bearer echoed in a result or an error reaches the session and logs only as `[redacted]` or a reason code. |
 | 4 | Connect, reconnect and health on the MCP server row in Settings | An isolated browser clicks Connect through the fake consent, and the state stays after reload, with screenshots. |
 | 5 | Jira, Slack and Basecamp presets (URL, read scopes, client needs) | Each preset produces the expected authorize URL and read-only scopes against the fake server. The real sign-in per vendor is the human step above. |
