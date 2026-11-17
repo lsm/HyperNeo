@@ -58,6 +58,13 @@ const Fields = {
     .optional()
     .describe('Mandate section that defines the goal, e.g. "mandate.md#adoption"'),
   mandateRev: z.string().nullable().optional().describe('Home repo commit the goal matches'),
+  dailyRunLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1440)
+    .optional()
+    .describe('Work wakes allowed in any 24 hours; further due times are skipped. Default 24.'),
 };
 
 const Create = z
@@ -71,7 +78,7 @@ const Create = z
       .int()
       .positive()
       .default(4)
-      .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
+      .describe('Legacy compatibility only; ignored.'),
     ownSession: z
       .boolean()
       .default(false)
@@ -162,6 +169,7 @@ const GoalSchema = z.object({
   nextSteps: z.array(z.string()),
   mandateRef: z.string().nullable(),
   mandateRev: z.string().nullable(),
+  dailyRunLimit: z.number(),
   createdAt: z.number(),
   updatedAt: z.number(),
   completedAt: z.number().nullable(),
@@ -400,7 +408,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session, with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
+        'Create a goal owned by a session, with one work wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Every due time wakes the owner to work, even when facts are unchanged, up to dailyRunLimit wakes in any 24 hours (default 24); later due times are skipped and the owner is told once. ownSession starts a dedicated session that owns the goal, runs its wakes and reports reviews back with session.clone.return; closing the goal stops its wakes and leaves that session open. nudgeEvery is accepted for legacy compatibility only. Returns { accepted, goal } or { accepted: false, reason }.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,

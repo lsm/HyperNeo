@@ -16,40 +16,8 @@ import {
 const entered = vi.hoisted(() => [] as string[]);
 
 vi.mock('superpipe', async (importOriginal) => {
-  const real = await importOriginal<typeof import('superpipe')>();
-  type Api = Record<string, (...args: unknown[]) => unknown>;
-  const recordEntry = (api: Api, name: string): Api => {
-    const proxy: Api = new Proxy(api, {
-      get(target, prop: string) {
-        const member = target[prop];
-        if (typeof member !== 'function') return member;
-        if (prop === 'end' || prop === 'endAsync') {
-          return (...args: unknown[]) => {
-            const run = member.apply(target, args) as (...input: unknown[]) => unknown;
-            return (...input: unknown[]) => {
-              entered.push(name);
-              return run(...input);
-            };
-          };
-        }
-        return (...args: unknown[]) => {
-          const result = member.apply(target, args);
-          return result === target ? proxy : result;
-        };
-      },
-    });
-    return proxy;
-  };
-  return {
-    ...real,
-    default: (functions?: Record<string, unknown>) => {
-      const factory = real.default(functions);
-      return (name: string, defs?: never) => {
-        const built = factory(name, defs);
-        return typeof built === 'object' ? recordEntry(built as unknown as Api, name) : built;
-      };
-    },
-  };
+  const { recordPipelineEntries } = await import('../../../helpers/pipeline-entries');
+  return recordPipelineEntries(await importOriginal<typeof import('superpipe')>(), entered);
 });
 
 const deps = {} as never;

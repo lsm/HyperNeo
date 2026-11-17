@@ -17735,6 +17735,12 @@
               }
             ]
           },
+          "dailyRunLimit": {
+            "description": "Work wakes allowed in any 24 hours; further due times are skipped. Default 24.",
+            "maximum": 1440,
+            "minimum": 1,
+            "type": "integer"
+          },
           "description": {
             "type": "string"
           },
@@ -17787,7 +17793,7 @@
           },
           "nudgeEvery": {
             "default": 4,
-            "description": "Legacy compatibility only; never forces a turn when facts are unchanged.",
+            "description": "Legacy compatibility only; ignored.",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
             "type": "integer"
@@ -17858,6 +17864,9 @@
                     ]
                   },
                   "createdAt": {
+                    "type": "number"
+                  },
+                  "dailyRunLimit": {
                     "type": "number"
                   },
                   "description": {
@@ -17971,6 +17980,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18048,6 +18058,9 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "dailyRunLimit": {
+                    "type": "number"
+                  },
                   "description": {
                     "type": "string"
                   },
@@ -18159,6 +18172,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18232,6 +18246,9 @@
                       ]
                     },
                     "createdAt": {
+                      "type": "number"
+                    },
+                    "dailyRunLimit": {
                       "type": "number"
                     },
                     "description": {
@@ -18345,6 +18362,7 @@
                     "nextSteps",
                     "mandateRef",
                     "mandateRev",
+                    "dailyRunLimit",
                     "createdAt",
                     "updatedAt",
                     "completedAt",
@@ -18386,6 +18404,12 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "dailyRunLimit": {
+            "description": "Work wakes allowed in any 24 hours; further due times are skipped. Default 24.",
+            "maximum": 1440,
+            "minimum": 1,
+            "type": "integer"
+          },
           "description": {
             "type": "string"
           },
@@ -18516,6 +18540,9 @@
                   "createdAt": {
                     "type": "number"
                   },
+                  "dailyRunLimit": {
+                    "type": "number"
+                  },
                   "description": {
                     "type": "string"
                   },
@@ -18627,6 +18654,7 @@
                   "nextSteps",
                   "mandateRef",
                   "mandateRev",
+                  "dailyRunLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",

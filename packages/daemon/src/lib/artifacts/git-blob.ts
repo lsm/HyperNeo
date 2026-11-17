@@ -5,7 +5,7 @@ import {
   type ArtifactRefusal,
 } from '@hyperneo/shared/types/artifact-file';
 import { VIDEO_MAX_BYTES, videoExtension } from '@hyperneo/shared/types/video-container';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import type { PipelineAPI, SuperPipeFactory } from 'superpipe';
 import { z } from 'zod';
 import { runGhJson } from '../github/gh-lookup-helpers.ts';
 import { spawnProcess } from '../runtime-spawn/index.ts';
@@ -129,25 +129,27 @@ async function download(target: Target, blobSha: string) {
   };
 }
 
-export const readBoundGitBlob = (superpipe({})('artifact-bound-git-blob') as PipelineAPI)
-  .input(['target'])
-  .pipe(
-    (target: Target) => {
-      const parsed = targetSchema.safeParse(target);
-      return parsed.success && !sensitivePath(parsed.data.path)
-        ? { value: parsed.data }
-        : { reason: unavailable() };
-    },
-    'target',
-    'result:blob'
-  )
-  .pipe((target: Target) => ({ target }), 'blob', 'held')
-  .pipe(locate, 'blob', 'result:blob')
-  .pipe(
-    (held: { target: Target }, blobSha: string) => download(held.target, blobSha),
-    ['held', 'blob'],
-    'blob'
-  )
-  .endAsync('blob') as (
-  target: Target
-) => Promise<Blob | ArtifactRefusal | ReturnType<typeof tooLarge>>;
+export const boundGitBlobReader = (pipeline: ReturnType<SuperPipeFactory>) =>
+  (pipeline as PipelineAPI)
+    .input(['target'])
+    .pipe(
+      (target: Target) => {
+        const parsed = targetSchema.safeParse(target);
+        return parsed.success && !sensitivePath(parsed.data.path)
+          ? { value: parsed.data }
+          : { reason: unavailable() };
+      },
+      'target',
+      'result:blob'
+    )
+    .pipe((target: Target) => ({ target }), 'blob', 'held')
+    .pipe(locate, 'blob', 'result:blob')
+    .pipe(
+      (held: { target: Target }, blobSha: string) => download(held.target, blobSha),
+      ['held', 'blob'],
+      'blob'
+    )
+    .endAsync('blob') as (
+    target: Target
+  ) => Promise<Blob | ArtifactRefusal | ReturnType<typeof tooLarge>>;
+export type GitBlobReader = ReturnType<typeof boundGitBlobReader>;
