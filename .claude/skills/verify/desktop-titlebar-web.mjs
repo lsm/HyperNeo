@@ -20,7 +20,6 @@ try {
     const context = await browser.newContext({ storageState, colorScheme: theme, viewport: { width: 1280, height: 900 } });
     await context.addInitScript((selectedTheme) => {
       window.isTauri = true;
-      document.documentElement.classList.add('tauri-desktop');
       localStorage.setItem('theme', selectedTheme);
     }, theme);
     const page = await context.newPage();
@@ -31,7 +30,7 @@ try {
       const measurement = await page.evaluate(() => {
         const root = document.querySelector('.neo-shell, .desktop-window-shell, #root > *');
         const hit = document.elementFromPoint(400, 25);
-        return { path: location.pathname, bodyText: document.body.innerText.slice(0, 100), top: root?.getBoundingClientRect().top, drag: hit?.hasAttribute('data-tauri-drag-region') ?? false };
+        return { path: location.pathname, bottom: root?.getBoundingClientRect().bottom, desktop: document.documentElement.classList.contains('tauri-desktop'), bodyText: document.body.innerText.slice(0, 100), top: root?.getBoundingClientRect().top, drag: hit?.hasAttribute('data-tauri-drag-region') ?? false };
       });
       await page.evaluate(() => {
         const box = document.createElement('div');
@@ -43,17 +42,30 @@ try {
         }
         document.body.append(box);
       });
-      await page.screenshot({ path: join(evidence, `${phase}-${name}-${theme}.png`) });
-      results.push({ name, theme, ...measurement });
+      await page.screenshot({ path: join(evidence, `${phase}-${name}-${theme}.png`), mask: [page.getByTestId('chat-header-folder')], maskColor: '#888888' });
+      results.push({ name, theme, expectedPath: route, ...measurement });
     }
     await context.close();
   }
+  const browserContext = await browser.newContext({ storageState, viewport: { width: 1280, height: 900 } });
+  const browserPage = await browserContext.newPage();
+  for (const route of ['/neo', '/sessions', '/pair']) {
+    await browserPage.goto(`${base}${route}`);
+    await browserPage.locator('#root').waitFor({ state: 'attached' });
+    await browserPage.waitForTimeout(1000);
+    assert.equal(await browserPage.locator('.desktop-drag-strip').count(), 0);
+    assert.equal(await browserPage.evaluate(() => document.documentElement.classList.contains('tauri-desktop')), false);
+  }
+  await browserContext.close();
 } finally {
   await browser.close();
   writeFileSync(join(evidence, `${phase}-geometry.json`), JSON.stringify(results, null, 2));
 }
 assert.equal(results.length, 12);
 for (const result of results) {
+  assert.equal(result.path, result.expectedPath);
+  assert(result.bottom <= 900, `${result.name}: bottom=${result.bottom}`);
+  assert(result.desktop, `${result.name}: desktop class missing`);
   assert(result.bodyText, `${result.name} has no visible content`);
   assert(result.top >= 52 && result.drag, `${result.name} ${result.theme}: top=${result.top} drag=${result.drag}`);
 }
