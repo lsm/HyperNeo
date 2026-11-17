@@ -69,7 +69,7 @@ async function persistLogin(
   return { state: 'complete', loginId: plan.loginId, connectionId: plan.connection.id };
 }
 
-const completeLogin = (superpipe({})('google-connection-complete') as PipelineAPI)
+const completeLogin = (superpipe({})('connection-login-complete') as PipelineAPI)
   .input(['outcome', 'flow', 'active', 'closed', 'read', 'save', 'vault', 'provider'])
   .pipe(admit, ['outcome', 'flow', 'active', 'closed'], 'result:result')
   .pipe((read: Read) => read(), 'read', 'records')
@@ -86,7 +86,7 @@ const completeLogin = (superpipe({})('google-connection-complete') as PipelineAP
   provider: ConnectionStatus['provider']
 ) => Promise<View>;
 
-const disconnect = (superpipe({})('google-connection-disconnect') as PipelineAPI)
+const disconnect = (superpipe({})('connection-disconnect') as PipelineAPI)
   .input(['connection', 'save', 'vault'])
   .pipe(
     async (connection: ConnectionStatus, save: Save) => {
