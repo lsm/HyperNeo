@@ -41,7 +41,7 @@ A missing path is refused. The daemon no longer fills in a path.
 
 The worker sandbox does not change. It applies only to workers in a Git checkout (its marker lives in `.git`, `drivers/worker-sandbox.ts`), and those are coding todos, which never use `evidence` under rule 1. A sandboxed worker that must write outside its checkout needs the human's filesystem grant, as `docs/design/worker-sandbox.md` already says.
 
-**3. Existing open todos keep working.** A todo that already has a check keeps it and completes as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
+**3. Existing open todos keep working.** A todo that already has a check keeps it and is evaluated as before. New adds and changed checks on edits follow rules 1 and 2. An edit that omits the check or resubmits the identical check retains it, including a legacy hidden path; changing the check applies the new rule. No data is rewritten.
 
 **4. Stop assigning hidden paths.** Remove:
 
@@ -49,7 +49,7 @@ The worker sandbox does not change. It applies only to workers in a Git checkout
 - `neoEvidenceRefusal`, replaced by rules 1 and 2;
 - `HYPERNEO_EVIDENCE`, its worker environment plumbing, and the general brief lines about private completion evidence.
 
-Keep `todoEvidenceFile` and the `ask-entries.ts` redaction for legacy records: their hidden paths remain masked in both done conditions and completion evidence, including historical and open todos. This lookup does not assign or create a path. For an existing todo whose check already names its assigned hidden path, the worker brief must still instruct the worker to satisfy that exact check privately; new todos receive only their actual outcome check and no instruction to write separate hidden evidence.
+Keep `todoEvidenceFile` and the `ask-entries.ts` redaction for legacy records: their hidden paths remain masked in both done conditions and completion evidence, including historical and open todos. This lookup does not assign or create a path. For an existing todo whose check already names its assigned hidden path, the worker brief must still instruct the worker to satisfy that exact check privately. If that path is outside its sandbox, the worker reports blocked until authorized access is available; do not grant the hidden directory automatically. New todos receive only their actual outcome check and no instruction to write separate hidden evidence.
 
 Builds and scratch stay as they are: temporary folders that clean themselves.
 
