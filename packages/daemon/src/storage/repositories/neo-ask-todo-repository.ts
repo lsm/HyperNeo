@@ -32,6 +32,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { neoInputText, type NeoUnansweredInput } from '../../lib/neo/plan-context.ts';
+import { NEO_TODO_FAILURE_NEXT } from '../../lib/neo/todo-state.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { JobQueueRepository } from './job-queue-repository.ts';
 import {
@@ -256,6 +257,14 @@ const toTodo = ({
   ...row
 }: TodoRow): NeoTodo => ({
   ...row,
+  ...((row.state as string) === 'failed'
+    ? {
+        state: 'blocked' as const,
+        blockedBy: 'failure' as const,
+        blockedReason: row.blockedReason ?? row.reason,
+        nextAction: row.nextAction ?? NEO_TODO_FAILURE_NEXT,
+      }
+    : {}),
   ...(producesFollowUp === 1 ? { producesFollowUp: true as const } : {}),
   dependsOn: parsed<string[]>(dependsOnJson),
   ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
