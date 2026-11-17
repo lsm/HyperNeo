@@ -203,6 +203,19 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
+  test('keeps a Neo-named worker the human later chose for another todo', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add({ ...started, name: 'dev-6' }));
+      await h.finishTodo(h.add({ verb: 'send', ref: worker }, { session: 'dev-6' }));
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('keeps a worker the todo only sent work to', async () => {
     const h = setup();
     try {
