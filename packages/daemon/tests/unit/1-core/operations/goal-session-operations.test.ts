@@ -7,7 +7,11 @@ import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
-import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
@@ -79,7 +83,7 @@ function setup(
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules, started, released };
+  return { db, call, audited, scheduler, goals, schedules, started, released, ops };
 }
 
 describe('session goal detail reads', () => {
@@ -856,6 +860,28 @@ describe('a goal in its own session', () => {
       expect(started).toHaveLength(1);
       expect(released).toEqual(['goal-session-1']);
       expect(scheduler.repo.list()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the goal session finds its goal operations in operations.list', async () => {
+    const { db, ops } = setup();
+    try {
+      const listed = listOperationSummaries(createOperationRegistry(ops), {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      }).map(({ name }) => name);
+      expect(listed).toEqual(
+        expect.arrayContaining([
+          'goal.session.get',
+          'goal.facts',
+          'goal.journal.list',
+          'goal.journal.append',
+          'goal.session.update',
+        ])
+      );
     } finally {
       db.close();
     }
