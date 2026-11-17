@@ -22,6 +22,8 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 ready=
 for _ in $(seq 1 120); do
   code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" || true)
