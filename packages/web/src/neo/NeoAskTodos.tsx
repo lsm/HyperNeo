@@ -904,8 +904,8 @@ export function NeoAskTodos({
         {ask.topic && (
           <button
             type="button"
-            disabled={!onTopic}
-            onClick={() => onTopic?.(ask.topic!)}
+            disabled={!onTopic || !ask.topicKey}
+            onClick={() => ask.topicKey && onTopic?.(ask.topicKey)}
             class="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-fg enabled:hover:underline"
           >
             <span

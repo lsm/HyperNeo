@@ -28,6 +28,7 @@ let dispatched: boolean;
 let workspace: string | null;
 let worktree: string | undefined;
 let mismatchedReply: boolean;
+let body: { content?: Record<string, unknown>[]; structuredContent?: unknown };
 const caller: OperationCaller = {
   source: 'mcp',
   sessionId: 'worker-a',
@@ -39,6 +40,7 @@ beforeEach(async () => {
   workspace = root;
   worktree = undefined;
   mismatchedReply = false;
+  body = {};
   await mkdir(join(root, 'desktop'));
   db = new Database(':memory:');
   db.exec(`CREATE TABLE neo_asks(id TEXT, status TEXT);
@@ -68,6 +70,7 @@ beforeEach(async () => {
             decision: reason ? 'refused' : 'allowed',
             reason,
             dispatched,
+            ...body,
           },
         }) + '\n'
       );
@@ -145,6 +148,71 @@ test.each(['universal_read', 'direct_task_worker'] as const)(
     expect(audit()[0].timestamp).toBeGreaterThan(0);
   }
 );
+
+test('a driver error reaches the session with the driver message and screenshot', async () => {
+  reason = 'driver_error';
+  body = {
+    content: [
+      { type: 'text', text: 'Call get_window_state first' },
+      { type: 'image', data: 'aW1n', mimeType: 'image/png' },
+    ],
+    structuredContent: { code: 'no_screenshot' },
+  };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({
+    ok: false,
+    reason: 'driver_error',
+    structuredContent: { code: 'no_screenshot' },
+  });
+  expect(response.content.slice(1)).toEqual(body.content);
+  expect(response.isError).toBe(true);
+});
+
+test('a full-window screenshot larger than 2 MiB reaches the session', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(3 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true });
+  expect(response.content[1]).toEqual(body.content?.[0]);
+  expect(response.isError).toBeFalsy();
+});
+
+test('a screenshot over the model image limit is replaced by a note', async () => {
+  body = { content: [{ type: 'image', data: 'A'.repeat(6 << 20), mimeType: 'image/png' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(response.content).toHaveLength(2);
+  expect(response.content[1]).toMatchObject({
+    type: 'text',
+    text: expect.stringContaining('max_image_dimension'),
+  });
+});
+
+test('a malformed driver image block still returns the reply', async () => {
+  body = { content: [{ type: 'image' }] };
+  const handler = createOperationMcpHandler(registry(), () => ({
+    sessionId: 'worker-a',
+    role: 'direct_task_worker',
+  }));
+  const response = await handler({ name: 'desktop.call', input });
+  expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true, dispatched: true });
+});
+
+test('driver content that is not a list is dropped and the call is still audited', async () => {
+  body = { content: 'not-a-list' } as unknown as typeof body;
+  expect(await call()).toMatchObject({ kind: 'completed', value: { ok: true, dispatched: true } });
+  expect(audit()).toHaveLength(1);
+});
 
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
