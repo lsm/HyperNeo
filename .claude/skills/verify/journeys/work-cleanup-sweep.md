@@ -1,8 +1,8 @@
 # Daily worker worktree cleanup
 
 Step 5b releases worker worktrees without an age delay. Worker and todo evidence
-live separately under `work/evidence` and remain untouched; their age/reference
-cleanup is the separate step 5c that shares `planWorkRelease`'s evidence arm.
+live separately under `work/evidence`; fresh evidence stays here, and its
+age/reference cleanup is covered by `work-cleanup-evidence.md`.
 
 Use the isolated metadata-only setup in `../SKILL.md` with pinned Bun:
 

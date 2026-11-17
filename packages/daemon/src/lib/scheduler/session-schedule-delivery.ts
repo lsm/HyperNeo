@@ -4,7 +4,13 @@ import {
   SessionScheduleRepository,
   type SessionSchedule,
 } from '../../storage/repositories/session-schedule-repository.ts';
-import type { WorkStatus, WorkTurnQuestion } from '../drivers/types.ts';
+import type { z } from 'zod';
+import type {
+  WorkInputEvidenceSchema,
+  WorkInputReceiptSchema,
+  WorkStatus,
+  WorkTurnQuestion,
+} from '../drivers/types.ts';
 import { createMailboxEntry } from '../mailbox/entry.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
 import { enqueueMailboxAdmission } from '../../storage/repositories/mailbox-admission-write.ts';
@@ -13,9 +19,17 @@ import type { OperationRegistry } from '../operations/registry.ts';
 import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
 import { neoSessionStatus } from '../neo/session-status.ts';
 
+type WorkInputReceipt = z.infer<typeof WorkInputReceiptSchema>;
+type WorkInputEvidence = z.infer<typeof WorkInputEvidenceSchema>;
+
+const accepted = (evidence: WorkInputEvidence | undefined, receipt: WorkInputReceipt) =>
+  evidence?.receipt.executionId === receipt.executionId &&
+  evidence.receipt.inputId === receipt.inputId &&
+  (evidence.state === 'observed' || evidence.transcriptState === 'accepted');
+
 export function createScheduleDelivery(db: Database, registry: () => OperationRegistry) {
   const caller = { source: 'internal' as const, role: 'neo' as const };
-  const invoke = async (name: string, input: unknown) => {
+  const call = async (name: string, input: unknown) => {
     const outcome = await invokeOperation(registry(), name, input, caller);
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     const value = outcome.value as
@@ -25,12 +39,22 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
             status?: WorkStatus;
             inputId?: string;
             unconfirmed?: boolean;
+            receipt?: WorkInputReceipt;
+            inputEvidence?: WorkInputEvidence;
             turnQuestion?: WorkTurnQuestion;
           };
         }
-      | { ok: false; reason: string; detail: string };
-    if (!value.ok && value.reason !== 'not_found' && value.reason !== 'not_open')
-      throw new Error(value.detail ?? `${name} refused`);
+      | { ok: false; reason: string; detail: string; notSent?: true };
+    return value;
+  };
+  const refused = (name: string, value: { reason: string; detail: string }) =>
+    value.reason !== 'not_found' && value.reason !== 'not_open'
+      ? new Error(value.detail ?? `${name} refused`)
+      : null;
+  const invoke = async (name: string, input: unknown) => {
+    const value = await call(name, input);
+    const error = value.ok ? null : refused(name, value);
+    if (error) throw error;
     return value;
   };
   return {
@@ -69,16 +93,24 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
       const message = `<daemon-note kind="scheduled_wake">\n${text.replace(/</g, '&lt;')}\n</daemon-note>`;
       const ref = schedule.target;
       if (ref.adapter !== 'hyperneo' || ref.daemon) {
-        if (
-          !new SessionScheduleRepository(db.getDatabase()).reserveExternalDelivery(
-            schedule,
-            messageId
-          )
-        )
-          return 'unconfirmed';
-        const sent = await invoke('work.send', { ref, message, from: origin, notice: true });
-        if (!sent.ok) return 'target_gone';
-        return sent.value.unconfirmed ? 'unconfirmed' : undefined;
+        const repo = new SessionScheduleRepository(db.getDatabase());
+        if (!repo.reserveExternalDelivery(schedule, messageId)) {
+          const receipt = repo.deliveryReceipt(schedule.id, messageId) as WorkInputReceipt | null;
+          if (!receipt) return 'unconfirmed';
+          const read = await invoke('work.status', { ref, receipt });
+          return read.ok && accepted(read.value.inputEvidence, receipt) ? undefined : 'unconfirmed';
+        }
+        const sent = await call('work.send', { ref, message, from: origin, notice: true });
+        if (!sent.ok) {
+          const error = refused('work.send', sent);
+          if (!error) return 'target_gone';
+          if (sent.notSent) repo.releaseExternalDelivery(schedule, messageId);
+          throw error;
+        }
+        if (!sent.value.unconfirmed) return undefined;
+        if (sent.value.receipt)
+          repo.saveDeliveryReceipt(schedule.id, messageId, sent.value.receipt);
+        return 'unconfirmed';
       }
       const sent = await gatewayFor(db.getDatabase()).call(
         enqueueMailboxAdmission,

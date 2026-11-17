@@ -16,7 +16,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import { sessionSdkPath } from '../session/sdk-path.ts';
+import { sessionSdkIds, sessionSdkPath } from '../session/sdk-path.ts';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -24,7 +24,7 @@ import { Logger } from '../logger.ts';
 import { teardownSessionDeliveries } from '../mailbox/cancellation.ts';
 import { getProviderService } from '../provider-service.ts';
 import { resolveNewSessionModel, type NewSessionModelSettings } from './new-session-model.ts';
-import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
+import { archiveSDKSessions, deleteSDKSessions } from '../sdk-session-file-manager.ts';
 import type { WorktreeManager } from '../worktree-manager.ts';
 import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
@@ -674,36 +674,14 @@ export class SessionLifecycle {
       this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
     }
 
-    let archiveMetadata:
-      | {
-          sdkArchivePath: string;
-          sdkArchivedAt: string;
-          sdkArchivedFileCount: number;
-          sdkArchivedSize: number;
-        }
-      | undefined;
     try {
       const sdkWorkspacePath = sessionSdkPath(session);
-      if (sdkWorkspacePath) {
-        const result = archiveSDKSessionFiles(
-          sdkWorkspacePath,
-          session.sdkSessionId ?? null,
-          sessionId
-        );
-        if (result.archivePath) {
-          archiveMetadata = {
-            sdkArchivePath: result.archivePath,
-            sdkArchivedAt: new Date().toISOString(),
-            sdkArchivedFileCount: result.archivedFiles.length,
-            sdkArchivedSize: result.totalSize,
-          };
-        }
-        completedPhases.push('sdk-files-archive');
-      } else {
-        completedPhases.push('sdk-files-archive-skipped');
-      }
+      const archived = sdkWorkspacePath
+        ? await archiveSDKSessions(sdkWorkspacePath, sessionSdkIds(session))
+        : 0;
+      completedPhases.push(archived ? 'sdk-session-archive' : 'sdk-session-archive-skipped');
     } catch (error) {
-      this.logger.error(`[SessionLifecycle] archiveResources: SDK file archive failed:`, error);
+      this.logger.error(`[SessionLifecycle] archiveResources: SDK session archive failed:`, error);
     }
 
     let cleanup: WorktreeCleanup | undefined;
@@ -738,10 +716,7 @@ export class SessionLifecycle {
             },
           }
         : {};
-      const metadataUpdate = {
-        ...archiveMetadata,
-        ...archivedWorktreeMetadata,
-      };
+      const metadataUpdate = archivedWorktreeMetadata;
 
       await this.update(sessionId, {
         status: 'archived',
@@ -823,20 +798,15 @@ export class SessionLifecycle {
       if (session) {
         try {
           const sdkWorkspacePath = sessionSdkPath(session);
-          if (!sdkWorkspacePath) {
-            completedPhases.push('sdk-files-delete-skipped');
-          } else {
-            const deleteResult = deleteSDKSessionFiles(
-              sdkWorkspacePath,
-              session.sdkSessionId ?? null,
-              sessionId
-            );
-            completedPhases.push(
-              deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
-            );
-          }
+          const deleted = sdkWorkspacePath
+            ? await deleteSDKSessions(sdkWorkspacePath, sessionSdkIds(session))
+            : 0;
+          completedPhases.push(deleted ? 'sdk-session-delete' : 'sdk-session-delete-skipped');
         } catch (error) {
-          this.logger.error(`[SessionLifecycle] deleteResources: SDK file deletion failed:`, error);
+          this.logger.error(
+            `[SessionLifecycle] deleteResources: SDK session delete failed:`,
+            error
+          );
         }
       }
 
