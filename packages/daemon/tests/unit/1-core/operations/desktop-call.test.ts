@@ -208,6 +208,12 @@ test('a malformed driver image block still returns the reply', async () => {
   expect(JSON.parse(response.content[0].text)).toMatchObject({ ok: true, dispatched: true });
 });
 
+test('driver content that is not a list is dropped and the call is still audited', async () => {
+  body = { content: 'not-a-list' } as unknown as typeof body;
+  expect(await call()).toMatchObject({ kind: 'completed', value: { ok: true, dispatched: true } });
+  expect(audit()).toHaveLength(1);
+});
+
 test.each([
   { source: 'rpc', principal: 'local', sessionId: 'worker-a', role: 'direct_task_worker' },
   { source: 'internal', sessionId: 'worker-a', role: 'direct_task_worker' },
