@@ -59,4 +59,24 @@ describe('neoTodoFollowUpRefusal', () => {
     h.store.addTodo('todo-other', h.ask.id, { ...draft, title: 'Other work', dependsOn: [] }, 5);
     expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('follow_up_missing');
   });
+
+  test('requires a dependent for every completed producer', () => {
+    const h = setup();
+    h.store.updateTodo(h.plan, { state: 'done' }, 2);
+    const next = h.store.addTodo(
+      'todo-next',
+      h.ask.id,
+      { ...draft, title: 'Second plan', producesFollowUp: true, dependsOn: [h.plan.id] },
+      3
+    );
+    h.store.updateTodo(next, { state: 'done' }, 4);
+    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toContain('todo-next');
+    h.store.addTodo(
+      'todo-build',
+      h.ask.id,
+      { ...draft, title: 'Build it', dependsOn: [next.id] },
+      5
+    );
+    expect(neoTodoFollowUpRefusal(h.store.listTodos(h.ask.id))).toBeNull();
+  });
 });
