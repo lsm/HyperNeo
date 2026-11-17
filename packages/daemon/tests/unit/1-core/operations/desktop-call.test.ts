@@ -275,6 +275,8 @@ test('operations.describe lists every catalog tool with its arguments', () => {
     expect(described).toContain(tool.description);
   }
   expect(described).toContain('"window_id"');
+  expect(described).toContain('For * and other shifted symbols, send the base key with shift');
+  expect(described).toContain('Unknown key names return driver_error');
 });
 
 test('input cannot impersonate a different worker or choose a workspace', async () => {
