@@ -6,8 +6,9 @@ GUI or external service is needed. Set PROOF to
 under `env -i` with NODE_ENV=test, a private HOME and HYPERNEO_DATA_DIR.
 
 The helper starts an isolated daemon on an ephemeral non-8399 port and seeds
-two finished asks on one synthetic Neo session. One ask's only todo is marked
-`producesFollowUp` (a plan); the other is an ordinary todo. Both have an ended
+two finished asks on one synthetic Neo session. One ask has a finished todo marked
+`producesFollowUp`, a removed dependent, and a later unrelated finished todo;
+the other has an ordinary todo. Both have an ended
 wake turn, so auto-settle may take them.
 
 Observable results, each asserted:
@@ -17,6 +18,6 @@ Observable results, each asserted:
   attention entry, naming the ask and its finished todo (its 1 h, 4 h and 24 h
   repeats are in `neo-attention-sweep.md`);
 - `neo.ask.settle` with status `done` on the plan ask is refused with
-  `follow_up_missing`, and accepted once a later todo exists.
+  `follow_up_missing`, and accepted once a non-removed dependent exists.
 
 Retain `evidence/result.json`. The daemon is closed in finally.
