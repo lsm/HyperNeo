@@ -57,11 +57,15 @@ function setup(
   scheduler.registerSource(schedules);
   const sessions = ['neo:root', 'neo:other'];
   const started: { parentSessionId: string; title: string }[] = [];
+  const released: string[] = [];
   const ops = createSessionGoalOperations({
     goals,
     schedules,
     sessionExists: (sessionId) => sessions.includes(sessionId),
     isChildSession: (sessionId) => sessionId.startsWith('goal-session-'),
+    releaseSession: async (sessionId) => {
+      released.push(sessionId);
+    },
     startSession: async (parentSessionId, title) => {
       started.push({ parentSessionId, title });
       sessions.push(`goal-session-${started.length}`);
@@ -73,7 +77,7 @@ function setup(
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules, started };
+  return { db, call, audited, scheduler, goals, schedules, started, released };
 }
 
 describe('session goal detail reads', () => {
@@ -830,6 +834,23 @@ describe('a goal in its own session', () => {
       expect(started).toHaveLength(1);
       expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual(goalsBefore);
       expect(scheduler.repo.list()).toHaveLength(schedulesBefore);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a goal that fails to save releases the session started for it', async () => {
+    const { db, call, goals, scheduler, started, released } = setup();
+    try {
+      spyOn(goals, 'create').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      await expect(
+        call('goal.session.create', { title: 'Broken', doneTest: 'Done', ownSession: true })
+      ).rejects.toThrow('disk full');
+      expect(started).toHaveLength(1);
+      expect(released).toEqual(['goal-session-1']);
+      expect(scheduler.repo.list()).toEqual([]);
     } finally {
       db.close();
     }
