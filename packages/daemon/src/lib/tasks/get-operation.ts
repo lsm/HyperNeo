@@ -103,12 +103,14 @@ export function createGetTaskOperation(
   const get = (superpipe({})('task.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof ById> | z.infer<typeof ByNumber>, caller: OperationCaller) =>
-        'taskId' in input
+      async (input: z.infer<typeof ById> | z.infer<typeof ByNumber>, caller: OperationCaller) => {
+        const task = await ('taskId' in input
           ? readTask(input.taskId, caller)
-          : readTaskByNumber!(input.spaceId, input.taskNumber, caller),
+          : readTaskByNumber!(input.spaceId, input.taskNumber, caller));
+        return task === null ? { reason: null } : { value: task };
+      },
       ['input', 'caller'],
-      'task'
+      'result:task'
     )
     .endAsync('task') as (
     input: z.infer<typeof ById> | z.infer<typeof ByNumber>,

@@ -73,7 +73,14 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
 ) {
   const transition = (superpipe({})('task.transition') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(transitionTask, ['input', 'caller'], 'result')
+    .pipe(
+      async (input: Input, caller: OperationCaller) => {
+        const result = await transitionTask(input, caller);
+        return result === null ? { reason: null } : { value: result };
+      },
+      ['input', 'caller'],
+      'result:result'
+    )
     .endAsync('result') as (input: Input, caller: OperationCaller) => Promise<TransitionTaskOutput>;
   return defineOperation({
     name: 'task.transition',

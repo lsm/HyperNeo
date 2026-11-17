@@ -17,7 +17,14 @@ export function createUpdateTaskOperation(
 ) {
   const update = (superpipe({})('task.update') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(editTask, ['input', 'caller'], 'result')
+    .pipe(
+      async (input: TaskMetadataInput, caller: OperationCaller) => {
+        const result = await editTask(input, caller);
+        return result === null ? { reason: null } : { value: result };
+      },
+      ['input', 'caller'],
+      'result:result'
+    )
     .endAsync('result') as (
     input: TaskMetadataInput,
     caller: OperationCaller
