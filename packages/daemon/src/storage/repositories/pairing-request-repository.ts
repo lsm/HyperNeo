@@ -345,6 +345,37 @@ export class PairingRequestRepository {
       return { ok: true as const, deviceId, credential, owner: step.owner };
     })();
   }
+
+  setupWindow(): string | null {
+    if (!this.firstDeviceOpen()) return null;
+    const reset = this.db
+      .prepare('SELECT id FROM human_device_resets ORDER BY rowid DESC LIMIT 1')
+      .get() as { id: string } | null;
+    return reset ? `reset:${reset.id}` : 'initial';
+  }
+
+  grantSetupDevice(
+    name: string,
+    window: string,
+    now: number
+  ): { deviceId: string; credential: string } | null {
+    const credential = randomBytes(32).toString('base64url');
+    const deviceId = randomUUID();
+    return this.db.transaction(() => {
+      if (this.setupWindow() !== window) return null;
+      this.cancelFirstDeviceRequests(now);
+      const devices = new DevicePairingRepository(this.db);
+      devices.unapproveHumanCodes();
+      devices.closeHumanRecovery(now);
+      this.db
+        .prepare(
+          `INSERT INTO paired_devices (id, name, kind, secret_hash, created_at, owner)
+           VALUES (?, ?, 'human', ?, ?, 1)`
+        )
+        .run(deviceId, name, hash(credential), now);
+      return { deviceId, credential };
+    })();
+  }
 }
 
 export const pairingRequestReads = defineRepositoryOp(
@@ -356,6 +387,7 @@ export const pairingRequestReads = defineRepositoryOp(
     'ownerCount',
     'activePhoneCount',
     'firstDeviceOpen',
+    'setupWindow',
     'pendingForApproval',
   ] as const
 );
@@ -372,5 +404,6 @@ export const pairingRequestWrites = defineRepositoryOp(
     'cancelRequest',
     'cancelBoundRequest',
     'completeRequest',
+    'grantSetupDevice',
   ] as const
 );
