@@ -1094,6 +1094,35 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('review metrics retain history and show progress without completing the goal', async () => {
+    const { db, call } = setup();
+    const goal = (
+      await call('goal.session.create', {
+        title: 'Grow',
+        metric: { name: 'adopters', target: 10, direction: 'increase', baseline: 2 },
+      })
+    ).goal;
+    const append = (runId: string, value: number) =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: 'Reviewed adoption',
+        effect: 'yes',
+        worked: 'Guides',
+        metricPoint: { value, evidence: 'Synthetic count' },
+      });
+    expect((await append('work:1', 4)).accepted).toBe(false);
+    expect((await append('goal-review:1', 4)).accepted).toBe(true);
+    expect((await append('goal-review:2', 10)).accepted).toBe(true);
+    const entries = (await call('goal.journal.list', { goalId: goal.id })).entries;
+    expect(entries).toHaveLength(2);
+    expect((await call('goal.facts', { goalId: goal.id })).facts.lines.join('\n')).toContain(
+      'adopters: 10; target 10; change 6'
+    );
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('active');
+    db.close();
+  });
+
   test('a retried run keeps its entry id, so a page cursor on it still works; an unknown cursor is refused', async () => {
     const { db, call } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
