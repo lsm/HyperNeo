@@ -109,8 +109,9 @@ export function createDatabaseOperationCatalog(
       }),
       createHumanDeviceResetOperation(() => db.getDatabase()),
       createConnectionList(() => db.getDatabase()),
-      ...createGoogleConnectionOperations(() => db.getDatabase()),
-      ...createMicrosoftConnectionOperations(() => db.getDatabase()),
+      ...[createGoogleConnectionOperations, createMicrosoftConnectionOperations].flatMap((create) =>
+        create(() => db.getDatabase())
+      ),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>
