@@ -44,6 +44,8 @@ ALLOWLIST=(
     "packages/daemon/src/lib/rpc-handlers/family-operations/drivers.ts"
     # Neo project cleanup applied on request: deletes only holders that never spoke, archives one-offs.
     "packages/daemon/src/lib/neo/project-cleanup-apply.ts"
+    # Goal creation archives the goal session it just started when the goal fails to save.
+    "packages/daemon/src/lib/rpc-handlers/family-operations/goals.ts"
 
 
     # Task archive pipeline (UI-initiated via task.archive event cascade)

@@ -47,6 +47,7 @@ import type { SdkMessageWriteMethod } from './repositories/sdk-message-writes.ts
 import { globalSettingsRevision, SettingsRepository } from './repositories/settings-repository.ts';
 import type { SpaceSessionPort } from '../lib/agent/space-session-port.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
+import { SessionGoalRepository } from './repositories/session-goal-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
@@ -110,6 +111,7 @@ export class Database {
   private logger = new Logger('Database');
   private core: DatabaseCore;
   private sessionRepo!: SessionRepository;
+  private sessionGoalRepo!: SessionGoalRepository;
   private sdkMessageRepo!: SDKMessageRepository;
   private settingsRepo!: SettingsRepository;
   private globalSettingsCache?: { version: number; settings: GlobalSettings };
@@ -170,6 +172,7 @@ export class Database {
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
     this.sessionRepo = new SessionRepository(db);
+    this.sessionGoalRepo = new SessionGoalRepository(db, reactiveDb);
     this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
     this.jobQueueRepo = new JobQueueRepository(db);
@@ -335,6 +338,10 @@ export class Database {
   async deleteSession(id: string): Promise<void> {
     await this.gateway.call(sessionWrites, 'deleteSession', id);
     this.reactiveDb?.forgetSessionTask(id);
+  }
+
+  ownsActiveGoal(sessionId: string): boolean {
+    return this.sessionGoalRepo.list(sessionId, false).length > 0;
   }
 
   listChildSessions(parentId: string): Session[] {

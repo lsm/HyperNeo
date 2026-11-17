@@ -58,7 +58,8 @@ const UNUSABLE_FOR_MS = 60 * 60_000;
 export function readStartedWork(
   db: BunDatabase,
   freeOn: string | null = null,
-  reuse?: { todoId?: string; sessionId?: string }
+  reuse?: { todoId?: string; sessionId?: string },
+  worker?: StartedWork
 ): (StartedWorkFacts & Partial<WorkerReuseFacts>)[] {
   const history = reuse
     ? `WITH uses AS (
@@ -85,17 +86,17 @@ export function readStartedWork(
            ORDER BY usedAt DESC, askId DESC LIMIT 1
          ) AS settledAt`
     : '';
-  return db
-    .prepare(
-      `${history} SELECT worker.adapter, worker.id${ranks},
+  const sql = `${history} SELECT worker.adapter, worker.id${ranks},
          (SELECT released_at FROM work_started_sessions own
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS releasedAt,
          (SELECT claimed_by FROM work_started_sessions own
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
-         SELECT adapter, id FROM work_started_sessions WHERE ?1 IS NULL OR role = 'worker'
+         SELECT adapter, id FROM work_started_sessions
+         WHERE (?1 IS NULL OR role = 'worker')
+           AND (?5 IS NULL OR (adapter = ?5 AND id = ?6 AND role = 'worker'))
          UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
-         WHERE ?1 IS NULL AND ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
+         WHERE ?1 IS NULL AND ?5 IS NULL AND ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
        ) worker
        WHERE ?1 IS NULL OR (worker.adapter = ?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked
@@ -107,12 +108,16 @@ export function readStartedWork(
            WHERE json_extract(bound.ref, '$.adapter') = worker.adapter
              AND json_extract(bound.ref, '$.id') = worker.id
              AND ask.status = 'open'
-             AND todo.state NOT IN ('done', 'removed')))`
-    )
+             AND todo.state NOT IN ('done', 'removed')))`;
+  return db
+    .prepare(sql)
     .all(
       freeOn,
       Date.now() - UNUSABLE_FOR_MS,
-      ...(reuse ? [reuse.todoId ?? null, reuse.sessionId ?? null] : [])
+      reuse?.todoId ?? null,
+      reuse?.sessionId ?? null,
+      worker?.adapter ?? null,
+      worker?.id ?? null
     ) as (StartedWorkFacts & Partial<WorkerReuseFacts>)[];
 }
 

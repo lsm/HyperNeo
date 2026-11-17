@@ -7,11 +7,13 @@ const Archived = workResultSchema(WorkArchivedSchema);
 export async function releaseWorkCleanup(
   folder: string,
   todoIds: readonly string[],
-  fence: () => Promise<boolean>,
+  fence: () => Promise<boolean | 'not_started_by_us'>,
   archive: () => Promise<OperationOutcome>,
   record: (todoId: string, receipt: unknown) => Promise<unknown>
 ): Promise<true | { keep: string }> {
-  if (!(await fence())) return { keep: 'live' };
+  const fenced = await fence();
+  if (fenced === 'not_started_by_us') return { keep: fenced };
+  if (!fenced) return { keep: 'live' };
   const result = await archive();
   if (result.kind !== 'completed') return { keep: 'archive_failed' };
   const parsed = Archived.safeParse(result.value);

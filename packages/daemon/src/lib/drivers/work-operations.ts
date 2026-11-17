@@ -1195,6 +1195,11 @@ async function listWorkAdapters(
   };
 }
 
+const runWorkAdapters = (superpipe({})('work.adapters') as PipelineAPI)
+  .input(['daemon', 'deps'])
+  .pipe(listWorkAdapters, ['daemon', 'deps'], 'outcome')
+  .endAsync('outcome') as typeof listWorkAdapters;
+
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
@@ -1213,7 +1218,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
-      execute: ({ daemon }) => listWorkAdapters(daemon, deps),
+      execute: ({ daemon }) => runWorkAdapters(daemon, deps),
     }),
     defineOperation({
       name: 'work.start',

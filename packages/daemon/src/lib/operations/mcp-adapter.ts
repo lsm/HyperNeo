@@ -1,10 +1,12 @@
 import { explainNeoRefusal } from '@hyperneo/shared/types/neo-refusals';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { resolveOperationRegistry } from './registry.ts';
 import { z } from 'zod';
 import { invokeOperation, type OperationOutcome } from './invoke.ts';
 import type { CallerIdentity } from './caller.ts';
 import type { OperationRegistrySource } from './registry.ts';
 import { Logger } from '../logger.ts';
+import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 
 const log = new Logger('operations-mcp');
 
@@ -13,10 +15,36 @@ export const OperationMcpInvocationSchema = z.object({
   input: z.looseObject({}).optional(),
 });
 
-function mcpResult(value: unknown, isError = false) {
+type TextBlock = { type: 'text'; text: string };
+type McpResult = { content: [TextBlock, ...CallToolResult['content']]; isError?: boolean };
+
+function mcpResult(value: unknown, isError = false): McpResult {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value ?? null) }],
     ...(isError ? { isError: true } : {}),
+  };
+}
+
+function desktopCallResult(value: unknown): McpResult {
+  const { content = [], ...rest } = value as {
+    content?: CallToolResult['content'];
+    reason?: unknown;
+  };
+  return {
+    content: [
+      mcpResult(rest).content[0],
+      ...content.map((block) =>
+        block.type === 'image' &&
+        typeof block.data === 'string' &&
+        block.data.length > MAX_IMAGE_BASE64_SIZE
+          ? {
+              type: 'text' as const,
+              text: `Screenshot omitted: ${block.data.length} base64 bytes exceeds the ${MAX_IMAGE_BASE64_SIZE}-byte model image limit. Call get_window_state again with a smaller max_image_dimension.`,
+            }
+          : block
+      ),
+    ],
+    ...(rest.reason === 'driver_error' ? { isError: true } : {}),
   };
 }
 
@@ -72,6 +100,8 @@ export function createOperationMcpHandler(
             }
           }
       }
+      if (outcome.kind === 'completed' && parsed.data.name === 'desktop.call')
+        return desktopCallResult(outcome.value);
       return outcome.kind === 'completed'
         ? mcpResult(
             parsed.data.name.startsWith('neo.') ? explainNeoRefusal(outcome.value) : outcome.value

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoTopicChips, neoTopicCounts } from '../NeoTopicChips.tsx';
 import { locale } from '../../lib/i18n/index.ts';
 
-const asks = (...topics: (string | null)[]) => topics.map((topic) => ({ ask: { topic } }));
+const asks = (...topics: (string | null)[]) =>
+  topics.map((topic) => ({ ask: { topic, topicKey: topic && `key:${topic}` } }));
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
@@ -17,9 +18,9 @@ describe('neoTopicCounts', () => {
   it('orders topics by count, puts 其他 last and leaves untopiced asks out', () => {
     expect(neoTopicCounts(asks('邮件', '其他', 'OAP', '其他', '其他', 'OAP', null, 'OAP'))).toEqual(
       [
-        ['OAP', 3],
-        ['邮件', 1],
-        ['其他', 3],
+        ['key:OAP', 'OAP', 3],
+        ['key:邮件', '邮件', 1],
+        ['key:其他', '其他', 3],
       ]
     );
   });
@@ -39,7 +40,9 @@ describe('NeoTopicChips', () => {
 
   it('selects a topic and clears it on a second tap', () => {
     const onSelect = vi.fn();
-    const view = render(<NeoTopicChips entries={asks('OAP')} selected="OAP" onSelect={onSelect} />);
+    const view = render(
+      <NeoTopicChips entries={asks('OAP')} selected="key:OAP" onSelect={onSelect} />
+    );
     expect(view.getByRole('button', { name: 'OAP 1' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(view.getByRole('button', { name: 'OAP 1' }));
     expect(onSelect).toHaveBeenLastCalledWith(null);
@@ -53,7 +56,21 @@ describe('NeoTopicChips', () => {
       <NeoTopicChips entries={asks('OAP')} selected={null} onSelect={onSelect} />
     );
     fireEvent.click(view.getByRole('button', { name: 'OAP 1' }));
-    expect(onSelect).toHaveBeenLastCalledWith('OAP');
+    expect(onSelect).toHaveBeenLastCalledWith('key:OAP');
+  });
+
+  it('keeps two topics with one label apart and labels a key by its first ask', () => {
+    const entries = [
+      { ask: { topic: 'Shop', topicKey: 'p' } },
+      { ask: { topic: 'Shop', topicKey: 'q' } },
+      { ask: { topic: 'kids', topicKey: 'pick:kids' } },
+      { ask: { topic: 'Kids', topicKey: 'pick:kids' } },
+    ];
+    expect(neoTopicCounts(entries)).toEqual([
+      ['pick:kids', 'kids', 2],
+      ['p', 'Shop', 1],
+      ['q', 'Shop', 1],
+    ]);
   });
 
   it('shows nothing when no ask has a topic', () => {

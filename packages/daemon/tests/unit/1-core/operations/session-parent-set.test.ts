@@ -7,13 +7,18 @@ import { createSetSessionParentOperation } from '../../../../src/lib/session/par
 const session = (id: string, fields: Partial<Session> = {}) =>
   ({ id, status: 'active', parentSessionId: null, ...fields }) as Session;
 
-function setup(sessions: Session[], spaceIds: Record<string, string> = {}) {
+function setup(
+  sessions: Session[],
+  spaceIds: Record<string, string> = {},
+  goalOwners: string[] = []
+) {
   const byId = new Map(sessions.map((item) => [item.id, item]));
   const setParent = vi.fn();
   const operation = createSetSessionParentOperation({
     getSession: (id) => byId.get(id) ?? null,
     listChildren: (id) => sessions.filter((item) => item.parentSessionId === id),
     sessionSpaceId: (item) => spaceIds[item.id],
+    ownsActiveGoal: (id) => goalOwners.includes(id),
     setParent,
   });
   const run = (input: { sessionId: string; parentSessionId: string | null }, source = 'rpc') =>
@@ -22,6 +27,20 @@ function setup(sessions: Session[], spaceIds: Record<string, string> = {}) {
 }
 
 describe('session.parent.set', () => {
+  test('a session that owns an active goal is neither detached nor moved', async () => {
+    const { run, setParent } = setup(
+      [session('neo:root'), session('goal', { parentSessionId: 'neo:root' }), session('b')],
+      {},
+      ['goal']
+    );
+    for (const parentSessionId of [null, 'b'])
+      expect(await run({ sessionId: 'goal', parentSessionId })).toMatchObject({
+        accepted: false,
+        reason: 'owns_goals',
+      });
+    expect(setParent).not.toHaveBeenCalled();
+  });
+
   test('moves a top-level chat under another and back to the top level', async () => {
     const { run, setParent } = setup([session('a'), session('b')]);
     expect(await run({ sessionId: 'a', parentSessionId: 'b' })).toEqual({

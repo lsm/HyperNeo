@@ -96,12 +96,42 @@ try {
   assert.equal(held.ref, null);
   const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
   const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
+  store.openAsk({ id: 'terminal-live', projectId: null, sessionId: 'neo', originMessageId: null, title: 'terminal-live', request: 'Synthetic', createdAt: 1 });
+  const liveOwner = worked('terminal-live', front, 'frontend');
+  reserve('terminal-live', liveOwner.id);
+  assert.deepEqual(await decide('a finished owner keeps its live session', todo('terminal-live'), { verb: 'start', adapter: 'hyperneo', name: 'other' }), { value: { verb: 'send', ref: front } });
+  for (const state of ['done', 'removed']) {
+    const askId = `terminal-${state}`;
+    store.openAsk({ id: askId, projectId: null, sessionId: 'neo', originMessageId: null, title: askId, request: 'Synthetic', createdAt: 1 });
+    const available = await session(`available-${state}`);
+    worked('earlier', available, 'backend');
+    const owner = worked(askId, missing);
+    db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, owner.id);
+    reserve(askId, owner.id);
+    const successor = ready(askId);
+    const result = await dispatched(`${state} owner with an unreachable session releases the next slice`, successor);
+    assert.equal(result.todo?.state, 'doing');
+    assert.deepEqual(result.target, { verb: 'send', ref: available });
+    assert.deepEqual(result.ref, available);
+    assert.deepEqual(reserved(askId), [{ todoId: successor.id }]);
+    await rpc('session.archive', { sessionId: available.id, confirmed: true });
+    const isolatedAsk = `terminal-alone-${state}`;
+    store.openAsk({ id: isolatedAsk, projectId: null, sessionId: 'neo', originMessageId: null, title: isolatedAsk, request: 'Synthetic', createdAt: 1 });
+    const loneOwner = worked(isolatedAsk, missing);
+    const loneSuccessor = todo(isolatedAsk);
+    const isolatedRepo = `synthetic/${isolatedAsk}`;
+    for (const item of [loneOwner, loneSuccessor]) db.prepare('UPDATE pack_coding_todos SET repo = ? WHERE todo_id = ?').run(isolatedRepo, item.id);
+    db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, loneOwner.id);
+    db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(isolatedRepo, isolatedAsk, loneOwner.id);
+    const loneDecision = await decide(`${state} owner with no live alternative starts fresh`, loneSuccessor, { verb: 'start', adapter: 'hyperneo' });
+    assert.equal('value' in loneDecision && loneDecision.value.verb, 'start', JSON.stringify(loneDecision));
+  }
   for (const id of ['failed', 'refused'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
   const failed = ready('failed');
   reserve('failed', failed.id);
   db.prepare("UPDATE neo_todos SET state = 'removed' WHERE id = ?").run(failed.id);
-  const after = await decide('a sessionless removed owner no longer holds its feature', todo('failed'), { verb: 'start', adapter: 'hyperneo' });
+  const after = await decide('a sessionless removed owner no longer holds its feature', todo('failed'), { verb: 'start', adapter: 'hyperneo', name: 'frontend' });
   assert(!('reason' in after), JSON.stringify(after));
   assert(pack.workerTargetRefused, 'the coding pack declares workerTargetRefused');
   const refused = ready('refused');

@@ -68,6 +68,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.session.mute',
   'neo.snapshot',
   'neo.todo.retarget',
+  'neo.topic.merge',
   'pack.preferences.applyAnswer',
   'pack.preferences.ask',
   'pack.preferences.get',

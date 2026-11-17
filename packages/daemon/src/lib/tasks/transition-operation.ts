@@ -1,5 +1,6 @@
 import { TaskMutationDenialSchema, type TaskMutationDenial } from './mutation-denial.ts';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
   TransitionStandaloneTaskInput,
   transitionStandaloneTask,
@@ -70,6 +71,17 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
   ) => TransitionTaskOutput | Promise<TransitionTaskOutput>,
   options: TransitionTaskOperationOptions<Input> = {}
 ) {
+  const transition = (superpipe({})('task.transition') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      async (input: Input, caller: OperationCaller) => {
+        const result = await transitionTask(input, caller);
+        return result === null ? { reason: null } : { value: result };
+      },
+      ['input', 'caller'],
+      'result:result'
+    )
+    .endAsync('result') as (input: Input, caller: OperationCaller) => Promise<TransitionTaskOutput>;
   return defineOperation({
     name: 'task.transition',
     description: options.description ?? STANDALONE_TRANSITION_TASK_DESCRIPTION,
@@ -92,6 +104,6 @@ export function createTransitionTaskOperation<Input = TransitionStandaloneTaskIn
         'completion_requires_review',
       ]),
     ]),
-    execute: async (input, caller) => transitionTask(input, caller),
+    execute: (input, caller) => transition(input, caller),
   });
 }

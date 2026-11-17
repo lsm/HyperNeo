@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { NEO_GOAL_CYCLE } from '@hyperneo/prompts';
+import { GOAL_SESSION_CYCLE, NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
@@ -7,7 +7,11 @@ import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
-import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
@@ -47,25 +51,46 @@ function setup(
   const audited: string[] = [];
   const goals = new SessionGoalRepository(db);
   const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
+  const canReturn = (sessionId: string) => sessionId.startsWith('goal-session-');
+  const parentProblem = async (sessionId: string) =>
+    canReturn(sessionId) || sessionId === 'moved'
+      ? ('child' as const)
+      : sessionId === 'archived'
+        ? ('inactive' as const)
+        : null;
   const schedules = new SessionGoalSchedules(
     goals,
     new NeoAskTodoRepository(db),
     scheduler,
     () => packs,
+    canReturn,
     mandateChange
   );
   scheduler.registerSource(schedules);
+  const sessions = ['neo:root', 'neo:other', 'plain', 'moved', 'archived'];
+  const started: { parentSessionId: string; title: string }[] = [];
+  const released: string[] = [];
   const ops = createSessionGoalOperations({
     goals,
     schedules,
-    sessionExists: (sessionId) => ['neo:root', 'neo:other'].includes(sessionId),
+    sessionExists: (sessionId) => sessions.includes(sessionId),
+    parentProblem,
+    canReturn,
+    releaseSession: async (sessionId) => {
+      released.push(sessionId);
+    },
+    startSession: async (parentSessionId, title) => {
+      started.push({ parentSessionId, title });
+      sessions.push(`goal-session-${started.length}`);
+      return `goal-session-${started.length}`;
+    },
     audit: (_caller, toolName) => audited.push(toolName),
   });
   const call = (name: string, input: unknown, caller: OperationCaller = neo) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited, scheduler, goals, schedules };
+  return { db, call, audited, scheduler, goals, schedules, started, released, ops, sessions };
 }
 
 describe('session goal detail reads', () => {
@@ -749,6 +774,234 @@ describe('session-owned goals', () => {
       )
     ).toMatchObject({ accepted: true });
     db.close();
+  });
+});
+
+describe('a goal in its own session', () => {
+  test('creating with ownSession starts a session that owns the goal, its wakes and its journal', async () => {
+    const { db, call, scheduler, schedules, started } = setup();
+    try {
+      const created = await call('goal.session.create', {
+        title: 'Market the guide',
+        doneTest: 'Ten readers a week',
+        ownSession: true,
+      });
+      expect(started).toEqual([{ parentSessionId: 'neo:root', title: 'Goal: Market the guide' }]);
+      expect(created.goal.ownerSessionId).toBe('goal-session-1');
+      expect(scheduler.repo.getBySource('goal', created.goal.id)?.target).toEqual({
+        adapter: 'hyperneo',
+        id: 'goal-session-1',
+      });
+      const message = schedules.message(created.goal.id, { summary: 'changed', nudge: false })!;
+      expect(message.startsWith(GOAL_SESSION_CYCLE)).toBe(true);
+      expect(message).not.toContain(NEO_GOAL_CYCLE);
+      expect(message).not.toContain('new asks');
+
+      const own: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      };
+      const goalId = created.goal.id;
+      expect(
+        await call(
+          'goal.journal.append',
+          { goalId, runId: 'run-1', done: 'Posted', effect: 'Two readers', worked: 'Posts' },
+          own
+        )
+      ).toMatchObject({ accepted: true, entry: { sessionId: 'goal-session-1' } });
+      expect(await call('goal.session.update', { goalId, progress: 20 }, own)).toMatchObject({
+        accepted: true,
+        goal: { progress: 20 },
+      });
+      expect(await call('goal.session.list', { ownerSessionId: 'neo:root' }, own)).toMatchObject({
+        reason: expect.stringContaining('owner_denied'),
+      });
+      expect(
+        (await call('goal.session.update', { goalId, status: 'completed' }, own)).goal.status
+      ).toBe('completed');
+      expect(scheduler.repo.getBySource('goal', goalId)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a child session cannot start another goal session under itself', async () => {
+    const { db, call, scheduler, started } = setup();
+    try {
+      await call('goal.session.create', { title: 'First', doneTest: 'Done', ownSession: true });
+      const child: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      };
+      const goalsBefore = db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get();
+      const schedulesBefore = scheduler.repo.list().length;
+      expect(
+        await call(
+          'goal.session.create',
+          { title: 'Nested', doneTest: 'Done', ownSession: true },
+          child
+        )
+      ).toEqual({
+        accepted: false,
+        reason: 'parent_is_child: a goal session must start under a top-level session.',
+      });
+      expect(started).toHaveLength(1);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual(goalsBefore);
+      expect(scheduler.repo.list()).toHaveLength(schedulesBefore);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('an archived session cannot get a goal session under it', async () => {
+    const { db, call, scheduler, started } = setup();
+    try {
+      expect(
+        await call(
+          'goal.session.create',
+          { ownerSessionId: 'archived', title: 'Late', doneTest: 'Done', ownSession: true },
+          human
+        )
+      ).toEqual({
+        accepted: false,
+        reason:
+          'parent_unavailable: a goal session must start under an active session that may be cloned.',
+      });
+      expect(started).toEqual([]);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });
+      expect(scheduler.repo.list()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a goal that fails to save releases the session started for it', async () => {
+    const { db, call, goals, scheduler, started, released } = setup();
+    try {
+      spyOn(goals, 'create').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      await expect(
+        call('goal.session.create', { title: 'Broken', doneTest: 'Done', ownSession: true })
+      ).rejects.toThrow('disk full');
+      expect(started).toHaveLength(1);
+      expect(released).toEqual(['goal-session-1']);
+      expect(scheduler.repo.list()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the goal session finds its goal operations in operations.list', async () => {
+    const { db, ops } = setup();
+    try {
+      const listed = listOperationSummaries(createOperationRegistry(ops), {
+        source: 'mcp',
+        sessionId: 'goal-session-1',
+        role: 'universal_read',
+      }).map(({ name }) => name);
+      expect(listed).toEqual(
+        expect.arrayContaining([
+          'goal.session.get',
+          'goal.facts',
+          'goal.journal.list',
+          'goal.journal.append',
+          'goal.session.update',
+        ])
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a clone that runs no goal cannot start owning goals', async () => {
+    const { db, call, sessions } = setup();
+    try {
+      sessions.push('goal-session-clone');
+      const clone: OperationCaller = {
+        source: 'mcp',
+        sessionId: 'goal-session-clone',
+        role: 'universal_read',
+      };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, clone)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a top-level plain session cannot own goals itself', async () => {
+    const { db, call } = setup();
+    try {
+      const plain: OperationCaller = { source: 'mcp', sessionId: 'plain', role: 'universal_read' };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, plain)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      expect(await call('goal.session.list', {}, plain)).toMatchObject({
+        reason: expect.stringContaining('owner_denied'),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a chat moved under a parent cannot report back, so it owns no goals itself', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const moved: OperationCaller = { source: 'mcp', sessionId: 'moved', role: 'universal_read' };
+      expect(
+        await call('goal.session.create', { title: 'Mine', doneTest: 'Done' }, moved)
+      ).toMatchObject({ reason: expect.stringContaining('owner_denied') });
+      const named = await call(
+        'goal.session.create',
+        { ownerSessionId: 'moved', title: 'Named', doneTest: 'Done' },
+        human
+      );
+      expect(
+        schedules
+          .message(named.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a goal a human gives to a parentless session keeps the Neo cycle', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const created = await call(
+        'goal.session.create',
+        { ownerSessionId: 'plain', title: 'Plain', doneTest: 'Done' },
+        human
+      );
+      expect(
+        schedules
+          .message(created.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('Neo-owned goals keep the root Neo cycle', async () => {
+    const { db, call, schedules, started } = setup();
+    try {
+      const created = await call('goal.session.create', { title: 'Ship', doneTest: 'Released' });
+      expect(started).toEqual([]);
+      expect(
+        schedules
+          .message(created.goal.id, { summary: 'changed', nudge: false })!
+          .startsWith(NEO_GOAL_CYCLE)
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
   });
 });
 
