@@ -235,6 +235,11 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
 
   test('a reuse decision sends to the chosen session and records that send target', async () => {
     const w = (current = world());
+    w.db
+      .prepare(
+        "INSERT INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')"
+      )
+      .run(backend.adapter, backend.id);
     w.decideWith(() => ({ value: { verb: 'send', ref: backend } }));
     const id = w.add();
     await w.runner.start(id);
@@ -244,6 +249,16 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
     expect(w.sessions.get(id)).toEqual({ verb: 'send', ref: backend });
     expect(w.sessions.readRef(id)).toEqual(backend);
     expect(w.store.getTodo(id)?.state).toBe('doing');
+  });
+
+  test('a redirect to a non-worker starts the original target', async () => {
+    const w = (current = world());
+    w.decideWith(() => ({ value: { verb: 'send', ref: backend } }));
+    const id = w.add();
+    await w.runner.start(id);
+    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
+    expect(w.sessions.get(id)).toEqual(start);
+    expect(w.sessions.readRef(id)).toEqual({ adapter: 'hyperneo', id: 'fresh' });
   });
 
   test('a named start decision starts a session with that name', async () => {

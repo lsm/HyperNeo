@@ -49,9 +49,8 @@ try {
   for (const id of ['feature', 'earlier'])
     store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
   const todo = (askId: string) => store.addTodo(crypto.randomUUID(), askId, { title: 'Slice', instruction: 'Synthetic', named: null, check: null, doneWhen: 'Done' }, 2, repo);
-  const worked = (askId: string, ref: WorkRef, name?: string, worker = true) => {
+  const worked = (askId: string, ref: WorkRef, name?: string) => {
     const item = todo(askId);
-    if (worker) db.prepare("INSERT OR IGNORE INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')").run(ref.adapter, ref.id);
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(item.id, JSON.stringify(name ? { verb: 'start', adapter: 'hyperneo', name } : { verb: 'send', ref }), JSON.stringify(ref));
     db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(item.id);
     return item;
@@ -61,27 +60,6 @@ try {
     evidence.push({ surface: 'coding pack workerTarget', label, target, decision });
     return decision;
   };
-  for (const id of ['pr-owner', 'pr-next', 'bound'])
-    store.openAsk({ id, projectId: null, sessionId: 'neo', originMessageId: null, title: id, request: 'Synthetic', createdAt: 1 });
-  const personForPr = await session('pr-person');
-  const prOwner = worked('pr-owner', personForPr, 'person', false);
-  const prNext = todo('pr-next');
-  const pr = JSON.stringify([{ url: 'https://github.com/synthetic/sessions/pull/9', state: 'OPEN', checks: 'passing', review: 'none' }]);
-  for (const item of [prOwner, prNext]) db.prepare('INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at) VALUES (?, ?, 1)').run(item.id, pr);
-  const prDecision = await decide('a non-worker PR holder starts new work', { ...prNext, check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/sessions/pull/9'] } } }, { verb: 'start', adapter: 'hyperneo' });
-  db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at) VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`).run(repo);
-  const boundPerson = await session('bound-person');
-  const bound = worked('bound', boundPerson, 'person', false);
-  const boundDecision = await decide('a non-worker bound session starts new work', bound, { verb: 'start', adapter: 'hyperneo' });
-  db.prepare("DELETE FROM neo_pack_preferences WHERE pack = 'coding' AND scope_key = ? AND key = 'sessionStrategy'").run(repo);
-  assert.equal('value' in prDecision && prDecision.value.verb, 'start', JSON.stringify(prDecision));
-  assert.equal('value' in boundDecision && boundDecision.value.verb, 'start', JSON.stringify(boundDecision));
-  store.openAsk({ id: 'unowned', projectId: null, sessionId: 'neo', originMessageId: null, title: 'unowned', request: 'Synthetic', createdAt: 1 });
-  const person = await session('person');
-  const previous = worked('unowned', person, 'person', false);
-  db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), 'unowned', previous.id);
-  const nonworker = await decide('a reserved person session starts new work', todo('unowned'), { verb: 'start', adapter: 'hyperneo' });
-  assert.equal('value' in nonworker && nonworker.value.verb, 'start', JSON.stringify(nonworker));
   worked('earlier', front, 'frontend');
   worked('earlier', back, 'backend');
   const first = todo('feature');
@@ -89,7 +67,6 @@ try {
   db.prepare('INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)').run(first.id, JSON.stringify({ verb: 'send', ref: back }));
   assert.deepEqual(await decide('a later slice of the feature follows it', todo('feature'), { verb: 'start', adapter: 'hyperneo' }), { value: { verb: 'send', ref: back } });
   const missing = { adapter: 'hyperneo', id: 'no-such-session' };
-  db.prepare("INSERT INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')").run(missing.adapter, missing.id);
   store.openAsk({ id: 'lost', projectId: null, sessionId: 'neo', originMessageId: null, title: 'lost', request: 'Synthetic', createdAt: 1 });
   const lost = todo('lost');
   db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), 'lost', lost.id);
@@ -108,6 +85,9 @@ try {
     evidence.push(row);
     return row;
   };
+  const nonworker = await dispatched('a non-worker redirect starts new work', ready('feature'));
+  assert.equal(nonworker.target?.verb, 'start', JSON.stringify(nonworker));
+  db.prepare("INSERT INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')").run(back.adapter, back.id);
   const reused = await dispatched('a ready slice of the feature is sent to its backend session', ready('feature'));
   assert.equal(reused.todo?.state, 'doing');
   assert.deepEqual(reused.target, { verb: 'send', ref: back });
@@ -117,7 +97,6 @@ try {
   assert(held.todo?.reason?.includes('session_unknown'));
   assert.deepEqual(held.target, { verb: 'start', adapter: 'hyperneo', name: 'backend' });
   assert.equal(held.ref, null);
-  db.prepare('DELETE FROM neo_todo_sessions WHERE ref = ?').run(JSON.stringify(missing));
   const reserve = (askId: string, todoId: string) => db.prepare('INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES (?, ?, ?, 1)').run(repo.toLowerCase(), askId, todoId);
   const reserved = (askId: string) => db.prepare('SELECT todo_id AS todoId FROM pack_coding_feature_sessions WHERE feature_key = ?').all(askId);
   for (const id of ['failed', 'refused'])
@@ -137,6 +116,7 @@ try {
   await pack.workerTargetRefused(reused.todo!);
   assert.deepEqual(reserved('refused'), [{ todoId: reused.todo!.id }]);
   for (const ref of [front, back]) await rpc('session.archive', { sessionId: ref.id, confirmed: true });
+  db.prepare('DELETE FROM neo_todo_sessions WHERE ref = ?').run(JSON.stringify(missing));
   const archivedStatus = await status(back);
   evidence.push({ surface: 'work.status', label: 'an archived session reports stopped', status: archivedStatus });
   assert.equal((archivedStatus.value as { value?: { status?: string } }).value?.status, 'stopped', JSON.stringify(archivedStatus));
@@ -146,7 +126,6 @@ try {
   assert.equal('value' in onlyArchived && onlyArchived.value.verb, 'start', JSON.stringify(onlyArchived));
   assert.deepEqual(reserved('after-archive'), [{ todoId: restarted.id }], 'the fresh start owns the feature');
   const next = await session('next');
-  db.prepare("INSERT INTO work_started_sessions (adapter, id, started_at, role) VALUES (?, ?, 1, 'worker')").run(next.adapter, next.id);
   db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(restarted.id, JSON.stringify({ verb: 'send', ref: next }), JSON.stringify(next));
   db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(restarted.id);
   await rpc('session.archive', { sessionId: next.id, confirmed: true });
