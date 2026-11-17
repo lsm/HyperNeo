@@ -1,5 +1,7 @@
 # Long-Horizon Agent Roadmap
 
+> Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs through Neo.
+
 **Status:** Proposed
 
 ## Purpose

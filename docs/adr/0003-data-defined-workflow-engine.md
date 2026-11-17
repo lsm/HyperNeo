@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed — Revision 12. All human + codex-connector review rounds to date; every
+Closed, 2026-11-16: not planned. This is a Space-era design; HyperNeo's work now runs
+through Neo. The text below is kept as history.
+
+Was: Proposed — Revision 12. All human + codex-connector review rounds to date; every
 code-level claim re-verified directly against current source. States complete invariants +
 phase boundaries; all mechanism deferred to phase PRs. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
