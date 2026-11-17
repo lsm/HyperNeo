@@ -76,3 +76,46 @@ test('the snapshot and ask reads return each ask its derived topic and key', asy
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the plan read counts Neo's picks on asks opened in the last 30 days, open or settled", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'neo-topic-list-'));
+  const path = join(dir, 'synthetic.db');
+  const db = new Database(path);
+  const gateway = new DbGateway(path, db);
+  try {
+    db.exec('PRAGMA journal_mode=WAL');
+    runMigrations(db, () => {});
+    createTables(db);
+    bindGateway(db, gateway);
+    const store = new NeoAskTodoRepository(db);
+    const day = 24 * 60 * 60 * 1000;
+    for (const [id, topic, age] of [
+      ['open', 'kids', 0],
+      ['settled', 'Kids', 2],
+      ['other', '邮件', 29],
+      ['old', '邮件', 31],
+      ['none', null, 0],
+    ] as const)
+      store.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: id,
+        topic,
+        request: '',
+        createdAt: Date.now() - age * day,
+      });
+    db.prepare("UPDATE neo_asks SET status = 'done' WHERE id = 'settled'").run();
+    const { topics } = await store.read('planContext');
+    expect([...topics].sort((a, b) => a.topic.localeCompare(b.topic))).toEqual([
+      { topic: 'kids', count: 1 },
+      { topic: 'Kids', count: 1 },
+      { topic: '邮件', count: 1 },
+    ]);
+  } finally {
+    await gateway.close();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
