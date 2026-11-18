@@ -21,7 +21,8 @@ A design or plan is finished only when the work it describes is filed and done. 
 existing `producesFollowUp`, renamed `plan` in the tool text and kept in the same column)
 or when a pack marks it from its own facts. A plan:
 
-1. **has steps:** at least one live todo that depends on it (`after`);
+1. **has steps:** at least one live todo that depends on it (`after`). Live means not
+   removed; a done step is live, so a plan whose steps are all done still has them;
 2. **was checked:** a passing check, recorded on the plan, by a session that is not its
    doer, listing exactly the current steps. The checker runs another model when the human
    has one available; when only the doer's model is usable, another session on the same
@@ -36,20 +37,24 @@ signs the plan. A `signoff` card satisfies the existing link rule in `planNeoQue
 plan's steps change, which asks for a new one. Other cards on a plan, such as an early
 blocking question, are unchanged.
 
-**The check is one field.** In any pack, Neo checks a plan by starting another worker
-session (`work.start` with the plan's `todoId`) and giving it the plan and its steps; when
-that session reports a pass, Neo records it. `neo.todo.edit` gains
-`checked: { ref, stepIds }`, accepted only when `ref` is a session the daemon started and
-not the plan's doer, written into one new nullable column `neo_todos.checked_json`
-with the checker's confirmed model read from its work status at write time, and whether
-another model was available then: `chooseLine` (`pack-selection.ts`) over the configured
-lines without the doer's model returns a usable line.
+**The check is recorded by the daemon from the checker's report.** In any pack, Neo
+checks a plan by starting another worker session with `work.start` and the plan's
+`todoId`, giving it the plan and its steps. The daemon already records that delivery with
+the todo id and the session it reached (`work_delivery_inputs`). The checker reports
+through the existing worker report (`message.send` to Neo) with an optional
+`check: { verdict, stepIds }`. The daemon writes a pass into one new nullable column
+`neo_todos.checked_json` only when the sender is a session that received a delivery for
+this plan's todo and is not its doer. It records the checker's confirmed model from its
+work status, and whether another model was available then: `chooseLine`
+(`pack-selection.ts`) over the configured lines without the doer's model returns a usable
+line. Neo cannot write the check. For coding, a passing `neo.coding.result` on a plan
+writes the same column, anchored by the pack's own stage assignment.
 A check stops counting when the steps change.
 
-**Plans already done.** The migration that adds `checked_json` writes `{"legacy": true}`
-on every todo that is already done and is a plan, either by `producesFollowUp` or by a
-pack's facts at that time (for coding, a done todo whose PR changed `docs/design/**`). `neoPlanRefusal` holds a legacy plan
-only to the old rule (one live dependent). Plans not yet done get no marker and follow the
+**Todos already done.** The migration that adds `checked_json` writes `{"legacy": true}`
+on every todo that is already done, plan or not, in plain SQL. `neoPlanRefusal` holds a
+legacy todo only to the old rule (one live dependent when it was marked
+`producesFollowUp`, nothing otherwise), so no pack facts are needed at migration time. Plans not yet done get no marker and follow the
 new rule; Neo checks and signs them as above.
 
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
@@ -75,7 +80,7 @@ Steps wait without new code: they depend on the plan, so they start when it is d
   already has.
 - The review brief (`packs/coding/assign-operation.ts`) lists the plan's steps and asks the
   reviewer to compare them with the design's change plan; a missing, extra or misordered
-  step is a finding. A passing `neo.coding.result` on a plan writes `checked` with those
+  step is a finding. A passing `neo.coding.result` on a plan writes `checked_json` with those
   step ids.
 - A plan is always reviewed, even when the repository's `crossModelReview` is off, and
   the daemon does not merge a plan's PR until `neoPlanRefusal` passes: steps, check and
@@ -87,9 +92,9 @@ Other packs mark plans the same way when they need to.
 
 Each slice is one PR from `dev`, failing tests first.
 
-1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, `checked` on
-   `neo.todo.edit`, tool text.
-2. **Coding.** Mark design PRs as plans, the review brief, `checked` from
+1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, the `check` field
+   on the worker report and its recording, the legacy migration, tool text.
+2. **Coding.** Mark design PRs as plans, the review brief, `checked_json` from
    `neo.coding.result`, review regardless of `crossModelReview` for plans.
 
 Acceptance, one integration case per row:
@@ -110,3 +115,5 @@ Acceptance, one integration case per row:
 | a plan already done before the upgrade, its ask still open | held to the old rule (one live dependent); the new rule applies to plans not yet done |
 | a `no`-style reply or a non-signoff card on a plan | does not sign it |
 | a design PR todo already done before the upgrade, its ask still open | marked legacy; the old rule applies |
+| all of a plan's steps done | the plan still has its steps; the ask settles |
+| a `check` reported by a session that got no delivery for the plan | not recorded |
