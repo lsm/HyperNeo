@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { defineOperation } from '../operations/registry.ts';
@@ -42,12 +42,20 @@ const cursorSchema = z
     connectionId: id,
     operation: z.enum(['outlook.search', 'outlook.read_thread']),
     key: z.string().length(64),
-    query: z
-      .string()
-      .max(1500)
-      .regex(/^\?[^#]*$/),
+    query: z.string().max(1500),
+    sig: z.string().length(64),
   })
   .strict();
+const secret = randomBytes(32);
+const options = new Set(['$search', '$filter', '$top', '$select', '$skiptoken', '$skip', '$count']);
+const sign = (fields: { connectionId: string; operation: string; key: string; query: string }) =>
+  createHmac('sha256', secret)
+    .update(JSON.stringify([fields.connectionId, fields.operation, fields.key, fields.query]))
+    .digest('hex');
+const plain = (search: string) =>
+  search.startsWith('?') &&
+  !search.includes('#') &&
+  [...new URLSearchParams(search).keys()].every((name) => options.has(name));
 const address = z
   .object({ emailAddress: z.object({ name: z.string().default(''), address: z.string() }) })
   .nullish();
@@ -111,9 +119,11 @@ function readCursor(input: Paging, operation: Operation, key: string) {
     const cursor = cursorSchema.parse(
       JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8'))
     );
-    return cursor.connectionId === input.connectionId &&
+    return timingSafeEqual(Buffer.from(cursor.sig), Buffer.from(sign(cursor))) &&
+      cursor.connectionId === input.connectionId &&
       cursor.operation === operation &&
-      cursor.key === digest(key)
+      cursor.key === digest(key) &&
+      plain(cursor.query)
       ? { value: cursor.query }
       : { reason: denied('invalid_cursor') };
   } catch {
@@ -124,15 +134,11 @@ function readCursor(input: Paging, operation: Operation, key: string) {
 function writeCursor(link: string | undefined, input: Paging, operation: Operation, key: string) {
   if (!link) return { value: undefined };
   const url = URL.canParse(link) ? new URL(link) : null;
-  if (url?.origin !== origin || url.pathname !== collection)
+  if (url?.origin !== origin || url.pathname !== collection || !plain(url.search))
     return { reason: denied('invalid_response') };
+  const fields = { connectionId: input.connectionId, operation, key: digest(key), query: url.search };
   const cursor = Buffer.from(
-    JSON.stringify({
-      connectionId: input.connectionId,
-      operation,
-      key: digest(key),
-      query: url.search,
-    })
+    JSON.stringify({ ...fields, sig: sign(fields) })
   ).toString('base64url');
   return cursor.length <= 2048 ? { value: cursor } : { reason: denied('response_limit') };
 }

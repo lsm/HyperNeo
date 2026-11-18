@@ -96,6 +96,8 @@ try {
   assert.equal((await search({ cursor: 'forged' })).reason, 'invalid_cursor');
   const crafted = Buffer.from(JSON.stringify({ connectionId: 'outlook-one', operation: 'outlook.search', key: createHash('sha256').update('fixture').digest('hex'), query: '/../../users/other/messages?$top=1' })).toString('base64url');
   assert.equal((await search({ cursor: crafted })).reason, 'invalid_cursor');
+  const minted = Buffer.from(JSON.stringify({ connectionId: 'outlook-one', operation: 'outlook.search', key: createHash('sha256').update('fixture').digest('hex'), query: '?$top=1&$select=id,body', sig: '0'.repeat(64) })).toString('base64url');
+  assert.equal((await search({ cursor: minted })).reason, 'invalid_cursor');
   assert.equal((await read({ cursor: first.nextCursor })).reason, 'invalid_cursor');
   assert.equal((await invoke('outlook.search', { connectionId: 'gmail-one', query: 'fixture' })).reason, 'unknown_connection');
   caller = { sessionId: '', role: 'universal_read' };
