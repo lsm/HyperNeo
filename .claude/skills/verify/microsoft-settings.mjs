@@ -58,7 +58,10 @@ try {
   await page.getByRole('button', { name: 'Connect Google', exact: true }).waitFor();
   await page.getByText('No accounts connected.', { exact: true }).waitFor();
   await shot('empty');
+  await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
+  await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
   await page.getByRole('button', { name: 'Connect Microsoft', exact: true }).click();
+  assert.equal(await page.getByLabel('Application (client) ID', { exact: true }).inputValue(), '');
   await page.getByLabel('Application (client) ID', { exact: true }).fill('synthetic-microsoft-client');
   assert.equal(await page.getByLabel('Client secret (optional)', { exact: true }).count(), 0);
   await shot('setup');

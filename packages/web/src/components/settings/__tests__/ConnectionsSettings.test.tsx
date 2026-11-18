@@ -106,6 +106,16 @@ it('connects Microsoft with only an application client ID and polls its own sign
   await waitFor(() => expect(invocations('connections.microsoft.login').length).toBeGreaterThan(0));
 });
 
+it('starts Microsoft with an empty client ID after switching from Google', async () => {
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));
+  fireEvent.input(screen.getByLabelText('Desktop client ID'), {
+    target: { value: 'synthetic-google-client' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect Microsoft' }));
+  expect((screen.getByLabelText('Application (client) ID') as HTMLInputElement).value).toBe('');
+});
+
 it('drops a Google client secret typed before switching to Connect Microsoft', async () => {
   render(<MainContent />);
   fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));

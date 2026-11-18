@@ -21,7 +21,8 @@ through the real `/pair` endpoint first; an unpaired browser is refused every
 connection operation.
 
 At Settings > Connections: capture the empty view with both Connect buttons, open
-Connect Microsoft, enter a synthetic Application (client) ID (no client secret
+Connect Google, enter a synthetic client ID, then switch to Microsoft and confirm
+its client ID is empty. Enter a synthetic Application (client) ID (no client secret
 field is shown) and capture the form. Capture the pending status and the fake
 consent page, approve, and observe the account, Connected and the Outlook mail
 and calendar access. Reconnect reuses the saved client ID without the form.
