@@ -80,13 +80,23 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
       await page.getByTitle('More options').click();
     }
+    await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+    const oxapMenu = page.getByRole('group', { name: 'Model and thinking settings' });
+    assert.equal(await oxapMenu.getByRole('slider', { name: 'Thinking' }).count(), 0);
+    assert.equal(await oxapMenu.getByText('Synthetic SDK Model').count(), 0);
+    await oxapMenu.screenshot({ path: `${output}/oxap-picker-${theme}.png`, animations: 'disabled' });
+    await page.getByRole('button', { name: 'Close model settings' }).click();
+    await page.getByTitle('More options').click();
+    assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
+    await page.screenshot({ path: `${output}/oxap-tools-${theme}.png`, animations: 'disabled' });
+    await page.getByTitle('More options').click();
     await page.screenshot({ path: `${output}/oxap-chat-${theme}.png`, animations: 'disabled' });
     await page.goto(`${base}/settings?tab=providers`);
     await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
     if (!before) {
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
       await page.getByLabel('Harness executable').waitFor();
-      await page.getByLabel('Hub binary').waitFor();
+      await page.getByText('Hub not installed').waitFor();
     }
     await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
     if (!before && theme === 'dark') {
@@ -100,13 +110,13 @@ try {
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
       console.log('Invalid executable refused; switching back to Claude Code persisted');
-      const created = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'rpc:session.create', JSON.stringify({ title: 'Provider retry proof', workspacePath: `${run}/home`, config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' } })], { encoding: 'utf8', env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port } })).reply;
+      const created = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'rpc:session.create', JSON.stringify({ title: 'Provider retry proof', workspacePath: `${run}/home`, config: { provider: 'anthropic', model: 'synthetic-sdk', queryMode: 'manual' } })], { encoding: 'utf8', env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port } })).reply;
       assert(created.sessionId);
       writeFileSync(`${run}/fail-provider-list`, '');
       await page.goto(`${base}/session/${created.sessionId}`);
       await page.getByRole('button', { name: 'Choose model and thinking' }).click();
       await page.getByRole('alert').getByText(/Could not load providers/).waitFor();
-      assert(await page.getByText('Synthetic Codex').count());
+      assert(await page.getByText('Synthetic SDK Model').count());
       await page.screenshot({ path: `${output}/sdk-provider-error.png`, animations: 'disabled' });
       unlinkSync(`${run}/fail-provider-list`);
       await page.getByRole('button', { name: 'Retry providers' }).click();
@@ -125,8 +135,40 @@ try {
       await page.reload();
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
-      assert.notEqual(await page.getByLabel('Hub binary').inputValue(), 'Installed automatically on save');
+      await page.getByText('Version:', { exact: true }).waitFor();
+      await page.getByText('SHA-256:', { exact: true }).waitFor();
+      for (const appearance of ['light', 'dark']) {
+        await page.evaluate((value) => localStorage.setItem('theme', value), appearance);
+        await page.reload();
+        await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+        await page.getByText('SHA-256:', { exact: true }).waitFor();
+        const path = page.locator('dt').filter({ hasText: 'Path:' }).locator('..').locator('dd');
+        assert((await path.textContent()).includes('/oxap'));
+        const sha = page.locator('dt').filter({ hasText: 'SHA-256:' }).locator('..').locator('dd');
+        assert.match(await sha.textContent(), /^[a-f0-9]{64}$/);
+        await page.screenshot({ path: `${output}/hub-installed-${appearance}.png`, animations: 'disabled', mask: [path], maskColor: appearance === 'dark' ? '#27272d' : '#f0f0f2' });
+      }
       console.log('Delayed first install saved and the installed hub persisted');
+      for (const appearance of ['light', 'dark']) {
+        await page.evaluate((value) => localStorage.setItem('theme', value), appearance);
+        await page.goto(`${base}/session/${created.sessionId}`);
+        await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+        const sdkMenu = page.getByRole('group', { name: 'Model and thinking settings' });
+        await sdkMenu.getByRole('slider', { name: 'Thinking' }).waitFor();
+        await sdkMenu.getByText('Synthetic SDK Model').waitFor();
+        assert.equal(await sdkMenu.getByText('Synthetic Codex').count(), 0);
+        await sdkMenu.screenshot({ path: `${output}/sdk-picker-${appearance}.png`, animations: 'disabled' });
+        await page.getByRole('button', { name: 'Close model settings' }).click();
+        await page.getByTitle('More options').click();
+        await page.getByTitle('More options').locator('..').screenshot({ path: `${output}/sdk-actions-${appearance}.png`, animations: 'disabled' });
+        await page.getByRole('button', { name: 'Tools', exact: true }).click();
+        const tools = page.getByRole('dialog', { name: 'Tools' });
+        await tools.getByRole('button', { name: 'Advanced settings' }).click();
+        await tools.getByText('MCP Servers', { exact: true }).first().waitFor();
+        await tools.screenshot({ path: `${output}/sdk-tools-${appearance}.png`, animations: 'disabled' });
+      }
+
+
       const authSession = /AUTH_SESSION=([a-f0-9-]+)/.exec(readFileSync(`${output}/daemon.log`, 'utf8'))?.[1];
       assert(authSession);
       await page.goto(`${base}/session/${authSession}`);

@@ -5,7 +5,12 @@ import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import { GLOBAL_SYSTEM_SNAPSHOT_REQUEST, STATE_CHANNELS } from '@hyperneo/shared';
-import type { ProviderRecord, CredentialStoreStatus, GlobalSystemSnapshot } from '@hyperneo/shared';
+import type {
+  ProviderRecord,
+  CredentialStoreStatus,
+  GlobalSystemSnapshot,
+  GlobalSettings,
+} from '@hyperneo/shared';
 import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
   updateGlobalSettings,
@@ -197,7 +202,7 @@ export function ProvidersSettings() {
       setSavingAllowlist(false);
     }
   };
-  const [hubPath, setHubPath] = useState<string | undefined>(undefined);
+  const [hubBinary, setHubBinary] = useState<GlobalSettings['oxapHub']>();
   const [harnessDrafts, setHarnessDrafts] = useState<
     Record<string, { harness: string; executable: string }>
   >({});
@@ -830,7 +835,7 @@ export function ProvidersSettings() {
           STATE_CHANNELS.GLOBAL_SNAPSHOT,
           GLOBAL_SYSTEM_SNAPSHOT_REQUEST
         );
-        setHubPath(snapshot.settings?.settings?.oxapHub?.path);
+        setHubBinary(snapshot.settings?.settings?.oxapHub);
       } catch {
         toast.warning('Harness saved, but the hub path could not be refreshed.');
       }
@@ -987,6 +992,7 @@ export function ProvidersSettings() {
                   harness: config.harness ?? 'sdk',
                   executable: config.harnessSettings?.executable ?? '',
                 };
+                const installedHub = hubBinary ?? globalSettings.value?.oxapHub;
                 const isExpanded = expandedId === provider.id;
                 const isPending = pendingId === provider.id;
                 const isCustom = provider.kind === 'custom_endpoint';
@@ -1152,6 +1158,7 @@ export function ProvidersSettings() {
                                     Harness executable
                                     <input
                                       aria-label="Harness executable"
+                                      placeholder={`Absolute path to ${oxapHarness(draft.harness).label} executable`}
                                       value={draft.executable}
                                       onInput={(e) =>
                                         setHarnessDrafts((prev) => ({
@@ -1164,21 +1171,32 @@ export function ProvidersSettings() {
                                       }
                                       class="block w-full bg-bg border border-line rounded px-2 py-1.5"
                                     />
+                                    <span class="block text-xs text-fg-muted">
+                                      An absolute path is required.
+                                    </span>
                                   </label>
                                 )}
-                                <label class="block text-sm">
-                                  Hub binary
-                                  <input
-                                    aria-label="Hub binary"
-                                    readOnly
-                                    value={
-                                      hubPath ??
-                                      globalSettings.value?.oxapHub?.path ??
-                                      'Installed automatically on save'
-                                    }
-                                    class="block w-full bg-bg border border-line rounded px-2 py-1.5"
-                                  />
-                                </label>
+                                <div class="text-sm">
+                                  <p>Hub binary</p>
+                                  {installedHub ? (
+                                    <dl class="mt-1 space-y-1 text-xs text-fg-muted break-all">
+                                      <div>
+                                        <dt class="inline">Path: </dt>
+                                        <dd class="inline">{installedHub.path}</dd>
+                                      </div>
+                                      <div>
+                                        <dt class="inline">Version: </dt>
+                                        <dd class="inline">{installedHub.version}</dd>
+                                      </div>
+                                      <div>
+                                        <dt class="inline">SHA-256: </dt>
+                                        <dd class="inline">{installedHub.sha256}</dd>
+                                      </div>
+                                    </dl>
+                                  ) : (
+                                    <p class="text-xs text-fg-muted">Hub not installed</p>
+                                  )}
+                                </div>
                                 <p class="text-xs text-fg-muted">
                                   Saving restarts the hub and interrupts active OXAP runs.
                                 </p>

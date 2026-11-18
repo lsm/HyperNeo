@@ -620,7 +620,7 @@ describe('ProvidersSettings', () => {
       target: { value: 'oxap-codex' },
     });
     expect(screen.getByText('Hub not installed')).toBeTruthy();
-    expect(screen.getByPlaceholderText('Absolute path to the Codex executable')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
     expect(screen.getByText('An absolute path is required.')).toBeTruthy();
     fireEvent.input(screen.getByLabelText('Harness executable'), {
       target: { value: '/synthetic/codex' },

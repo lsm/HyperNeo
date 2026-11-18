@@ -62,6 +62,10 @@ const transport = new WebSocketClientTransport({
 rpc.registerTransport(transport);
 await transport.initialize();
 await rpc.request('providers.create', oxapCodexProvider);
+await rpc.request('providers.create', {
+  params: { providerId: 'anthropic', displayName: 'Synthetic SDK', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 2 },
+  credentials: { apiKey: 'sk-devproxy-test-key' },
+});
 setModelsCache(
   new Map([
     [
@@ -77,6 +81,10 @@ setModelsCache(
           description: '',
           releaseDate: '',
           available: true,
+        },
+        {
+          id: 'synthetic-sdk', name: 'Synthetic SDK Model', alias: 'synthetic-sdk', family: 'sonnet',
+          provider: 'anthropic', contextWindow: 128000, description: '', releaseDate: '', available: true,
         },
       ],
     ],

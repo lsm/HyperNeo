@@ -27,3 +27,7 @@ attachment action. Keep `oxap-menu-light.png` and `oxap-menu-dark.png`.
 
 A synthetic auth status card displays a URL followed by punctuation. The browser
 checks the link destination excludes that punctuation and keeps `auth-link.png`.
+
+Retain the OXAP and SDK picker and tools screenshots in both themes. The picker
+checks that OXAP omits SDK models and thinking, while SDK shows thinking and the
+Tools/MCP panel. Settings show path, version and hash after the fixture install.
