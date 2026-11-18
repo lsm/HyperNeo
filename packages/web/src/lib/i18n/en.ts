@@ -49,6 +49,8 @@ export const en = {
   'connections.failedMicrosoft': 'Microsoft connection failed',
   'connections.outlookMail': 'Read Outlook mail and manage drafts',
   'connections.outlookCalendars': 'Read Outlook calendars',
+  'connections.profile': 'Basic profile',
+  'connections.offlineAccess': 'Stay connected',
   'drawer.appearance': 'Appearance',
   'drawer.theme': 'Theme',
   'drawer.theme.light': 'Light',

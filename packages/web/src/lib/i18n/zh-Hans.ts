@@ -50,6 +50,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.failedMicrosoft': 'Microsoft 连接失败',
   'connections.outlookMail': '读取 Outlook 邮件并管理草稿',
   'connections.outlookCalendars': '读取 Outlook 日历',
+  'connections.profile': '基本资料',
+  'connections.offlineAccess': '保持连接',
   'drawer.appearance': '外观',
   'drawer.theme': '主题',
   'drawer.theme.light': '浅色',

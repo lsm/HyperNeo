@@ -69,6 +69,8 @@ const scopeLabels: Record<string, MessageKey> = {
   'https://www.googleapis.com/auth/calendar.events.readonly': 'connections.events',
   'Mail.ReadWrite': 'connections.outlookMail',
   'Calendars.Read': 'connections.outlookCalendars',
+  profile: 'connections.profile',
+  offline_access: 'connections.offlineAccess',
 };
 
 const copy = {
@@ -160,6 +162,7 @@ export function ConnectionsSettings() {
             disabled={busy}
             onClick={() => {
               setProvider(next);
+              setClientSecret('');
               setSetup({});
             }}
           >

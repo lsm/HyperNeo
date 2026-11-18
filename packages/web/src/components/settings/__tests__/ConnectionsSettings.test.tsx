@@ -106,12 +106,29 @@ it('connects Microsoft with only an application client ID and polls its own sign
   await waitFor(() => expect(invocations('connections.microsoft.login').length).toBeGreaterThan(0));
 });
 
+it('drops a Google client secret typed before switching to Connect Microsoft', async () => {
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));
+  fireEvent.input(screen.getByLabelText('Client secret (optional)'), {
+    target: { value: 'synthetic-secret' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect Microsoft' }));
+  fireEvent.input(screen.getByLabelText('Application (client) ID'), {
+    target: { value: 'synthetic-microsoft-client' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to Microsoft' }));
+  await waitFor(() => expect(invocations('connections.microsoft.connect')).toHaveLength(1));
+  expect(invocations('connections.microsoft.connect')[0].input).toEqual({
+    clientId: 'synthetic-microsoft-client',
+  });
+});
+
 it('reconnects and disconnects a Microsoft account through Microsoft operations', async () => {
   accounts = [
     {
       ...account,
       provider: 'microsoft',
-      scopes: ['Mail.ReadWrite', 'Calendars.Read'],
+      scopes: ['openid', 'profile', 'email', 'offline_access', 'Mail.ReadWrite', 'Calendars.Read'],
       health: 'healthy',
     },
   ];
@@ -122,6 +139,9 @@ it('reconnects and disconnects a Microsoft account through Microsoft operations'
   render(<MainContent />);
   expect(await screen.findByText('Read Outlook mail and manage drafts')).toBeTruthy();
   expect(screen.getByText('Read Outlook calendars')).toBeTruthy();
+  expect(screen.getByText('Basic profile')).toBeTruthy();
+  expect(screen.getByText('Stay connected')).toBeTruthy();
+  expect(screen.queryByText('offline_access')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
   expect((await screen.findByRole('alert')).textContent).toContain(
     'Sign in with the same Microsoft account to reconnect.'
