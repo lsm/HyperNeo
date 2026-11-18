@@ -293,6 +293,7 @@ try {
     releaseRefresh?.();
     await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId));
   }
+  if (!saturated) assert.equal(replies()[0].workOn, false);
   evidence.firstDeliveryMs = Date.now() - sentAt;
   evidence.deliveredWhileHeld = deliveredWhileHeld;
   if (lagTimer) clearInterval(lagTimer);
@@ -327,6 +328,8 @@ try {
       })).ok,
       true
     );
+    await waitFor(() => replies().some((row) => row.replyTo?.includes(handoffId)));
+    assert.equal(replies().find((row) => row.replyTo?.includes(handoffId))?.workOn, true);
     await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
     await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
     const publish = async (requestId: string, replyTo: string[], fullText: string) => {
