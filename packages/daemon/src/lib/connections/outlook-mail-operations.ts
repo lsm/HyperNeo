@@ -158,7 +158,12 @@ async function list(
 ) {
   const reply = await api.http.get(
     input.connectionId,
-    `${origin}${collection}${stored ?? query([...first, ['$top', String(input.limit)], ['$select', select]])}`,
+    `${origin}${collection}${query([
+      ...(stored
+        ? [...new URLSearchParams(stored)].filter(([name]) => name !== '$top')
+        : [...first, ['$select', select] as [string, string]]),
+      ['$top', String(input.limit)],
+    ])}`,
     scope
   );
   if (!reply.ok) return { reason: reply };

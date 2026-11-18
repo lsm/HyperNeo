@@ -83,7 +83,9 @@ beforeEach(async () => {
       const next = url.searchParams.get('$skiptoken');
       return Response.json({
         value: next
-          ? Array.from({ length: Number(url.searchParams.get('$top')) }, (_, i) => message(`page-two-${i}`))
+          ? Array.from({ length: Number(url.searchParams.get('$top')) }, (_, i) =>
+              message(`page-two-${i}`)
+            )
           : [message('page-one')],
         ...(next ? {} : { '@odata.nextLink': nextLink }),
       });
