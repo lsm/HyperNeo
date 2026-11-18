@@ -3,6 +3,13 @@ export type OxapHarness = {
   adapter: string;
   providers: readonly string[];
   thinking: boolean;
+  settings: readonly string[];
+  environment: readonly string[];
+  key?: string;
+  entry: (
+    settings: Readonly<Record<string, string>>,
+    environment: readonly string[]
+  ) => Record<string, unknown>;
   nativeId: (link: string) => string | undefined;
 };
 
@@ -12,6 +19,16 @@ export const OXAP_HARNESSES = {
     adapter: 'codex',
     providers: ['anthropic-codex'],
     thinking: false,
+    settings: ['executable'],
+    environment: ['HOME', 'CODEX_HOME'],
+    entry: (settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({
+      type: 'codex',
+      executable: settings.executable,
+      environment,
+      any_directory: true,
+      approval_policy: 'on-request',
+      sandbox: 'workspace-write',
+    }),
     nativeId: (link: string) => /^codex:\/\/threads\/([a-zA-Z0-9._~-]+)$/.exec(link)?.[1],
   },
 } as const satisfies Record<string, OxapHarness>;

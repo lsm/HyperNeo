@@ -148,6 +148,34 @@ export const decideSwitch = (superpipe({})('session.switch.admission') as Pipeli
   target: SessionEngine
 ) => true | string;
 
+function openGate(
+  config: Pick<SessionConfig, 'harness' | 'provider'>,
+  record: Pick<ProviderRecord, 'configJson'> | null
+) {
+  const harness = selectSessionEngine(config.harness);
+  if (!isOxapHarness(harness) || !config.provider)
+    return { reason: 'This chat has no OXAP provider.' };
+  let current: SessionEngine;
+  try {
+    current = engineForProvider(config.provider, () => record);
+  } catch {
+    current = 'sdk';
+  }
+  if (current !== harness)
+    return {
+      reason: `This chat ran on ${oxapHarness(harness).label}, which this provider no longer uses; start a new chat`,
+    };
+  return { value: { adapter: config.provider } };
+}
+
+export const decideOxapOpen = (superpipe({})('oap.session.open') as PipelineAPI)
+  .input(['config', 'record'])
+  .pipe(openGate, ['config', 'record'], 'result:open')
+  .end('open') as (
+  config: Pick<SessionConfig, 'harness' | 'provider'>,
+  record: Pick<ProviderRecord, 'configJson'> | null
+) => { adapter: string } | string;
+
 export function thinkingRefusal(
   harness: SessionConfig['harness'],
   thinkingLevel: unknown

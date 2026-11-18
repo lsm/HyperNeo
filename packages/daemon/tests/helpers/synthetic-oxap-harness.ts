@@ -10,8 +10,15 @@ export async function withSyntheticOxapRow(importOriginal: () => Promise<typeof 
     'oxap-synthetic': {
       label: 'OXAP Synthetic',
       adapter: 'memory',
-      providers: ['synthetic-memory'],
+      providers: ['synthetic-memory', 'synthetic-memory-2'],
       thinking: true,
+      settings: [],
+      environment: [],
+      key: 'SYNTHETIC_API_KEY',
+      entry: (_settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({
+        type: 'memory',
+        environment,
+      }),
       nativeId: (link: string) => /^memory:\/\/sessions\/([a-z0-9-]+)$/.exec(link)?.[1],
     },
   };

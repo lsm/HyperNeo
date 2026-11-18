@@ -1,14 +1,16 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { prepareOapBinary, type PreparedOapBinary, type BinaryIdentity } from './oap-binary.ts';
 import { OapHubClient, type OapHubClientOptions } from './oap-hub-client.ts';
-import { buildOapHubConfig, type OapHubConfigInput } from './oap-hub-config.ts';
+import type { OapHubConfig } from './oap-hub-config.ts';
 import { createOapQueryHub, type OapQueryHub } from './oap-query.ts';
 
-export interface OapEngineOptions extends OapHubConfigInput {
+export interface OapEngineOptions {
   binaryPath: string;
   identity: BinaryIdentity;
+  stateDirectory: string;
+  hub: OapHubConfig;
 }
 
 type Slot = {
@@ -19,22 +21,27 @@ type Slot = {
   start: Promise<OapHubClient>;
 };
 
-function configurationKey(options: OapEngineOptions): string {
-  return JSON.stringify([
-    options.binaryPath,
-    options.identity.version,
-    options.identity.sha256.toLowerCase(),
-    options.stateDirectory,
-    options.codexExecutable,
-    options.codexHome,
-  ]);
-}
-
 function validateIdentity(options: OapEngineOptions): OapEngineOptions {
   if (!options.identity.version.trim() || !/^[a-f0-9]{64}$/i.test(options.identity.sha256)) {
     throw new Error('invalid OAP binary identity');
   }
+  if (!isAbsolute(options.stateDirectory)) throw new Error('OAP hub paths must be absolute');
   return options;
+}
+
+function hubLaunch(options: OapEngineOptions) {
+  return {
+    config: { adapters: options.hub.adapters },
+    args: [
+      'serve',
+      '--stdio',
+      '--config',
+      join(options.stateDirectory, 'oap-serve.json'),
+      '--session-history',
+      join(options.stateDirectory, 'session-history.jsonl'),
+    ],
+    environment: options.hub.environment,
+  };
 }
 
 async function readSnapshotNames(options: OapEngineOptions): Promise<string[]> {
@@ -62,9 +69,9 @@ function checkBinary(options: OapEngineOptions): Promise<PreparedOapBinary> {
 
 function ensureValidBinary(
   check: PreparedOapBinary,
-  config: ReturnType<typeof buildOapHubConfig>
+  config: ReturnType<typeof hubLaunch>
 ): {
-  config: ReturnType<typeof buildOapHubConfig>;
+  config: ReturnType<typeof hubLaunch>;
   binary: Extract<PreparedOapBinary, { ok: true }>;
 } {
   if (!check.ok) throw new Error(`OAP binary rejected: ${check.reason}`);
@@ -98,7 +105,7 @@ async function writeConfig(
 const prepareHub = (superpipe({})('oap.engine.prepare') as PipelineAPI)
   .input('options')
   .pipe(validateIdentity, 'options', 'validOptions')
-  .pipe(buildOapHubConfig, 'validOptions', 'config')
+  .pipe(hubLaunch, 'validOptions', 'config')
   .pipe(readSnapshotNames, 'validOptions', 'snapshotNames')
   .pipe(staleSnapshotPaths, ['validOptions', 'snapshotNames'], 'stalePaths')
   .pipe(removeStaleSnapshots, ['validOptions', 'stalePaths'], 'cleanOptions')
@@ -121,21 +128,25 @@ export class OapEngine {
     return !this.closed && !!slot && !slot.failed && slot.client === client;
   }
 
-  async getHub(options: OapEngineOptions): Promise<OapHubClient> {
+  async getHub(read: () => Promise<OapEngineOptions>): Promise<OapHubClient> {
     if (this.closed) throw new Error('OAP engine is closed');
-    const input = { ...options, identity: { ...options.identity } };
-    const key = configurationKey(input);
+    const options = await read();
+    if (this.closed) throw new Error('OAP engine is closed');
+    const key = JSON.stringify(options);
     const previous = this.slot;
-    if (previous && !previous.failed) {
-      if (previous.key !== key)
-        throw new Error('OAP hub configuration differs from the running hub');
-      return previous.start;
-    }
+    if (previous && !previous.failed && previous.key === key) return previous.start;
+    if (previous) previous.failed = true;
 
     const slot: Slot = { key, failed: false, start: Promise.resolve(undefined as never) };
     this.slot = slot;
-    slot.start = this.start(slot, input, previous);
+    slot.start = this.start(slot, options, previous);
     return slot.start;
+  }
+
+  restart(): Promise<void> {
+    const slot = this.slot;
+    if (slot) slot.failed = true;
+    return this.closeSlot(slot);
   }
 
   close(): Promise<void> {

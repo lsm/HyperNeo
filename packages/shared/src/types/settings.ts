@@ -249,6 +249,7 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
   workFeedScope?: 'all' | 'own';
   codexCuAutoReap?: boolean;
+  oxapHub?: { path: string; version: string; sha256: string };
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {

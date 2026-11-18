@@ -82,7 +82,7 @@ try {
   evidence.clientHarnessRefused = clientHarness;
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
-  while (!errors.some((message) => /OAP configuration is incomplete/i.test(message))) {
+  while (!errors.some((message) => /OXAP hub is not installed/.test(message))) {
     assert(Date.now() < deadline, `missing visible workspace refusal: ${JSON.stringify(errors)}`);
     await new Promise((done) => setTimeout(done, 50));
   }
@@ -291,7 +291,7 @@ try {
   evidence.persistedHarness = 'oxap-codex';
   evidence.updateRefused = true;
   evidence.workerOperationsRefused = true;
-  evidence.visibleRefusal = errors.find((message) => /OAP configuration is incomplete/i.test(message));
+  evidence.visibleRefusal = errors.find((message) => /OXAP hub is not installed/.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;

@@ -140,7 +140,7 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
@@ -212,6 +212,10 @@ import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 import { OapEngine } from './lib/oap/oap-engine.ts';
 import { createOapRuntime } from './lib/oap/oap-query.ts';
+import { readHubOptions, type OxapSettingsDeps } from './lib/oap/oxap-settings.ts';
+import { installOxapHub } from './lib/oap/oxap-install.ts';
+import { getDataDir } from './lib/data-dir.ts';
+import { providerRpcWrites, providerWriter } from './storage/repositories/provider-rpc-writes.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -364,6 +368,7 @@ export interface CreateDaemonAppOptions {
 
 export interface DaemonAppContext {
   oapEngine: OapEngine;
+  oxapSettings: OxapSettingsDeps;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   handleSetup: (req: Request) => Promise<Response>;
@@ -812,6 +817,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logScratchError(error);
     }
 
+    const oxapStateDirectory = join(getDataDir(), 'oap');
+    const oxapSettings: OxapSettingsDeps = {
+      settings: () => settingsManager.getGlobalSettings(),
+      writeHub: (oxapHub) => settingsManager.updateGlobalSettings({ oxapHub }),
+      records: () => db.providers.listProviders(),
+      writeProvider: async (id, configJson) => {
+        await providerWriter(db.providers).call(providerRpcWrites, 'updateProvider', id, {
+          configJson,
+        });
+      },
+      key: async (providerId) => {
+        const credentials = await credentialManager.getCredentials(providerId);
+        return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
+      },
+      install: (installed) => installOxapHub(join(oxapStateDirectory, 'install'), installed),
+      engine: oapEngine,
+      stateDirectory: oxapStateDirectory,
+      environment: process.env,
+    };
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
@@ -835,7 +859,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
         ),
-      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
+      createOapRuntime(
+        oapEngine,
+        {
+          installed: () => !!oxapSettings.settings().oxapHub,
+          read: () => readHubOptions(oxapSettings),
+        },
+        internalEventBus,
+        reactiveDb.db,
+        messageHub,
+        (providerId) => db.providers.getProviderByProviderId(providerId)
+      )
     );
 
     sessionManager.setLoginRecovery(loginRecoveryPort);
@@ -1166,6 +1200,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         liveQueries,
         skillsManager,
         mcpImportService,
+        oxapSettings,
       },
       spaceModule && spaceManager && spaceExternalEvents
         ? (rpcDeps, host) =>
@@ -1827,6 +1862,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     return {
       oapEngine,
+      oxapSettings,
       server,
       handlePair,
       handleSetup,

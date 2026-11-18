@@ -3,6 +3,7 @@ export const SETTINGS_OPERATION_NAMES = [
   'connections.google.disconnect',
   'connections.google.login',
   'connections.list',
+  'oxap.settings.save',
   'settings.model.get',
   'settings.model.set',
   'settings.provider.usage',
