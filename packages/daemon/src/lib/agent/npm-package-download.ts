@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 
@@ -97,10 +97,17 @@ async function sha512OfFile(filePath: string): Promise<string> {
 
 async function fetchNpmPackageMeta(
   packageName: string,
-  version: string
+  version: string,
+  registry: string
 ): Promise<{ tarballUrl: string; integrity: string }> {
-  const url = `${registryUrl()}/${encodeURIComponent(packageName)}/${version}`;
-  const meta = JSON.parse((await curl(['-f', url])).trim());
+  const url = `${registry.replace(/\/$/, '')}/${encodeURIComponent(packageName)}/${version}`;
+  const response = (await curl(['-f', url])).trim();
+  let meta: { dist?: { tarball?: string; integrity?: string } };
+  try {
+    meta = JSON.parse(response);
+  } catch {
+    throw new Error('registry returned a web page, not package metadata (blocked by the network?)');
+  }
   const tarballUrl = meta?.dist?.tarball;
   const integrity = meta?.dist?.integrity;
   if (tarballUrl && integrity) return { tarballUrl, integrity };
@@ -119,9 +126,10 @@ async function resumeTarball(url: string, destPath: string): Promise<void> {
 async function fetchVerifiedTarball(
   packageName: string,
   version: string,
-  destPath: string
+  destPath: string,
+  registry: string
 ): Promise<void> {
-  const meta = await fetchNpmPackageMeta(packageName, version);
+  const meta = await fetchNpmPackageMeta(packageName, version, registry);
   if (existsSync(destPath) && (await sha512OfFile(destPath)) === meta.integrity) return;
   await resumeTarball(meta.tarballUrl, destPath);
   const actualIntegrity = await sha512OfFile(destPath);
@@ -132,6 +140,43 @@ async function fetchVerifiedTarball(
   );
 }
 
+async function runPackageManager(command: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
+      if (!err) return resolve(String(stdout).trim());
+      if (err.code === 'ENOENT') return resolve(null);
+      reject(new Error(`${command} failed while preparing the package download`));
+    });
+  });
+}
+
+async function downloadWithConfiguredManager(
+  packageName: string,
+  version: string,
+  destPath: string
+): Promise<void> {
+  const directory = await mkdtemp(join(dirname(destPath), '.npm-pack-'));
+  try {
+    const output = await runPackageManager('npm', [
+      'pack',
+      `${packageName}@${version}`,
+      '--pack-destination',
+      directory,
+    ]);
+    if (output !== null) {
+      const filename = output.split('\n').at(-1) ?? '';
+      if (!filename || filename !== basename(filename))
+        throw new Error('npm pack returned no package');
+      await rename(join(directory, filename), destPath);
+      return;
+    }
+    const registry = await runPackageManager('pnpm', ['config', 'get', 'registry']);
+    await fetchVerifiedTarball(packageName, version, destPath, registry || registryUrl());
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 export async function downloadVerifiedTarball(
   packageName: string,
   version: string,
@@ -139,7 +184,7 @@ export async function downloadVerifiedTarball(
 ): Promise<void> {
   try {
     mkdirSync(dirname(destPath), { recursive: true });
-    await fetchVerifiedTarball(packageName, version, destPath);
+    await downloadWithConfiguredManager(packageName, version, destPath);
   } catch (err) {
     const reason =
       err instanceof Error
