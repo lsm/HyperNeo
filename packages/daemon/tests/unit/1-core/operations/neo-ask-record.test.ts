@@ -96,6 +96,21 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('a proposal opens a human decision card and refuses todos until approved', async () => {
+    const { call, store } = setup();
+    const result = await call(
+      'neo.ask.open',
+      { title: 'Improve login', request: 'Improve login because users get stuck' },
+      turn('proposal')
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(store.listQuestions(result.ask.id)).toMatchObject([
+      { state: 'open', kind: 'yesno', yesLabel: 'Do it', noLabel: "Don't" },
+    ]);
+    const retry = await call('neo.ask.open', opening, turn('retry'));
+    expect(retry.ok).toBe(false);
+  });
   test('ask retries read each repository scope once and refresh facts on the next operation', async () => {
     const { db, call, store } = setup();
     const base = { title: 'Repository query budget', request: 'Reuse recorded work' };
