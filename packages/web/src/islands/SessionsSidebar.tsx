@@ -168,6 +168,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
   const [systemWork, setSystemWork] = useState<Record<string, { key: string; reason: string }>>({});
   const systemWorkRef = useRef<Record<string, { key: string; reason: string }>>({});
+  const failedWorkRef = useRef(new Set<string>());
+  const [workRefresh, setWorkRefresh] = useState(0);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -180,7 +182,12 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       .then(setHistory)
       .catch(() => {});
     listSystemProjects()
-      .then(setSystemProjects)
+      .then((projects) => {
+        setSystemProjects(projects);
+        const ids = new Set(projects.map((project) => project.id));
+        for (const id of failedWorkRef.current) if (!ids.has(id)) failedWorkRef.current.delete(id);
+        if (failedWorkRef.current.size > 0) setWorkRefresh((version) => version + 1);
+      })
       .catch(() => {});
   }, [historyVersion, sessions.value]);
 
@@ -197,6 +204,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     for (const project of systemProjects) {
       const key = workKey(project);
       if (project.hasSessions || project.unknownWork) {
+        failedWorkRef.current.delete(project.id);
         if (systemWorkRef.current[project.id]) {
           delete systemWorkRef.current[project.id];
           setSystemWork((previous) => {
@@ -208,6 +216,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         continue;
       }
       if (systemWorkRef.current[project.id]?.key === key) continue;
+      failedWorkRef.current.delete(project.id);
       findProjectWork(project.folders)
         .then((busy) => {
           if (!current) return;
@@ -218,14 +227,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
         .catch(() => {
           if (!current) return;
           const entry = { key, reason: 'Could not check project work' };
-          systemWorkRef.current[project.id] = entry;
+          failedWorkRef.current.add(project.id);
           setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
         });
     }
     return () => {
       current = false;
     };
-  }, [workSignature]);
+  }, [workSignature, workRefresh]);
 
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped, childrenByParent } = buildView(

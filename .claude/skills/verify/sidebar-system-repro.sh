@@ -37,7 +37,7 @@ CODE=$(env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bi
   bun run packages/cli/main.ts pair --kind human |
   python3 -c "import json,sys;print(json.load(sys.stdin)['code'])")
 set +e
-PAIR_CODE="$CODE" NODE_PATH="${PLAYWRIGHT_NODE_PATH:-/opt/homebrew/lib/node_modules/@playwright/cli/node_modules}" \
+PAIR_CODE="$CODE" VERIFY_INJECT_FAILURE="${VERIFY_INJECT_FAILURE:-}" NODE_PATH="${PLAYWRIGHT_NODE_PATH:-/opt/homebrew/lib/node_modules/@playwright/cli/node_modules}" \
   "${VERIFY_NODE:-node}" .claude/skills/verify/sidebar-system-repro.mjs "$PORT" "$RUN"
 STATUS=$?
 cp "$RUN"/evidence/sidebar-* "$OUT"/ 2>/dev/null

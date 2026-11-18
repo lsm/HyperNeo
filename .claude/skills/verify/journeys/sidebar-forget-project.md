@@ -8,7 +8,9 @@ when needed, as in the sidebar new-session journey.
 The light desktop screenshot shows the empty Neo project's remove control. The browser
 checks that projects with a chat, hidden worker, or uncheckable remote work refuse removal.
 A project without folders or other workspace aliases can be forgotten. An unrelated
-session update does not trigger another work scan.
+session update does not trigger another work scan. Run again with
+`VERIFY_INJECT_FAILURE=1` to simulate an unreachable work source and confirm the
+control becomes available after the next project list refresh.
 It invokes forget directly to check the worker guard, then verifies that an injected
 failure shows an error and retains the project and folder history. Confirmed removal
 stays gone after reload; a synthetic file and unrelated chat must remain. The run prints each observed result and exits nonzero

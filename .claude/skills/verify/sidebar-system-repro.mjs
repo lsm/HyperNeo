@@ -23,10 +23,50 @@ try {
   await page.getByLabel('Name for this browser').fill('Sidebar check');
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor();
+  if (process.env.VERIFY_INJECT_FAILURE) {
+    let requestId;
+    let injected = false;
+    await page.routeWebSocket('**/ws', (route) => {
+      const server = route.connectToServer();
+      route.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (!injected && !requestId && message.method === 'operation.invoke' && message.data?.name === 'work.find' && message.data?.input?.folder?.endsWith('/projects/alpha')) requestId = message.id;
+        server.send(raw);
+      });
+      server.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (requestId && (message.id === requestId || message.requestId === requestId)) {
+          message.data.unreachable = [{source:'synthetic', reason:'temporary outage'}];
+          requestId = null;
+          injected = true;
+        }
+        route.send(JSON.stringify(message));
+      });
+    });
+  }
   await page.goto(`http://127.0.0.1:${port}/sessions`);
   await page.getByRole('button', { name: 'New session in neo-read' }).waitFor({ state: 'attached' });
   await page.getByTestId('project-group-header').filter({ hasText: 'neo-read' }).hover();
+  if (process.env.VERIFY_INJECT_FAILURE) {
+    const retry = page.getByRole('button', {name:'Remove project neo-read'});
+    await page.waitForFunction(() => document.querySelector('[aria-label="Remove project neo-read"]')?.title === 'Could not check project work', null, {timeout:15000});
+    assert(await retry.isDisabled());
+    await page.evaluate(async (folder) => {
+      const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
+      await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
+      const id = crypto.randomUUID();
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('session creation timed out')), 10000);
+        socket.onmessage = (event) => { const message = JSON.parse(event.data); if (message.id !== id && message.requestId !== id) return; clearTimeout(timer); if (message.error) reject(new Error(JSON.stringify(message.error))); else resolve(message.data); };
+        socket.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'session.create',data:{title:'Connectivity update',workspacePath:folder,config:{queryMode:'manual'}},timestamp:new Date().toISOString(),version:'1.0.0'}));
+      });
+      socket.close();
+    }, `${run}/projects/beta`);
+    await page.getByText('Connectivity update').waitFor({timeout:15000});
+    console.log('Observed temporary work lookup failure');
+  }
   await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
+  if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
   const archived = page.getByRole('button', {name: 'Remove project archived-chat'});
   await archived.waitFor({state: 'attached'});
