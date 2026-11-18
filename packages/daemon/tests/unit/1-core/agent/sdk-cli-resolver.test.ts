@@ -12,6 +12,7 @@ import {
   warmupSDKCliBinary,
   _resetForTesting,
   awaitSDKCliPath,
+  awaitSDKCliPathForQuery,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
 
 const mocks = vi.hoisted(() => ({
@@ -708,6 +709,25 @@ describe('warmupSDKCliBinary', () => {
     expect(await session).toContain('.hyperneo/sdk');
     expect((await startup).status).toBe('ready');
     expect(curlCalls).toBe(2);
+  });
+
+  it('reports a slow download as a download cause while it continues', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.existsSync.mockReturnValue(false);
+      mocks.execFile.mockImplementation(() => {});
+      const result = awaitSDKCliPathForQuery().catch((error: Error) => error);
+
+      await vi.advanceTimersByTimeAsync(45_001);
+      const error = await Promise.race([result, Promise.resolve('still waiting')]);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({
+        name: 'PackageDownloadError',
+        message: 'Claude Code is still downloading. Try again shortly.',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives a session one clear error when the download fails', async () => {
