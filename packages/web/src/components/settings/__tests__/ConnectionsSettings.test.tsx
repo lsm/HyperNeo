@@ -216,6 +216,9 @@ it('keeps Google pending and its consent link while opening Microsoft setup', as
   expect(screen.getByRole('alert').textContent).toContain(
     'Sign in with the same Google account to reconnect.'
   );
+  fireEvent.click(screen.getByRole('button', { name: 'Connect Google' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect Microsoft' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });
 
 it('clears Google credentials when Microsoft reconnect fails with a mismatched account', async () => {
@@ -268,6 +271,13 @@ it('shows Microsoft consent when starting it during a pending Google sign-in', a
   const link = await screen.findByRole('link', { name: 'Continue to Microsoft' });
   expect(link.getAttribute('href')).toBe('https://example.test/microsoft');
   expect(screen.getByRole('status').textContent).toContain('Finish signing in on Microsoft.');
+  microsoftPending = false;
+  const googleLink = await screen.findByRole(
+    'link',
+    { name: 'Continue to Google' },
+    { timeout: 2500 }
+  );
+  expect(googleLink.getAttribute('href')).toBe(consentUrl);
 });
 
 it('keeps a Google secret out of a Microsoft reconnect that reuses the open form', async () => {

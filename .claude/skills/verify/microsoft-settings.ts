@@ -69,6 +69,6 @@ try {
   const child = spawn('node', ['.claude/skills/verify/microsoft-settings.mjs', String(port), pairing.code, run], { env: process.env, stdio: 'inherit' });
   assert.equal(await new Promise((done, fail) => { child.once('error', fail); child.once('close', done); }), 0, 'isolated browser proof failed');
 } finally { server?.stop(true); await app.cleanup(); }
-assert.equal(exchanges, 2);
+assert.equal(exchanges, 3);
 writeFileSync(join(run, 'evidence/microsoft-settings-runtime.json'), JSON.stringify({ surface: 'isolated daemon and headless browser, fake Microsoft identity with real PKCE/ID-token validation', exchanges, requests, resourcesClosed: true }, null, 2));
 console.log('PASS: Connect Microsoft in the real Connections panel, consent, reconnect and disconnect; resources closed');
