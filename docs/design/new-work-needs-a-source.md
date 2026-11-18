@@ -6,12 +6,7 @@ Status: proposal, 2026-11-16, tracked in #10943. Design only. Paths without a pr
 
 Neo can come up with work itself, write it as a request in its own words, give it to a worker, and see it merged. The human never asked for it, and it looks exactly like work the human asked for.
 
-Example: a recent bug fix moved every review session into the daemon's internal read checkout. Here is how it happened:
-
-- Reviewers kept asking Neo for a folder.
-- Neo opened an ask whose request already named that folder as the fix.
-- A worker built it, two reviewers checked the code against that request, and it merged.
-- Nobody asked whether the request was right.
+For example: sessions keep asking Neo for something. Neo opens an ask whose request already names its own fix, a worker builds it, reviewers check the code against that request, and it merges. Nobody asked whether the request was right.
 
 Two gaps allow this:
 
@@ -85,7 +80,7 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 
 ## Slices
 
-Two PRs, as the human asked, in this order so a proposal can never be approved by a relayed answer:
+Two PRs, as the human asked. Relayed card answers exist today (`daemon/src/lib/neo/relay-answer.ts`). Slice 1 removes them. Proposal cards exist only from slice 2, which merges after slice 1, so no proposal can ever be approved by a relayed answer:
 
 1. **Remove relayed answers**: everything listed in rule 4. Removal only.
 2. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`. It merges only after slice 1.
