@@ -28,6 +28,12 @@ const delegationQuestion = rpc('pack.preferences.ask', {
   alternatives: [[{ ...delegation, value: 'self' }], [{ ...delegation, value: 'saved' }]],
 }).questionId;
 assert(delegationQuestion);
+const coding = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'sessionStrategy' };
+const codingQuestion = rpc('pack.preferences.ask', {
+  askId, requestId: 'synthetic-coding', hold: false,
+  alternatives: ['long_lived', 'per_task', 'per_pr'].map((value) => [{ ...coding, value }]),
+}).questionId;
+assert(codingQuestion);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observed = {};
@@ -46,6 +52,10 @@ try {
   observed.delegationText = await signIn.innerText();
   assert(observed.delegationText.includes('Work continues using the default until you answer.'));
   assert(!observed.delegationText.includes('I sign in: I sign in'));
+  const codingCard = card.locator(`[id="neo-ref-question-${codingQuestion}"]`);
+  await codingCard.waitFor();
+  observed.codingText = await codingCard.innerText();
+  assert(observed.codingText.includes('How should coding sessions be reused in this repository?'));
   const body = card.locator(`[id="neo-ref-question-${questionId}"]`);
   await body.waitFor();
   observed.text = await body.innerText();

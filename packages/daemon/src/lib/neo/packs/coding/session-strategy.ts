@@ -8,7 +8,10 @@ export type CodingSessionStrategy = (typeof STRATEGIES)[number];
 
 export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Session strategy', 'zh-Hans': '会话策略' },
-  question: { en: 'How should sessions be reused?', 'zh-Hans': '如何复用会话？' },
+  question: {
+    en: 'How should coding sessions be reused in this repository?',
+    'zh-Hans': '如何在此仓库复用编码会话？',
+  },
   valueLabels: {
     long_lived: { en: 'Long-lived work-type sessions', 'zh-Hans': '按工作类型长期复用会话' },
     per_task: { en: 'One session per task', 'zh-Hans': '每个任务一个会话' },
