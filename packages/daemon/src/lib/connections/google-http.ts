@@ -6,7 +6,7 @@ import { grantedScopes } from './status.ts';
 type Token = ReturnType<typeof createGoogleTokenAccess>['token'];
 type Grant = Extract<Awaited<ReturnType<Token>>, { ok: true }>;
 export type GoogleReply = { ok: true; data: unknown } | { ok: false; reason: string };
-type Write = { method: 'POST' | 'PUT'; body: string };
+type Write = { method: 'POST' | 'PUT' | 'PATCH'; body: string };
 type Payload = Partial<Write> & { headers?: Record<string, string> };
 type Reply = { response: Response; token: string };
 const denied = (reason: string) => ({ ok: false as const, reason });

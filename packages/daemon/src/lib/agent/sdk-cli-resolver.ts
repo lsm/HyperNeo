@@ -20,6 +20,7 @@ import {
   downloadVerifiedTarball,
   extractFileFromTarGz,
   isMusl,
+  PackageDownloadError,
   PACKAGE_DOWNLOAD_WAIT_MS,
   waitForDownload,
 } from './npm-package-download.ts';
@@ -306,7 +307,12 @@ export async function warmupSDKCliBinary(): Promise<WarmupResult> {
 }
 
 export async function awaitSDKCliPathForQuery(): Promise<string | undefined> {
-  return waitForDownload(awaitSDKCliPath(), PACKAGE_DOWNLOAD_WAIT_MS, 'Claude Code binary');
+  return waitForDownload(
+    awaitSDKCliPath(),
+    PACKAGE_DOWNLOAD_WAIT_MS,
+    'Claude Code binary',
+    () => new PackageDownloadError('Claude Code is still downloading. Try again shortly.')
+  );
 }
 
 export async function awaitSDKCliPath(): Promise<string | undefined> {
@@ -314,7 +320,7 @@ export async function awaitSDKCliPath(): Promise<string | undefined> {
   if (local) return local;
   const result = await warmupSDKCliBinary();
   if (result.status === 'ready' || !result.packageName) return result.path;
-  throw new Error(`Claude Code binary unavailable: ${result.error}`);
+  throw new PackageDownloadError(`Can't download Claude Code: ${result.error}`);
 }
 
 async function doWarmup(): Promise<WarmupResult> {
@@ -375,7 +381,7 @@ async function doWarmup(): Promise<WarmupResult> {
       version,
     };
   } catch (err) {
-    const msg = `Could not download ${platformPkg}@${version}: ${(err as Error).message}`;
+    const msg = err instanceof Error ? err.message : String(err);
     logWarn(
       `[SDK] Claude Code binary unavailable. Agent queries may fail until the binary is available. Error: ${msg}`
     );

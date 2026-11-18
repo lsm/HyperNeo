@@ -1814,7 +1814,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
-      await releaseNeoTodoWorkers(sessions, deps.invoke, warn);
+      await releaseNeoTodoWorkers(sessions, deps.invoke, warn, Date.now(), async (row, reason) => {
+        const todo = store.getTodo(row.todoId);
+        const ask = todo && store.getAsk(todo.askId);
+        if (!todo || !ask) throw new Error('Pending worker todo or ask is missing');
+        await deps.tell(
+          ask,
+          todo,
+          `Finished todo "${todo.title}" (${todo.id}) has a worker (${row.ref.adapter}:${row.ref.id}) pending release for 24 hours: ${reason}.`,
+          neoDerivedId(JSON.stringify(['worker-release-pending', todo.id])),
+          'event'
+        );
+      });
     },
   };
 }

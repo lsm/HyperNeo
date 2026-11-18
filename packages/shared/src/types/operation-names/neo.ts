@@ -70,6 +70,8 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.remove',
   'neo.todo.retarget',
   'neo.topic.merge',
+  'neo.workerOwnership.apply',
+  'neo.workerOwnership.candidates',
   'pack.preferences.applyAnswer',
   'pack.preferences.ask',
   'pack.preferences.get',
