@@ -131,10 +131,9 @@ export function ConnectionsSettings() {
   const [setup, setSetup] = useState<{ connectionId?: string } | null>(null);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
-  const [consentUrl, setConsentUrl] = useState('');
+  const [consentUrls, setConsentUrls] = useState<Partial<Record<Provider, string>>>({});
   const popup = useRef<Window | null>(null);
   const watched = useRef<Provider | null>(null);
-  const [consentProvider, setConsentProvider] = useState<Provider | null>(null);
   const reload = useCallback(async (from: Provider | null, command?: Command) => {
     const next = await update(from, command, watched.current);
     watched.current =
@@ -180,8 +179,7 @@ export function ConnectionsSettings() {
       } else if (receipt?.authorizeUrl) {
         popup.current?.close();
         popup.current = window;
-        setConsentUrl(receipt.authorizeUrl);
-        setConsentProvider(command.provider);
+        setConsentUrls((urls) => ({ ...urls, [command.provider]: receipt.authorizeUrl }));
         if (window) window.location.href = receipt.authorizeUrl;
         setSetup(null);
         return;
@@ -206,6 +204,7 @@ export function ConnectionsSettings() {
             key={next}
             disabled={busy}
             onClick={() => {
+              if (view.attempt.state === 'failed' && view.provider !== next) watched.current = null;
               setProvider(next);
               setError('');
               setClientId('');
@@ -231,10 +230,10 @@ export function ConnectionsSettings() {
       {view.attempt.state === 'pending' && (
         <p role="status" class="text-sm text-fg-soft">
           {t(statusText.pending)}
-          {consentUrl && consentProvider === view.provider && (
+          {consentUrls[view.provider] && (
             <a
               class="ml-2 text-accent hover:underline"
-              href={consentUrl}
+              href={consentUrls[view.provider]}
               target="_blank"
               rel="noopener noreferrer"
             >
