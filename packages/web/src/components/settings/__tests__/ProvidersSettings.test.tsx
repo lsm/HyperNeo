@@ -602,13 +602,26 @@ describe('ProvidersSettings', () => {
     mockRequest.mockImplementation(async (method: string) =>
       method === 'operation.invoke'
         ? { accepted: true }
-        : { settings: { settings: { oxapHub: { path: '/synthetic/oxap' } } } }
+        : {
+            settings: {
+              settings: {
+                oxapHub: {
+                  path: '/synthetic/oxap',
+                  version: 'synthetic-version',
+                  sha256: 'a'.repeat(64),
+                },
+              },
+            },
+          }
     );
     render(<ProvidersSettings />);
     fireEvent.click(await screen.findByText('Codex'));
     fireEvent.change(screen.getByLabelText('Harness', { exact: true }), {
       target: { value: 'oxap-codex' },
     });
+    expect(screen.getByText('Hub not installed')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Absolute path to the Codex executable')).toBeTruthy();
+    expect(screen.getByText('An absolute path is required.')).toBeTruthy();
     fireEvent.input(screen.getByLabelText('Harness executable'), {
       target: { value: '/synthetic/codex' },
     });
@@ -627,11 +640,9 @@ describe('ProvidersSettings', () => {
         { timeout: 300_000 }
       )
     );
-    await waitFor(() =>
-      expect((screen.getByLabelText('Hub binary') as HTMLInputElement).value).toBe(
-        '/synthetic/oxap'
-      )
-    );
+    await waitFor(() => expect(screen.getByText('/synthetic/oxap')).toBeTruthy());
+    expect(screen.getByText('synthetic-version')).toBeTruthy();
+    expect(screen.getByText('a'.repeat(64))).toBeTruthy();
   });
 
   it('expands provider row on click', async () => {
