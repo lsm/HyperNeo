@@ -19,3 +19,6 @@ cards independently, so retaining old children does not create new splits.
 Keep observed.json and proof.log. The wrapper removes the synthetic database and
 HOME after saving evidence. This proof covers MCP and public read results. Web
 layout and a model-driven chat turn require separate observation.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

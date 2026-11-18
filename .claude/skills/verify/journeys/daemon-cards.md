@@ -24,3 +24,6 @@ On a real daemon, driving its Neo refresh and attention sweep:
 
 Evidence is `result.json` and `proof.log`. This proves the stored rows and the
 wakes queued for Neo, not how Neo words its turn.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

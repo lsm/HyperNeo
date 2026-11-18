@@ -202,7 +202,9 @@ export function createNeoAskRecordOperations(
         return {
           context,
           hasTodos: input.todos.length > 0,
-          proposal: prior ? !!store.getQuestion(proposalQuestionId(prior.id)) : true,
+          proposal: prior
+            ? prior.status === 'open' && !!store.getQuestion(proposalQuestionId(prior.id))
+            : true,
         };
       },
       ['outcome', 'input'],
@@ -329,7 +331,11 @@ export function createNeoAskRecordOperations(
           ? store.getAsk(priorAsk.id)
           : store.findAsk(sessionId, origin, input.title, goalId);
         if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
-        if (input.todos.length && (!current || store.getQuestion(proposalQuestionId(current.id))))
+        if (
+          input.todos.length &&
+          (!current ||
+            (current.status === 'open' && store.getQuestion(proposalQuestionId(current.id))))
+        )
           return {
             ok: false,
             reason: 'proposal_todos: open the proposal without todos and wait for human approval.',

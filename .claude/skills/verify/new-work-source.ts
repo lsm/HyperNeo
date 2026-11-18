@@ -107,6 +107,16 @@ try {
   evidence.goal = { cycle, cards: cycleCards };
   assert.equal(cycleCards.length, 1);
   assert.equal(cycleCards[0]!.state, 'open');
+  const finished = await mcp('neo.ask.open', { title: 'Finished proposal', request: 'Complete the synthetic task' });
+  const finishedCard = store.listQuestions(finished.ask.id)[0]!;
+  assert.equal((await human('neo.question.answer', { questionId: finishedCard.id, answer: 'yes' })).ok, true);
+  store.openAsk({ id: 'finished-child', parentId: finished.ask.id, sessionId: sender, projectId: null, originMessageId: null, title: 'Historical child', request: 'Preserve settled retry', createdAt: 1 });
+  const settled = await mcp('neo.ask.settle', { askId: finished.ask.id, status: 'done', outcome: 'Synthetic work completed' });
+  assert.equal(settled.ok, true, JSON.stringify(settled));
+  const settledRetry = await mcp('neo.ask.open', { title: 'Finished proposal', request: 'Complete the synthetic task', todos: [draft] });
+  evidence.settledRetry = settledRetry;
+  assert.equal(settledRetry.ok, true, JSON.stringify(settledRetry));
+  assert(settledRetry.records?.some((record: string) => record.startsWith('ask_settled:')));
   const second = await mcp('neo.ask.open', { title: 'Declined proposal', request: 'A separate synthetic change' });
   const secondSnapshot = await invokeOperation(registry(), 'neo.snapshot', {}, { source: 'rpc', principal: 'local' });
   const secondCard = (secondSnapshot as { value: { todoAsks: { ask: { id: string }; questions: { id: string; kind: string }[] }[] } }).value.todoAsks.find((entry) => entry.ask.id === second.ask.id)?.questions.find((item) => item.kind === 'yesno');

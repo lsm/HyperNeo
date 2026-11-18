@@ -2,7 +2,7 @@
     `VERIFY_MOCK=neo-script-api.ts`, register the synthetic provider from Launch,
     then run `bun .claude/skills/verify/goal-schedule.ts <port> "$RUN"`. It creates
     an hourly-capable goal with a one-minute cadence for verification. The mock
-    model calls `neo.ask.open` through the real MCP door with that `goalId`.
+    model calls `neo.ask.open` through the real MCP door with that `goalId`, without todos; the resulting proposal awaits human approval.
     End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
     `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
     and journal run identity, the full goal-cycle instructions prefixed inside that wake, the schedule digest covering goal facts and received work, and an

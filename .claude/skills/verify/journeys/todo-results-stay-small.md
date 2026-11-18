@@ -18,3 +18,6 @@ the web card.
 
 Evidence: `sizes.json` (bytes of each reply, and of the full todo list a change
 used to carry) and `agent-ask-read.json`.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

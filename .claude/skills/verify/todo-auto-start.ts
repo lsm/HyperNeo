@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import assert from 'node:assert/strict';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -224,6 +225,7 @@ try {
       store.askQuestion(id, askId, { text: 'Which release?', kind: 'reply', options: null, multiple: false, noLabel: null, yesLabel: null }, Date.now());
       return id;
     };
+    seedHistoricalAsk(store, root, { title: 'Chain', request: 'Run the plan in order.' });
     const opened = await call('neo.ask.open', { title: 'Chain', request: 'Run the plan in order.', todos: [
       { ...step('chain-1'), after: [] },
       { ...step('chain-2', 'restart'), after: [0] },
