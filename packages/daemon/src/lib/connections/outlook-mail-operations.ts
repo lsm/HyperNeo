@@ -42,7 +42,7 @@ const cursorSchema = z
     connectionId: id,
     operation: z.enum(['outlook.search', 'outlook.read_thread']),
     key: z.string().length(64),
-    query: z.string().max(1500),
+    query: z.string().max(1500).regex(/^\?[^#]*$/),
   })
   .strict();
 const address = z
@@ -278,10 +278,11 @@ export function createOutlookMailOperations(db: () => Database, service: () => P
           ? await Promise.all(page.items.map((item) => withBody(api, input, item)))
           : page.items;
         const failed = items.find((item) => 'ok' in item);
-        return (
-          failed ??
-          finish({ ...page, items: items as Item[] }, { conversationId: input.conversationId })
-        );
+        if (failed) return failed;
+        const fitted = items as Item[];
+        for (let i = fitted.length - 1; i >= 0 && Buffer.byteLength(JSON.stringify(fitted)) > 61440; i--)
+          if (fitted[i].body !== undefined) fitted[i] = { ...fitted[i], body: undefined, truncated: true };
+        return finish({ ...page, items: fitted }, { conversationId: input.conversationId });
       },
       ['result', 'input', 'api'],
       'result'

@@ -17,7 +17,7 @@ Check `outlook-mail.json`:
 
 - Only the Microsoft account is listed.
 - Search pages are bounded and redacted, with clipped previews. They page through an opaque cursor that never contains a Graph URL.
-- A cursor for another query or operation is refused, and so is a forged cursor. A Google connection id is refused, and so is a caller without a session. None of these sends a Graph request.
+- A cursor for another query or operation is refused, and so is a forged cursor or a hand-made one whose stored query would change the request path. A Google connection id is refused, and so is a caller without a session. None of these sends a Graph request.
 - A next link on a foreign origin is refused, and a 429 maps to `rate_limited`.
 - Thread reads select no body by default. With `body: true` they fetch each text body on its own; an 80 KiB body returns that message's preview marked truncated while the others keep their bodies.
 

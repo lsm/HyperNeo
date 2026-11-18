@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -93,6 +94,8 @@ try {
   let before = requests.length;
   assert.equal((await search({ cursor: first.nextCursor, query: 'other' })).reason, 'invalid_cursor');
   assert.equal((await search({ cursor: 'forged' })).reason, 'invalid_cursor');
+  const crafted = Buffer.from(JSON.stringify({ connectionId: 'outlook-one', operation: 'outlook.search', key: createHash('sha256').update('fixture').digest('hex'), query: '/../../users/other/messages?$top=1' })).toString('base64url');
+  assert.equal((await search({ cursor: crafted })).reason, 'invalid_cursor');
   assert.equal((await read({ cursor: first.nextCursor })).reason, 'invalid_cursor');
   assert.equal((await invoke('outlook.search', { connectionId: 'gmail-one', query: 'fixture' })).reason, 'unknown_connection');
   caller = { sessionId: '', role: 'universal_read' };
