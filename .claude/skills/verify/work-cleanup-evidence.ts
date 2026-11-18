@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { workerWorkKey } from '../../../packages/daemon/src/lib/work-locations.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 
 const DAY = 86400000;
 const run = resolve(process.argv.at(-1)!);
@@ -70,6 +71,7 @@ try {
     createdAt: iso, lastActiveAt: iso, status: 'archived',
     config: { model: 'claude-sonnet-4-5-20250929', maxTokens: 8192, temperature: 1 },
     metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  recordWorkerStarted(raw, { adapter: 'hyperneo', id });
   writeFileSync(join(tree.worktreePath, 'draft.txt'), 'keep this draft');
   const rpc = () => new Promise<{ reply: { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> } }>((resolveReply, reject) => {
     const child = Bun.spawn([process.execPath, join(import.meta.dir, 'rpc.ts'), 'work.cleanup.sweep', '{}'], {

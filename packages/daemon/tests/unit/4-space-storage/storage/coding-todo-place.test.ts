@@ -42,12 +42,14 @@ test('core asks and todos carry no repository field', () => {
 test('the coding pack reads stored places from its own facts given only ids', () => {
   store.addTodo('own', 'history', draft, 2, 'github.com/synthetic/own');
   store.addTodo('historical', 'history', draft, 2);
-  expect(decide({ ask: { id: 'history' }, todo: { id: 'own' } })).toBe('github.com/synthetic/own');
-  expect(decide({ ask: { id: 'history' }, todo: { id: 'historical' } })).toBe(
+  expect(decide({ ask: { id: 'history' }, todo: { id: 'own', check: null } })).toBe(
+    'github.com/synthetic/own'
+  );
+  expect(decide({ ask: { id: 'history' }, todo: { id: 'historical', check: null } })).toBe(
     'github.com/synthetic/history'
   );
   store.addTodo('empty', 'history', draft, 2, '');
-  expect(decide({ ask: { id: 'history' }, todo: { id: 'empty' }, start: true })).toBe(
+  expect(decide({ ask: { id: 'history' }, todo: { id: 'empty', check: null }, start: true })).toBe(
     'github.com/synthetic/history'
   );
 });

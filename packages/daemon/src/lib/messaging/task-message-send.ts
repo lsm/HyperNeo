@@ -1,4 +1,5 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { ActorResolver } from '../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../messaging/src/types.ts';
@@ -7,9 +8,14 @@ import { defineOperation } from '../operations/registry.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { TaskWorkerMessageInjector } from '../tasks/task-message-delivery.ts';
-import { resolveOutboundSender } from './outbound-sender-identity.ts';
+import { resolveOutboundSender, type OutboundSender } from './outbound-sender-identity.ts';
 import { deliverToAgent, deliverToWorker } from './task-message-send-delivery.ts';
-import { locateTask, resolveMessageTarget, resolveWorkflow } from './task-message-send-target.ts';
+import {
+  locateTask,
+  resolveMessageTarget,
+  resolveWorkflow,
+  type ResolvedMessageTarget,
+} from './task-message-send-target.ts';
 
 export const SENDER_IDENTITY_UNAVAILABLE_ERROR =
   'Sender identity is unavailable — only Space agent sessions can send task messages.';
@@ -94,90 +100,126 @@ export interface TaskMessageSendDependencies {
   audit?: (outcome: string, extra?: Record<string, unknown>) => void;
 }
 
-export async function sendTaskMessage(
+type Admission = { sender: OutboundSender; task: SpaceTask; workflow: SpaceWorkflow | null };
+type Rejection = { reason: TaskMessageSendResult };
+
+function reject(input: TaskMessageSendInput, error: string, taskId?: string): Rejection {
+  return {
+    reason: { success: false, task_id: taskId ?? ('taskId' in input ? input.taskId : ''), error },
+  };
+}
+
+function admitSender(input: TaskMessageSendInput, caller: OperationCaller) {
+  const sender = resolveOutboundSender(caller);
+  return 'reason' in sender
+    ? reject(input, SENDER_IDENTITY_UNAVAILABLE_ERROR)
+    : { value: sender.value };
+}
+
+function admitTask(
+  sender: OutboundSender,
   input: TaskMessageSendInput,
-  caller: OperationCaller,
+  deps: TaskMessageSendDependencies
+): { value: { sender: OutboundSender; task: SpaceTask } } | Rejection {
+  const located = locateTask(input, deps);
+  return 'reason' in located
+    ? reject(input, located.reason)
+    : { value: { sender, task: located.value } };
+}
+
+function admitWorkflow(
+  admission: { sender: OutboundSender; task: SpaceTask },
+  input: TaskMessageSendInput,
+  deps: TaskMessageSendDependencies
+): { value: Admission } | Rejection {
+  const { task } = admission;
+  if (!input.target && !input.nodeId) {
+    return reject(
+      input,
+      'Target agent is required. Use node_id or target to specify a recipient.',
+      task.id
+    );
+  }
+  const workflow = resolveWorkflow(task, deps);
+  return 'reason' in workflow
+    ? reject(input, workflow.reason, task.id)
+    : { value: { ...admission, workflow: workflow.value.workflow } };
+}
+
+async function admitTarget(
+  admission: Admission,
+  input: TaskMessageSendInput,
+  executions: NodeExecution[],
+  deps: TaskMessageSendDependencies
+): Promise<{ value: Admission & { target: ResolvedMessageTarget } } | Rejection> {
+  try {
+    const target = await resolveMessageTarget(
+      input,
+      admission.task,
+      admission.workflow,
+      executions,
+      deps
+    );
+    return 'reason' in target
+      ? reject(input, target.reason, admission.task.id)
+      : { value: { ...admission, target: target.value } };
+  } catch (err) {
+    return reject(input, err instanceof Error ? err.message : String(err), admission.task.id);
+  }
+}
+
+async function deliverMessage(
+  admission: Admission & { target: ResolvedMessageTarget },
+  input: TaskMessageSendInput,
   deps: TaskMessageSendDependencies
 ): Promise<TaskMessageSendResult> {
-  const sender = resolveOutboundSender(caller);
-  if ('reason' in sender) {
-    return {
-      success: false,
-      task_id: 'taskId' in input ? input.taskId : '',
-      error: SENDER_IDENTITY_UNAVAILABLE_ERROR,
-    };
-  }
-
-  const located = locateTask(input, deps);
-  if ('reason' in located) {
-    return {
-      success: false,
-      task_id: 'taskId' in input ? input.taskId : '',
-      error: located.reason,
-    };
-  }
-  const task = located.value;
-
-  if (!input.target && !input.nodeId) {
-    return {
-      success: false,
-      task_id: task.id,
-      error: 'Target agent is required. Use node_id or target to specify a recipient.',
-    };
-  }
-
-  const workflowOutcome = resolveWorkflow(task, deps);
-  if ('reason' in workflowOutcome) {
-    return { success: false, task_id: task.id, error: workflowOutcome.reason };
-  }
-
-  const { workflow } = workflowOutcome.value;
-  const allExecutions = deps.listNodeExecutions(task.workflowRunId!);
-
+  const { sender, task, workflow, target } = admission;
   try {
-    const targetOutcome = await resolveMessageTarget(input, task, workflow, allExecutions, deps);
-    if ('reason' in targetOutcome) {
-      return { success: false, task_id: task.id, error: targetOutcome.reason };
+    if (target.kind === 'agent') {
+      return await deliverToAgent(input, sender, task, target.genericTarget, deps);
     }
-
-    if (targetOutcome.value.kind === 'agent') {
-      return await deliverToAgent(
-        input,
-        sender.value,
-        task,
-        targetOutcome.value.genericTarget,
-        deps
-      );
-    }
-
-    deps.replyRoutingRegistry?.set(
-      task.id,
-      sender.value.sessionId,
-      targetOutcome.value.resolved.agentName
-    );
-
+    deps.replyRoutingRegistry?.set(task.id, sender.sessionId, target.resolved.agentName);
     return await deliverToWorker(
       input,
-      sender.value,
+      sender,
       task,
       workflow,
-      targetOutcome.value.resolved,
-      targetOutcome.value.sessionSelector,
+      target.resolved,
+      target.sessionSelector,
       deps
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, task_id: task.id, error: message };
+    return {
+      success: false,
+      task_id: task.id,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies) {
+  const send = (superpipe({ deps })('task.message.send') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitSender, ['input', 'caller'], 'result:outcome')
+    .pipe(admitTask, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(admitWorkflow, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(
+      (admission: Admission) => deps.listNodeExecutions(admission.task.workflowRunId!),
+      ['outcome'],
+      'executions'
+    )
+    .pipe(admitTarget, ['outcome', 'input', 'executions', 'deps'], 'result:outcome')
+    .pipe(deliverMessage, ['outcome', 'input', 'deps'], 'outcome')
+    .endAsync('outcome') as (
+    input: TaskMessageSendInput,
+    caller: OperationCaller
+  ) => Promise<TaskMessageSendResult>;
   return defineOperation({
     name: 'task.message.send',
     description:
       'Send a message to a workflow node agent or long-horizon agent on a task, resolving the target by node_id, @handle, @role, @worker, or @session. The node is activated automatically if it has no live session. Sender attribution and the reply route are taken from the calling session, so only Space agent sessions can send.',
     inputSchema: TaskMessageSendInputSchema,
     resultSchema: TaskMessageSendResultSchema,
-    execute: (input, caller) => sendTaskMessage(input, caller, deps),
+    execute: send,
   });
 }

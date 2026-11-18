@@ -77,6 +77,7 @@ describe('Whole todo-add writer', () => {
   test('different repositories commit to the same ask without creating children', async () => {
     const placed = {
       ...draft(),
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
       target: {
         verb: 'start',
         adapter: 'hyperneo',
@@ -139,17 +140,15 @@ describe('Whole todo-add writer', () => {
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });
-  test('an empty core evidence check gets an assigned path', async () => {
+  test('an empty core evidence check is refused', async () => {
     const receipt = await add('one', {
       ...draft(),
       check: { pack: 'core', kind: 'evidence', params: {} },
     });
-    expect(receipt).toMatchObject({ ok: true });
-    const todo = store.getTodo('one');
-    expect(todo?.check?.params.path).toMatch(/result\.md$/);
-    expect(todo?.check?.params.path).toContain('one');
+    expect(receipt).toMatchObject({ ok: false });
+    expect(store.getTodo('one')).toBeNull();
   });
-  test('evidence inside the human folder is refused before writing', async () => {
+  test('coding evidence is refused before writing', async () => {
     const coding = {
       ...draft(),
       named: { repository: 'synthetic/repo' },
@@ -166,7 +165,7 @@ describe('Whole todo-add writer', () => {
     };
     const receipt = await add('one', coding);
     expect(receipt).toMatchObject({ ok: false });
-    expect((receipt as { reason?: string }).reason).toContain('evidence_in_user_folder');
+    expect((receipt as { reason?: string }).reason).toContain('coding_evidence_refused');
     expect(store.listTodos('ask')).toEqual([]);
     expect(changes).toEqual([]);
   });

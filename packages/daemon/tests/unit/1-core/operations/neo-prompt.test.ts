@@ -96,7 +96,7 @@ describe('root Neo system prompt', () => {
     { packs: ['coding', 'life-admin'] },
   ])('delivered root and pack guidance use paths with $packs', ({ packs }) => {
     const prompt = neoPrompt(packs.length ? neoSettingsPackBriefs({ packs }) : []);
-    expect(prompt).toContain('core.evidence {}');
+    expect(prompt).toContain('Non-coding evidence requires an explicit visible path.');
     expect(prompt).toContain('absolute path on the owning daemon');
     expect(prompt).toContain('fixed-head Git');
     expect(prompt).not.toContain('{artifact:registeredArtifactId}');
@@ -135,6 +135,10 @@ describe('root Neo system prompt', () => {
       'When you are waiting on something, end the turn; the event wakes you'
     );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(350);
+    expect(NEO_ROOT_PROMPT).toContain('talking with the human, coordinating work');
+    expect(NEO_ROOT_PROMPT).toContain('current across restarts');
+    expect(NEO_ROOT_PROMPT).toContain('A `<session-message>` is not human');
+    expect(NEO_ROOT_PROMPT).toContain('A new worker is named for the matter');
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
@@ -203,7 +207,7 @@ describe('root Neo system prompt', () => {
         'Most tasks write nothing',
         'filled form',
         'table',
-        '旅行/2026圣诞',
+        'itineraries',
         'home root',
         'hidden state',
       ])

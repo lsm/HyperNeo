@@ -104,7 +104,10 @@ test.each([0, 4])(
     }
     await invoke('Writes', 'prepare');
     expect(
-      new CodingTodoPrRepository(db).place({ ask: { id: 'ask' }, todo: { id: 'historical' } })
+      new CodingTodoPrRepository(db).place({
+        ask: { id: 'ask' },
+        todo: { id: 'historical', check: null },
+      })
     ).toEqual({
       ask: 'github.com/synthetic/legacy',
       peers: Array.from({ length: peers }, (_, i) => `github.com/synthetic/peer-${i}`),
@@ -126,7 +129,8 @@ test('a missing candidate row reads as no recorded place', async () => {
   await invoke('Writes', 'prepare');
   core.addTodo('late', 'ask', draft, 2);
   expect(
-    new CodingTodoPrRepository(db).place({ ask: { id: 'ask' }, todo: { id: 'late' } }).todo
+    new CodingTodoPrRepository(db).place({ ask: { id: 'ask' }, todo: { id: 'late', check: null } })
+      .todo
   ).toBeNull();
   expect(rows()).toEqual([]);
 });
