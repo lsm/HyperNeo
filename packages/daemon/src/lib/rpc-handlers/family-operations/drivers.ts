@@ -718,6 +718,21 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           : null;
       if (!facts) return { mode: 'per_todo' as const, sameAsk: [] };
       if (!facts.saved) {
+        const noteFailure = async (detail: unknown) => {
+          log.warn('Session reuse question could not be opened', { todoId, detail });
+          if (todoId)
+            await context
+              .neoAttention?.({
+                kind: 'todo.unworked',
+                subject: { type: 'todo', id: todoId },
+                since: Date.now(),
+                facts: {
+                  reason: 'settings_question',
+                  text: 'A settings question for this todo could not be opened; the work continues without it.',
+                },
+              })
+              .catch((error) => log.warn('Settings question note pending', { todoId }, error));
+        };
         const { prefix, ...question } = sessionReuseQuestion(facts);
         const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {
           const existing = await gatewayFor(db()).call(
@@ -733,14 +748,14 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
               caller
             );
             if (outcome.kind !== 'completed' || !(outcome.value as { ok?: boolean })?.ok)
-              log.warn('Session reuse question could not be opened', { todoId, outcome });
+              await noteFailure(outcome);
           }
         });
         pendingReuseQuestions.set(prefix, ask);
         try {
           await ask;
         } catch (error) {
-          log.warn('Session reuse question could not be opened', { todoId }, error);
+          await noteFailure(error);
         } finally {
           if (pendingReuseQuestions.get(prefix) === ask) pendingReuseQuestions.delete(prefix);
         }

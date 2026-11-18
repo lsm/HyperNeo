@@ -72,6 +72,8 @@ try {
   store.updateTodo(store.getTodo('todo-card-error')!, { state: 'doing' }, 2);
   db.prepare("INSERT INTO neo_session_bindings (session_id, kind) VALUES (?, 'neo')").run(neo.sessionId);
   store.addTodo('todo-card-refused', 'synthetic-ask', { title: 'Card refused', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
+  const noteCount = () => (db.prepare("SELECT count(*) AS n FROM job_queue WHERE queue = 'neo_notes' AND payload LIKE '%settings question%'").get() as { n: number }).n;
+  const notesBeforeRefusal = noteCount();
   let cardRefused;
   try {
     app.sessionManager.getOperationRegistry = () => createOperationRegistry(registry.entries.filter((entry) => entry.name !== 'pack.preferences.ask'));
@@ -82,8 +84,7 @@ try {
   assert.equal(cardRefused.kind, 'completed');
   const afterCardRefused = (cardRefused as { value: Result<WorkStarted> }).value;
   assert(afterCardRefused.ok, JSON.stringify(afterCardRefused));
-  const note = db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes' AND payload LIKE '%settings question%'").get();
-  assert(note, 'a refused question must leave a note for Neo');
+  assert.equal(noteCount(), notesBeforeRefusal + 1, 'a refused question must leave a note for Neo');
   todos.bind('todo-card-refused', afterCardRefused.value.ref, Date.now());
   store.updateTodo(store.getTodo('todo-card-refused')!, { state: 'doing' }, 2);
   const first = await start('first', neo);

@@ -43,4 +43,5 @@ an unrelated worker is idle. The forwarded start creates a fresh session. Remote
 `per_ask` waiting is not implemented by this route.
 Starts with no todo or a todo owned by another Neo also start fresh when the
 daemon cannot determine which matter's reuse setting applies.
-If opening the reuse question fails, work still starts using the default.
+If opening the reuse question fails, work still starts using the default and Neo
+receives a note about the missing card.
