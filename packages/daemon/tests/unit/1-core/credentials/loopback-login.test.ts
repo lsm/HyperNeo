@@ -10,12 +10,12 @@ const success = {
   tokens: { accessToken: 'synthetic-access', expiresAt: Date.now() + 3600000, scopes: [] },
 };
 
-function get(url: string, host: string) {
+function get(url: string, host: string, address = '127.0.0.1') {
   return new Promise<number>((done, fail) => {
     const target = new URL(url);
     const call = request(
       {
-        hostname: target.hostname,
+        hostname: address,
         port: target.port,
         path: target.pathname + target.search,
         headers: { host },
@@ -49,8 +49,8 @@ async function localhostLogin() {
   });
   const redirect = new URL(new URL(login.authorizeUrl).searchParams.get('redirect_uri') ?? '');
   const query = new URLSearchParams({ code: 'synthetic-code', state });
-  const callback = (host: string) =>
-    get(`http://127.0.0.1:${redirect.port}${redirect.pathname}?${query}`, host);
+  const callback = (host: string, address?: string) =>
+    get(`http://127.0.0.1:${redirect.port}${redirect.pathname}?${query}`, host, address);
   return { login, redirect, callback, codes };
 }
 
@@ -59,6 +59,17 @@ test('the Node server backend accepts a localhost callback and completes the log
   expect(await callback(redirect.host)).toBe(200);
   expect(await login.result).toEqual(success);
   expect(codes).toEqual(['synthetic-code']);
+});
+
+test('the Node server backend accepts a localhost callback over IPv6', async () => {
+  const { login, redirect, callback, codes } = await localhostLogin();
+  try {
+    expect(await callback(redirect.host, '::1')).toBe(200);
+    expect(await login.result).toEqual(success);
+    expect(codes).toEqual(['synthetic-code']);
+  } finally {
+    login.cancel();
+  }
 });
 
 test('the Node server backend refuses a callback for another host without exchanging', async () => {
