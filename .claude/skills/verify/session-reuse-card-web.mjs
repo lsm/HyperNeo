@@ -56,6 +56,7 @@ try {
   await codingCard.waitFor();
   observed.codingText = await codingCard.innerText();
   assert(observed.codingText.includes('How should coding sessions be reused in this repository?'));
+  assert(observed.codingText.includes('synthetic/repo'));
   const body = card.locator(`[id="neo-ref-question-${questionId}"]`);
   await body.waitFor();
   observed.text = await body.innerText();
