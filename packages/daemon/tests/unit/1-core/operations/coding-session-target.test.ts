@@ -139,6 +139,25 @@ function setup() {
 }
 
 describe('coding session target decision', () => {
+  test('a later slice keeps its start target even when its feature has a worker', async () => {
+    const { todo, worked, decide, db } = setup();
+    worked(todo(), 'prior-worker', 'backend', 'done');
+    const next = todo();
+    const requested = start('backend');
+    expect(await decide(next, requested)).toEqual({ value: requested });
+    expect(db.prepare('SELECT count(*) AS n FROM pack_coding_feature_sessions').get()).toEqual({
+      n: 0,
+    });
+  });
+
+  test('a PR holder does not redirect an explicitly addressed worker', async () => {
+    const { todo, worked, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    worked(todo('feature', repo, url), 'holder', 'backend', 'done');
+    const target = { verb: 'send' as const, ref: ref('author') };
+    expect(await decide(todo('other', repo, url), target)).toEqual({ value: target });
+  });
+
   const catalog = [catalogModel('glm-6', 'glm'), catalogModel('claude-opus-5-5', 'anthropic')];
   const glmHold = [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }];
   const routed = (kinds: string[], held: boolean) =>
