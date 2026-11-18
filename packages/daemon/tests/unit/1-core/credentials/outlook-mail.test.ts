@@ -16,6 +16,7 @@ let mcp: ReturnType<typeof createOperationMcpHandler>;
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 let fetchImpl: ReturnType<typeof vi.fn<Fetch>>;
 let mode: string;
+let vault: ConnectionVault;
 let nextLink: string | undefined;
 let caller: { sessionId?: string; role?: 'neo' | 'universal_read' };
 const microsoft = {
@@ -50,7 +51,7 @@ beforeEach(async () => {
   nextLink = `${graph}/v1.0/me/messages?$search=%22fixture%22&$top=2&$select=id,conversationId&$skiptoken=page-two`;
   caller = { sessionId: 'synthetic-worker', role: 'neo' };
   const store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
-  const vault = new ConnectionVault(
+  vault = new ConnectionVault(
     store,
     await db.gateway.call(artifactIdentityWrites, 'ensure', 'synthetic-instance')
   );
@@ -258,4 +259,25 @@ test('a cursor page may ask for fewer items than the first page', async () => {
   expect(next.ok).toBe(true);
   expect(next.items).toHaveLength(1);
   expect(new URL(String(fetchImpl.mock.calls.at(-1)![0])).searchParams.get('$top')).toBe('1');
+});
+
+test('a cursor page always selects headers only, whatever the next link carried', async () => {
+  nextLink = `${graph}/v1.0/me/messages?$search=%22fixture%22&$top=2&$skiptoken=page-two`;
+  const first = await search();
+  await search({ cursor: first.nextCursor });
+  const paged = new URL(String(fetchImpl.mock.calls.at(-1)![0]));
+  expect(paged.searchParams.get('$select')).toBe(
+    'id,conversationId,from,toRecipients,subject,receivedDateTime,bodyPreview'
+  );
+});
+
+test('a grant stored with fully qualified Graph scopes still admits Outlook reads', async () => {
+  await vault.replace(microsoft, {
+    accessToken: 'synthetic-access-token',
+    refreshToken: 'synthetic-refresh-token',
+    expiresAt: Date.now() + 3600000,
+    scopes: ['openid', 'https://graph.microsoft.com/Mail.ReadWrite'],
+    client: { clientId: 'synthetic-client' },
+  });
+  expect((await search()).ok).toBe(true);
 });
