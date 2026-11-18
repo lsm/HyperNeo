@@ -7,6 +7,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { frontSessionId } from './front-mode.ts';
+import { neoDerivedId } from './derived-id.ts';
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
@@ -15,6 +17,8 @@ export type Fact = {
   processing: string | null;
   answered: boolean;
   messageDbId: string | null;
+  reason?: string;
+  supersededBy?: string;
 };
 export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
@@ -51,10 +55,36 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
       AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1)
       ORDER BY CAST(ref.key AS INTEGER)`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
-  return rows.map((row, i) => ({
-    ...row,
-    answered: answered.has(JSON.stringify([items[i].conversationId, items[i].requestId])),
-  }));
+  return rows.map((row, i) => {
+    const item = items[i];
+    const retryId = neoDerivedId(`neo-retry:${item.conversationId}:${item.requestId}`);
+    const retry =
+      row.sendStatus === 'failed' &&
+      db
+        .prepare('SELECT 1 FROM neo_conversation_asks WHERE conversation_id = ? AND request_id = ?')
+        .get(item.conversationId, retryId);
+    const failure =
+      row.sendStatus === 'failed'
+        ? (db
+            .prepare(`SELECT json_extract(body, '$.result') AS reason FROM (
+      SELECT ${sdkMessageBodyAt('r.rowid')} AS body FROM sdk_messages r
+      WHERE r.session_id = ? AND r.message_type = 'result' AND r.is_terminal = 1
+        AND r.consumed_seq > (SELECT consumed_seq FROM sdk_messages WHERE id = ?)
+      ORDER BY r.consumed_seq ASC
+    ) WHERE json_extract(body, '$.is_error') = 1 AND json_extract(body, '$.api_error_status') = 400
+      AND (json_extract(body, '$.user_message_uuid') = ? OR ? IN (SELECT value FROM json_each(body, '$.user_message_uuids')))
+      LIMIT 1`)
+            .get(item.askOrigin.sessionId, row.messageDbId, item.requestId, item.requestId) as {
+            reason: string | null;
+          } | null)
+        : null;
+    return {
+      ...row,
+      answered: answered.has(JSON.stringify([item.conversationId, item.requestId])),
+      ...(failure?.reason ? { reason: failure.reason } : {}),
+      ...(retry ? { supersededBy: retryId } : {}),
+    };
+  });
 }
 
 function describeMessageStatus(item: Ask, fact: Fact): NeoConversationMessageStatus {
@@ -83,7 +113,15 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
       ...item,
       askOrigin: { ...item.askOrigin, messageDbId: facts[index].messageDbId },
       messageStatus,
-      ...(messageStatus === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
+      ...(messageStatus === 'failed'
+        ? {
+            delivery: {
+              state: 'failed' as const,
+              ...(facts[index].reason ? { reason: facts[index].reason } : {}),
+              ...(facts[index].supersededBy ? { supersededBy: facts[index].supersededBy } : {}),
+            },
+          }
+        : {}),
     };
   });
 }

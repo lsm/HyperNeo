@@ -343,10 +343,11 @@ try {
     );
     await waitFor(() => replies().some((row) => row.replyTo?.includes(handoffId)));
     assert.equal(replies().find((row) => row.replyTo?.includes(handoffId))?.workOn, true);
-    await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
+    await waitFor(() => ['consumed', 'failed'].includes(app!.db.getSDKMessageRepo().getUserSendStatus(root, handoffId) ?? ''));
     await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
     const read = async () => invoke<{ items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string; reason?: string; supersededBy?: string }; retryOf?: string }> }>('neo.conversation.asks.read', { conversationId });
     const ask = (await read()).items.find((item) => item.requestId === handoffId);
+    await waitFor(() => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).some((job) => job.payload.messageId === handoffId && job.status === 'completed'));
     evidence.requests = requests;
     evidence.ask = ask;
     evidence.handoffOutcome = app.db.getJobQueueRepo().listJobs({ queue: 'neo.front' }).find((job) => job.payload.messageId === handoffId)?.result;
@@ -354,16 +355,28 @@ try {
     assert.equal(ask?.messageStatus, 'failed');
     assert.equal(ask?.delivery?.reason?.includes('synthetic refusal'), true);
     const before = requests.filter((item) => item === 'neo-provider-400').length;
-    const retry = await invoke<{ accepted: boolean; requestId?: string }>('neo.message.retry', { conversationId, requestId: handoffId });
-    assert.equal(retry.accepted, true);
-    assert(retry.requestId && retry.requestId !== handoffId);
+    const originalSeq = (app.db.getDatabase().prepare("SELECT consumed_seq AS seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'").get(root, handoffId) as { seq: number }).seq;
+    assert(originalSeq > 0);
     evidence.retryAccepted = true;
+    const attempts = await Promise.all([0, 1].map(() => invoke<{ accepted: boolean; requestId?: string }>('neo.message.retry', { conversationId, requestId: handoffId })));
+    const accepted = attempts.filter((attempt) => attempt.accepted);
+    assert.equal(accepted.length, 1);
+    const retry = accepted[0];
+    assert(retry.requestId && retry.requestId !== handoffId);
     const second = await invoke<{ accepted: boolean }>('neo.message.retry', { conversationId, requestId: handoffId });
     assert.equal(second.accepted, false);
-    await waitFor(() => requests.filter((item) => item === 'neo-provider-400').length === before);
+    await waitFor(() => app!.db.getSDKMessageRepo().getUserSendStatus(root, retry.requestId!) === 'consumed');
+    await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
+    assert.equal(requests.filter((item) => item === 'neo-provider-400').length, before);
+    assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, handoffId), 'failed');
+    evidence.retryConsumed = true;
     const after = await read();
     assert.equal(after.items.find((item) => item.requestId === handoffId)?.delivery?.supersededBy, retry.requestId);
-    assert.equal(after.items.find((item) => item.requestId === retry.requestId)?.retryOf, handoffId);
+    const resent = after.items.find((item) => item.requestId === retry.requestId);
+    assert.equal(resent?.retryOf, handoffId);
+    assert.deepEqual((resent as { content?: unknown })?.content, (ask as { content?: unknown })?.content);
+    assert.equal((app.db.getDatabase().prepare("SELECT consumed_seq AS seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'").get(root, handoffId) as { seq: number }).seq, originalSeq);
+    evidence.originalSequencePreserved = true;
     evidence.passed = true;
   } else {
     evidence.passed = true;
@@ -385,5 +398,5 @@ try {
 console.log(
   saturated
     ? 'PASS human input reached the front while refresh work remained held'
-    : 'PASS ordinary front session, one-call reply hand-off and direct Neo updates per human input'
+    : 'PASS refused input surfaced and one fresh retry consumed'
 );

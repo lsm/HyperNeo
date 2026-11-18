@@ -20,12 +20,17 @@ export interface NeoConversationAskInput {
   readonly content: SDKUserMessage['message']['content'];
   readonly replyTo?: NeoReplyTo;
   readonly previewContext?: NeoPreviewReference;
+  readonly retryOf?: string;
 }
 
 export interface NeoConversationAsk extends NeoConversationAskInput {
   readonly sequence: number;
   readonly createdAt: string;
-  readonly delivery?: { readonly state: 'failed' };
+  readonly delivery?: {
+    readonly state: 'failed';
+    readonly reason?: string;
+    readonly supersededBy?: string;
+  };
   readonly messageStatus?: NeoConversationMessageStatus;
 }
 

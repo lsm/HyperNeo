@@ -39,6 +39,7 @@ import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { NEO_STANDING_RULE_MAX_CHARS, neoStandingRules } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
+import { createNeoRetryOperation } from './retry-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { createNeoProjectListOperation } from './project-list-operation.ts';
 import { readNeoProjectIdentities } from './project-merge.ts';
@@ -767,6 +768,7 @@ export function createNeoOperations(
       for (const pack of service.installedPacks()) pack.forgetRepositories?.(repos);
       await service.refreshPackPreferences();
     }),
+    createNeoRetryOperation(service),
     createNeoIntakeOperation(
       service.db,
       service.repo,

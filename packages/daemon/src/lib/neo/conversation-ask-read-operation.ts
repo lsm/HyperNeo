@@ -61,7 +61,11 @@ const StoredAsk = z
       createdAt: z.iso.datetime(),
       messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
       delivery: z
-        .object({ state: z.literal('failed') })
+        .object({
+          state: z.literal('failed'),
+          reason: z.string().optional(),
+          supersededBy: z.uuid().optional(),
+        })
         .strict()
         .optional(),
       ask: NeoConversationAskSchema,
@@ -100,7 +104,14 @@ export const NeoConversationAskPageSchema = z.object({
   createdAt: z.iso.datetime(),
   replyTo: NeoReplyToSchema.optional(),
   previewContext: NeoPreviewReferenceSchema.optional(),
-  delivery: z.object({ state: z.literal('failed') }).optional(),
+  retryOf: z.uuid().optional(),
+  delivery: z
+    .object({
+      state: z.literal('failed'),
+      reason: z.string().optional(),
+      supersededBy: z.uuid().optional(),
+    })
+    .optional(),
   messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
 });
 
