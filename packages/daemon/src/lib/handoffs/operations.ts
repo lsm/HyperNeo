@@ -81,7 +81,7 @@ const publishArtifact = (superpipe({})('handoff.publish') as PipelineAPI)
   name: string
 ) => Promise<unknown>;
 
-const readArtifact = (superpipe({})('read-worker-handoff') as PipelineAPI)
+const readArtifact = (superpipe({})('handoff.read') as PipelineAPI)
   .input(['ref', 'caller', 'offset', 'length'])
   .pipe(requireReader, ['ref', 'caller'], 'result:outcome')
   .pipe(read, ['outcome', 'offset', 'length'], 'outcome')
