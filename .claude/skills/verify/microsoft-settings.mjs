@@ -30,6 +30,40 @@ try {
     assert(['127.0.0.1', 'localhost'].includes(url.hostname) && url.port !== '8399', `external browser request refused: ${url.origin}`);
     return route.continue();
   });
+  await context.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+    const send = WebSocket.prototype.send;
+    const heldIds = new Set();
+    const held = [];
+    window.armConnectionPoll = () => { window.holdConnectionPoll = true; };
+    window.releaseConnectionPoll = () => { for (const release of held.splice(0)) release(); };
+    WebSocket.prototype.send = function(data) {
+      try {
+        const request = JSON.parse(data);
+        if (window.holdConnectionPoll && request.method === 'operation.invoke' && request.data?.name === 'connections.google.login') {
+          heldIds.add(request.id);
+          window.holdConnectionPoll = false;
+        }
+      } catch {}
+      return send.call(this, data);
+    };
+    Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      ...descriptor,
+      set(handler) {
+        descriptor.set.call(this, (event) => {
+          try {
+            const response = JSON.parse(event.data);
+            if (heldIds.delete(response.requestId)) {
+              held.push(() => handler.call(this, event));
+              window.connectionPollHeld = true;
+              return;
+            }
+          } catch {}
+          handler.call(this, event);
+        });
+      },
+    });
+  });
   const page = await context.newPage();
   page.on('websocket', (socket) => assert.equal(new URL(socket.url()).port, port));
   page.setDefaultTimeout(10000);
@@ -113,8 +147,12 @@ try {
   const googleLink = await page.getByRole('link', { name: 'Continue to Google', exact: true }).count();
   const googleAuthorize = await page.getByRole('link', { name: 'Continue to Google', exact: true }).getAttribute('href');
   await page.getByLabel('Application (client) ID', { exact: true }).fill('synthetic-microsoft-client');
+  await page.evaluate(() => window.armConnectionPoll());
+  await page.waitForFunction(() => window.connectionPollHeld === true);
   await page.getByRole('button', { name: 'Continue to Microsoft', exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('button:disabled'));
+  await page.getByRole('link', { name: 'Continue to Microsoft', exact: true }).waitFor();
+  await page.evaluate(() => window.releaseConnectionPoll());
+  await page.waitForTimeout(250);
   const microsoftPending = await page.getByRole('status').filter({ hasText: 'Finish signing in on Microsoft.' }).count();
   const microsoftLink = await page.getByRole('link', { name: 'Continue to Microsoft', exact: true }).count();
   assert.deepEqual({ reconnectId, googlePending, googleLink, rowActionId, microsoftPending, microsoftLink }, { reconnectId: '', googlePending: 1, googleLink: 1, rowActionId: '', microsoftPending: 1, microsoftLink: 1 });

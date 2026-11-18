@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const { request } = vi.hoisted(() => ({ request: vi.fn() }));
@@ -240,10 +240,20 @@ it('shows Microsoft consent when starting it during a pending Google sign-in', a
   vi.spyOn(window, 'open').mockReturnValue(null);
   let googlePending = false;
   let microsoftPending = false;
+  let holdPoll = false;
+  let releasePoll: (() => void) | undefined;
   request.mockImplementation(async (_method, data: Invocation) => {
     if (data.name === 'connections.list') return { connections: [] };
-    if (data.name === 'connections.google.login')
-      return { state: googlePending ? 'pending' : 'missing' };
+    if (data.name === 'connections.google.login') {
+      const snapshot = { state: googlePending ? 'pending' : 'missing' };
+      if (holdPoll) {
+        holdPoll = false;
+        await new Promise<void>((resolve) => {
+          releasePoll = resolve;
+        });
+      }
+      return snapshot;
+    }
     if (data.name === 'connections.microsoft.login')
       return { state: microsoftPending ? 'pending' : 'missing' };
     if (data.name === 'connections.google.connect') {
@@ -266,8 +276,20 @@ it('shows Microsoft consent when starting it during a pending Google sign-in', a
   fireEvent.input(screen.getByLabelText('Application (client) ID'), {
     target: { value: 'synthetic-microsoft-client' },
   });
+  holdPoll = true;
+  await waitFor(() => expect(releasePoll).toBeDefined(), { timeout: 2500 });
   fireEvent.click(screen.getByRole('button', { name: 'Continue to Microsoft' }));
   const link = await screen.findByRole('link', { name: 'Continue to Microsoft' });
+  await act(async () => {
+    releasePoll?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await waitFor(() =>
+    expect(screen.getByRole('status').textContent).toContain('Finish signing in on Microsoft.')
+  );
+  expect(screen.getByRole('link', { name: 'Continue to Microsoft' }).getAttribute('href')).toBe(
+    'https://example.test/microsoft'
+  );
   expect(link.getAttribute('href')).toBe('https://example.test/microsoft');
   expect(screen.getByRole('status').textContent).toContain('Finish signing in on Microsoft.');
   microsoftPending = false;
