@@ -12,11 +12,10 @@ import {
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { getDataDir } from '../data-dir.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
 import type { NeoTodoControls } from './todo-operations.ts';
-import { neoTodoRepository } from './pack-contract.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -73,14 +72,7 @@ export function wireNeoTodoMutations(
     .endAsync('outcome') as (result: Result) => Promise<Result>;
   const mutate = (superpipe({})('neo.todo.mutate-through-writer') as PipelineAPI)
     .input(['raw', 'caller'])
-    .pipe(
-      (raw: Input): Input =>
-        raw.kind === 'edit' && raw.check
-          ? { ...raw, check: withAssignedEvidence(raw.check, todoEvidenceFile(raw.todoId)) }
-          : raw,
-      'raw',
-      'request'
-    )
+    .pipe((raw: Input) => raw, 'raw', 'request')
     .pipe(
       async (request: Input) => {
         if (request.kind !== 'edit' || request.target?.verb !== 'send') return { value: request };
@@ -125,13 +117,7 @@ export function wireNeoTodoMutations(
       async (plan: Plan, input: Input) => {
         if (input.kind !== 'edit' || !input.check) return { value: plan };
         const current = await deps.gateway.call(neoTodoReads, 'getTodo', input.todoId);
-        const ask = await deps.gateway.call(neoTodoReads, 'getAsk', plan.todo.askId);
-        const repo = neoTodoRepository(
-          { check: input.check, named: plan.todo.named, target: input.target },
-          deps.packs(),
-          { ask, todo: current }
-        );
-        const reason = neoEvidenceRefusal(input.check, repo, deps.userFolder, current?.check);
+        const reason = neoEvidencePathRefusal(input.check, current?.check, getDataDir());
         return reason ? { reason: { ok: false as const, reason } } : { value: plan };
       },
       ['outcome', 'input'],

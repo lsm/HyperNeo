@@ -11,7 +11,9 @@ no provider and no model turn. Synthetic workers have real local Git repositorie
 with matching SSH, different HTTPS, or absent remotes. Production work.status
 resolves their places; todo resolution reads local remotes with the shared cached
 workspace identity reader, while remote workers use only status remotes; the MCP operations accept matching and non-coding sends,
-and refuse other or unknown repositories on add, edit, bind and continue.
+and refuse other or unknown repositories on add, edit, bind and continue. Ask opening
+accepts matching send and bind targets after resolving their remotes and refuses a
+mismatched worker without creating an ask.
 Dispatch sentries require zero work.send/work.start calls, and the delivery input
 count stays zero. Refused adds and bind targets create no todo; refused edits create no
 worker target. Evidence includes operation replies and the dispatch counts.
