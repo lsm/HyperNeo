@@ -57,6 +57,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    mkdtemp: async (prefix: string) => `${prefix}fixture`,
     readFile: passthrough(mocks.readFile, actual.readFile),
     writeFile: passthrough(mocks.writeFile, actual.writeFile),
   };
@@ -92,9 +93,16 @@ function resetModuleMocks(): void {
   }
 }
 
+function packageManagerMissing(file: string, done: (...r: unknown[]) => void): boolean {
+  if (file !== 'npm' && file !== 'pnpm') return false;
+  setImmediate(() => done(Object.assign(new Error('not found'), { code: 'ENOENT' })));
+  return true;
+}
+
 function curlMock(run: (file: string, args?: string[]) => unknown): void {
   mocks.execFile.mockImplementation(
     (file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) => {
+      if (packageManagerMissing(file, done)) return;
       try {
         const out = run(file, args);
         setImmediate(() => done(null, out, ''));
@@ -667,8 +675,10 @@ describe('warmupSDKCliBinary', () => {
       return curl(args);
     });
     mocks.execFile.mockImplementation(
-      (_file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) =>
-        setTimeout(() => done(null, curl(args), ''), 200)
+      (file: string, args: string[], _options: unknown, done: (...r: unknown[]) => void) => {
+        if (packageManagerMissing(file, done)) return;
+        setTimeout(() => done(null, curl(args), ''), 200);
+      }
     );
 
     let ticks = 0;
