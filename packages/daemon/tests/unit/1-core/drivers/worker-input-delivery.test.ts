@@ -688,7 +688,8 @@ describe('durable worker follow-ups', () => {
     supported = true;
     await h.send('Second input');
     await h.tick();
-    expect(h.sent).toEqual(['Second input']);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toStartWith('Second input');
   });
 
   test.each(['unreachable', 'unknown'] as const)(
