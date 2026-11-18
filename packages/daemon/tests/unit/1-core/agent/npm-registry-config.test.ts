@@ -58,7 +58,14 @@ describe('configured package downloads', () => {
   });
 
   it('preserves npm network failure classification without exposing stderr', async () => {
-    for (const code of ['ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']) {
+    for (const code of [
+      'ETIMEDOUT',
+      'ECONNREFUSED',
+      'ENOTFOUND',
+      'EAI_AGAIN',
+      'ECONNRESET',
+      'EPIPE',
+    ]) {
       script('npm', `printf 'npm error code ${code}\\nprivate-token-example\\n' >&2; exit 1`);
       try {
         await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
