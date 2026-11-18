@@ -134,8 +134,23 @@ export function ConnectionsSettings() {
   const [consentUrls, setConsentUrls] = useState<Partial<Record<Provider, string>>>({});
   const popup = useRef<Window | null>(null);
   const watched = useRef<Provider | null>(null);
+  const revision = useRef(0);
+  const issued = useRef(0);
+  const applied = useRef(0);
   const reload = useCallback(async (from: Provider | null, command?: Command) => {
-    const next = await update(from, command, watched.current);
+    const started = revision.current;
+    const sequence = ++issued.current;
+    let next: Awaited<ReturnType<typeof update>>;
+    try {
+      next = await update(from, command, watched.current);
+    } catch (failure) {
+      if (started !== revision.current || sequence < applied.current) return null;
+      throw failure;
+    }
+    if (started !== revision.current || (!command && sequence < applied.current))
+      return next.receipt;
+    applied.current = Math.max(applied.current, sequence);
+    if (command) revision.current++;
     watched.current =
       next.attempt.state === 'pending' ||
       (next.attempt.state === 'failed' && watched.current === next.provider)
@@ -157,6 +172,7 @@ export function ConnectionsSettings() {
   const text = copy[provider ?? 'google'];
   const statusText = copy[view.provider];
   const act = async (command: Command) => {
+    revision.current++;
     if (command.provider !== watched.current) watched.current = command.provider;
     if (command.provider !== provider) {
       setClientId('');
@@ -204,6 +220,7 @@ export function ConnectionsSettings() {
             key={next}
             disabled={busy}
             onClick={() => {
+              revision.current++;
               if (view.attempt.state === 'failed' && view.provider !== next) {
                 watched.current = null;
                 setView((current) => ({ ...current, attempt: { state: 'missing' } }));
