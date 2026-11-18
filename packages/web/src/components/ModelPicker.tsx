@@ -68,6 +68,7 @@ export function ModelPicker({
     new Map()
   );
   const [oxapProviders, setOxapProviders] = useState<Set<string> | null>(null);
+  const [providerError, setProviderError] = useState(false);
   const isConnected = connectionState.value === 'connected';
 
   useClickOutside(ref, () => setOpen(false), open);
@@ -89,7 +90,8 @@ export function ModelPicker({
 
   const loadOxapProviders = useCallback(() => {
     void listProviders()
-      .then(({ providers }) =>
+      .then(({ providers }) => {
+        setProviderError(false);
         setOxapProviders(
           new Set(
             providers
@@ -104,9 +106,9 @@ export function ModelPicker({
               })
               .map((entry) => entry.providerId)
           )
-        )
-      )
-      .catch(() => {});
+        );
+      })
+      .catch(() => setProviderError(true));
   }, []);
 
   useEffect(() => {
@@ -129,7 +131,10 @@ export function ModelPicker({
     availableModels.filter((model) =>
       isOxapHarness(harness)
         ? model.provider === provider
-        : harness === undefined || (oxapProviders !== null && !oxapProviders.has(model.provider))
+        : harness === undefined ||
+          (oxapProviders === null
+            ? model.provider === (provider ?? activeProvider)
+            : !oxapProviders.has(model.provider))
     ),
     isOxapHarness(harness) ? new Map() : providerAuthStatuses,
     activeProvider,
@@ -180,6 +185,14 @@ export function ModelPicker({
           class={`!h-3.5 !w-3.5 shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
+      {open && providerError && harness === 'sdk' && (
+        <div role="alert" class="text-xs text-warning-soft">
+          Could not load providers. Other providers may be unavailable.{' '}
+          <button type="button" class="underline" onClick={loadOxapProviders}>
+            Retry providers
+          </button>
+        </div>
+      )}
       {open && (
         <NeoModelMenu
           id={menuId}

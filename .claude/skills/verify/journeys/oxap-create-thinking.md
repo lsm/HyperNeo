@@ -13,3 +13,7 @@ resulting `oxap-chat-*` and `oxap-provider-*` screenshots.
 
 It also checks that a relative executable is refused and a switch back to Claude
 Code persists after a reload, without downloading or starting a hub.
+
+It injects a controlled provider lookup failure for an SDK chat, checks that its
+current provider's model stays visible and the retry control clears the error,
+then retains `sdk-provider-retry.png`.

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
@@ -77,6 +78,10 @@ await rpc.request('models.list', {});
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
 let failProviderList = true;
 app.db.providers.listProviders = () => {
+  const marker = `${run}/fail-provider-list`;
+  if (existsSync(marker)) {
+    throw new Error('Synthetic provider lookup failure');
+  }
   if (failProviderList) {
     failProviderList = false;
     throw new Error('Synthetic provider lookup failure');

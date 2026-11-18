@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { unlinkSync, writeFileSync } from 'node:fs';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const [port, code, output] = process.argv.slice(2);
+const [port, code, output, run] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
 const browser = await chromium.launch({
   headless: true,
@@ -94,6 +96,19 @@ try {
       await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
       console.log('Invalid executable refused; switching back to Claude Code persisted');
+      const created = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'rpc:session.create', JSON.stringify({ title: 'Provider retry proof', workspacePath: `${run}/home`, config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' } })], { encoding: 'utf8', env: { ...process.env, HYPERNEO_DATA_DIR: `${run}/data`, VERIFY_PORT: port } })).reply;
+      assert(created.sessionId);
+      writeFileSync(`${run}/fail-provider-list`, '');
+      await page.goto(`${base}/session/${created.sessionId}`);
+      await page.getByRole('button', { name: 'Choose model and thinking' }).click();
+      await page.getByRole('alert').getByText(/Could not load providers/).waitFor();
+      assert(await page.getByText('Synthetic Codex').count());
+      await page.screenshot({ path: `${output}/sdk-provider-error.png`, animations: 'disabled' });
+      unlinkSync(`${run}/fail-provider-list`);
+      await page.getByRole('button', { name: 'Retry providers' }).click();
+      await page.getByRole('alert').waitFor({ state: 'detached' });
+      await page.screenshot({ path: `${output}/sdk-provider-retry.png`, animations: 'disabled' });
+      console.log('SDK picker kept its model after lookup failure and recovered on retry');
     }
     await context.close();
   }
