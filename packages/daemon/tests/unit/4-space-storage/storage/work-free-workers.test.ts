@@ -92,6 +92,13 @@ describe('readFreeWorkers', () => {
       if (withRow) sessions.create(todoId, { verb: 'start', adapter: 'claude-desktop' });
     };
 
+    test('a started todo without a worker can wait for a busy worker', () => {
+      liveTodo('next');
+      store.updateTodo(store.getTodo('next')!, { state: 'doing', startedAt: 4 }, 4);
+      expect(sessions.queueOn('next', ref, 'Next step.')).toBe('instruction');
+      expect(sessions.get('next')).toMatchObject({ verb: 'send', ref });
+    });
+
     test('a released worker is never offered again, also once its unusable mark expired', () => {
       bind('finished', 'w-done', 'done');
       recordStartedWork(db, ref, Date.now() - 61 * 60_000, true);
