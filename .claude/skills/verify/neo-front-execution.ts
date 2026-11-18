@@ -83,6 +83,14 @@ const fixture = createServer(async (request, response) => {
     evidence.neoSawAcknowledgment = true;
   const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   const stage = stages.get(active) ?? 0;
+  if (front && active === failedDeliveryId && stage === 0) {
+    const changed = app!.db.getDatabase().prepare(
+      'UPDATE neo_front_inputs SET eligible = 0 WHERE message_id = ? AND eligible = 1'
+    ).run(failedDeliveryId).changes;
+    assert.equal(changed, 1);
+    stages.set(active, 1);
+    evidence.handoffAdmissionRefused = true;
+  }
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0 && active === humanId) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',
@@ -360,6 +368,8 @@ try {
     await waitFor(() => failedJob()?.status === 'completed');
     evidence.handoffOutcome = failedJob()?.result;
     evidence.failedInputStatus = app.db.getSDKMessageRepo().getUserSendStatus(front, failedDeliveryId);
+    assert.equal(evidence.handoffAdmissionRefused, true);
+    assert.deepEqual(evidence.handoffOutcome, { delivered: true, outcome: 'failed' });
     assert.equal(evidence.failedInputStatus, 'failed');
     assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
     assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
