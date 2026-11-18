@@ -4,6 +4,7 @@ BIN=${1:?compiled daemon binary required}
 CLI=${2:?fixture Claude binary required}
 RUN=${3:?fresh absolute run directory required}
 PORT=${4:-9413}
+MODE=${5:-npm}
 case "$RUN" in /*) ;; *) exit 2 ;; esac
 [[ ! -e "$RUN" && "$PORT" != 8399 ]]
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/package"
@@ -19,6 +20,26 @@ cat > "$RUN/bin/curl" <<'SCRIPT'
 #!/bin/sh
 exit 7
 SCRIPT
+if [[ "$MODE" == fallback ]]; then
+  INTEGRITY=$(openssl dgst -sha512 -binary "$RUN/fixture.tgz" | openssl base64 -A)
+  cat > "$RUN/bin/npm" <<SCRIPT
+#!/bin/sh
+printf '%s\n' "\$@" > "$RUN/npm-args"
+exit 7
+SCRIPT
+  cat > "$RUN/bin/pnpm" <<'SCRIPT'
+#!/bin/sh
+printf 'https://mirror.example.test\n'
+SCRIPT
+  cat > "$RUN/bin/curl" <<SCRIPT
+#!/bin/sh
+case "\$*" in
+  *-fL*) while [ "\$1" != '-o' ]; do shift; done; /bin/cp "$RUN/fixture.tgz" "\$2" ;;
+  *) printf '%s' '{"dist":{"tarball":"https://mirror.example.test/fixture.tgz","integrity":"sha512-$INTEGRITY"}}' ;;
+esac
+SCRIPT
+  chmod +x "$RUN/bin/pnpm"
+fi
 chmod +x "$RUN/bin/npm" "$RUN/bin/curl"
 env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test \
   HYPERNEO_DATA_DIR="$RUN/data" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
@@ -32,7 +53,7 @@ done
 if [[ -f "$RUN/npm-args" ]]; then count=$(wc -l < "$RUN/npm-args" | tr -d ' '); else count=0; fi
 printf 'npm argument count: %s\n' "$count"
 if grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log" && [[ "$count" -eq 4 ]]; then
-  echo 'PASS: daemon downloaded the SDK through fake npm'
+  echo "PASS: daemon downloaded the SDK using $MODE fixture"
 else
   echo 'FAIL: daemon did not download the SDK through fake npm'
   exit 1

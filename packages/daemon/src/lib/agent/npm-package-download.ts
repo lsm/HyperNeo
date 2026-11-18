@@ -142,11 +142,13 @@ async function fetchVerifiedTarball(
 
 async function runPackageManager(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
+    execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
       if (!err) return resolve(String(stdout).trim());
       if (err.code === 'ENOENT') return resolve(null);
       const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
-      reject(new Error(`${command} failed while preparing the package download${detail}`));
+      const failure = new Error(`${command} failed while preparing the package download${detail}`);
+      Object.defineProperty(failure, 'stderr', { value: String(stderr) });
+      reject(failure);
     });
   });
 }
@@ -158,20 +160,33 @@ async function downloadWithConfiguredManager(
 ): Promise<void> {
   const directory = await mkdtemp(join(dirname(destPath), '.npm-pack-'));
   try {
+    let npmFailure: Error | undefined;
     const output = await runPackageManager('npm', [
       'pack',
       `${packageName}@${version}`,
       '--pack-destination',
       directory,
-    ]);
+    ]).catch((error: Error) => {
+      npmFailure = error;
+      return null;
+    });
     if (output !== null) {
       const archives = readdirSync(directory).filter((name) => name.endsWith('.tgz'));
       if (archives.length !== 1) throw new Error('npm pack returned no package');
       await rename(join(directory, archives[0]), destPath);
       return;
     }
-    const registry = await runPackageManager('pnpm', ['config', 'get', 'registry']);
-    await fetchVerifiedTarball(packageName, version, destPath, registry || registryUrl());
+    try {
+      const registry = await runPackageManager('pnpm', ['config', 'get', 'registry']);
+      await fetchVerifiedTarball(packageName, version, destPath, registry || registryUrl());
+    } catch (error) {
+      if (!npmFailure) throw error;
+      const reason =
+        error instanceof Error
+          ? error.message
+          : describeCurlFailure(error as CurlFailure, registryHost());
+      throw new Error(reason, { cause: npmFailure });
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
