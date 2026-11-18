@@ -606,7 +606,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           title={`Remove ${removeProjectTarget.name}?`}
           message={
             removeProjectTarget.system
-              ? 'This forgets the project record and cannot be undone. It deletes no files or chats. Settled asks move to the root, project aliases are removed, and repository watches may be removed.'
+              ? 'Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.'
               : `This archives ${chatCount(unarchived(removeProjectTarget.sessions).length)} in this project, then removes it from the sidebar. Chats with unmerged worktree commits or child chats are kept for you to archive one by one.`
           }
           confirmText={removeProjectTarget.system ? 'Forget project' : 'Archive chats and remove'}

@@ -47,6 +47,10 @@ try {
   }
   await page.goto(`http://127.0.0.1:${port}/sessions`);
   await page.getByRole('button', { name: 'New session in neo-read' }).waitFor({ state: 'attached' });
+  for (const name of ['Shared project', 'Stale project']) {
+    const header = page.getByTestId('project-group-header').filter({hasText:name});
+    if (await header.getAttribute('aria-expanded') === 'true') await header.click();
+  }
   await page.getByTestId('project-group-header').filter({ hasText: 'neo-read' }).hover();
   if (process.env.VERIFY_INJECT_FAILURE) {
     const retry = page.getByRole('button', {name:'Remove project neo-read'});
@@ -73,9 +77,9 @@ try {
   await inbox.waitFor({state:'attached'});
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
-  await page.getByTestId('project-group-header').filter({hasText:'Inbox'}).hover();
-  await page.getByRole('tooltip').filter({hasText:'This project cannot be forgotten.'}).waitFor({state:'visible', timeout:3000});
-  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`});
+  await page.getByTestId('project-group-header').filter({hasText:'occupied'}).hover();
+  await page.getByRole('tooltip').filter({hasText:'Project has chats, including archived chats'}).waitFor({state:'visible', timeout:3000});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`, animations:'disabled'});
   console.log('Protected Inbox cannot be forgotten');
   async function callRpc(method, data) {
     return page.evaluate(async ({method, data}) => {
@@ -108,6 +112,8 @@ try {
   assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:true});
   await stale.click();
   await page.getByText('Failed to remove project').waitFor();
+  await page.getByRole('button', {name:'Dismiss notification'}).first().click();
+  await page.getByRole('alert').filter({hasText:'Failed to remove project'}).waitFor({state:'detached'});
   historyResult = await callRpc('workspace.history', {});
   const remaining = historyResult.entries.find((entry) => entry.path.endsWith('/projects/stale-b'));
   assert(remaining && remaining.project.folders.length === 1 && remaining.project.folders[0].endsWith('/projects/stale-b'));
@@ -122,7 +128,9 @@ try {
   await linked.click({timeout:15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByText('Project has chats, workers, or other linked work.').waitFor({timeout:15000});
-  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-error.png`});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-error.png`, animations:'disabled'});
+  await page.getByRole('button', {name:'Dismiss notification'}).first().click();
+  await page.getByRole('alert').filter({hasText:'Project has chats, workers, or other linked work.'}).waitFor({state:'detached'});
   assert.equal(await linked.count(), 1);
   console.log('Linked work refusal was explained');
   const remote = page.getByRole('button', {name: 'Remove project remote-work'});
@@ -190,6 +198,8 @@ try {
   await refused.click({timeout: 15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByText(/synthetic refusal/).waitFor({timeout: 15000});
+  await page.getByRole('button', {name:'Dismiss notification'}).first().click();
+  await page.getByRole('alert').filter({hasText:'synthetic refusal'}).waitFor({state:'detached'});
   assert.equal(await page.getByRole('button', {name: 'New session in refused'}).count(), 1);
   console.log('Failed forget showed an error and retained the project');
   const history = await page.evaluate(async () => {
@@ -221,7 +231,7 @@ try {
   await remove.waitFor({state: 'visible'});
   await remove.click({timeout: 15000});
   await page.getByText('Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.').waitFor();
-  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-confirm.png`});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-confirm.png`, animations:'disabled'});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByRole('button', {name: 'New session in neo-read'}).waitFor({state: 'detached', timeout: 15000});
   await page.reload();

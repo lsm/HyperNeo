@@ -5,7 +5,8 @@ The script owns an isolated daemon, synthetic projects and one chat. It pairs a 
 browser and cleans up. Set `VERIFY_BROWSER`, `VERIFY_NODE` and `PLAYWRIGHT_NODE_PATH`
 when needed, as in the sidebar new-session journey.
 
-The light desktop screenshot shows the empty Neo project's remove control. The browser
+The desktop screenshots show the remove control, confirmation, disabled reason and error.
+Set `VERIFY_COLOR_SCHEME` to `light` or `dark` to capture both appearances. The browser
 checks that the protected Inbox and projects with a chat, hidden worker, or uncheckable
 remote work refuse removal. A two-folder history project disappears without deleting
 files; a stale folder reports failure and leaves the other membership intact.
