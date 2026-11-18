@@ -1459,12 +1459,12 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('a front reply over the shared line limit is told to shorten, not to add details', async () => {
+test('a front reply over the shared character limit is told to shorten, not to add details', async () => {
   const { id } = await deliveredConvoInput();
   const refused = await convoPublish({
-    requestId: 'six-lines',
+    requestId: 'too-long',
     replyTo: [id],
-    fullText: 'Status\n- a\n- b\n- c\n- d\n- e',
+    fullText: 'x'.repeat(401),
     verbatim: true,
   });
   expect(refused.accepted).toBe(false);

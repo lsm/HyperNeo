@@ -557,7 +557,7 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('holds every reply text to the character and line limits, with or without details', async () => {
+  test('holds every reply text to the character limit, with or without details', async () => {
     const send = (requestId: string, text: string, details?: string) =>
       publish({ requestId, text, ...(details === undefined ? {} : { details }) }, caller);
     const long = `${'The build is green and the review is finished. '.repeat(10)}The branch is ready to merge.`;
@@ -602,7 +602,7 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       publication: { shortText: 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), fullText: 'b'.repeat(20) },
     });
-    expect(ledger.list(conversationId)).toHaveLength(7);
+    expect(ledger.list(conversationId)).toHaveLength(9);
   });
 
   test('refuses exactly one character over the reply limit', async () => {
