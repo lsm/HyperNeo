@@ -92,6 +92,7 @@ The rules are code, not prompt text, and each lives where its subject lives. Bot
 
 - Bulk deletion of existing `work/evidence` folders. The existing cleanup sweep continues to reclaim eligible evidence under its retention and reference rules.
 - Builds and scratch folders.
+- A question card's `retireWhen` check (`question-operations.ts`). It only decides when a card goes away; it is not a todo's result, and no hidden path is assigned to it.
 
 ## Slices
 
