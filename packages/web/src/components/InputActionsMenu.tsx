@@ -221,7 +221,7 @@ export function InputActionsMenu({
             <span class="text-sm">Tools</span>
           </button>
 
-          <div class="h-px bg-line-strong" />
+          {showTools && <div class="h-px bg-line-strong" />}
 
           <button
             type="button"
