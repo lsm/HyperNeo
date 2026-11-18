@@ -22,7 +22,12 @@ vi.mock('node:child_process', async (original) => ({
     _options: unknown,
     done: (error: Error, stdout: string, stderr: string) => void
   ) => {
-    if (file === 'npm' && args[0] === 'pack') requests.push(args[1]);
+    if (file === 'npm' || file === 'pnpm') {
+      queueMicrotask(() => done(Object.assign(new Error('not found'), { code: 'ENOENT' }), '', ''));
+      return;
+    }
+    if (file === 'curl')
+      requests.push(...args.filter((arg) => arg.startsWith('https://registry.npmjs.org/')));
     queueMicrotask(() => done(new Error('Isolated download refused'), '', ''));
   },
 }));
@@ -35,6 +40,6 @@ test('a server without package manifests downloads the pinned SDK version', asyn
 
   expect(result.status).toBe('failed');
   expect(requests).toHaveLength(1);
-  expect(requests[0]?.split('@').at(-1)).toBe(expected);
+  expect(requests[0]?.split('/').at(-1)).toBe(expected);
   expect(result.version).toBe(expected);
 });
