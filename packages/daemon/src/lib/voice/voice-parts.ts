@@ -53,12 +53,21 @@ export async function resolveVoiceKey(
 export async function resolveSpeechPart(
   voice: VoiceSettings | undefined,
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
-): Promise<{ endpoint: string; model?: string; voice?: string; key?: string } | undefined> {
+): Promise<
+  | {
+      provider?: 'openai' | 'deepgram';
+      endpoint: string;
+      model?: string;
+      voice?: string;
+      key?: string;
+    }
+  | undefined
+> {
   const speech = voiceParts(voice).speech;
   const endpoint = speech?.endpoint.trim();
   if (!endpoint) return undefined;
   const key = URL.canParse(endpoint)
     ? await resolveVoiceKey(voice, new URL(endpoint), credentialManager)
     : undefined;
-  return { endpoint, model: speech?.model, voice: speech?.voice, key };
+  return { provider: speech?.provider, endpoint, model: speech?.model, voice: speech?.voice, key };
 }
