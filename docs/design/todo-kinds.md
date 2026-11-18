@@ -31,7 +31,10 @@ or when a pack marks it from its own facts. A plan:
 **The sign-off card.** `neo.question.ask` gains `signoff: true`. It is valid only on a
 plan, only as a one-option choice (the option approves; Reply stays for anything else),
 and its `todos` must be exactly the plan's live steps. Only an answer choosing that option
-signs the plan. Other cards on a plan, such as an early blocking question, are unchanged.
+signs the plan. A `signoff` card satisfies the existing link rule in `planNeoQuestion`
+(a todo card needs `retireWhen` or a todo `check`): it retires when answered, or when the
+plan's steps change, which asks for a new one. Other cards on a plan, such as an early
+blocking question, are unchanged.
 
 **The check is one field.** In any pack, Neo checks a plan by starting another worker
 session (`work.start` with the plan's `todoId`) and giving it the plan and its steps; when
@@ -44,7 +47,8 @@ lines without the doer's model returns a usable line.
 A check stops counting when the steps change.
 
 **Plans already done.** The migration that adds `checked_json` writes `{"legacy": true}`
-on every todo that is already a plan and already done. `neoPlanRefusal` holds a legacy plan
+on every todo that is already done and is a plan, either by `producesFollowUp` or by a
+pack's facts at that time (for coding, a done todo whose PR changed `docs/design/**`). `neoPlanRefusal` holds a legacy plan
 only to the old rule (one live dependent). Plans not yet done get no marker and follow the
 new rule; Neo checks and signs them as above.
 
@@ -59,7 +63,7 @@ requirement or null. A fact step reads those; the function is the only rule. It 
 | `planNeoTodoDone` and the `done` input of `planNeoTodoEdit` | a plan missing any of the three |
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge in `todo-runner.ts`) | it does not mark such a plan done; the plan stays open with the unmet requirement as its reason, and Neo is woken |
 | the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | an ask with a plan missing any of the three |
-| the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`neo-todo-session-repository.ts`) | the same: such an ask is not settled, and Neo is woken |
+| the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: such an ask is not settled, and Neo is woken |
 | `planNeoTodoRemove` | removing a plan's last live step without `replacedBy` |
 
 Steps wait without new code: they depend on the plan, so they start when it is done
@@ -105,3 +109,4 @@ Acceptance, one integration case per row:
 | a todo that is not a plan | unchanged |
 | a plan already done before the upgrade, its ask still open | held to the old rule (one live dependent); the new rule applies to plans not yet done |
 | a `no`-style reply or a non-signoff card on a plan | does not sign it |
+| a design PR todo already done before the upgrade, its ask still open | marked legacy; the old rule applies |
