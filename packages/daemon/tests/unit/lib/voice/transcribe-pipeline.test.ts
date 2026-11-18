@@ -418,6 +418,43 @@ describe('voice transcribe pipeline', () => {
     expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer stored-key');
   });
 
+  it('records through Deepgram with a raw WAV body and a Token header', async () => {
+    const seen: { url?: string; headers?: Record<string, string>; body?: unknown } = {};
+    globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      seen.url = url.toString();
+      seen.headers = init?.headers as Record<string, string>;
+      seen.body = init?.body;
+      return Response.json({
+        results: { channels: [{ alternatives: [{ transcript: 'deepgram heard' }] }] },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      transcribe(
+        createDeps(
+          {
+            endpoint: '',
+            model: '',
+            recorded: {
+              provider: 'deepgram',
+              endpoint: 'https://api.deepgram.com/v1/listen',
+              model: 'nova-3',
+            },
+            apiKeyEndpoint: 'https://api.deepgram.com/v1/listen',
+          },
+          createVoiceTranscribeLimiters(),
+          {
+            getCredentials: async () => ({ type: 'api_key' as const, apiKey: 'dg-key' }),
+          } as unknown as Pick<ProviderCredentialManager, 'getCredentials'>
+        )
+      )
+    ).resolves.toEqual({ action: 'transcribed', text: 'deepgram heard' });
+    expect(seen.url).toBe('https://api.deepgram.com/v1/listen?model=nova-3');
+    expect(seen.headers?.Authorization).toBe('Token dg-key');
+    expect(seen.headers?.['Content-Type']).toBe('audio/wav');
+    expect(Buffer.from(seen.body as Uint8Array).toString('base64')).toBe(wavBase64());
+  });
+
   describe('keys by host', () => {
     const storedKey = () =>
       ({
