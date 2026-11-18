@@ -15,7 +15,8 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/third/evid
 The helper sends messages in two OXAP chats through the daemon and a real hub.
 The synthetic Codex app-server reports a signed-out account. Both chats show the
 same device code and link before either thread opens; the server sees two account
-reads and one login request. After the matching completion, both threads open.
+reads and one login request. The joining app-server exits while the shared
+login waits. After the matching completion, both threads open.
 
 The first run makes the default Codex path invalid, so sign-in must use the
 configured executable. The second kills the app-server during sign-in, checks

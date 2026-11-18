@@ -114,6 +114,7 @@ export async function checkCodexLogin(
   const server = await startCodexBootstrapServer(executable, notify, reportExit);
   let owned: Login | undefined;
   let finished = false;
+  let closed = false;
   try {
     const account = (await server.call('account/read', { refreshToken: false })) as {
       account: unknown;
@@ -129,6 +130,10 @@ export async function checkCodexLogin(
           },
           exited
         ));
+    if (!owned) {
+      await server.close();
+      closed = true;
+    }
     const uuid = generateUUID() as AuthMessage['uuid'];
     let code: Code;
     try {
@@ -175,15 +180,17 @@ export async function checkCodexLogin(
     );
     if (!completion.success) throw new Error(SIGN_IN_FAILURE);
   } finally {
-    if (owned && !finished) {
-      void owned.done
-        .then(
-          () => server.close(),
-          () => server.close()
-        )
-        .catch(() => {});
-    } else {
-      await server.close();
+    if (!closed) {
+      if (owned && !finished) {
+        void owned.done
+          .then(
+            () => server.close(),
+            () => server.close()
+          )
+          .catch(() => {});
+      } else {
+        await server.close();
+      }
     }
   }
 }

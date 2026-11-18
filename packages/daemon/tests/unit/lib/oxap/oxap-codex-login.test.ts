@@ -6,6 +6,7 @@ const fake = vi.hoisted(() => ({
   account: null as object | null,
   exits: [] as Array<() => void>,
   commands: [] as unknown[],
+  closed: [] as number[],
   failStart: false,
   rejectStart: undefined as ((error: Error) => void) | undefined,
 }));
@@ -16,6 +17,7 @@ vi.mock('../../../../src/lib/drivers/codex-app-server.ts', () => ({
     listener: (typeof fake.listeners)[number],
     onExit: () => void
   ) => {
+    const serverIndex = fake.listeners.length;
     fake.listeners.push(listener);
     fake.exits.push(onExit);
     fake.commands.push(_command);
@@ -31,7 +33,9 @@ vi.mock('../../../../src/lib/drivers/codex-app-server.ts', () => ({
           return { loginId: 'login-1', verificationUrl: 'https://example.com', userCode: 'CODE' };
         return {};
       },
-      close: async () => {},
+      close: async () => {
+        fake.closed.push(serverIndex);
+      },
     };
   },
 }));
@@ -70,6 +74,7 @@ beforeEach(() => {
   fake.listeners.length = 0;
   fake.exits.length = 0;
   fake.commands.length = 0;
+  fake.closed.length = 0;
   fake.account = null;
   fake.failStart = false;
   fake.rejectStart = undefined;
@@ -87,6 +92,7 @@ describe('checkCodexLogin', () => {
       { method: 'account/login/start', params: { type: 'chatgptDeviceCode' } },
     ]);
     expect(f.messages).toHaveLength(2);
+    expect(fake.closed).toEqual([1]);
     expect(f.messages.map(({ message }) => message.output)).toEqual([
       ['Open https://example.com', 'Enter code CODE'],
       ['Open https://example.com', 'Enter code CODE'],
@@ -100,6 +106,7 @@ describe('checkCodexLogin', () => {
       listener({ method: 'account/login/completed', params: { loginId: 'login-1', success: true } })
     );
     await Promise.all([one, two]);
+    expect(fake.closed).toEqual([1, 0]);
     expect(f.messages).toHaveLength(4);
     expect(f.messages[2]?.message.isAuthenticating).toBe(false);
     expect(f.messages[2]?.message.uuid).toBe(
