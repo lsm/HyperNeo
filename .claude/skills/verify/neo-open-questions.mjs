@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, directory] = process.argv.slice(2);
 assert(port && directory, 'usage: neo-open-questions.mjs <port> <run-dir>');
@@ -36,7 +37,7 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 1000 } });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = page.locator(`[data-ask="${ask}"]:visible`);
+    const card = await revealAsk(page, ask);
     await card.waitFor();
     for (const id of questions) {
       const body = card.locator(`[data-ask-question="${id}"]`);

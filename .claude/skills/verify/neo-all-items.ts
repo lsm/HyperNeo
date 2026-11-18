@@ -8,6 +8,7 @@ import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/r
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
 const [phase,readyPath,directory]=process.argv.slice(2),run=resolve(directory);
@@ -16,7 +17,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`,createSocket:(url)=>createLocalSocket(url)});hub.registerTransport(transport);
 let front:ReturnType<typeof Bun.serve>|undefined;
 const evidence:Record<string,unknown>={phase,passed:false,syntheticOnly:true};
 try{
@@ -42,12 +43,15 @@ try{
  const removed=store.addTodo('all-removed',askId,{title:'Removed All step',doneWhen:'Synthetic removal',check:null,instruction:null,named:null},now);
  store.updateTodo(removed,{state:'removed',reason:'Synthetic retired work'},now);
  db.prepare('UPDATE neo_asks SET outcome=? WHERE id=?').run('## Final outcome\n\nOutcome sentinel',askId);
+ const history='all-history';store.openAsk({id:history,title:'Synthetic finished history',sessionId:root,projectId:null,originMessageId:null,request:'Synthetic history outside the queue',createdAt:now});
+ for(let i=1;i<=4;i++){const todo=store.addTodo(`history-todo-${i}`,history,{title:`Finished history step ${i}`,doneWhen:'Observed synthetic result',check:null,instruction:null,named:null},now+i);store.updateTodo(todo,{state:'done',report:`History report ${i}`},now+i);}
+ const past=store.askQuestion('history-answered',history,{...draft,text:'**Past question**',document:undefined},now+7);store.answerQuestion(past,'Past answer','chat',now+8);
  const entry=await hub.request<{ok:boolean;entry:{questions:{id:string;text:string}[]}}>('operation.invoke',{name:'neo.ask.read',input:{askId}});assert(entry.ok && entry.entry.questions.some(q=>q.id==='answered-long' && q.text===full));
  const dist=resolve('packages/web/dist');assert(existsSync(join(dist,'neo/index.html')));
  front=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request,server){
   const path=new URL(request.url).pathname;
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
-  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});
+  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));if(!await file.exists())return new Response('Not found',{status:404});return path==='/neo'?new Response(file,{headers:{'Set-Cookie':`hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict`}}):new Response(file);
  },websocket:createWebSocketHandlers(app.transport,app.sessionManager)});assert.notEqual(front.port,8399);
  writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,askId,full},null,2));
  console.log(`Ready for attended browser: http://127.0.0.1:${front.port}/neo`);

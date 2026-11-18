@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, directory] = process.argv.slice(2);
 assert(port && directory, 'usage: question-document-labels.mjs <port> <run-dir>');
@@ -36,7 +37,7 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${port}/neo`);
       for (const {home,ask} of fixtures) {
-        const card=page.locator(`[data-ask="${ask}"]:visible`);
+        const card=await revealAsk(page, ask);
         await card.waitFor();
         await card.getByText(home?'direction.md '+ 'a'.repeat(64):'Ordinary question with a document',{exact:true}).first().waitFor();
         const label=language==='en'?(home?'View full versions':'View full report'):(home?'查看完整版本':'查看完整内容');

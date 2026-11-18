@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, out, run] = process.argv.slice(2);
 assert(port && out && run, 'usage: desktop-control-toggle-web.mjs <port> <evidence-dir> <run-dir>');
@@ -37,6 +38,7 @@ try {
   await page.getByRole('button', { name: 'Pair this browser' }).click();
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/neo`);
+  await revealAsk(page, 'desktop-ask');
   const row = page.locator('[data-ask-todo="dentist"]').first();
   await expand(row, 'Book the dentist on the clinic site');
   await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
@@ -54,6 +56,7 @@ try {
     () => document.querySelector('[data-ask-todo="dentist"] input[type=checkbox]')?.checked === true
   );
   await page.reload();
+  await revealAsk(page, 'desktop-ask');
   const again = page.locator('[data-ask-todo="dentist"]').first();
   await expand(again, 'Book the dentist on the clinic site');
   await expand(page.locator('[data-ask-todo="taxes"]').first(), 'File the tax form');
