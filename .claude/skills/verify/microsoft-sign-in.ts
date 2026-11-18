@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -71,7 +72,13 @@ async function signIn(input: unknown) {
   assert.equal(redirect.hostname, 'localhost'); assert.equal(redirect.pathname, '/oauth/microsoft/callback');
   const code = `synthetic-code-${crypto.randomUUID()}`; nonces.set(code, authorize.searchParams.get('nonce')!);
   redirect.search = new URLSearchParams({ code, state: authorize.searchParams.get('state')! }).toString();
-  await fetch(redirect).then((response) => response.body?.cancel());
+  const status = await new Promise<number>((done, fail) => {
+    const call = request({ hostname: '::1', port: redirect.port, path: redirect.pathname + redirect.search, headers: { host: redirect.host } }, (response) => {
+      response.resume(); response.on('end', () => done(response.statusCode ?? 0));
+    });
+    call.on('error', fail); call.end();
+  });
+  assert([200, 400].includes(status));
   for (const deadline = Date.now() + 10000; ; await new Promise((done) => setTimeout(done, 10))) {
     const view = await rpc('connections.microsoft.login', { loginId: flow.loginId });
     if (view.state !== 'pending') return view;

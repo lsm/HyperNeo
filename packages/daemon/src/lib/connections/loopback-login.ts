@@ -1,5 +1,9 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { createHttpWsServer } from '../runtime-server/index.ts';
+import {
+  createHttpWsServer,
+  type ServerHandle,
+  type ServerOptions,
+} from '../runtime-server/index.ts';
 
 export type LoginOutcome =
   | {
@@ -36,12 +40,14 @@ export async function startLoopbackLogin(options: {
   });
   let timer: ReturnType<typeof setTimeout>;
   let redirectUri = '';
+  let ipv6: ServerHandle | undefined;
   const finish = (outcome: LoginOutcome) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
     controller.abort();
     server.stop(false);
+    ipv6?.stop(false);
     complete(outcome);
   };
   const answer = (status: number) =>
@@ -58,7 +64,8 @@ export async function startLoopbackLogin(options: {
         },
       }
     );
-  const server = await (options.serve ?? createHttpWsServer)({
+  const serve = options.serve ?? createHttpWsServer;
+  const serverOptions: ServerOptions = {
     hostname: '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 30,
@@ -98,12 +105,21 @@ export async function startLoopbackLogin(options: {
         return answer(400);
       }
     },
-  });
+  };
+  const server = await serve(serverOptions);
   if (server.port === 8399) {
     server.stop(true);
     throw new Error('Reserved callback port');
   }
   redirectUri = options.redirect(server.port);
+  if (new URL(redirectUri).hostname === 'localhost') {
+    try {
+      ipv6 = await serve({ ...serverOptions, hostname: '::1', port: server.port });
+    } catch (error) {
+      server.stop(true);
+      throw error;
+    }
+  }
   timer = setTimeout(() => finish({ ok: false, reason: 'expired' }), options.timeoutMs ?? 300000);
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   return {

@@ -11,8 +11,8 @@ Microsoft and needs no app registration.
 
 Through management RPC it starts `connections.microsoft.connect`, checks the
 consent URL (PKCE S256, the six scopes, `prompt=select_account`, a
-`localhost` callback), then follows the real `localhost` redirect to the
-daemon's loopback listener. The completed row is `microsoft`, keyed by tenant
+`localhost` callback), then follows the redirect over IPv6 to the daemon's
+loopback listener. The completed row is `microsoft`, keyed by tenant
 and object id. A token signed by a key restricted to another tenant fails
 `login_failed`; reconnect returning another object id fails `account_mismatch`.
 Google disconnect of the Microsoft id returns `unknown_connection` and keeps the
