@@ -47,6 +47,21 @@ describe('ErrorBanner', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
   });
 
+  it.each(['registry.npmjs.org', 'mirror.example'])(
+    'localizes an unreachable registry and keeps its host: %s',
+    (host) => {
+      locale.value = 'zh-Hans';
+      render(
+        <ErrorBanner
+          downloadFailure
+          error={`Can't download Claude Code: Cannot reach npm registry at ${host}.`}
+          onDismiss={vi.fn()}
+        />
+      );
+      expect(screen.getByText(`无法下载 Claude Code：无法连接 npm 软件源 ${host}。`)).toBeTruthy();
+    }
+  );
+
   it('localizes a registry web page response', () => {
     locale.value = 'zh-Hans';
     render(
