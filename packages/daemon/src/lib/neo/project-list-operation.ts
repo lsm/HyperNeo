@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { defineOperation } from '../operations/registry.ts';
+import { NEO_INBOX_ID } from './inbox.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
 type ListRepo = Pick<NeoRepository, 'listProjects' | 'projectMerges' | 'projectWorkFactsAsync'>;
@@ -14,6 +15,7 @@ const ListedProject = z.object({
   updatedAt: z.number(),
   hasSessions: z.boolean(),
   unknownWork: z.boolean(),
+  isProtected: z.boolean(),
 });
 const Result = z.object({ projects: z.array(ListedProject) });
 type Listed = z.infer<typeof Result>;
@@ -32,6 +34,7 @@ export function listNeoProjects(
       updatedAt: project.updatedAt,
       hasSessions: busy.has(project.id),
       unknownWork: unknown.has(project.id),
+      isProtected: project.id === NEO_INBOX_ID,
     })),
   };
 }

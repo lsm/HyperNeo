@@ -197,13 +197,14 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       [...project.folders].sort(),
       project.hasSessions,
       project.unknownWork,
+      project.isProtected,
     ]);
   const workSignature = JSON.stringify(systemProjects.map(workKey).sort());
   useEffect(() => {
     let current = true;
     for (const project of systemProjects) {
       const key = workKey(project);
-      if (project.hasSessions || project.unknownWork) {
+      if (project.hasSessions || project.unknownWork || project.isProtected) {
         failedWorkRef.current.delete(project.id);
         if (systemWorkRef.current[project.id]) {
           delete systemWorkRef.current[project.id];
@@ -542,6 +543,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                             (entry) => `neo:${entry.id}` === project.path
                           );
                           if (!item) return 'Checking project work';
+                          if (item.isProtected) return 'This project cannot be forgotten.';
                           if (project.sessions.length > 0 || item.hasSessions)
                             return 'Project has chats, including archived chats';
                           if (item.unknownWork) return 'Cannot check all work for this project';

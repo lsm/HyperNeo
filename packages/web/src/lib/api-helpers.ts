@@ -362,6 +362,7 @@ export interface SystemProject {
   updatedAt: number;
   hasSessions: boolean;
   unknownWork: boolean;
+  isProtected: boolean;
 }
 
 export async function listSystemProjects(): Promise<SystemProject[]> {

@@ -6,7 +6,8 @@ browser and cleans up. Set `VERIFY_BROWSER`, `VERIFY_NODE` and `PLAYWRIGHT_NODE_
 when needed, as in the sidebar new-session journey.
 
 The light desktop screenshot shows the empty Neo project's remove control. The browser
-checks that projects with a chat, hidden worker, or uncheckable remote work refuse removal.
+checks that the protected Inbox and projects with a chat, hidden worker, or uncheckable
+remote work refuse removal.
 A project without folders or other workspace aliases can be forgotten. An unrelated
 session update does not trigger another work scan. Run again with
 `VERIFY_INJECT_FAILURE=1` to simulate an unreachable work source and confirm the

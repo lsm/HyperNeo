@@ -33703,6 +33703,9 @@
                 "id": {
                   "type": "string"
                 },
+                "isProtected": {
+                  "type": "boolean"
+                },
                 "name": {
                   "type": "string"
                 },
@@ -33719,7 +33722,8 @@
                 "folders",
                 "updatedAt",
                 "hasSessions",
-                "unknownWork"
+                "unknownWork",
+                "isProtected"
               ],
               "type": "object"
             },
