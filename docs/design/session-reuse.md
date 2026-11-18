@@ -130,6 +130,15 @@ sessions whose record exists and has no end.
 
 Neo's explicit `send` to a named session is unchanged.
 
+`bun run system-map impact` on `drivers/work-operations.ts`, `drivers/worker-reuse.ts`,
+`packages/daemon/src/storage/work-started-sessions.ts`, `neo/packs/coding/session-target.ts`,
+`neo/todo-release.ts` and `neo/session-archive-operation.ts`: `work_started_sessions` is
+read and written only in `work-started-sessions.ts`, so the start record's columns and the
+`role` → `kind` rename stay in that file and its 6 importers. `work-operations.ts` has 29
+importers and defines every `work.*` operation; PR 3 adds one optional `role` input to
+`work.start` and changes no other operation. `session-target.ts` has one importer, the
+coding pack, so PR 1's deletions do not reach core.
+
 Acceptance, one integration case per row:
 
 | Case | Expected |
