@@ -136,10 +136,15 @@ function writeCursor(link: string | undefined, input: Paging, operation: Operati
   const url = URL.canParse(link) ? new URL(link) : null;
   if (url?.origin !== origin || url.pathname !== collection || !plain(url.search))
     return { reason: denied('invalid_response') };
-  const fields = { connectionId: input.connectionId, operation, key: digest(key), query: url.search };
-  const cursor = Buffer.from(
-    JSON.stringify({ ...fields, sig: sign(fields) })
-  ).toString('base64url');
+  const fields = {
+    connectionId: input.connectionId,
+    operation,
+    key: digest(key),
+    query: url.search,
+  };
+  const cursor = Buffer.from(JSON.stringify({ ...fields, sig: sign(fields) })).toString(
+    'base64url'
+  );
   return cursor.length <= 2048 ? { value: cursor } : { reason: denied('response_limit') };
 }
 
