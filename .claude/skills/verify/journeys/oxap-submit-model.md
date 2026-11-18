@@ -16,4 +16,4 @@ carries `gpt-6-luna`, the provider's canonical id. Before this change it carried
 no model, so the run used the harness default.
 
 A harness that does not advertise `run.model_selection` is covered by the unit
-test in `oap-query-hub.test.ts`; no such harness row exists yet.
+test in `oxap-query-hub.test.ts`; no such harness row exists yet.

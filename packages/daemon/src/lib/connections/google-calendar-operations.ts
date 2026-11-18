@@ -126,7 +126,7 @@ function project(value: unknown, input: Input) {
     : { ok: false as const, reason: 'response_limit' };
 }
 export function createGoogleCalendarOperations(service: () => Promise<Service>) {
-  const list = (superpipe({})('google-calendar-list') as PipelineAPI)
+  const list = (superpipe({})('calendar.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:result')
     .pipe(plan, 'input', 'plan')

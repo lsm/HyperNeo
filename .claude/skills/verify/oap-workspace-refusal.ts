@@ -5,7 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import type { SDKUserMessage } from '../../../packages/shared/src/sdk/index.ts';
@@ -18,7 +18,7 @@ mkdirSync(join(run, 'workspace'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
-const evidence: Record<string, unknown> = { synthetic: true, usedRealOap: false };
+const evidence: Record<string, unknown> = { synthetic: true, usedRealOxap: false };
 try {
   answerCodexProbeLocally();
   app = await createDaemonApp({
@@ -94,7 +94,7 @@ try {
   assert(agent);
   const submissions: string[] = [];
   let cancellations = 0;
-  const syntheticOap: OapQueryRuntime = {
+  const syntheticOxap: OxapQueryRuntime = {
     openDirectorySupported: true,
     hub: {
       submit: async (target: string, message: SDKUserMessage) => {
@@ -116,7 +116,7 @@ try {
       cancel: async () => { cancellations++; },
     },
   };
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = syntheticOap;
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = syntheticOxap;
   const errorsBeforeTurns = errors.length;
   for (let turn = 1; turn <= 2; turn++) {
     await hub.request('message.send', { sessionId: syntheticSession, content: `Synthetic prompt ${turn}` });
@@ -141,7 +141,7 @@ try {
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
   let rejectOld: ((error: Error) => void) | undefined;
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = {
     openDirectorySupported: true,
     hub: {
       submit: () => new Promise<{ runId: string }>((_resolve, reject) => { rejectOld = reject; }),
@@ -180,7 +180,7 @@ try {
   const orderAgent = app.sessionManager.getSession(orderSession);
   assert(orderAgent);
   let orderTurn = 0;
-  (orderAgent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+  (orderAgent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = {
     openDirectorySupported: true,
     hub: {
       submit: async () => ({ runId: `order-${++orderTurn}` }),
@@ -225,7 +225,7 @@ try {
   let releaseInterrupt!: () => void;
   const listeningInterrupt = new Promise<void>((resolve) => { entered = resolve; });
   const cancelledInterrupt = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
-  (interruptAgent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+  (interruptAgent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = {
     openDirectorySupported: true,
     hub: {
       submit: async () => ({ runId: 'interrupt-run' }),
@@ -256,7 +256,7 @@ try {
   const lateGate = new Promise<void>((resolve) => { releaseLate = resolve; });
   const listeningStarted = new Promise<void>((resolve) => { listening = resolve; });
   let staleCancellations = 0;
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = {
     openDirectorySupported: true,
     hub: {
       submit: async () => ({ runId: 'synthetic-late-run' }),
