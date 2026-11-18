@@ -49,7 +49,7 @@ try {
 
     const history = page.locator('[data-ask="a-history"]:visible');
     await history.getByText('Finished synthetic history').waitFor();
-    await history.getByText('Todos · 22', { exact: true }).waitFor();
+    await history.locator('[data-ask-status]').getByText('· 22 todos', { exact: true }).waitFor();
     assert.equal(readsOf('a-history'), 0, 'a summary card outside the queue reads nothing up front');
     assert.equal(await history.getByText('Full synthetic history report', { exact: true }).count(), 0);
     await history.evaluate(node => node.scrollIntoView({ block: 'center' }));

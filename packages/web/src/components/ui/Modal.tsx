@@ -9,6 +9,7 @@ export interface ModalProps {
   onClose: () => void;
   children: ComponentChildren;
   title?: string;
+  titleClass?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showCloseButton?: boolean;
   footer?: ComponentChildren;
@@ -66,6 +67,7 @@ export function Modal({
   onClose,
   children,
   title,
+  titleClass = 'text-sm',
   size = 'md',
   showCloseButton = true,
   footer,
@@ -134,7 +136,12 @@ export function Modal({
         {(title || showCloseButton) && (
           <div class="flex items-center justify-between px-4 py-3 border-b border-line flex-shrink-0">
             {title && (
-              <h2 class="text-sm font-semibold text-fg max-[720px]:min-w-0 max-[720px]:break-words">
+              <h2
+                class={cn(
+                  'font-semibold text-fg max-[720px]:min-w-0 max-[720px]:break-words',
+                  titleClass
+                )}
+              >
                 {title}
               </h2>
             )}

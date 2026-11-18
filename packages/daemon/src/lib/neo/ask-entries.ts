@@ -149,8 +149,13 @@ export function summarizeNeoAskEntry(entry: NeoAskEntry): NeoAskEntry {
       blockedReason: null,
       nextAction: null,
       named:
-        typeof todo.named?.requestFrom === 'string'
-          ? { requestFrom: todo.named.requestFrom }
+        typeof todo.named?.requestFrom === 'string' || todo.named?.desktopControl === true
+          ? {
+              ...(typeof todo.named?.requestFrom === 'string'
+                ? { requestFrom: todo.named.requestFrom }
+                : {}),
+              ...(todo.named?.desktopControl === true ? { desktopControl: true } : {}),
+            }
           : null,
       check: null,
       artifacts: undefined,
