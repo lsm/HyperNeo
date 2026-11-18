@@ -20,7 +20,7 @@ const draft = {
   after: [],
   title: 'Fix it',
   doneWhen: 'Merged',
-  check: pendingTodoCheck,
+  check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
   instruction: null,
   named: null,
 };
@@ -164,7 +164,7 @@ describe('neo.todo.add repo', () => {
     const first = await call({
       askId: 'ask',
       ...draft,
-      check: pendingTodoCheck,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
       named: { repository: 'lsm/HyperNeo' },
     });
     expect(recordedRepo(db, first.todo.id)).toBe('github.com/lsm/hyperneo');
