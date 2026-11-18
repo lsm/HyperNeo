@@ -59,6 +59,7 @@ try {
   const notices = () => (db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' ORDER BY rowid").all() as { payload: string }[]).filter(row => row.payload.includes('pending release for 24 hours')).map(row => JSON.parse(row.payload));
   await service.refreshDriverWork();
   assert.equal((await app.db.getSession(reused))?.status, 'active');
+  assert.equal(db.prepare("SELECT 1 FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'released'").get(initial.id), null);
   db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify(reusedRef), followUp.id);
   service.todos.updateTodo(service.todos.getTodo(followUp.id)!, { state: 'done', finishedAt: start }, start);
   await service.refreshDriverWork();

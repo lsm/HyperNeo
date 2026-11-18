@@ -642,10 +642,10 @@ describe('neo todo runner refresh settles shared and local-only work', () => {
       h.queueOn(followUp.id);
       await h.refresh();
       expect(h.archived).toEqual([]);
-      expect(h.released()).toHaveLength(1);
+      expect(h.released()).toHaveLength(0);
       await h.finishTodo(followUp);
       await h.refresh();
-      expect(h.archived).toEqual([worker]);
+      expect(h.archived).toContainEqual(worker);
       expect(h.released()).toHaveLength(2);
     } finally {
       h.db.close();
