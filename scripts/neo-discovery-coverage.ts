@@ -24,7 +24,6 @@ const excludedOperations = {
   'daemon.probe': 'Operator connection diagnostics.',
   'file.reference.read': 'Paired-human live file preview.',
   'neo.open': 'Client bootstrap; Neo already has its binding.',
-  'neo.question.relayAnswer': 'Verified CLI relay transport.',
   'goal.create': 'Space goal administration; Neo uses session goals and journals.',
   'goal.event.list': 'Space goal administration; Neo uses session goals and journals.',
   'goal.get': 'Space goal administration; Neo uses session goals and journals.',

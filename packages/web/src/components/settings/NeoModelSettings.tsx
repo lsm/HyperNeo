@@ -1,4 +1,3 @@
-import { NeoRelaySendersSettings } from './NeoRelaySendersSettings.tsx';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { navigateToSettings } from '../../lib/router.ts';
 import { globalSettings } from '../../lib/state.ts';
@@ -44,7 +43,6 @@ export function NeoModelSettings() {
       <div class="mt-4">
         <NeoTodoLimitsSettings />
       </div>
-      <NeoRelaySendersSettings />
       <NeoMutedSessionsSettings />
       <NeoRelatedSettings />
     </>

@@ -1,6 +1,4 @@
-import { createNeoRelayOperations } from './relay-answer.ts';
 import { WorkRefSchema } from '../drivers/types.ts';
-import { neoAskInputWrites } from '../../storage/repositories/neo-ask-input-worker.ts';
 import { NEO_ANSWER_NOTE } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { createPeerOperations } from './peer-operations.ts';
@@ -763,7 +761,6 @@ export function createNeoOperations(
         speech: service.speech.restartBusy(),
       };
     }),
-    ...createNeoRelayOperations(service),
     ...createPeerOperations(service),
     ...service.speech.operations,
     createNeoProjectForgetOperation(service.repo, async (repos) => {
@@ -917,16 +914,7 @@ export function createNeoOperations(
         input.todoId
           ? service.relayWorkerQuestion({ ...input, todoId: input.todoId }, caller.sessionId)
           : service.relaySessionQuestion(input, caller.sessionId, Date.now()),
-      () => service.db.getGlobalSettings().language,
-      async (input) => {
-        const written = await gatewayFor(service.db.getDatabase()).call(
-          neoAskInputWrites,
-          'relayAnswer',
-          { ...input, at: Date.now() }
-        );
-        if ('value' in written) service.notifyChanged();
-        return written;
-      }
+      () => service.db.getGlobalSettings().language
     ),
     defineOperation({
       name: 'neo.open',
