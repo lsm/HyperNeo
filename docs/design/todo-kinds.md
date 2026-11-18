@@ -17,8 +17,11 @@ A design or plan is finished only when the work it describes is filed and done. 
 
 ## The design
 
-**One kind, `plan`.** A todo is a plan when Neo marks it so (the existing
-`producesFollowUp`, called `plan` in the tool text, same column), or when a pack says so
+**One kind, `plan`.** A plan is a design or a plan of work whose steps the human approves.
+Research and inventory todos are not plans: they keep `producesFollowUp` and today's
+one-live-dependent rule unchanged. A todo is a plan when Neo passes the new `plan: true` on
+`neo.todo.add` (stored in a new `neo_todos.plan` column; it implies `producesFollowUp`), or
+when a pack says so
 through a new optional hook `NeoTodoPack.plan?(todo): Promise<boolean>` (`pack-contract.ts`),
 read by the fact step; core never names a pack. The coding pack answers true when the
 todo's PR changes `docs/design/**`. A plan cannot be marked done, and its ask cannot settle
@@ -63,7 +66,8 @@ callers), review-bot routing and merge checks are not touched: a design PR is re
 merged exactly as today, and the plan check is a separate core check on the plan todo.
 This is why the plan check works the same in a repository whose reviews go to a bot.
 
-**Old todos.** The migration adds `plan_check_json TEXT` with no default and fills only that
+**Old todos.** The migration adds `plan INTEGER NOT NULL DEFAULT 0` and `plan_check_json TEXT` with no
+default, and fills only that
 new column with `{"legacy":true}` on existing rows in one `UPDATE`; no other data
 changes. New rows get NULL without any insert change. A legacy todo keeps the old rule: one live dependent if it was marked
 `producesFollowUp`, nothing otherwise. Legacy wins: the coding design-PR mark does not
@@ -94,12 +98,17 @@ covers them and the web shows the refusal.
 
 ## Change plan
 
-Two PRs from `dev`, failing tests first; the second is a few lines.
+Four PRs from `dev`, failing tests first, each building and passing alone.
 
-1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, the `todos.plan`
-   hook, `signoff` cards, `checkPlan` starts with the daemon-written brief, the `check`
-   report and its recording, the column, tool text.
-2. **Coding.** `todos.plan` returns true when the todo's PR changes `docs/design/**`,
+1. **Build.** The two columns and migration, `neoPlanRefusal` and its fact step, the
+   `todos.plan` hook, `signoff` cards, `checkPlan` starts with the daemon-written brief,
+   and the `check` report and its recording. Nothing calls the rule yet and Neo cannot
+   mark a plan yet, so behavior is unchanged.
+2. **Wire.** `neoPlanRefusal` at every call site above, including the removal guard, and
+   the `plan` input and tool text on `neo.todo.add` (the text stops calling research and
+   inventory plans). From here plans are enforced.
+3. **Delete.** `neoTodoFollowUpRefusal` and `neoTodoWithoutFollowUp`, now unused.
+4. **Coding.** `todos.plan` returns true when the todo's PR changes `docs/design/**`,
    read from the PR facts the pack already has. Nothing else in the pack changes.
 
 ## Acceptance
@@ -129,4 +138,5 @@ lines resolve to a single model.
 | a todo that existed before the upgrade, including an open design PR todo | reads legacy; old rule only |
 | a sign-off card whose plan's check already passes | stays open until answered |
 | a step added after the plan is done | no new check or sign-off; the ask settles |
+| a research or inventory todo marked `producesFollowUp` | today's rule: one live dependent; no check or sign-off |
 | a todo that is not a plan | unchanged |
