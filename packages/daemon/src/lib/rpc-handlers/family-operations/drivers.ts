@@ -685,11 +685,14 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       );
     },
     noticeReply: (ref: WorkRef, sessionId: string) => {
+      const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
       const sender = ref.daemon
-        ? renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: ref.id })
-        : ref.adapter === 'hyperneo'
-          ? ref.id
-          : `${ref.adapter}:${ref.id}`;
+        ? renderRemoteAddress({
+            kind: 'remote-session',
+            daemonId: ref.daemon,
+            sessionId: localSender,
+          })
+        : localSender;
       return new NeoSessionMessageRepository(db()).sentTo(sender, sessionId);
     },
     isOpenTodo: (todoId: string, sessionId: string) => {
