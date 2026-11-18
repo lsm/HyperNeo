@@ -7,6 +7,10 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
+import { readReusableWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 
@@ -125,7 +129,40 @@ try {
   store.updateTodo(store.getTodo('todo-bound')!, { state: 'doing', startedAt: 6 }, 6);
   const bound = await start('bound', neo, 'todo-bound');
   assert.equal(bound.reused, false);
-  writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb } }, null, 2));
+  store.updateTodo(store.getTodo(`todo-${separate.id}`)!, { state: 'done' }, Date.now());
+  await settle([separate.id]);
+  assert(readReusableWorkers(db, 'hyperneo').has(separate.id));
+  assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+  const socket = createLocalSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+  let remote;
+  try {
+    await new Promise<void>((done, fail) => { socket.onopen = () => done(); socket.onerror = () => fail(new Error('RPC unavailable')); });
+    const sender = createOperationRegistry(createWorkVerbOperations({
+      adapters: () => [], daemonName: 'synthetic-origin',
+      remote: {
+        list: () => [{ daemonId: 'synthetic-peer' }],
+        invoke: async (_daemon, name, value) => new Promise((done, fail) => {
+          const id = crypto.randomUUID();
+          const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
+          socket.onmessage = (event) => {
+            const reply = JSON.parse(String(event.data));
+            if (reply.requestId !== id && reply.id !== id) return;
+            clearTimeout(timer);
+            if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
+          };
+          socket.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input: value }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+        }),
+      },
+    }));
+    const result = await invokeOperation(sender, 'work.start', { ...input('remote', 'todo-wait'), place: { ...place, daemon: 'synthetic-peer' } }, neo);
+    assert.equal(result.kind, 'completed');
+    const reply = (result as { value: Result<WorkStarted> }).value;
+    assert(reply.ok, JSON.stringify(reply));
+    assert.notEqual(reply.value.ref.id, separate.id);
+    assert.notEqual(reply.value.reused, true);
+    remote = { newSession: reply.value.ref.id !== separate.id, reused: reply.value.reused === true };
+  } finally { socket.close(); }
+  writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb }, remote }, null, 2));
 } finally {
   await app.cleanup();
 }

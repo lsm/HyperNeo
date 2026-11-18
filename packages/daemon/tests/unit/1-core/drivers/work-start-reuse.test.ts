@@ -11,6 +11,7 @@ import {
   type WorkVerbDeps,
 } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -182,7 +183,7 @@ function harness(
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable, messages, waiting };
+  return { start, sent, started, unusable, messages, waiting, registry };
 }
 
 describe('work.start session reuse preference', () => {
@@ -664,6 +665,51 @@ describe('work.start independent worker reuse', () => {
 });
 
 describe('work.start remote actor exclusions', () => {
+  test('a forwarded start creates a fresh session instead of reusing a remote worker', async () => {
+    const destination = harness([{ id: 'other', status: 'done' }], ['other'], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: [],
+    });
+    const rpc = createOperationRpcHandler(destination.registry, () => ({}));
+    const sender = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [],
+        daemonName: 'origin',
+        remote: {
+          list: () => [{ daemonId: 'peer' }],
+          invoke: async (_daemon, name, input) =>
+            rpc(
+              { name, input },
+              {
+                messageId: 'synthetic',
+                sessionId: 'global',
+                method: 'operation.invoke',
+                timestamp: new Date().toISOString(),
+              }
+            ),
+        },
+      })
+    );
+    const result = await invokeOperation(
+      sender,
+      'work.start',
+      {
+        adapter: 'claude-desktop',
+        place: { ...place, daemon: 'peer' },
+        todoId: 'remote-todo',
+        title: 'loader',
+        message: 'Fix the loader.',
+      },
+      neo
+    );
+    expect(result).toMatchObject({
+      value: { ok: true, value: { ref: { id: 'fresh', daemon: 'peer' } } },
+    });
+    expect(destination.sent).toEqual([]);
+    expect(destination.started).toEqual(['loader']);
+  });
+
   test('qualifies exclusions for the destination before forwarding a start', async () => {
     const forwarded: unknown[] = [];
     const registry = createOperationRegistry(
