@@ -11,6 +11,8 @@ import { withOxapRecovery } from './oxap-recovery.ts';
 import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
 import { decideOxapOpen } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
+import { checkCodexLogin } from './oxap-codex-login.ts';
+import { harnessSettings } from './oxap-hub-config.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -115,7 +117,8 @@ export function createOxapRuntime(
   events?: InternalEventBus<DaemonInternalEventMap>,
   db?: OxapReopenStore,
   messageHub?: OxapReopenEvents,
-  providerRecord: (providerId: string) => ProviderRecord | null = () => null
+  providerRecord: (providerId: string) => ProviderRecord | null = () => null,
+  checkLogin = checkCodexLogin
 ): (session: Session) => OxapQueryRuntime {
   const sessions = new Map<string, SessionSlot>();
   events?.subscribe(
@@ -157,11 +160,8 @@ export function createOxapRuntime(
           if (!hubOptions?.installed())
             throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
           if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
-          const plan = prepareOpen(
-            session,
-            generateUUID(),
-            session.config.provider ? providerRecord(session.config.provider) : null
-          );
+          const record = session.config.provider ? providerRecord(session.config.provider) : null;
+          const plan = prepareOpen(session, generateUUID(), record);
           if (slot.directory && slot.directory !== plan.directory) {
             throw new Error('Codex session workspace changed; reopen is required');
           }
@@ -179,6 +179,11 @@ export function createOxapRuntime(
               .then(async (client) => {
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.client = client;
+                if (session.config.harness === 'oxap-codex') {
+                  const executable = record && harnessSettings(record).executable;
+                  if (!executable) throw new Error('Codex executable is not configured');
+                  await checkLogin(session.id, db, messageHub, executable);
+                }
                 await openOxapSession(client, plan, session, db, messageHub, events, () => {
                   if (slot.deleted) throw new Error('Codex session was deleted');
                 });

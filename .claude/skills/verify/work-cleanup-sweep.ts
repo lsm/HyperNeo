@@ -87,6 +87,11 @@ try {
       else resolveReply(JSON.parse(text));
     }, reject);
   });
+  const operation = app.sessionManager.getOperationRegistry().get('work.cleanup.sweep');
+  assert(operation);
+  evidence.refused = await operation.execute({}, { source: 'rpc' });
+  assert.deepEqual(evidence.refused, { accepted: false, reason: 'human_or_neo_only' });
+  assert(existsSync(trees.todo), 'an unauthorized caller cannot release the worktree');
   evidence.first = await rpc();
   const first = evidence.first as { reply: { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> } };
   assert.deepEqual(first.reply.removed.toSorted((a, b) => a.directory.localeCompare(b.directory)), [

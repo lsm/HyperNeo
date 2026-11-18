@@ -15,7 +15,8 @@ const bindOxapRuntime = (
       events?: ReturnType<typeof createDaemonInternalEventBus>,
       db?: unknown,
       messageHub?: unknown,
-      providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null
+      providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null,
+      checkLogin?: () => Promise<void>
     ): (session: Session) => OxapQueryRuntime;
   }
 ).createOxapRuntime;
@@ -41,7 +42,8 @@ function createOxapRuntime(
     events,
     db,
     { event: mock(() => {}) },
-    (providerId) => (providerId === codexRecord.providerId ? codexRecord : null)
+    (providerId) => (providerId === codexRecord.providerId ? codexRecord : null),
+    async () => {}
   );
 }
 
@@ -52,7 +54,10 @@ const options: OxapEngineOptions = {
   hub: { adapters: {}, environment: {} },
 };
 const readOptions = async () => options;
-const codexRecord = { providerId: 'anthropic-codex', configJson: '{"harness":"oxap-codex"}' };
+const codexRecord = {
+  providerId: 'anthropic-codex',
+  configJson: '{"harness":"oxap-codex","harnessSettings":{"executable":"/synthetic/codex"}}',
+};
 
 function session(id: string, workspace: string): Session {
   return {

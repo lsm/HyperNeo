@@ -12,7 +12,11 @@ that the front hands to Neo with one `reply` call carrying
 its reply and work_on true. Require Neo's turn to offer its publish and speech tools and
 to carry that reply in `<already-said>`,
 then require two direct Neo publications for that input to succeed with
-publishedBy neo. The handoff-failure proof is tracked in issue #11074.
+publishedBy neo. A third input ends without a Front reply. The fixture makes its
+input ineligible during the Front model turn, so the real handoff admission
+refuses it. Require a failed handoff outcome, failed Front SDK input status,
+and no publication for that input. The conversation reader's missing failure
+status is tracked in issue #11082.
 Switch to single-model mode and preserve the same front SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper
