@@ -56,8 +56,15 @@ try {
   const unsandboxedSettings = JSON.parse(readFileSync(sourceSettingsPath, 'utf8'));
   assert.equal(unsandboxedSettings.env.HYPERNEO_EVIDENCE, undefined);
   assert.equal(unsandboxedSettings.env.CUSTOM_WORKER_VALUE, 'retain');
-  writeFileSync(join(run, 'evidence/unsandboxed-evidence-refresh.json'), JSON.stringify({ passed: true, staleHintRemoved: true, customValueRetained: true }, null, 2));
-  console.log('PASS: work.start removed the stale evidence hint and retained the custom setting');
+  unsandboxedSettings.env.HYPERNEO_EVIDENCE = '/synthetic/obsolete-evidence';
+  writeFileSync(sourceSettingsPath, JSON.stringify(unsandboxedSettings));
+  const resumed = await rpc('work.send', { ref: unsandboxed.value.ref, message: 'Continue synthetic work' });
+  assert((resumed as { ok: boolean }).ok, JSON.stringify(resumed));
+  const resumedSettings = JSON.parse(readFileSync(sourceSettingsPath, 'utf8'));
+  assert.equal(resumedSettings.env.HYPERNEO_EVIDENCE, undefined);
+  assert.equal(resumedSettings.env.CUSTOM_WORKER_VALUE, 'retain');
+  writeFileSync(join(run, 'evidence/unsandboxed-evidence-refresh.json'), JSON.stringify({ passed: true, staleHintRemoved: true, resumeHintRemoved: true, customValueRetained: true }, null, 2));
+  console.log('PASS: work.start and work.send removed the stale evidence hint and retained the custom setting');
 } finally {
   ws?.close();
   await app?.cleanup();

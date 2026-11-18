@@ -72,6 +72,21 @@ test('Codex named profile enables network access for local servers', () => {
   expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
 });
 
+test('resuming markerless worker settings removes the legacy evidence hint', async () => {
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.claude/settings.local.json'),
+    JSON.stringify({
+      env: { HYPERNEO_EVIDENCE: '/synthetic/old-evidence', CUSTOM_WORKER_VALUE: 'retain' },
+      customSetting: true,
+    })
+  );
+  expect(await readClaudeWorkerSandbox(root)).toBeNull();
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
+  expect(settings().env.CUSTOM_WORKER_VALUE).toBe('retain');
+  expect(settings().customSetting).toBe(true);
+});
+
 test('unsandboxed worker refresh clears a legacy evidence hint while preserving settings', async () => {
   mkdirSync(join(root, '.claude'));
   writeFileSync(
