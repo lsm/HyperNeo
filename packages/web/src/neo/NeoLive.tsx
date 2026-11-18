@@ -1016,7 +1016,20 @@ export function NeoLive() {
                     requestId: ask.requestId,
                   });
                   if (!result.accepted) {
-                    neo.setError(result.reason);
+                    const reason = result.reason;
+                    neo.setError(
+                      reason === 'already_retried'
+                        ? t('live.retryAlreadySent')
+                        : reason === 'not_failed'
+                          ? t('live.retryUnavailable')
+                          : reason === 'session_unavailable'
+                            ? t('live.retrySessionUnavailable')
+                            : reason === 'conversation_not_found'
+                              ? t('live.retryConversationUnavailable')
+                              : reason === 'human_only'
+                                ? t('live.retryHumanOnly')
+                                : t('live.retryFailed')
+                    );
                     return false;
                   }
                   return true;
