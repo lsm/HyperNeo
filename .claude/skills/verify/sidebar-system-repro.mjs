@@ -10,7 +10,8 @@ const browser = await chromium.launch({
   ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
 });
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  const scheme = process.env.VERIFY_COLOR_SCHEME || 'light';
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
   const page = await context.newPage();
   let workChecks = 0;
   page.on('websocket', (socket) => socket.on('framesent', ({payload}) => {
@@ -72,6 +73,9 @@ try {
   await inbox.waitFor({state:'attached'});
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
+  await page.getByTestId('project-group-header').filter({hasText:'Inbox'}).hover();
+  await page.getByRole('tooltip').filter({hasText:'This project cannot be forgotten.'}).waitFor({state:'visible', timeout:3000});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-refusal.png`});
   console.log('Protected Inbox cannot be forgotten');
   async function callRpc(method, data) {
     return page.evaluate(async ({method, data}) => {
@@ -118,6 +122,7 @@ try {
   await linked.click({timeout:15000});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByText('Project has chats, workers, or other linked work.').waitFor({timeout:15000});
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-error.png`});
   assert.equal(await linked.count(), 1);
   console.log('Linked work refusal was explained');
   const remote = page.getByRole('button', {name: 'Remove project remote-work'});
@@ -210,10 +215,13 @@ try {
   const count = await page.getByRole('button', { name: 'Remove project neo-read' }).count();
   console.log(`Remove control count: ${count}`);
   assert.equal(count, 1, 'empty system project must expose remove');
+  assert.equal(await page.getByRole('button', {name:'Remove project neo-read'}).locator('path[d="M6 18L18 6M6 6l12 12"]').count(), 1);
+  assert.equal(await page.getByRole('button', {name:'Remove project neo-read'}).getAttribute('title'), 'Remove from list');
   const remove = page.getByRole('button', { name: 'Remove project neo-read' });
   await remove.waitFor({state: 'visible'});
   await remove.click({timeout: 15000});
-  await page.getByText(/This forgets the project record and cannot be undone/).waitFor();
+  await page.getByText('Your files and chats stay. The folder leaves the sidebar, and this project is permanently forgotten.').waitFor();
+  await page.screenshot({path:`${run}/evidence/sidebar-${scheme}-confirm.png`});
   await page.getByRole('button', {name: 'Forget project'}).click();
   await page.getByRole('button', {name: 'New session in neo-read'}).waitFor({state: 'detached', timeout: 15000});
   await page.reload();
