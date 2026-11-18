@@ -17,9 +17,6 @@ vi.mock('../NeoMutedSessionsSettings.tsx', () => ({
 }));
 
 import { globalSettings } from '../../../lib/state.ts';
-vi.mock('../NeoRelaySendersSettings.tsx', () => ({
-  NeoRelaySendersSettings: () => <h2>Who may relay my words</h2>,
-}));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 
 const settle = (settings: unknown) => {
@@ -31,16 +28,12 @@ afterEach(() => {
   navigateToSettings.mockClear();
 });
 
-test('orders coordinator, rules, relay senders, muted sessions and related settings', () => {
+test('orders coordinator, rules, muted sessions and related settings', () => {
   settle({});
   render(<NeoModelSettings />);
-  const titles = [
-    'Coordinator',
-    'Standing rules',
-    'Who may relay my words',
-    'Muted sessions',
-    'Related settings',
-  ].map((name) => screen.getByText(name));
+  const titles = ['Coordinator', 'Standing rules', 'Muted sessions', 'Related settings'].map(
+    (name) => screen.getByText(name)
+  );
   titles
     .slice(1)
     .forEach((title, index) =>
