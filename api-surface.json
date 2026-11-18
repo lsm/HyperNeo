@@ -5857,6 +5857,189 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "clientId": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "connectionId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "connections.microsoft.connect",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "authorizeUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "loginId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "complete",
+              "failed",
+              "missing"
+            ],
+            "type": "string"
+          },
+          "storage": {
+            "additionalProperties": false,
+            "properties": {
+              "backend": {
+                "enum": [
+                  "keychain",
+                  "keychain-unavailable",
+                  "keychain-fallback",
+                  "database"
+                ],
+                "type": "string"
+              },
+              "keychainAvailable": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "backend",
+              "keychainAvailable"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "type": "object"
+      },
+      "name": "connections.microsoft.disconnect",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "loginId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "connections.microsoft.login",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "authorizeUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "loginId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "complete",
+              "failed",
+              "missing"
+            ],
+            "type": "string"
+          },
+          "storage": {
+            "additionalProperties": false,
+            "properties": {
+              "backend": {
+                "enum": [
+                  "keychain",
+                  "keychain-unavailable",
+                  "keychain-fallback",
+                  "database"
+                ],
+                "type": "string"
+              },
+              "keychainAvailable": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "backend",
+              "keychainAvailable"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "code": {
             "maxLength": 40,
