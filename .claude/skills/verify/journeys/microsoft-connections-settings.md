@@ -27,11 +27,13 @@ field is shown) and capture the form. Reload during sign-in and confirm the
 Microsoft pending status remains visible. Capture the pending status and the fake
 consent page, approve, and observe the account, Connected and the Outlook mail
 and calendar access. Reconnect reuses the saved client ID without the form.
-Capture the mobile width, disconnect, reload and confirm the disabled account
-stays listed. Enter Google client details, reconnect the disconnected Microsoft
+Capture the mobile width, type Google client details, then disconnect the
+Microsoft account and confirm the Microsoft form is empty. Reload and confirm
+the disabled account stays listed. Enter Google client details, reconnect the disconnected Microsoft
 account and confirm its setup starts empty. Begin Google sign-in with popups
 blocked, switch to Microsoft and confirm Google pending status and its Continue
-link remain visible.
+link remain visible. Submit Microsoft setup and confirm its pending status and
+Continue link replace the Google sign-in status.
 
 Screenshots and visible text land in the evidence directory; no token or code
 appears on the page. Real Microsoft consent and account interoperability remain

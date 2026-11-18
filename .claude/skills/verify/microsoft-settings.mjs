@@ -84,8 +84,11 @@ try {
   const button = await page.getByRole('button', { name: 'Connect Microsoft', exact: true }).boundingBox();
   assert(button.x >= 0 && button.x + button.width <= 391);
   await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
+  await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await page.getByText('Disconnected', { exact: true }).waitFor();
+  const rowActionId = await page.getByLabel('Application (client) ID', { exact: true }).inputValue();
   await page.reload();
   await page.getByText('one@example.test', { exact: true }).waitFor();
   await page.getByText('Disconnected', { exact: true }).waitFor();
@@ -108,7 +111,12 @@ try {
   await page.waitForTimeout(1500);
   const googlePending = await page.getByRole('status').filter({ hasText: 'Finish signing in on Google.' }).count();
   const googleLink = await page.getByRole('link', { name: 'Continue to Google', exact: true }).count();
-  assert.deepEqual({ reconnectId, googlePending, googleLink }, { reconnectId: '', googlePending: 1, googleLink: 1 });
+  await page.getByLabel('Application (client) ID', { exact: true }).fill('synthetic-microsoft-client');
+  await page.getByRole('button', { name: 'Continue to Microsoft', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('button:disabled'));
+  const microsoftPending = await page.getByRole('status').filter({ hasText: 'Finish signing in on Microsoft.' }).count();
+  const microsoftLink = await page.getByRole('link', { name: 'Continue to Microsoft', exact: true }).count();
+  assert.deepEqual({ reconnectId, googlePending, googleLink, rowActionId, microsoftPending, microsoftLink }, { reconnectId: '', googlePending: 1, googleLink: 1, rowActionId: '', microsoftPending: 1, microsoftLink: 1 });
   assert.equal(authorizations.length, 2);
   await context.close();
 } catch (error) {
