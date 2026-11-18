@@ -29,7 +29,7 @@ describe('configured package downloads', () => {
     writeFileSync(join(run, 'fixture.tgz'), archive);
     script(
       'npm',
-      `printf '%s\\n' "$@" > '${run}/args'; /bin/cp '${run}/fixture.tgz' "$4/pkg.tgz"; printf 'pkg.tgz\\n'`
+      `printf '%s\\n' "$@" > '${run}/args'; /bin/cp '${run}/fixture.tgz' "$4/pkg.tgz"; printf '%s\\n' "$4/pkg.tgz"`
     );
     const dest = join(run, 'result.tgz');
     await downloadVerifiedTarball('@example/pkg', '1.2.3', dest);
@@ -37,6 +37,15 @@ describe('configured package downloads', () => {
     expect(readFileSync(join(run, 'args'), 'utf8')).toContain(
       '@example/pkg@1.2.3\n--pack-destination\n'
     );
+  });
+
+  it('reports npm failure without exposing its stderr or falling back', async () => {
+    script('npm', "printf 'private-token-example' >&2; exit 7");
+    script('pnpm', `printf 'called' > '${run}/pnpm-called'`);
+    await expect(downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'))).rejects.toThrow(
+      'npm failed while preparing the package download (exit 7)'
+    );
+    expect(() => readFileSync(join(run, 'pnpm-called'))).toThrow();
   });
 
   it('uses the pnpm registry when npm is absent', async () => {

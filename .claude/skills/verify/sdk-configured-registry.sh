@@ -13,7 +13,7 @@ cat > "$RUN/bin/npm" <<SCRIPT
 #!/bin/sh
 printf '%s\n' "\$@" > "$RUN/npm-args"
 /bin/cp "$RUN/fixture.tgz" "\$4/fixture.tgz"
-printf 'fixture.tgz\n'
+printf '%s\n' "\$4/fixture.tgz"
 SCRIPT
 cat > "$RUN/bin/curl" <<'SCRIPT'
 #!/bin/sh

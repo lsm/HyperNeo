@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 
@@ -145,7 +145,8 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
     execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
       if (!err) return resolve(String(stdout).trim());
       if (err.code === 'ENOENT') return resolve(null);
-      reject(new Error(`${command} failed while preparing the package download`));
+      const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
+      reject(new Error(`${command} failed while preparing the package download${detail}`));
     });
   });
 }
@@ -164,10 +165,9 @@ async function downloadWithConfiguredManager(
       directory,
     ]);
     if (output !== null) {
-      const filename = output.split('\n').at(-1) ?? '';
-      if (!filename || filename !== basename(filename))
-        throw new Error('npm pack returned no package');
-      await rename(join(directory, filename), destPath);
+      const archives = readdirSync(directory).filter((name) => name.endsWith('.tgz'));
+      if (archives.length !== 1) throw new Error('npm pack returned no package');
+      await rename(join(directory, archives[0]), destPath);
       return;
     }
     const registry = await runPackageManager('pnpm', ['config', 'get', 'registry']);
