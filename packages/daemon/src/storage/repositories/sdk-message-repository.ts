@@ -1,5 +1,6 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { SessionRepository } from './session-repository.ts';
+import { markRefusedNeoInput } from './neo-front-input-worker.ts';
 import type { RunDbOp } from '../db-gateway/db-op.ts';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
 import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';
@@ -1031,17 +1032,7 @@ export class SDKMessageRepository {
             )
           ),
         ];
-        for (const id of ids) {
-          this.db
-            .prepare(`UPDATE sdk_messages SET send_status = 'failed'
-            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-              AND send_status IN ('enqueued', 'submitted', 'consumed')
-              AND EXISTS (SELECT 1 FROM neo_conversation_asks a
-                JOIN neo_front_inputs f ON f.conversation_id = a.conversation_id AND f.message_id = a.request_id
-                WHERE a.request_id = ? AND f.owner = 'neo'
-                  AND json_extract(a.payload_json, '$.askOrigin.sessionId') = ?)`)
-            .run(sessionId, id, id, sessionId);
-        }
+        markRefusedNeoInput(this.db, sessionId, ids);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);

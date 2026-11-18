@@ -10,7 +10,7 @@ const Input = z.object({ conversationId: z.uuid(), requestId: z.uuid() }).strict
 type Input = z.infer<typeof Input>;
 type Result = { accepted: true; requestId: string } | { accepted: false; reason: string };
 
-const retry = (superpipe({})('neo-message-retry') as PipelineAPI)
+const retry = (superpipe({})('neo.message.retry') as PipelineAPI)
   .input(['input', 'caller', 'service'])
   .pipe(
     (input: Input, caller: OperationCaller, service: NeoService) => {

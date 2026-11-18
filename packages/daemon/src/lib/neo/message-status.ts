@@ -8,7 +8,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { frontSessionId } from './front-mode.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
+import { readRefusedNeoInput } from '../../storage/repositories/neo-front-input-worker.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
@@ -58,31 +58,21 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
   return rows.map((row, i) => {
     const item = items[i];
     const retryId = neoDerivedId(`neo-retry:${item.conversationId}:${item.requestId}`);
-    const retry =
-      row.sendStatus === 'failed' &&
-      db
-        .prepare('SELECT 1 FROM neo_conversation_asks WHERE conversation_id = ? AND request_id = ?')
-        .get(item.conversationId, retryId);
-    const failure =
+    const refusal =
       row.sendStatus === 'failed'
-        ? (db
-            .prepare(`SELECT json_extract(body, '$.result') AS reason FROM (
-      SELECT ${sdkMessageBodyAt('r.rowid')} AS body FROM sdk_messages r
-      WHERE r.session_id = ? AND r.message_type = 'result' AND r.is_terminal = 1
-        AND r.consumed_seq > (SELECT consumed_seq FROM sdk_messages WHERE id = ?)
-      ORDER BY r.consumed_seq ASC
-    ) WHERE json_extract(body, '$.is_error') = 1 AND json_extract(body, '$.api_error_status') = 400
-      AND (json_extract(body, '$.user_message_uuid') = ? OR ? IN (SELECT value FROM json_each(body, '$.user_message_uuids')))
-      LIMIT 1`)
-            .get(item.askOrigin.sessionId, row.messageDbId, item.requestId, item.requestId) as {
-            reason: string | null;
-          } | null)
-        : null;
+        ? readRefusedNeoInput(
+            db,
+            item.conversationId,
+            item.askOrigin.sessionId,
+            item.requestId,
+            row.messageDbId,
+            retryId
+          )
+        : {};
     return {
       ...row,
       answered: answered.has(JSON.stringify([item.conversationId, item.requestId])),
-      ...(failure?.reason ? { reason: failure.reason } : {}),
-      ...(retry ? { supersededBy: retryId } : {}),
+      ...refusal,
     };
   });
 }
