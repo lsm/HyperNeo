@@ -22,7 +22,10 @@ const recorded = (todoId: string) =>
     repo: string | null;
   } | null;
 const stored = (todoId: string) =>
-  neoTodoRepository(draft, neoTodoPolicies(db), { ask: { id: 'ask' }, todo: { id: todoId } });
+  neoTodoRepository(draft, neoTodoPolicies(db), {
+    ask: { id: 'ask' },
+    todo: { id: todoId, check: null },
+  });
 beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -184,7 +187,7 @@ test('the add writer publishes the pack fact notification after committing', asy
     draft: {
       after: [],
       title: 'Announced',
-      check: { pack: 'core', kind: 'evidence', params: { path: '/synthetic/result' } },
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
       instruction: null,
       named: { repository: 'synthetic/new' },
       start: false,

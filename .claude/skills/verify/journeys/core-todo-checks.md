@@ -35,8 +35,6 @@ warn that the ID is reserved instead of silently discarding its instructions.
 The baseline fails on the missing warning; core check RPCs must still work after
 the loader refuses that colliding file pack.
 
-An evidence check may omit its path. On a repo ask the helper adds one, checks the
-daemon assigned `<dataDir>/work/evidence/<todoId>/result.md` and named it in doneWhen,
-which the worker brief carries, then finishes the todo from that file. It also checks
-that a repo todo naming the configured workspace root is refused on add and edit,
-while an existing todo keeps an unchanged path. No worker writes the file here. A sandboxed worker cannot write an assigned path: sandbox writes stay per worktree so one worker cannot forge another todo's evidence, and such a todo blocks instead.
+New evidence checks require an explicit visible path. Repository todos refuse evidence;
+new data-directory paths are refused. The helper seeds a legacy hidden-path check,
+keeps it on edit, refuses changes, and completes it when its file exists.
