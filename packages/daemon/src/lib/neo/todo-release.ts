@@ -157,7 +157,7 @@ export async function releaseNeoTodoWorkers(
     const outcome = await releaseWorker(row, invoke, sessions).catch((error: unknown) => ({
       pending: error instanceof Error ? error.message : String(error),
     }));
-    if ('kept' in outcome) {
+    if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
       await sessions.write('recordReleased', row.todoId, outcome);
     } else if ('pending' in outcome) {
       const pending = {

@@ -626,7 +626,7 @@ describe('releaseNeoTodoWorkers', () => {
       );
       await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
       expect(h.archived).toEqual([]);
-      expect(h.released()).toHaveLength(1);
+      expect(h.released()).toHaveLength(0);
     } finally {
       h.db.close();
     }

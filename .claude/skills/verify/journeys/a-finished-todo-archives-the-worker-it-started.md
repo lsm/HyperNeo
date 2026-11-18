@@ -34,5 +34,5 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 The helper advances a synthetic clock through repeated daemon refreshes and
 checks that a dirty worker produces one Neo mailbox event after 24 hours,
 with the todo, worker and reason. It also checks that a daemon-started worker
-stays active while a follow-up is live and is archived after the follow-up
-finishes. Retain `todo-release-pending.json` and `proof.log`.
+stays active without a release fact while a follow-up is live, and is archived
+after the follow-up finishes. Retain `todo-release-pending.json` and `proof.log`.
