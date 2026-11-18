@@ -85,7 +85,9 @@ voice up by answering Neo:
   words: `voice.testConnection` (recorded, as today), `voice.testLive` (opens the stream
   with streaming forced, sends one second of silence, closes it, and returns the service's
   error instead of falling back to batch) and `voice.testSpeech` (synthesizes one short
-  sentence and returns whether audio came back). After a provider choice or a key save,
+  sentence and returns whether audio came back). A returned error is the HTTP status and a
+  short reason with every saved key's text replaced by `[key]` before it leaves the daemon, so
+  a server that echoes the token never puts it in Neo's context. After a provider choice or a key save,
   Neo runs the three and says which part works.
 
 - **One part or one voice: on request.** When the human asks to change only one part, its
@@ -133,7 +135,8 @@ to 200 production lines, failing tests first.
    reply card for its base URL, which fills the three addresses; and the follow-up that names
    the hosts still missing a key and runs the three tests.
 
-Acceptance, as tests against local fake servers, one per row:
+Acceptance, one test per row: against local fake servers for requests and tests, and as
+daemon integration cases for cards and Neo messages:
 
 | Case | Expected |
 |---|---|
@@ -148,6 +151,7 @@ Acceptance, as tests against local fake servers, one per row:
 | OpenAI recorded and Deepgram live, a key saved for each host | each part gets its own host's key |
 | A provider chosen on the card | all three parts filled from the preset; the card names the hosts still missing a key |
 | A key | never appears in a card, an answer or a Neo message |
+| A fake server whose 401 body echoes the key | the test returns `[key]` in its place |
 
 ## Out of scope
 
