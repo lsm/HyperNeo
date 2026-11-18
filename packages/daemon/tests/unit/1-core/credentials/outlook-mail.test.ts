@@ -76,7 +76,8 @@ beforeEach(async () => {
       const filter = url.searchParams.get('$filter');
       if (filter) {
         expect(filter).toBe("conversationId eq 'conversation-one'");
-        const ids = mode === 'wide' ? Array.from({ length: 10 }, (_, i) => `w${i}`) : ['m1', 'm2', 'm3'];
+        const ids =
+          mode === 'wide' ? Array.from({ length: 10 }, (_, i) => `w${i}`) : ['m1', 'm2', 'm3'];
         return Response.json({ value: ids.map(message) });
       }
       const next = url.searchParams.get('$skiptoken');
