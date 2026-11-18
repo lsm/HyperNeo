@@ -59,4 +59,26 @@ describe('Windows package downloads', () => {
       spawn.mockReset();
     }
   });
+
+  it.each(['win32', 'darwin'])(
+    'reports a synchronous permission failure on %s',
+    async (platform) => {
+      const run = mkdtempSync(join(tmpdir(), 'npm-spawn-error-'));
+      const originalPlatform = process.platform;
+      spawn.mockImplementation(() => {
+        throw Object.assign(new Error('private-token-example'), { code: 'EACCES' });
+      });
+      try {
+        Object.defineProperty(process, 'platform', { value: platform });
+        await expect(
+          downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'))
+        ).rejects.toThrow('npm could not start (EACCES)');
+        expect(spawn).toHaveBeenCalledTimes(1);
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
+        rmSync(run, { recursive: true, force: true });
+        spawn.mockReset();
+      }
+    }
+  );
 });
