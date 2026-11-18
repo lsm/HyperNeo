@@ -13,6 +13,7 @@ proposal retry returns its ask_settled record without adding work. The evidence
 records the replies and snapshot. An oversized proposal is refused, and a chat
 reply leaves the approval or relayed-session card open until the human presses a
 decision button.
+Neo cannot retire or replace either decision card before the human answers it.
 For each remote worker adapter, a recorded message permits a notice past the
 source gate; an unrelated sender is refused. The synthetic remote is unavailable,
 so this checks admission and does not claim delivery.

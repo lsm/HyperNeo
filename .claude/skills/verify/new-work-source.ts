@@ -89,6 +89,16 @@ try {
   assert(proposal.questions?.some((question) => question.kind === 'yesno' && question.state === 'open'), 'proposal has an open human decision card');
   const question = proposal.questions!.find((item) => item.kind === 'yesno') as { id: string } | undefined;
   assert(question);
+  const protectedCard = async (askId: string, questionId: string, label: string) => {
+    const replacement = await mcp('neo.question.ask', { askId, replaces: questionId, kind: 'choice', text: 'Choose an option?', options: ['Continue'], retireWhen: draft.check });
+    evidence[`${label}Replace`] = replacement;
+    assert.equal(replacement.ok, false, JSON.stringify(replacement));
+    const retired = await mcp('neo.question.retire', { questionId, reason: 'No longer needed' });
+    evidence[`${label}Retire`] = retired;
+    assert.equal(retired.ok, false, JSON.stringify(retired));
+    assert.equal(new NeoAskTodoRepository(db).getQuestion(questionId)?.state, 'open');
+  };
+  await protectedCard(opened.ask.id, question.id, 'proposal');
   evidence.retry = await mcp('neo.ask.open', { title: 'Synthetic proposal', request: 'Improve the synthetic workflow because it is confusing', todos: [draft] });
   assert.equal((evidence.retry as { ok: boolean }).ok, false);
   const before = await mcp('neo.todo.add', { ...draft, askId: opened.ask.id });
@@ -119,6 +129,7 @@ try {
   evidence.requestRefusal = await mcp('neo.todo.add', { ...draft, title: 'Request work', askId: 'session-request' });
   assert.equal((evidence.requestRefusal as { ok: boolean }).ok, false);
   const relayed = seed('new-relay', 'relay-session-proposal');
+  await protectedCard('new-relay', relayed.id, 'relay');
   evidence.relayBefore = await mcp('neo.todo.add', { ...draft, title: 'Relayed step', askId: 'new-relay' });
   assert.equal((evidence.relayBefore as { ok: boolean }).ok, false);
   const relayChat = await invokeOperation(registry(), 'neo.message.send', { sessionId: sender, requestId: crypto.randomUUID(), content: 'A', replyTo: { kind: 'question', id: relayed.id } }, { source: 'rpc', principal: 'local' });
