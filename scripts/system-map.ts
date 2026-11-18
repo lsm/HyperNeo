@@ -301,12 +301,17 @@ function git(root: string, ...args: string[]): string[] {
   return result.stdout.toString().split('\n').filter(Boolean);
 }
 
-function loadRepository(root: string): SystemMap {
-  const sources = new Map(
-    git(root, 'ls-files', '--', 'packages')
+export function readRepositorySources(root: string, includeUntracked = false): Map<string, string> {
+  const options = includeUntracked ? ['--cached', '--others', '--exclude-standard'] : [];
+  return new Map(
+    git(root, 'ls-files', ...options, '--', 'packages')
       .filter((path) => isSource(path) && existsSync(join(root, path)))
       .map((path) => [path, readFileSync(join(root, path), 'utf8')])
   );
+}
+
+function loadRepository(root: string): SystemMap {
+  const sources = readRepositorySources(root);
   const packages = new Map<string, PackageEntry>();
   for (const name of readdirSync(join(root, 'packages'))) {
     const file = join(root, 'packages', name, 'package.json');
@@ -349,3 +354,174 @@ function main(args: readonly string[]): number {
 }
 
 if (import.meta.main) process.exit(main(process.argv.slice(2)));
+
+export interface PipelineCounts {
+  missing: number;
+  misnamed: number;
+  dynamic: number;
+  unreadable: number;
+}
+
+interface PipelineToken {
+  text: string;
+}
+
+function pipelineTokens(source: string): PipelineToken[] {
+  const pattern =
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|(?:'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*"|`[^`\\]*(?:\\.[^`\\]*)*`)|[A-Za-z_$][\w$]*|\d+|[^\s]/g;
+  return [...source.matchAll(pattern)]
+    .filter((match) => !match[0].startsWith('//') && !match[0].startsWith('/*'))
+    .map((match) => ({ text: match[0] }));
+}
+
+function closeToken(tokens: PipelineToken[], start: number): number {
+  const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']' };
+  const pending: string[] = [];
+  for (let i = start; i < tokens.length; i++) {
+    const text = tokens[i].text;
+    if (pairs[text]) pending.push(pairs[text]);
+    else if (text === ')' || text === '}' || text === ']') {
+      if (pending.pop() !== text) return -1;
+      if (!pending.length) return i;
+    }
+  }
+  return -1;
+}
+
+function stringToken(text: string | undefined): string | undefined {
+  if (!text || !/^(['"])[\s\S]*\1$/.test(text)) return undefined;
+  return text.slice(1, -1);
+}
+
+export function countPipelineRoutes(sources: Map<string, string>): PipelineCounts {
+  const counts: PipelineCounts = { missing: 0, misnamed: 0, dynamic: 0, unreadable: 0 };
+  for (const [file, source] of sources) {
+    if (!isSource(file)) continue;
+    const tokens = pipelineTokens(source);
+    const scopes: number[][] = [];
+    const scope: number[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      scopes.push([...scope]);
+      if (tokens[i].text === '{') scope.push(i);
+      else if (tokens[i].text === '}') scope.pop();
+    }
+    const isParameter = (index: number, name: string | undefined): boolean => {
+      if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return false;
+      for (const open of [...scopes[index]].reverse()) {
+        let end = open - 1;
+        if (tokens[end]?.text === '>' && tokens[end - 1]?.text === '=') end -= 2;
+        if (tokens[end]?.text !== ')') continue;
+        let depth = 1;
+        let start = end - 1;
+        for (; start >= 0 && depth; start--) {
+          if (tokens[start].text === ')') depth++;
+          else if (tokens[start].text === '(') depth--;
+        }
+        if (depth || ['if', 'while', 'for', 'switch', 'catch'].includes(tokens[start]?.text))
+          continue;
+        if (tokens.slice(start + 2, end).some((token) => token.text === name)) return true;
+      }
+      return false;
+    };
+    const pipelines: { index: number; name?: string; variable?: string }[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].text !== 'superpipe' || tokens[i + 1]?.text !== '(') continue;
+      const close = closeToken(tokens, i + 1);
+      if (close < 0 || tokens[close + 1]?.text !== '(') continue;
+      const end = closeToken(tokens, close + 1);
+      if (end < 0) continue;
+      const name = end === close + 3 ? stringToken(tokens[close + 2]?.text) : undefined;
+      let variable: string | undefined;
+      for (let j = i - 1; j >= 0 && i - j < 12; j--) {
+        if ([';', '{', '}'].includes(tokens[j].text)) break;
+        if (tokens[j].text === '=' && tokens[j - 2]?.text === 'const') {
+          variable = tokens[j - 1].text;
+          break;
+        }
+      }
+      pipelines.push({ index: i, name, variable });
+      if (!name) {
+        if (end === close + 3 && isParameter(i, tokens[close + 2]?.text)) counts.unreadable++;
+        else counts.dynamic++;
+      }
+    }
+    for (let i = 0; i < tokens.length; i++) {
+      if (
+        tokens[i].text === 'onRequest' &&
+        tokens[i - 1]?.text === '.' &&
+        tokens[i + 1]?.text === '('
+      ) {
+        const end = closeToken(tokens, i + 1);
+        const comma = tokens.findIndex(
+          (token, index) => index > i + 1 && index < end && token.text === ','
+        );
+        if (comma < 0) continue;
+        const arg = tokens.slice(i + 2, comma).map((token) => token.text);
+        if (arg.length === 1 && stringToken(arg[0])) continue;
+        if ((arg.length === 1 && isParameter(i, arg[0])) || (arg.length === 3 && arg[1] === '.'))
+          counts.unreadable++;
+        else counts.dynamic++;
+      }
+      if (
+        tokens[i].text !== 'defineOperation' ||
+        tokens[i + 1]?.text !== '(' ||
+        tokens[i + 2]?.text !== '{'
+      )
+        continue;
+      const end = closeToken(tokens, i + 2);
+      if (end < 0) {
+        counts.unreadable++;
+        continue;
+      }
+      let name: string | undefined;
+      let executeStart = -1;
+      let executeEnd = -1;
+      for (let j = i + 3; j < end; j++) {
+        if (tokens[j].text === 'name' && tokens[j + 1]?.text === ':')
+          name = stringToken(tokens[j + 2]?.text);
+        if (tokens[j].text === 'execute' && tokens[j + 1]?.text === ':') {
+          executeStart = j + 2;
+          let k = executeStart;
+          while (k < end && tokens[k].text !== ',') {
+            if (['(', '[', '{'].includes(tokens[k].text)) {
+              const close = closeToken(tokens, k);
+              if (close < 0) break;
+              k = close + 1;
+            } else k++;
+          }
+          executeEnd = k;
+        }
+        if (['(', '[', '{'].includes(tokens[j].text)) {
+          const close = closeToken(tokens, j);
+          if (close < 0) break;
+          j = close;
+        }
+      }
+      if (!name || executeStart < 0 || executeEnd < 0) {
+        counts.unreadable++;
+        i = end;
+        continue;
+      }
+      const body = tokens.slice(executeStart, executeEnd).map((token) => token.text);
+      const reached = pipelines.filter(
+        (pipeline) =>
+          (pipeline.index >= executeStart && pipeline.index < executeEnd) ||
+          (pipeline.variable &&
+            scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
+            ((body.length === 1 && body[0] === pipeline.variable) ||
+              body.some((token, index) => token === pipeline.variable && body[index + 1] === '(')))
+      );
+      if (reached.length === 0) {
+        if (body.includes('=>') || (body.includes('=') && body.includes('>'))) {
+          if (
+            body.some((token, index) => /^[A-Za-z_$][\w$]*$/.test(token) && body[index + 1] === '(')
+          )
+            counts.unreadable++;
+          else counts.missing++;
+        } else counts.unreadable++;
+      } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;
+      i = end;
+    }
+  }
+  return counts;
+}
