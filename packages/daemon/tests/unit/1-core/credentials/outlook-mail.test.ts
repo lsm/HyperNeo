@@ -177,6 +177,7 @@ test('a next link on another origin or collection is refused instead of becoming
     'https://attacker.example/v1.0/me/messages?$skiptoken=x',
     `${graph}/v1.0/me/mailFolders/inbox/messages?$skiptoken=x`,
     `${graph}/beta/me/messages?$skiptoken=x`,
+    `${graph}/v1.0/me/messages?$expand=attachments&$skiptoken=x`,
   ]) {
     nextLink = link;
     expect(await search()).toEqual({ ok: false, reason: 'invalid_response' });
@@ -218,7 +219,12 @@ test('a requested body over the cap returns that preview marked truncated and th
 
 test('a hand-made cursor cannot change the Graph path the token is sent to', async () => {
   const before = fetchImpl.mock.calls.length;
-  for (const query of ['/../../users/other/messages?$top=1', '/../../../beta/me/events', '#x']) {
+  for (const query of [
+    '/../../users/other/messages?$top=1',
+    '/../../../beta/me/events',
+    '#x',
+    '?$top=1&$select=id,body',
+  ]) {
     const cursor = Buffer.from(
       JSON.stringify({
         connectionId: microsoft.id,
