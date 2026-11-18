@@ -1,3 +1,6 @@
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import type { SessionConfig } from '@hyperneo/shared';
+import { listProviders } from '../lib/api-helpers.ts';
 import { THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -17,6 +20,8 @@ interface ModelPickerProps {
   activeModelInfo: ModelInfo | null;
   activeModelLabel: string;
   availableModels: ModelInfo[];
+  harness?: SessionConfig['harness'];
+  provider?: string;
   loading: boolean;
   thinkingLevel: ThinkingLevel;
   showThinking?: boolean;
@@ -42,6 +47,8 @@ export function ModelPicker({
   activeModelInfo,
   activeModelLabel,
   availableModels,
+  harness,
+  provider,
   loading,
   thinkingLevel,
   showThinking = true,
@@ -60,6 +67,7 @@ export function ModelPicker({
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
   );
+  const [oxapProviders, setOxapProviders] = useState<Set<string> | null>(null);
   const isConnected = connectionState.value === 'connected';
 
   useClickOutside(ref, () => setOpen(false), open);
@@ -79,23 +87,51 @@ export function ModelPicker({
       .catch(() => {});
   }, []);
 
+  const loadOxapProviders = useCallback(() => {
+    void listProviders()
+      .then(({ providers }) =>
+        setOxapProviders(
+          new Set(
+            providers
+              .filter((entry) => {
+                try {
+                  return isOxapHarness(
+                    (JSON.parse(entry.configJson ?? '{}') as { harness?: unknown }).harness
+                  );
+                } catch {
+                  return false;
+                }
+              })
+              .map((entry) => entry.providerId)
+          )
+        )
+      )
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!isConnected) return;
     loadAuthStatuses();
-  }, [isConnected, loadAuthStatuses]);
+    if (harness !== undefined) loadOxapProviders();
+  }, [isConnected, loadAuthStatuses, loadOxapProviders, harness]);
 
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
     return hub.onEvent('providers.changed', () => {
       loadAuthStatuses();
+      if (harness !== undefined) loadOxapProviders();
     });
-  }, [loadAuthStatuses, connectionState.value]);
+  }, [loadAuthStatuses, loadOxapProviders, harness, connectionState.value]);
 
   const activeProvider = activeModelInfo?.provider;
   const models = filterModelsForPicker(
-    availableModels,
-    providerAuthStatuses,
+    availableModels.filter((model) =>
+      isOxapHarness(harness)
+        ? model.provider === provider
+        : harness === undefined || (oxapProviders !== null && !oxapProviders.has(model.provider))
+    ),
+    isOxapHarness(harness) ? new Map() : providerAuthStatuses,
     activeProvider,
     activeModelInfo?.id
   );

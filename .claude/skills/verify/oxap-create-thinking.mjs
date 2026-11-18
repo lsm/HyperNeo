@@ -7,6 +7,8 @@ const browser = await chromium.launch({
   headless: true,
   ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
 });
+const before = process.env.OXAP_UI_BEFORE === '1';
+let sessionPath;
 try {
   const initial = await browser.newPage();
   await initial.goto(`${base}/pair#${code}`);
@@ -57,8 +59,41 @@ try {
       assert.equal(await page.getByText('OXAP Codex does not take a thinking level.').count(), 0);
       await page.getByRole('button', { name: 'Choose model and thinking' }).click();
       assert.equal(await page.getByRole('slider', { name: 'Thinking' }).count(), 0);
+      sessionPath = new URL(page.url()).pathname;
       console.log('OXAP session model picker hides thinking');
       console.log('OXAP create accepted with persisted thinking=off and sandbox=true; controls absent');
+    }
+    if (theme === 'dark') {
+      await page.goto(`${base}${sessionPath}`);
+      await page.getByRole('button', { name: 'Choose model and thinking' }).waitFor();
+    }
+    if (!before) {
+      await page.getByText(/This harness accepts text only/).waitFor();
+      await page.getByTitle('More options').click();
+      assert.equal(await page.getByRole('button', { name: 'Attach image' }).isDisabled(), true);
+      assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
+      await page.getByTitle('More options').click();
+    }
+    await page.screenshot({ path: `${output}/oxap-chat-${theme}.png`, animations: 'disabled' });
+    await page.goto(`${base}/settings?tab=providers`);
+    await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+    if (!before) {
+      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
+      await page.getByLabel('Harness executable').waitFor();
+      await page.getByLabel('Hub binary').waitFor();
+    }
+    await page.screenshot({ path: `${output}/oxap-provider-${theme}.png`, animations: 'disabled' });
+    if (!before && theme === 'dark') {
+      await page.getByLabel('Harness executable').fill('relative');
+      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByText(/needs an absolute executable path/).waitFor();
+      await page.getByLabel('Harness', { exact: true }).selectOption('sdk');
+      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.getByText('Harness saved').waitFor();
+      await page.reload();
+      await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'sdk');
+      console.log('Invalid executable refused; switching back to Claude Code persisted');
     }
     await context.close();
   }

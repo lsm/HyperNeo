@@ -596,6 +596,40 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('saves the selected harness through the OXAP operation', async () => {
+    const provider = createMockProvider('1', 'anthropic-codex', { displayName: 'Codex' });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockRequest.mockImplementation(async (method: string) =>
+      method === 'operation.invoke'
+        ? { accepted: true }
+        : { settings: { settings: { oxapHub: { path: '/synthetic/oxap' } } } }
+    );
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByText('Codex'));
+    fireEvent.change(screen.getByLabelText('Harness', { exact: true }), {
+      target: { value: 'oxap-codex' },
+    });
+    fireEvent.input(screen.getByLabelText('Harness executable'), {
+      target: { value: '/synthetic/codex' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith('operation.invoke', {
+        name: 'oxap.settings.save',
+        input: {
+          providerId: 'anthropic-codex',
+          harness: 'oxap-codex',
+          settings: { executable: '/synthetic/codex' },
+        },
+      })
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText('Hub binary') as HTMLInputElement).value).toBe(
+        '/synthetic/oxap'
+      )
+    );
+  });
+
   it('expands provider row on click', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),

@@ -6,6 +6,7 @@ import { IconButton } from './ui/IconButton.tsx';
 export interface ChatHeaderMenuProps {
   features: SessionFeatures;
   readonly: boolean;
+  showTools?: boolean;
   archived: boolean;
   archiving: boolean;
   resettingAgent: boolean;
@@ -21,6 +22,7 @@ export interface ChatHeaderMenuProps {
 export function ChatHeaderMenu({
   features,
   readonly,
+  showTools = true,
   archived,
   archiving,
   resettingAgent,
@@ -34,7 +36,7 @@ export function ChatHeaderMenu({
 }: ChatHeaderMenuProps) {
   const isConnected = connectionState.value === 'connected';
   const items: DropdownMenuItem[] = [];
-  if (!readonly) {
+  if (!readonly && showTools) {
     items.push({ label: 'Tools', title: 'Tools', onClick: onToolsClick, disabled: !isConnected });
   }
   items.push({

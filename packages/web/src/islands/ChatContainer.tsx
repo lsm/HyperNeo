@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   AgentProcessingState,
   ChatDisplayMode,
@@ -978,7 +979,12 @@ export default function ChatContainer({
     modelSwitching ||
     coordinatorSwitching ||
     sandboxSwitching;
-  const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
+  const harness = session?.config?.harness;
+  const dropEnabled =
+    !readonly &&
+    session?.status !== 'archived' &&
+    !composerDisabled &&
+    (!isOxapHarness(harness) || oxapHarness(harness).input !== 'text');
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
   }, dropEnabled);
@@ -1328,6 +1334,7 @@ export default function ChatContainer({
         sessionStatus={session?.status}
         sessionType={session?.type}
         harness={session?.config?.harness}
+        provider={session?.config?.provider}
         thinkingLevel={
           session?.config?.thinkingLevel
             ? normalizeThinkingLevel(session.config.thinkingLevel)

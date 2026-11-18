@@ -3,6 +3,7 @@ export type OxapHarness = {
   adapter: string;
   providers: readonly string[];
   thinking: boolean;
+  input: 'text' | 'multimodal';
   settings: readonly string[];
   environment: readonly string[];
   key?: string;
@@ -19,6 +20,7 @@ export const OXAP_HARNESSES = {
     adapter: 'codex',
     providers: ['anthropic-codex'],
     thinking: false,
+    input: 'text',
     settings: ['executable'],
     environment: ['HOME', 'CODEX_HOME'],
     entry: (settings: Readonly<Record<string, string>>, environment: readonly string[]) => ({

@@ -1,3 +1,4 @@
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { ChevronLeftGlyph } from './icons/common-glyphs.tsx';
 import type { ChatDisplayMode, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
@@ -178,6 +179,7 @@ export function ChatHeader({
         <ChatHeaderMenu
           features={features}
           readonly={readonly}
+          showTools={!isOxapHarness(session?.config?.harness)}
           archived={session?.status === 'archived'}
           archiving={archiving}
           resettingAgent={resettingAgent}

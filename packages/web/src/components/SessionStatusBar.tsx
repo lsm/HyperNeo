@@ -24,6 +24,7 @@ interface SessionStatusBarProps {
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   harness?: SessionConfig['harness'];
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   coordinatorSwitching?: boolean;
@@ -45,6 +46,7 @@ export default function SessionStatusBar({
   modelLoading,
   onModelSwitch,
   harness,
+  provider,
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
@@ -95,6 +97,8 @@ export default function SessionStatusBar({
           activeModelInfo={currentModelInfo}
           activeModelLabel={_currentModel || 'Select model'}
           availableModels={availableModels}
+          harness={harness ?? 'sdk'}
+          provider={provider}
           loading={modelLoading}
           disabled={modelSwitching || coordinatorSwitching || isRecovering}
           busy={modelSwitching}

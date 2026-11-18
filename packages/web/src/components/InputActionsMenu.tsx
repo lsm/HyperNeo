@@ -18,6 +18,8 @@ export interface InputActionsMenuProps {
   onModelSwitch?: (model: ModelInfo) => void;
   onOpenTools: () => void;
   onAttachFile: () => void;
+  attachmentReason?: string;
+  showTools?: boolean;
   coordinatorMode?: boolean;
   coordinatorSwitching?: boolean;
   onCoordinatorModeChange?: (enabled: boolean) => void;
@@ -41,6 +43,8 @@ export function InputActionsMenu({
   onModelSwitch: _onModelSwitch,
   onOpenTools,
   onAttachFile,
+  attachmentReason,
+  showTools = true,
   coordinatorMode = false,
   coordinatorSwitching = false,
   onCoordinatorModeChange,
@@ -73,7 +77,7 @@ export function InputActionsMenu({
   };
 
   const handleAttachClick = () => {
-    if (!disabled) {
+    if (!disabled && !attachmentReason) {
       onAttachFile();
       onClose();
     }
@@ -197,6 +201,7 @@ export function InputActionsMenu({
           <button
             type="button"
             onClick={handleToolsClick}
+            style={{ display: showTools ? undefined : 'none' }}
             class="w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50"
           >
             <svg class="w-5 h-5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -221,10 +226,11 @@ export function InputActionsMenu({
           <button
             type="button"
             onClick={handleAttachClick}
-            disabled={disabled}
+            disabled={disabled || !!attachmentReason}
+            title={attachmentReason}
             class={cn(
               'w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50',
-              disabled && 'opacity-50 cursor-not-allowed'
+              (disabled || !!attachmentReason) && 'opacity-50 cursor-not-allowed'
             )}
           >
             <svg
