@@ -637,6 +637,25 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
 });
 
 describe('releaseNeoTodoWorkers', () => {
+  test('continues with other workers when recording one keep fails', async () => {
+    const h = setup();
+    try {
+      const first = h.add({ ...started, name: 'Jason' }, { session: 'Jason' });
+      const second = h.add({ ...started, name: 'Jason' }, { session: 'Jason' });
+      await h.finishTodo(first);
+      await h.finishTodo(second);
+      h.db.run(`CREATE TRIGGER fail_one_release BEFORE INSERT ON pack_facts
+        WHEN NEW.todo_id = '${first.id}' AND NEW.key = 'released'
+        BEGIN SELECT RAISE(FAIL, 'synthetic write failure'); END`);
+      const warnings: unknown[] = [];
+      await releaseNeoTodoWorkers(h.sessions, h.invoke, (_message, error) => warnings.push(error));
+      expect(h.released()).toEqual([{ todo_id: second.id }]);
+      expect(warnings).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('keeps a worker another todo queues onto while the folder is checked', async () => {
     const h = setup();
     try {

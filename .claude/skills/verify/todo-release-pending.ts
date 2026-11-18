@@ -41,6 +41,18 @@ try {
   await session(reused, run);
   const db = app.db.getDatabase();
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  const faultAsk = service.todos.openAsk({ id: 'fault-ask', sessionId: root, projectId: null, originMessageId: null, title: 'Fault proof', request: 'Fault proof', createdAt: start });
+  for (const id of ['faulted-keep', 'healthy-keep']) {
+    const item = service.todos.addTodo(id, faultAsk.id, { title: id, doneWhen: 'Done', instruction: null, named: { session: id }, check: null }, start);
+    service.todoSessions.create(id, { verb: 'start', adapter: 'hyperneo', name: id });
+    db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id }), id);
+    service.todos.updateTodo(item, { state: 'done', finishedAt: start }, start);
+  }
+  db.run("CREATE TRIGGER fail_one_release BEFORE INSERT ON pack_facts WHEN NEW.todo_id = 'faulted-keep' AND NEW.key = 'released' BEGIN SELECT RAISE(FAIL, 'synthetic write failure'); END");
+  await service.refreshDriverWork();
+  evidence.healthyKeep = db.prepare("SELECT value_json FROM pack_facts WHERE todo_id = 'healthy-keep' AND pack = 'core' AND key = 'released'").get();
+  assert(evidence.healthyKeep, 'another worker must be settled after a write failure');
+  db.run('DROP TRIGGER fail_one_release');
   recordWorkerStarted(db, { adapter: 'hyperneo', id: worker });
   const ask = service.todos.openAsk({ id: 'release-pending', sessionId: root, projectId: null, originMessageId: null, title: 'Release', request: 'Release', createdAt: start });
   const todo = service.todos.addTodo('pending-todo', ask.id, { title: 'Pending worker', doneWhen: 'Done', instruction: null, named: null, check: null }, start);
