@@ -769,9 +769,16 @@ try {
       assert.equal(start?.request.params?.sandbox, 'workspace-write');
       assert.equal(start?.request.params?.developerInstructions, undefined);
     }
-    assert(allCalls.every((call) => [join(run, 'workspace-a'), join(run, 'workspace-b')].includes(call.cwd)));
+    const accountReads = allCalls.filter((call) => call.request.method === 'account/read');
+    assert.equal(accountReads.length, 2);
+    const bootstrapPids = new Set(accountReads.map((call) => call.pid));
+    assert.equal(bootstrapPids.size, 2);
+    const bootstrapCalls = allCalls.filter((call) => bootstrapPids.has(call.pid));
+    const adapterCalls = allCalls.filter((call) => !bootstrapPids.has(call.pid));
+    assert(adapterCalls.every((call) => [join(run, 'workspace-a'), join(run, 'workspace-b')].includes(call.cwd)));
     assert(allCalls.every((call) => call.codexHome === join(run, 'codex-home')));
-    assert(allCalls.filter((call) => call.request.method === 'initialize').every((call) => call.request.params?.capabilities?.experimentalApi !== true));
+    assert.equal(bootstrapCalls.filter((call) => call.request.method === 'initialize' && call.request.params?.capabilities?.experimentalApi === true).length, 2);
+    assert(adapterCalls.filter((call) => call.request.method === 'initialize').every((call) => call.request.params?.capabilities?.experimentalApi !== true));
     assert.equal(firstResults, 3);
     assert.equal(secondResults, 1);
     assert.equal(errors.length, 0, JSON.stringify(errors));
