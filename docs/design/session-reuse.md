@@ -80,9 +80,10 @@ which free worker another todo may reuse (rule 2 below):
   - when nothing is saved, the last option is "Use the default for now (<label>)", and the
     card says the work goes on with the default until it is answered; "Keep current
     settings" stays only when a value is saved;
-  - it is written in the human's language. `proposalLocale` falls back to the machine
-    locale when no language is set, which produced an English card for a Chinese-speaking
-    human; it uses the human's configured reply language instead.
+  - it is written in the human's language. With the language setting at `system`,
+    `proposalLocale` uses the machine locale, which produced an English card for a human
+    who writes to Neo in Chinese; with `system` it uses the language of the human's latest
+    message to Neo instead, and the machine locale only when there is none.
 - It applies in `reuseIdleWorker` (`drivers/work-operations.ts`) through the candidate
   filter of `chooseReusableWorker`. "Worked on this ask" reads `neo_todo_sessions` until
   PR 4, then `neo_todo_roles`.
