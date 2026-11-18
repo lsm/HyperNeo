@@ -212,6 +212,7 @@ export async function startDevServer(config: Config) {
       }
 
       if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+      if (url.pathname === '/setup' && req.method === 'POST') return daemonContext.handleSetup(req);
       if (daemonContext.handlePair2 && url.pathname.startsWith('/pair2/'))
         return daemonContext.handlePair2(req, server.requestIP(req)?.address ?? null);
 

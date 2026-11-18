@@ -71,10 +71,20 @@ describe('root Neo system prompt', () => {
     );
   });
 
-  test('tells Neo to label asks with a reused short topic', () => {
+  test('tells Neo a topic is a lasting area reused from the topic list', () => {
     expect(NEO_ROOT_TURN_END).toContain('neo.ask.topic');
-    expect(NEO_ROOT_TURN_END).toContain('never coin a near-synonym');
+    expect(NEO_ROOT_TURN_END).toContain('a lasting area of the human');
+    expect(NEO_ROOT_TURN_END).toContain('not a single matter');
+    expect(NEO_ROOT_TURN_END).toContain('reuse a topic from the topic list');
     expect(NEO_ROOT_TURN_END).toContain('其他');
+  });
+  test.each(['neo.ask.open', 'neo.ask.topic'])('%s describes a topic as a lasting area', (tool) => {
+    expect(neoToolDescription(tool)).toContain('a lasting area of the human');
+    expect(neoToolDescription(tool)).toContain('reuse a topic from the topic list');
+  });
+  test('neo.topic.merge tells Neo it rewrites the pick on every ask and leaves project topics', () => {
+    expect(neoToolDescription('neo.topic.merge')).toContain('every ask, open or settled');
+    expect(neoToolDescription('neo.topic.merge')).toContain('Project topics are never rewritten');
   });
   test('tells Neo to bind parallel running work with after: []', () => {
     expect(NEO_ROOT_TURN_END).toContain('so pass after: [] for parallel running work.');

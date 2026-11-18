@@ -113,6 +113,7 @@ describe('session.runtimeSettings.update native boundary', () => {
       isPreparing: () => state.preparing,
       hasPendingWork: () => state.pending,
       notify: publish,
+      engineOf: () => 'sdk',
     });
     const update = operations.find(
       (operation) => operation.name === 'session.runtimeSettings.update'

@@ -1068,6 +1068,51 @@ describe('Session RPC Handlers — models.list', () => {
       expect(deleteResourcesMock).not.toHaveBeenCalled();
     });
 
+    it('refuses to archive or delete a session that runs an active goal', async () => {
+      const hub = createMockMessageHub();
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      const deleteResourcesMock = mock(async () => {});
+      const resolveClones = mock(async () => null);
+      const sessionManager = {
+        getSessionFromDB: mock(() => ({
+          id: 'goal-1',
+          title: 'Goal: Grow',
+          status: 'active',
+          context: {},
+        })),
+        getSession: mock(() => null),
+        archiveSessionResources: archiveResourcesMock,
+        deleteSessionResources: deleteResourcesMock,
+      } as unknown as SessionManager;
+      setupSessionHandlers(hub.hub, sessionManager, eventBus, {} as SpaceManager, undefined, {
+        ensureSession: async () => ({
+          kind: 'unresolved',
+          reason: 'session_resolution_unavailable',
+        }),
+        resolveClones,
+        runsGoal: (sessionId) => sessionId === 'goal-1',
+      });
+
+      const archived = await hub.handlers.get('session.archive')!(
+        { sessionId: 'goal-1', confirmed: true },
+        {}
+      );
+      const deleted = await hub.handlers.get('session.delete')!({ sessionId: 'goal-1' }, {});
+
+      const refusal = {
+        success: false,
+        reason: 'owns_goals',
+        clones: [{ id: 'goal-1', title: 'Goal: Grow' }],
+      };
+      expect(archived).toEqual(refusal);
+      expect(deleted).toEqual(refusal);
+      expect(resolveClones).not.toHaveBeenCalled();
+      expect(archiveResourcesMock).not.toHaveBeenCalled();
+      expect(deleteResourcesMock).not.toHaveBeenCalled();
+    });
+
     it('refuses to archive a parent with clones until a choice is made, then passes it on', async () => {
       const resolveClones = mock(async (_id: string, choice?: string) =>
         choice
@@ -3361,5 +3406,56 @@ describe('Session RPC Handlers — session.sandbox.switch', () => {
 
     expect(result).toEqual({ success: true, sandboxEnabled: false });
     expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  describe('on an OXAP chat', () => {
+    const stored = () => ({
+      model: 'gpt-5.5',
+      provider: 'anthropic-codex',
+      harness: 'oxap-codex',
+      sandbox: { enabled: false },
+    });
+    beforeEach(() => {
+      config = stored();
+    });
+
+    it('refuses turning the sandbox on before it saves', async () => {
+      const result = await messageHubData.handlers.get('session.sandbox.switch')!(
+        { sessionId: 's1', sandboxEnabled: true },
+        {}
+      );
+      expect(result).toEqual({
+        success: false,
+        sandboxEnabled: false,
+        error: expect.stringContaining('this restriction is not supported'),
+      });
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
+
+    it('refuses coordinator mode before it saves', async () => {
+      const result = await messageHubData.handlers.get('session.coordinator.switch')!(
+        { sessionId: 's1', coordinatorMode: true },
+        {}
+      );
+      expect(result).toEqual({
+        success: false,
+        coordinatorMode: false,
+        error: expect.stringContaining('this restriction is not supported'),
+      });
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
+
+    it('refuses a thinking level before it saves', async () => {
+      await expect(
+        messageHubData.handlers.get('session.thinking.set')!(
+          { sessionId: 's1', level: 'think16k' },
+          {}
+        )
+      ).rejects.toThrow(/OXAP Codex does not take a thinking level/);
+      expect(updateSession).not.toHaveBeenCalled();
+      expect(config).toEqual(stored());
+    });
   });
 });

@@ -65,7 +65,7 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 export const neoWorkerKey = (ref: WorkRef | null | undefined) =>
   ref ? `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}` : null;
 
-const LIVE_TODO_STATES = ['todo', 'doing', 'blocked', 'failed'];
+const LIVE_TODO_STATES = ['todo', 'doing', 'blocked'];
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   read(
@@ -715,7 +715,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS humanNamed,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
-                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked', 'failed')
+                WHERE o.todo_id <> s.todo_id AND ot.state IN ('todo', 'doing', 'blocked')
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS shared,
               (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
@@ -746,6 +746,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
     }));
+  }
+
+  fenceWorkerRelease(ref: WorkRef, now: number): 'fenced' | 'live' | 'not_started_by_us' {
+    if (readStartedWork(this.db, null, undefined, ref).length === 0) return 'not_started_by_us';
+    return this.fenceRelease(ref, now) ? 'fenced' : 'live';
   }
 
   fenceRelease(ref: WorkRef, now: number): boolean {
@@ -838,6 +843,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'markWorkerUnusable',
     'queueOn',
     'fenceRelease',
+    'fenceWorkerRelease',
     'claimWorker',
     'unclaimWorker',
     'recordReleased',

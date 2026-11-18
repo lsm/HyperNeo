@@ -58,7 +58,7 @@ try {
     if (id === 'settled') service!.todos.settleAsk(ask, 'done', 'Settled', at);
     if (id === 'question') service!.todos.askQuestion('q', id, { text: 'Choose', kind: 'yesno', options: null, multiple: false, noLabel: 'No', yesLabel: 'Yes', confirm: null, document: null, replyTo: [], todoId: null, artifacts: [] }, at);
     if (id === 'blocked') service!.todos.updateTodo(service!.todos.addTodo('blocked-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Needs a decision' }, at);
-    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'failed', reason: 'Synthetic failure' }, at);
+    if (id === 'failed') service!.todos.updateTodo(service!.todos.addTodo('failed-step', id, { title: 'Step', doneWhen: 'Done', check: null, instruction: null, named: null }, at), { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic failure' }, at);
   }
   clock = at + 2 * hour - 1;
   await refresh(); check('before threshold', 0);

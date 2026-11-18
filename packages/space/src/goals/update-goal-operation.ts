@@ -121,7 +121,7 @@ const DESCRIPTION =
   'Update goal fields and rolling state (summary, progress, metrics, nextSteps), move the goal between lifecycle statuses, or edit its check-in schedule in place. Set status to "paused" to pause a goal and its linked check-in schedule, or to "active" to resume both. Internal pointers such as activeTaskId are not writable. Requires an active session in the owning Space. Returns { accepted: true, goal } or { accepted: false, reason }.';
 
 export function createUpdateGoalOperation(deps: UpdateGoalDependencies) {
-  const update = (superpipe({ deps })('goal-update') as PipelineAPI)
+  const update = (superpipe({ deps })('goal.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalUpdate, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(applyGoalUpdate, ['outcome', 'input', 'caller', 'deps'], 'outcome')

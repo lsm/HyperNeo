@@ -32,14 +32,14 @@ const card = (change: Partial<NeoQuestion> = {}) =>
   }) as NeoQuestion;
 
 describe('planNeoQuestionPrune', () => {
-  test('retires a question whose todo is finished', () => {
+  test('keeps a question whose todo is finished', () => {
     const question = card({
       kind: 'reply' as NeoQuestion['kind'],
       todoId: 'first',
       todos: ['first'],
     });
     expect(planNeoQuestionPrune(question, [step('first', { state: 'done' })])).toEqual({
-      value: { retire: 'todo no longer active' },
+      reason: 'unchanged',
     });
   });
 

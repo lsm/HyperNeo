@@ -38,6 +38,7 @@ type Refusal =
   | 'session_not_found'
   | 'session_closed'
   | 'selection_version_unsupported'
+  | 'harness_unsupported'
   | 'superseded';
 type Failure = { ok: false; reason: Refusal };
 type Gate<T> = { value: T } | { reason: Failure };

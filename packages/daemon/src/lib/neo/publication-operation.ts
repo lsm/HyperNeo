@@ -158,7 +158,7 @@ export function requirePublicationLifetime(
 }
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {
-  return (superpipe({})('neo-publication-publish') as PipelineAPI)
+  return (superpipe({})('neo.publication.publish') as PipelineAPI)
     .input(['input', 'caller', 'workOn'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
     .pipe(

@@ -222,7 +222,11 @@ describe('todo dependencies', () => {
       const first = store.addTodo('first', 'parent', draft('A'), 2);
       store.updateTodo(first, { state: 'done', evidence: 'Done.', startedAt: 3, finishedAt: 4 }, 4);
       const failed = store.addTodo('child-step', 'child', draft('X'), 2, 'synthetic/child');
-      store.updateTodo(failed, { state: 'failed', reason: 'Worker failed.' }, 5);
+      store.updateTodo(
+        failed,
+        { state: 'blocked', blockedBy: 'failure', blockedReason: 'Worker failed.' },
+        5
+      );
       store.settleAsk(store.getAsk('child')!, 'done', 'Done.', 6);
       const waiting = store.addTodo('waiting', 'parent', draft('B', [failed.id]), 7);
       sessions.create(waiting.id, { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } });

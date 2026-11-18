@@ -102,7 +102,7 @@ describe('Data-only atomic ask settlement', () => {
     for (const todo of store.listTodos('ask')) moveToChild(todo.id);
   };
 
-  test.each(['todo', 'doing', 'blocked', 'failed', 'removed'] as const)(
+  test.each(['todo', 'doing', 'blocked', 'removed'] as const)(
     'done refuses an unfinished %s row without changing work or cards',
     async (state) => {
       db.prepare('UPDATE neo_todos SET state = ?, reason = NULL WHERE id = ?').run(state, 'first');
@@ -154,7 +154,7 @@ describe('Data-only atomic ask settlement', () => {
     const report = 'Complete prior report 🦊\n'.repeat(20000);
     store.updateTodo(
       store.getTodo('first')!,
-      { state: 'failed', reason: 'check_failed: exit 7', report },
+      { state: 'blocked', blockedBy: 'failure', blockedReason: 'check_failed: exit 7', report },
       3
     );
     store.updateTodo(store.getTodo('second')!, { state: 'done', evidence: 'Observed' }, 3);

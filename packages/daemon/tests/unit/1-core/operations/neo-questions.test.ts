@@ -937,16 +937,18 @@ describe('question reference gates warn or omit instead of refusing', () => {
 });
 
 describe('todo-owned question cards', () => {
-  test('retains explicit todo ownership and retires only settled todo cards', async () => {
+  test('retains a linked card when done and retires it when removed', async () => {
     const h = setup();
     try {
       const bound = await h.asked({ kind: 'reply', text: 'Which rows?', todoId: h.fix.id });
       const other = h.seeded('Which style?', h.rows.id);
       const general = h.seeded('Anything else?');
       expect(bound).toMatchObject({ todoId: h.fix.id });
-      h.store.updateTodo(h.fix, { state: 'failed' }, 3);
+      h.store.updateTodo(h.fix, { state: 'blocked', blockedBy: 'failure' }, 3);
       expect(h.store.getQuestion(bound.id)?.state).toBe('open');
       h.store.updateTodo(h.fix, { state: 'done' }, 4);
+      expect(h.store.getQuestion(bound.id)?.state).toBe('open');
+      h.store.updateTodo(h.store.getTodo(h.fix.id)!, { state: 'removed' }, 5);
       expect(h.store.getQuestion(bound.id)?.state).toBe('retired');
       expect(h.store.getQuestion(other.id)?.state).toBe('open');
       expect(h.store.getQuestion(general.id)?.state).toBe('open');
@@ -954,7 +956,7 @@ describe('todo-owned question cards', () => {
       h.db.close();
     }
   });
-  test('recompute retires cards for missing or already settled todos without a new state write', async () => {
+  test('recompute retires missing-todo cards and preserves done-todo cards without a new state write', async () => {
     const h = setup();
     try {
       const gone = await h.asked({ kind: 'reply', text: 'Gone?', todoId: h.fix.id });
@@ -969,7 +971,7 @@ describe('todo-owned question cards', () => {
         async () => {}
       );
       expect(h.store.getQuestion(gone.id)?.state).toBe('retired');
-      expect(h.store.getQuestion(done.id)?.state).toBe('retired');
+      expect(h.store.getQuestion(done.id)?.state).toBe('open');
     } finally {
       h.db.close();
     }

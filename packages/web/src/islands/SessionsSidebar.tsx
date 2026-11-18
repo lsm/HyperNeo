@@ -1,4 +1,5 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
+import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
 import { useEffect, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
@@ -12,6 +13,8 @@ import { sessions } from '../lib/state.ts';
 import { newChatProjectSignal, workspaceHistoryVersionSignal } from '../lib/signals.ts';
 import {
   getWorkspaceHistory,
+  listSystemProjects,
+  type SystemProject,
   addWorkspaceToHistory,
   removeWorkspaceFromHistory,
   archiveSession,
@@ -56,11 +59,13 @@ interface ProjectGroup {
   sessions: Session[];
   sortTime: number;
   folders: string[];
+  system: boolean;
 }
 
 function buildView(
   sessionsList: Session[],
-  history: WorkspaceHistoryEntry[]
+  history: WorkspaceHistoryEntry[],
+  systemProjects: SystemProject[] = []
 ): { projects: ProjectGroup[]; ungrouped: Session[]; childrenByParent: Map<string, Session[]> } {
   const byRoot = new Map<string, Session[]>();
   const memberships = new Map(
@@ -68,8 +73,23 @@ function buildView(
       entry.project ? entry.project.folders.map((folder) => [folder, entry.project!] as const) : []
     )
   );
+  const systemTime = new Map<string, number>();
+  const systemDefinitions = systemProjects.flatMap((project) => {
+    const free = project.folders.filter((folder) => !memberships.has(folder));
+    if (project.folders.length > 0 && free.length === 0) return [];
+    const definition = {
+      id: `neo:${project.id}`,
+      name: project.name,
+      folders: free.slice(0, 1),
+    };
+    for (const folder of free) memberships.set(folder, definition);
+    systemTime.set(definition.id, project.updatedAt);
+    return [definition];
+  });
   const projectKey = (path: string) => memberships.get(path)?.id ?? path;
-  const definitions = new Map([...memberships.values()].map((project) => [project.id, project]));
+  const definitions = new Map(
+    [...memberships.values(), ...systemDefinitions].map((project) => [project.id, project])
+  );
   const ungrouped: Session[] = [];
   const ids = new Set(sessionsList.map((session) => session.id));
   const childrenByParent = new Map<string, Session[]>();
@@ -99,6 +119,10 @@ function buildView(
     historyTime.set(key, Math.max(historyTime.get(key) ?? 0, entry.lastUsedAt));
     if (!byRoot.has(key)) byRoot.set(key, []);
   }
+  for (const [key, updatedAt] of systemTime) {
+    historyTime.set(key, Math.max(historyTime.get(key) ?? 0, updatedAt));
+    if (!byRoot.has(key)) byRoot.set(key, []);
+  }
 
   const projects: ProjectGroup[] = [...byRoot.entries()]
     .map(([path, grouped]) => {
@@ -109,6 +133,7 @@ function buildView(
         path,
         name: project?.name ?? projectName(path),
         folders: project?.folders ?? [path],
+        system: systemTime.has(path),
         sessions: sorted,
         sortTime,
       };
@@ -125,6 +150,7 @@ function buildView(
 
 export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarProps) {
   const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
+  const [systemProjects, setSystemProjects] = useState<SystemProject[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => getCollapsedProjects());
   const [archiveConfirm, setArchiveConfirm] = useState<{
     sessionId: string;
@@ -149,10 +175,17 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     getWorkspaceHistory()
       .then(setHistory)
       .catch(() => {});
+    listSystemProjects()
+      .then(setSystemProjects)
+      .catch(() => {});
   }, [historyVersion]);
 
   const sessionsList = sessions.value.filter(isUserSession);
-  const { projects, ungrouped, childrenByParent } = buildView(sessionsList, history);
+  const { projects, ungrouped, childrenByParent } = buildView(
+    sessionsList,
+    history,
+    systemProjects
+  );
   const hasContent = sessionsList.length > 0 || projects.length > 0;
   const childrenOf = (sessionId: string) => childrenByParent.get(sessionId) ?? [];
   const removeProjectTarget = projects.find((project) => project.path === removeProjectPath);
@@ -259,7 +292,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(sessionId, false, children);
-      if (result.reason === 'has_clones' && result.clones) {
+      if (result.reason === 'owns_goals') {
+        setCloneChoice(null);
+        toast.error(GOAL_CHILD_MESSAGE);
+      } else if (result.reason === 'has_clones' && result.clones) {
         setCloneChoice({ sessionId, clones: result.clones });
       } else if (result.requiresConfirmation && result.commitStatus) {
         setCloneChoice(null);
@@ -280,7 +316,10 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
     setArchiveBusy(true);
     try {
       const result = await archiveSession(archiveConfirm.sessionId, true, archiveConfirm.children);
-      if (result.success) {
+      if (result.reason === 'owns_goals') {
+        toast.error(GOAL_CHILD_MESSAGE);
+        setArchiveConfirm(null);
+      } else if (result.success) {
         toast.success('Chat archived');
         setArchiveConfirm(null);
       }
@@ -404,20 +443,27 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   name={project.name}
                   path={project.path}
                   folders={project.folders}
-                  onNewSession={() => {
-                    newChatProjectSignal.value = project.folders[0];
-                    handleNewChat();
-                  }}
+                  onNewSession={
+                    project.folders.length > 0
+                      ? () => {
+                          newChatProjectSignal.value = project.folders[0];
+                          handleNewChat();
+                        }
+                      : undefined
+                  }
                   sessions={project.sessions}
                   collapsed={collapsed.has(project.path)}
                   onToggle={() => toggleProject(project.path)}
                   onSessionClick={handleSessionClick}
                   onArchive={handleArchive}
                   childrenOf={childrenOf}
-                  onRemove={() =>
-                    unarchived(project.sessions).length === 0
-                      ? handleRemoveProject(project.folders)
-                      : setRemoveProjectPath(project.path)
+                  onRemove={
+                    project.system
+                      ? undefined
+                      : () =>
+                          unarchived(project.sessions).length === 0
+                            ? handleRemoveProject(project.folders)
+                            : setRemoveProjectPath(project.path)
                   }
                 />
               ))}

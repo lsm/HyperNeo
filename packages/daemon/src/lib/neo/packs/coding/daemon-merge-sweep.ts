@@ -11,7 +11,9 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
-import { readGithubBudget } from '../../../github/gh-lookup-helpers.ts';
+import { homedir } from 'node:os';
+import { fetchRateLimitResetEpoch, readGithubBudget } from '../../../github/gh-lookup-helpers.ts';
+import { computeRateLimitRetryMs, isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import {
   CODING_LEDGER_MIN_RATE,
   type CodingPrLedgerRepository,
@@ -79,6 +81,7 @@ export function createCodingDaemonMergeSweep(
 ) {
   const actor = 'daemon:coding-sweep';
   let holdRevision = 0;
+  let rateLimitedUntil = 0;
   const signoffHolds = new Map<string, { key: string; at: number }>();
   const lastRead = new Map<string, { key: string; at: number; facts: Observed['facts'] }>();
   const remember = (
@@ -188,6 +191,7 @@ export function createCodingDaemonMergeSweep(
     .pipe(
       async (observed: Observed, now: number) => {
         const { url, head } = observed;
+        if (Date.now() < rateLimitedUntil) return { reason: 'github_rate_limited' };
         const [receipt] = await record({ kind: 'begin', url, head, actor, at: now });
         return receipt
           ? { value: receipt }
@@ -206,7 +210,7 @@ export function createCodingDaemonMergeSweep(
     )
     .pipe(
       async (receipt: Receipt, observed: Observed, now: number) => {
-        const { owner, repo } = parsePrUrl(receipt.url)!;
+        const { owner, repo, host } = parsePrUrl(receipt.url)!;
         let admitted = false;
         try {
           const revision = holdRevision;
@@ -220,6 +224,12 @@ export function createCodingDaemonMergeSweep(
         }
         // oxlint-disable-next-line no-warning-comments -- TODO(#9458): accepted final-read/in-flight-writer race.
         const error = await runCodingMergeAttempt(receipt.url, receipt.head, spawn);
+        if (error && isRateLimitError(error)) {
+          const reset = await fetchRateLimitResetEpoch(homedir(), spawn, 5_000, host);
+          rateLimitedUntil = Date.now() + computeRateLimitRetryMs(reset);
+          await record({ ...receipt, kind: 'void', at: receipt.startedAt });
+          return 'github_rate_limited';
+        }
         const facts = await read(receipt.url);
         await finish(receipt, facts, now, error);
         return facts.ok ? 'attempted' : 'read_failure';

@@ -212,6 +212,33 @@ describe('session.clone.spawn', () => {
     });
   });
 
+  test('an OXAP clone drops the stored thinking level its harness cannot take', async () => {
+    const h = makeHarness();
+    h.sessions.set(
+      'parent',
+      makeSession({
+        config: {
+          model: 'gpt-5.5',
+          provider: 'anthropic-codex',
+          harness: 'oxap-codex',
+          thinkingLevel: 'think8k',
+        } as Session['config'],
+      })
+    );
+    await run(h, {});
+    expect(h.created[0]?.config).toEqual({ model: 'gpt-5.5', provider: 'anthropic-codex' });
+    expect(await run(h, { thinkingLevel: 'think16k' })).toEqual({
+      accepted: false,
+      reason: 'harness_unsupported',
+      message: 'OXAP Codex does not take a thinking level.',
+    });
+    expect(h.created).toHaveLength(1);
+    expect(await run(h, { thinkingLevel: 'off' })).toEqual({
+      accepted: true,
+      sessionId: 'child',
+    });
+  });
+
   test('the input schema accepts the Ultra thinking level and rejects unknown ones', () => {
     const schema = createSpawnSessionCloneOperation(makeHarness().deps).inputSchema;
     expect(schema.safeParse({ thinkingLevel: 'think64k' }).success).toBe(true);

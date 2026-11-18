@@ -68,9 +68,12 @@ try {
   store.openAsk({ id: 'composer-fixture', sessionId: root, projectId: null, originMessageId: null, title: 'Composer attention fixture', request: 'Synthetic UI verification', createdAt: Date.now() });
   store.focusAsk('composer-fixture', { adapter: 'hyperneo', id: worker, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: `/session/${worker}` }, Date.now());
   store.askQuestion('composer-source', 'composer-fixture', { kind: 'reply', text: 'Review synthetic worker context', options: null, multiple: false, noLabel: null, yesLabel: null, sourceSession: { adapter: 'hyperneo', id: worker, name: 'Synthetic worker', label: 'HyperNeo · Synthetic worker', provider: 'Synthetic', link: `/session/${worker}` } }, Date.now());
-  const child = Bun.spawn([process.execPath, '.claude/skills/verify/composer-attention.mjs', String(front.port), run, process.argv[2] ?? '', process.argv[3] ?? '', pairing.code, process.argv[4] ?? 'after'], { stdout: 'inherit', stderr: 'inherit' });
+  const titlebar = process.argv[2] === 'titlebar';
+  const child = titlebar
+    ? Bun.spawn([process.execPath, '.claude/skills/verify/desktop-titlebar-overlay-web.mjs', String(front.port), run, pairing.code], { stdout: 'inherit', stderr: 'inherit' })
+    : Bun.spawn([process.execPath, '.claude/skills/verify/composer-attention.mjs', String(front.port), run, process.argv[2] ?? '', process.argv[3] ?? '', pairing.code, process.argv[4] ?? 'after'], { stdout: 'inherit', stderr: 'inherit' });
   assert.equal(await child.exited, 0);
-  assert.equal(stops, 4, 'both themes and widths must reach the synthetic Stop RPC peer');
+  if (!titlebar) assert.equal(stops, 4, 'both themes and widths must reach the synthetic Stop RPC peer');
 } finally {
   const ports = [app.server.port, front.port];
   front.stop(true);

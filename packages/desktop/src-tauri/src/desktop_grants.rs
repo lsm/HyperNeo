@@ -1,4 +1,4 @@
-use objc2_app_kit::{NSAlert, NSApplication};
+use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSApplication};
 use objc2_foundation::NSString;
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
@@ -106,6 +106,36 @@ pub(super) fn admit(bundle_id: &str, requirement: &str, class: &str) {
         .insert(format!("{class}\n{requirement}"), bundle_id.to_owned());
 }
 
+fn prepare_alert(alert: &NSAlert, message: &str) {
+    alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
+    alert.setInformativeText(&NSString::from_str(message));
+    alert.addButtonWithTitle(&NSString::from_str("Allow"));
+    alert
+        .addButtonWithTitle(&NSString::from_str("Don't Allow"))
+        .setKeyEquivalent(&NSString::from_str("\u{1b}"));
+}
+
+#[cfg(test)]
+pub(super) fn dialog_buttons() -> Option<Vec<(String, String)>> {
+    let message = dialog_text("com.apple.calculator", "launch")?;
+    dispatch2::run_on_main(move |mtm| {
+        let alert = NSAlert::new(mtm);
+        prepare_alert(&alert, &message);
+        Some(
+            alert
+                .buttons()
+                .iter()
+                .map(|button| {
+                    (
+                        button.title().to_string(),
+                        button.keyEquivalent().to_string(),
+                    )
+                })
+                .collect(),
+        )
+    })
+}
+
 fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {
     let Some(message) = dialog_text(bundle_id, class) else {
         return Some(false);
@@ -131,13 +161,10 @@ fn owner_allows(bundle_id: &str, class: &str) -> Option<bool> {
                 panic!("fixture dialog failed");
             }
             let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("Allow HyperNeo to control an app?"));
-            alert.setInformativeText(&NSString::from_str(&message));
-            alert.addButtonWithTitle(&NSString::from_str("Don't Allow"));
-            alert.addButtonWithTitle(&NSString::from_str("Allow"));
+            prepare_alert(&alert, &message);
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
-            alert.runModal() == 1001
+            alert.runModal() == NSAlertFirstButtonReturn
         }))
         .ok()
     })

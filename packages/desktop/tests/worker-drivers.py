@@ -40,6 +40,11 @@ with channel.makefile('rwb') as stream:
         result = {'ready': True, 'pid': os.getpid(), 'metadata': {
             'driver_version': '0.44.0', 'contract_version': '0.8.0'},
             'name': request.get('name'), 'arguments': request.get('arguments')}
+        if name is not None and request.get('arguments', {}).get('fixture_error'):
+            result = {'isError': True, 'content': [{'type': 'text', 'text': 'Call get_window_state first'}],
+                      'structuredContent': {'code': 'no_screenshot'}}
+        if name is not None and request.get('arguments', {}).get('fixture_large'):
+            result = {'content': [{'type': 'image', 'data': 'A' * (3 << 20), 'mimeType': 'image/png'}]}
         if name is not None and request.get('arguments', {}).get('fixture_delay'):
             time.sleep(0.3)
         reply_id = request['request_id'] + int(bool(name and request.get('arguments', {}).get('fixture_bad_reply')))
@@ -866,6 +871,11 @@ open(sys.argv[2], 'w').write(reply.decode())
                 self.assertNotIn(promise, text.lower())
         print('dialog_text=no_focus_idle_revoke unknown_class=refused')
 
+    def test_dialog_puts_allow_on_the_right_as_the_default(self):
+        buttons = self.call('fixture-dialog-buttons')['result']['buttons']
+        self.assertEqual(buttons, [['Allow', '\r'], ["Don't Allow", '\x1b']])
+        print('dialog_buttons=allow_rightmost_return deny_left_escape')
+
     def test_owner_yes_grants_exactly_the_shown_pair(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
@@ -937,6 +947,25 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(again['result']['dispatched'])
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_driver_error_reaches_the_caller_with_its_body(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_error': True}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason']), ('allowed', 'driver_error'))
+        self.assertEqual(reply['content'], [{'type': 'text', 'text': 'Call get_window_state first'}])
+        self.assertEqual(reply['structuredContent'], {'code': 'no_screenshot'})
+        self.assertEqual(self.call('status')['result']['state'], 'running')
+        print('driver_error=reported body=returned driver_kept=1')
+
+    def test_a_full_window_screenshot_reaches_the_caller(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        reply = self.dispatch('click', {'pid': pid, 'fixture_large': True}, workDir=str(self.work))['result']
+        self.assertIsNone(reply['reason'])
+        self.assertEqual(len(reply['content'][0]['data']), 3 << 20)
+        self.assertEqual(self.call('status')['result']['state'], 'running')
+        print('screenshot_bytes=3MiB driver_kept=1')
 
     def test_daemon_advert_uses_the_process_birth_even_after_a_long_suite(self):
         from unittest.mock import patch

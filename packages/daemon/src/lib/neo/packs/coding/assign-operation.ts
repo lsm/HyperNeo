@@ -9,7 +9,10 @@ import {
 import { workerSandboxOn } from '../../../drivers/worker-sandbox.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { homedir, hostname } from 'node:os';
-import { getNeoReadCheckoutPath, isReadyNeoReadCheckout } from './read-checkout-path.ts';
+import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
+import { existsSync, realpathSync } from 'node:fs';
+import { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
+import { neoProjectFolders, neoRepositoryIdentity } from '../../project-mirror.ts';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -25,6 +28,8 @@ import { sameCodingWorkRef } from './delivery-facts.ts';
 import type { CodingPrLedgerRepository } from './pr-ledger.ts';
 import type { CodingTodoPrRepository } from './todo-prs.ts';
 import { CodingStageTarget } from './stage-preferences.ts';
+import { type CodingLines, rankCodingTargets } from './stage-lines.ts';
+import { codingStageTargetReads } from './stage-target-db.ts';
 import type { runCodingReview } from './review.ts';
 
 const Input = z.object({
@@ -57,6 +62,7 @@ type Deps = {
   todos: CodingTodoPrRepository;
   review: typeof runCodingReview;
   invoke: (name: string, input: unknown, caller: OperationCaller) => Promise<OperationOutcome>;
+  lines?: CodingLines;
 };
 type Failure = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Failure };
@@ -104,6 +110,49 @@ function admit(input: Input, deps: Deps): Gate<Assignment> {
   };
 }
 
+async function repositoryProjectFolder(db: Database, name: string): Promise<string | null> {
+  const projects = new NeoRepository(db);
+  const view = getNeoReadCheckoutPath(...(name.split('/') as [string, string]));
+  const identity = `repository:github.com/${name.toLowerCase()}`;
+  const allProjects = projects.listProjects();
+  for (const project of allProjects) {
+    const aliases = projects.workspaceAliases(project.id, allProjects);
+    if (
+      !aliases.some((entry) => {
+        const alias = entry.toLowerCase();
+        return alias === identity || alias.startsWith(`repo:${name.toLowerCase()}\u0000`);
+      })
+    )
+      continue;
+    for (const place of neoProjectFolders(aliases)) {
+      if (place.machine !== hostname() || place.folder === view || !existsSync(place.folder))
+        continue;
+      try {
+        const root = spawnProcess(['git', 'rev-parse', '--show-toplevel'], {
+          cwd: place.folder,
+          stdout: 'pipe',
+          stderr: 'ignore',
+        });
+        const [rootPath, rootCode] = await Promise.all([
+          new Response(root.stdout).text(),
+          root.exited,
+        ]);
+        if (rootCode || realpathSync(rootPath.trim()) !== realpathSync(place.folder)) continue;
+        const git = spawnProcess(['git', 'config', '--local', '--get', 'remote.origin.url'], {
+          cwd: place.folder,
+          stdout: 'pipe',
+          stderr: 'ignore',
+        });
+        const [remote, code] = await Promise.all([new Response(git.stdout).text(), git.exited]);
+        if (!code && neoRepositoryIdentity(remote) === identity) return place.folder;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
 export function createCodingAssignmentOperation(deps: Deps) {
   const assignments = new CodingAssignmentsRepository(deps.db),
     running = new Set<string>();
@@ -128,28 +177,47 @@ export function createCodingAssignmentOperation(deps: Deps) {
     if (!candidates.length)
       return refuse('Configure an available independent actor on this daemon.');
     const { owner, repo } = parsePrUrl(input.url)!;
-    const view = getNeoReadCheckoutPath(owner, repo);
-    if (!isReadyNeoReadCheckout(view))
+    const folder = await repositoryProjectFolder(deps.db, `${owner}/${repo}`);
+    if (!folder)
       return refuse(
-        `${owner}/${repo} has no read-only view yet, so no actor was started; assign again after the view syncs.`
+        `${owner}/${repo} has no known project folder on this machine, so no actor was started; open the repository as a project here, then assign again.`
       );
-    const place = { machine: hostname(), folder: view, name: `${owner}/${repo}` };
-    const select = (candidates: Input['candidates']) =>
-      assignments.planTargetCurrent({
+    const place = { machine: hostname(), folder, name: `${owner}/${repo}` };
+    const select = async (candidates: Input['candidates']) => {
+      const plan = await assignments.planTargetCurrent({
         repo: repoName(input),
         stage: input.stage,
         candidates,
         body: pr.body,
       });
+      if (!plan.ok || !deps.lines)
+        return plan.ok ? { ok: true as const, ...plan.choices[0] } : plan;
+      const ranked = await rankCodingTargets(
+        deps.lines,
+        `coding.${input.stage}`,
+        plan.choices.map((choice) => choice.target),
+        await gatewayFor(deps.db).call(codingStageTargetReads, 'lineScope', {
+          todoId: input.todoId,
+          repo: repoName(input),
+        })
+      );
+      if ('reason' in ranked) return { ok: false as const, reason: ranked.reason };
+      const choice = plan.choices.find((entry) => entry.target === ranked.sources[0])!;
+      return {
+        ok: true as const,
+        target: ranked.value[0],
+        fallback: [...choice.fallback, ...ranked.skipped.map((line) => `Skipped ${line}.`)],
+      };
+    };
     const plan = await select(candidates);
     if (!plan.ok) return refuse(plan.reason);
     if (candidates.length < input.candidates.length)
       plan.fallback.unshift(
-        'Candidates on another daemon were skipped: the read checkout is resolved on this daemon.'
+        'Candidates on another daemon were skipped: the project folder is resolved on this daemon.'
       );
     const stage = input.stage === 'verify' ? 'Verify' : 'Review';
     const contract = input.stage === 'verify' ? QA_SYSTEM_CONTRACT : REVIEWER_SYSTEM_CONTRACT;
-    const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
+    const message = `${contract}\n\nCoding-pack ${stage} override for this run:\nThis worker may be reused from prior tasks; independence means it is not this PR's author or another stage actor for this head; reuse from earlier tasks or review rounds is allowed. The shared contract's workflow-specific Bash allowlist and direct GitHub posting procedure are replaced here by checkout in your own folder and reporting through Neo; respect actual permission denials. Before switching, preserve uncommitted or unpushed work: stop and report if the checkout would discard it, and never reset --hard or clean the folder to switch tasks.\n${await withCodingWorkerStartBrief('', { pullRequest: Number(parsePrUrl(input.url)!.number), head: input.head, role: input.stage })}\nTodo: ${input.todoId}. PR: ${input.url}. PR number: ${parsePrUrl(input.url)!.number}. Exact head: ${input.head}. Acceptance contract: ${input.acceptanceContract}. Fetch origin, fetch +refs/pull/${parsePrUrl(input.url)!.number}/head:refs/remotes/origin/pull/${parsePrUrl(input.url)!.number}/head, check out exactly ${input.head} in your existing folder, and verify git rev-parse HEAD equals that SHA before inspecting code. Do not switch to a moving branch or alter the author's folder. Read the acceptance contract and cover every criterion and allowed scope. CI covers base integration; skip the shared contract's separate base-integration checkout and base-OID revalidation requirements. A new PR head requires a new assignment and verdict. ${input.stage === 'verify' ? "Use the repository's .claude/skills/verify/SKILL.md (list and read relevant journeys) or Verify section in AGENTS.md. Before changing application code, locate that skill or section; if missing, report that evidence is blocked. Return durable evidence per criterion; stop owned test resources." : 'Return a soundness verdict across every review-contract dimension, with separate bug/integration and goal/scope passes.'} Do not merge, close or complete the todo. Your verdict must name the exact reviewed head ${input.head}; report facts through Neo with this head and contract.`;
     const excludeRefs = [base.write, ...(review?.ref ? [review.ref] : [])];
     const start = (target: z.infer<typeof CodingStageTarget>) =>
       deps.invoke(
@@ -219,7 +287,7 @@ export function createCodingAssignmentOperation(deps: Deps) {
     return { value: { ...base, ref, actor, effort, fallback: plan.fallback } };
   }
 
-  const assign = (superpipe({})('coding.assign-actor') as PipelineAPI)
+  const assign = (superpipe({})('neo.coding.assign') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((input: Input) => admit(input, deps), 'input', 'result:assignment')
     .pipe(

@@ -30,7 +30,13 @@ import {
 import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events.ts';
 import { readCodingPostableReviews } from './review-comment.ts';
 import type { CodingStageFact } from './stage-facts.ts';
-import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
+import {
+  type CodingPrSweepRepository,
+  type CodingSweepDeps,
+  codingFindingsText,
+  sweepCodingPrs,
+} from './pr-sweep.ts';
+import { WORK_MESSAGE_MAX } from '../../../drivers/work-operations.ts';
 import { type NeoWorkPrReader } from './work-prs.ts';
 import { wakeCodingUnownedPrs } from './pr-unowned.ts';
 import { recordCodingSmoke } from './delivery-facts.ts';
@@ -41,6 +47,7 @@ import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
+import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
@@ -66,6 +73,7 @@ export function createCodingPack(deps: {
   attend: CodingAttend;
   projectRepos: (projectId?: string) => string[];
   readLedgerRepo?: CodingLedgerRead;
+  lines?: CodingLines;
   postReviewComments?: (
     read: () => Promise<readonly CodingStageFact[]>,
     posted: (fact: CodingStageFact, marker: string) => Promise<void>,
@@ -84,13 +92,15 @@ export function createCodingPack(deps: {
     withCodingMergeContext(text, await deps.prLedger.policyContextCurrent(text));
   const prSweepDeps: CodingSweepDeps = {
     host: process.env.GH_HOST ?? 'github.com',
-    tell: async (ref, key, text, pr) =>
-      deps.prSweepDeps.tell(
+    tell: async (ref, key, text, pr, findings) => {
+      const context = (await notificationContext(text)).slice(text.length);
+      return deps.prSweepDeps.tell(
         ref,
         key,
-        await notificationContext(text),
+        `${text}${codingFindingsText(findings, WORK_MESSAGE_MAX - text.length - context.length)}${context}`,
         pr && (await deps.todoPrs.readHolder(pr, ref))
-      ),
+      );
+    },
     human: async (key, text) => (await deps.prSweepDeps.human?.(key, text)) ?? false,
     wake: async (key, text) => deps.prSweepDeps.wake(key, await notificationContext(text)),
   };
@@ -145,6 +155,7 @@ export function createCodingPack(deps: {
             planCodingIssueHome([{ repo: preference.scope.key }]) === repo
         )?.value === true,
     }),
+    workKinds: CODING_WORK_KINDS,
     preferences: {
       mirror_issues: {
         label: { en: 'Mirror plans to GitHub Issues', 'zh-Hans': '把计划同步到 GitHub Issues' },
@@ -253,7 +264,7 @@ export function createCodingPack(deps: {
       };
     },
     workerTarget: (todo, target, status, askSetting) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting),
+      decideCodingSessionTarget(deps.database(), todo, target, status, askSetting, deps.lines),
     workerTargetRefused: (todo) =>
       gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
         todoId: todo.id,

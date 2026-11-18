@@ -64,7 +64,7 @@ const DESCRIPTION =
   'List long-horizon goals in a Space with rolling summary and progress; read this before changing goal state. Agent callers are scoped to their own Space; human callers pass spaceId. Returns { accepted: true, goals } or { accepted: false, reason }.';
 
 export function createListGoalsOperation(deps: ListGoalsDependencies) {
-  const listGoals = (superpipe({ deps })('goal-list') as PipelineAPI)
+  const listGoals = (superpipe({ deps })('goal.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalListing, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(readGoalListing, ['outcome', 'input', 'deps'], 'outcome')

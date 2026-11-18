@@ -72,9 +72,9 @@ try {
     set(j, { state: 'doing', startedAt: 1, approvedAt: 1, instruction: 'Synthetic step' });
     set(a, { state: 'doing', finishedAt: null });
     await row('continue while prerequisite A is reopened', 'refused', 'neo.todo.continue', { todoId: j, message: 'Synthetic next step' } as { todoId: string });
-    set(j, { state: 'failed', reason: 'Synthetic failure' });
+    set(j, { state: 'blocked', blockedBy: 'failure', blockedReason: 'Synthetic failure' });
     await row('retry with a worker while prerequisite A is reopened', 'refused', 'neo.todo.continue', { todoId: j });
-    assert.equal(store.getTodo(j)?.state, 'failed');
+    assert.equal(store.getTodo(j)?.state, 'blocked');
     set(a, { state: 'done' }); set(x, { state: 'done' });
     await row('retry after A finished', 'ok', 'neo.todo.continue', { todoId: j });
     await row('continue after A finished', 'ok', 'neo.todo.continue', { todoId: j, message: 'Synthetic next step' } as { todoId: string });

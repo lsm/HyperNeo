@@ -98,10 +98,10 @@ test('leaves checked and settled rows alone and plans unfinished rows', () => {
       id: state,
       state,
     })),
-    ...(['doing', 'blocked', 'failed'] as const).map((state) => ({ ...named, id: state, state })),
+    ...(['doing', 'blocked'] as const).map((state) => ({ ...named, id: state, state })),
   ]);
   expect(plan.unresolved).toEqual([]);
-  expect(plan.edits.map((edit) => edit.todoId)).toEqual(['doing', 'blocked', 'failed']);
+  expect(plan.edits.map((edit) => edit.todoId)).toEqual(['doing', 'blocked']);
   expect(
     planNeoTodoCheckBackfill(
       plan.edits.map((edit) => ({ ...named, id: edit.todoId, check: edit.check }))

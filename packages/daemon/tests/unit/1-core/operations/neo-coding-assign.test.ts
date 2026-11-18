@@ -16,6 +16,8 @@ import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/p
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { CodingAssignmentsRepository } from '../../../../src/lib/neo/packs/coding/assignments.ts';
 import { createCodingAssignmentOperation } from '../../../../src/lib/neo/packs/coding/assign-operation.ts';
+import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
+import type { NeoLine, NeoLineScope } from '../../../../src/lib/neo/pack-contract.ts';
 import { runCodingReview } from '../../../../src/lib/neo/packs/coding/review.ts';
 import { createCodingResultOperation } from '../../../../src/lib/neo/packs/coding/result-operation.ts';
 import { StartWorkInputSchema } from '../../../../src/lib/drivers/work-operations.ts';
@@ -43,13 +45,24 @@ const author = { adapter: write.adapter, place, model: 'gpt-6' };
 const reviewer = { adapter: 'claude-code', place, model: 'claude-opus-5-5' };
 type Start = z.infer<typeof StartWorkInputSchema>;
 function fixture(
-  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome
+  simulate?: (input: Start, count: number) => Promise<OperationOutcome> | OperationOutcome,
+  lines?: CodingLines
 ) {
   const root = mkdtempSync(join(tmpdir(), 'neo-actor-'));
   process.env.HYPERNEO_DATA_DIR = join(root, 'data');
   const view = join(root, 'data', 'worktrees', 'synthetic', 'actors', 'neo-read');
   execFileSync('git', ['init', '-q', view]);
   execFileSync('git', ['-C', view, 'read-tree', '--empty']);
+  const project = join(root, 'project');
+  execFileSync('git', ['init', '-q', project]);
+  execFileSync('git', [
+    '-C',
+    project,
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/synthetic/actors.git',
+  ]);
   const pr = {
     body: 'Agent: gpt-6-sol (effort: high) via codex-desktop',
     headRefOid: head,
@@ -72,7 +85,18 @@ function fixture(
     rmSync(root, { recursive: true, force: true });
   });
   db.exec(
+    "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('project','Actors','','',1,1,1)"
+  );
+  const projectAlias = db.prepare(
+    'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+  );
+  projectAlias.run('repository:github.com/synthetic/actors', 'project');
+  projectAlias.run(`folder:${hostname()}\u0000${project}`, 'project');
+  db.exec(
     "INSERT INTO neo_asks (id,session_id,title,request,created_at,updated_at) VALUES ('ask','neo-fixture','Actors','Actors',1,1); INSERT INTO neo_todos (id,ask_id,position,title,done_when,state,created_at,updated_at) VALUES ('todo','ask',1,'Actors','Merged','doing',1,1)"
+  );
+  db.exec(
+    "INSERT INTO pack_coding_todos (todo_id, repo) VALUES ('todo', 'github.com/synthetic/actors')"
   );
   const ledger = new CodingPrLedgerRepository(db),
     todos = new CodingTodoPrRepository(db),
@@ -112,6 +136,7 @@ function fixture(
       ledger,
       todos,
       review: runCodingReview,
+      ...(lines ? { lines } : {}),
       invoke: async (name, input) => {
         if (name === 'work.stop') {
           stops.push(input);
@@ -168,10 +193,91 @@ function fixture(
     set,
     success,
     view,
+    project,
   };
 }
 
 describe('coding actor assignments', () => {
+  test('review ranks only its eligible hyperneo candidates as coding.review and starts the first ranked one', async () => {
+    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    const calls: { kind: string; candidates: readonly NeoLine[]; scope: NeoLineScope }[] = [];
+    const rank: CodingLines['rank'] = async (kind, candidates, scope) => {
+      calls.push({ kind, candidates, scope });
+      return {
+        ranked: [...candidates].reverse().map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      };
+    };
+    const lines: CodingLines = {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
+      rank,
+    };
+    const f = fixture(undefined, lines);
+    f.db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    f.db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'ask'").run();
+    expect(await f.assign({ candidates: [author, sonnet, opus] })).toMatchObject({ ok: true });
+    expect(calls.map(({ kind, scope }) => ({ kind, scope }))).toEqual([
+      { kind: 'coding.review', scope: { repo: 'synthetic/actors', projectId: 'p1' } },
+    ]);
+    expect(calls[0].candidates.map((line) => line.model)).toEqual([
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+    ]);
+    expect(f.starts.map((start) => start.model)).toEqual(['claude-opus-5-5']);
+    const external = fixture(undefined, lines);
+    expect(await external.assign()).toMatchObject({ ok: true });
+    expect(calls).toHaveLength(1);
+  });
+  test('when a route reorders the candidates, the fallback notes are the started candidate own', async () => {
+    const sonnet = { adapter: 'hyperneo', place, model: 'claude-sonnet-5-5', effort: 'high' };
+    const opus = { adapter: 'hyperneo', place, model: 'claude-opus-5-5' };
+    const lines: CodingLines = {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
+      rank: async (_kind, candidates) => ({
+        ranked: [...candidates].reverse().map((line) => ({ line })),
+        skipped: [],
+        exhausted: false,
+      }),
+    };
+    const f = fixture(undefined, lines);
+    f.set('review.effort', 'high');
+    expect(await f.assign({ candidates: [author, opus, sonnet] })).toMatchObject({
+      ok: true,
+      assignment: {
+        actor: { model: 'claude-opus-5-5' },
+        fallback: ['Preferred effort "high" is unavailable for this selection; using "default".'],
+      },
+    });
+  });
+
+  test('a review whose every candidate is refused names the skip reasons and starts nothing', async () => {
+    const f = fixture(undefined, {
+      models: () => [],
+      active: () => true,
+      resolve: async (target) => ({ ok: true, value: { model: target.model } }),
+      rank: async (_kind, candidates) => ({
+        ranked: [],
+        skipped: candidates.map((line) => ({ line, reason: 'held until later' })),
+        exhausted: true,
+      }),
+    });
+    expect(
+      await f.assign({ candidates: [{ adapter: 'hyperneo', place, model: 'claude-sonnet-5-5' }] })
+    ).toEqual({
+      ok: false,
+      reason:
+        'No usable model line for coding.review: claude-sonnet-5-5 via hyperneo: held until later.',
+    });
+    expect(f.starts).toEqual([]);
+  });
   test.each([
     'unsupported_model',
     'unsupported_effort',
@@ -572,31 +678,29 @@ describe('coding actor assignments', () => {
 describe('review place', () => {
   const homeFolder = { ...reviewer, place: { ...place, folder: '/not/a/repository' } };
   const remote = { ...reviewer, place: { ...place, daemon: 'remote-daemon' } };
-  test('the reviewer starts in the read view and passes start-place admission', async () => {
+  test('the reviewer starts in the repository project folder, not the read mirror, and passes start-place admission', async () => {
     const f = fixture();
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
     expect(f.starts[0].place).toEqual({
       machine: hostname(),
-      folder: f.view,
+      folder: f.project,
       name: 'synthetic/actors',
     });
   });
-  test('without a read view assignment refuses and starts nobody', async () => {
+  test('without a known project folder assignment refuses and starts nobody', async () => {
     const f = fixture();
-    rmSync(join(f.view, '.git', 'index'));
-    const notReady = { ok: false, reason: expect.stringContaining('has no read-only view yet') };
-    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
+    const forget = () =>
+      f.db.prepare("DELETE FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").run();
+    const unknown = { ok: false, reason: expect.stringContaining('has no known project folder') };
+    forget();
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(unknown);
     expect(f.starts).toHaveLength(0);
-    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
-    rmSync(join(f.view, '.git', 'HEAD'));
-    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject(notReady);
-    expect(f.starts).toHaveLength(0);
-    rmSync(f.view, { recursive: true, force: true });
-    execFileSync('git', ['init', '-q', f.view]);
-    execFileSync('git', ['-C', f.view, 'read-tree', '--empty']);
-    expect((await f.assign({ candidates: [homeFolder] })).ok).toBe(true);
-    rmSync(f.view, { recursive: true, force: true });
-    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(notReady);
+    f.db
+      .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
+      .run(`folder:${hostname()}\u0000${f.project}`, 'project');
+    expect(await f.assign({ candidates: [homeFolder] })).toMatchObject({ ok: true });
+    forget();
+    expect(await f.assign({ stage: 'verify', candidates: [author] })).toMatchObject(unknown);
     expect(f.starts).toHaveLength(1);
   });
   test('a candidate on another daemon is never routed to', async () => {

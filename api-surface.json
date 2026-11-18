@@ -6882,7 +6882,7 @@
               },
               "tool": {
                 "const": "get_window_state",
-                "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Use fresh element handles for subsequent actions.",
+                "description": "Read the authorized target window as accessibility content or an image after the required grants are verified. Call this before any click, drag or other pointer action; their x and y are pixels in this screenshot (Retina pixels, not points). Use fresh element handles for subsequent actions.",
                 "type": "string"
               }
             },
@@ -6974,7 +6974,7 @@
               },
               "tool": {
                 "const": "click",
-                "description": "Click or focus an element or point inside the authorized target window. Secure and credential surfaces are refused.",
+                "description": "Click or focus an element or point inside the authorized target window. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points). Secure and credential surfaces are refused.",
                 "type": "string"
               }
             },
@@ -7025,7 +7025,7 @@
               },
               "tool": {
                 "const": "double_click",
-                "description": "Double-click inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Double-click inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -7076,7 +7076,7 @@
               },
               "tool": {
                 "const": "right_click",
-                "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Open a context menu inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -7140,7 +7140,7 @@
               },
               "tool": {
                 "const": "drag",
-                "description": "Drag between points inside the authorized target window after target and sensitive-surface checks.",
+                "description": "Drag between points inside the authorized target window after target and sensitive-surface checks. Call get_window_state first; x and y are pixels in its screenshot (Retina pixels, not points).",
                 "type": "string"
               }
             },
@@ -7248,7 +7248,7 @@
               },
               "tool": {
                 "const": "press_key",
-                "description": "Send a key to the authorized target window after checking the focused field and requested effect. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
+                "description": "Send a key to the authorized target window after checking the focused field and requested effect. On macOS, * is not a key name. For * and other shifted symbols, send the base key with shift in modifiers (for example, key 8 with shift for * on a US keyboard). Unknown key names return driver_error. Credential entry, clipboard shortcuts and process-launch shortcuts are refused.",
                 "type": "string"
               }
             },
@@ -7448,6 +7448,21 @@
                   "null"
                 ]
               },
+              "content": {
+                "items": {
+                  "additionalProperties": {},
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "decision": {
                 "enum": [
                   "allowed",
@@ -7466,7 +7481,8 @@
                   "string",
                   "null"
                 ]
-              }
+              },
+              "structuredContent": {}
             },
             "required": [
               "call_id",
@@ -15841,7 +15857,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16213,13 +16229,30 @@
             "minLength": 1,
             "type": "string"
           },
+          "metricPoint": {
+            "additionalProperties": false,
+            "properties": {
+              "evidence": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "value",
+              "evidence"
+            ],
+            "type": "object"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
           "runId": {
-            "description": "Scheduler run that woke this cycle; a second entry for the same run replaces the first",
+            "description": "Scheduler run that woke this cycle; a second entry replaces the first except for measured reviews, which cannot be replaced",
             "minLength": 1,
             "type": "string"
           },
@@ -16303,6 +16336,34 @@
                   "id": {
                     "type": "string"
                   },
+                  "metricPoint": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "evidence": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "number"
+                          },
+                          "value": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "evidence",
+                          "time"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "runId": {
                     "type": [
                       "string",
@@ -16332,6 +16393,9 @@
                   "createdAt"
                 ],
                 "type": "object"
+              },
+              "metricReached": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -16381,7 +16445,7 @@
             "type": "integer"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -16457,6 +16521,34 @@
                     },
                     "id": {
                       "type": "string"
+                    },
+                    "metricPoint": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "evidence": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "time": {
+                              "type": "number"
+                            },
+                            "value": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "evidence",
+                            "time"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "runId": {
                       "type": [
@@ -17953,6 +18045,35 @@
               "null"
             ]
           },
+          "metric": {
+            "additionalProperties": false,
+            "properties": {
+              "baseline": {
+                "type": "number"
+              },
+              "direction": {
+                "enum": [
+                  "increase",
+                  "decrease"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "target",
+              "direction",
+              "baseline"
+            ],
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "type": [
@@ -17974,6 +18095,12 @@
             },
             "type": "array"
           },
+          "noEffectReviewLimit": {
+            "default": 3,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
           "nudgeEvery": {
             "default": 4,
             "description": "Legacy compatibility only; ignored.",
@@ -17981,8 +18108,13 @@
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "ownSession": {
+            "default": false,
+            "description": "Start a dedicated session that owns the goal and runs its wakes; it reports reviews to the creating session.",
+            "type": "boolean"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -17999,6 +18131,53 @@
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
+          },
+          "reviewCadence": {
+            "default": {
+              "everyMs": 86400000,
+              "kind": "every"
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "everyMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "every",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "everyMs"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "cron": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "cron",
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "default": "UTC",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "summary": {
             "type": "string"
@@ -18071,6 +18250,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18090,6 +18305,9 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "noEffectReviewLimit": {
+                    "type": "number"
                   },
                   "ownerSessionId": {
                     "type": "string"
@@ -18151,6 +18369,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
@@ -18159,6 +18378,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18203,7 +18423,7 @@
             "type": "string"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18263,6 +18483,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18282,6 +18538,9 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "noEffectReviewLimit": {
+                    "type": "number"
                   },
                   "ownerSessionId": {
                     "type": "string"
@@ -18343,6 +18602,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
@@ -18351,6 +18611,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -18395,7 +18656,7 @@
             "type": "boolean"
           },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           }
@@ -18453,6 +18714,42 @@
                         "null"
                       ]
                     },
+                    "metric": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "baseline": {
+                              "type": "number"
+                            },
+                            "direction": {
+                              "enum": [
+                                "increase",
+                                "decrease"
+                              ],
+                              "type": "string"
+                            },
+                            "name": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "target": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "target",
+                            "direction",
+                            "baseline"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "metrics": {
                       "additionalProperties": {
                         "type": [
@@ -18472,6 +18769,9 @@
                         "type": "string"
                       },
                       "type": "array"
+                    },
+                    "noEffectReviewLimit": {
+                      "type": "number"
                     },
                     "ownerSessionId": {
                       "type": "string"
@@ -18533,6 +18833,7 @@
                     "type",
                     "priority",
                     "metrics",
+                    "metric",
                     "doneTest",
                     "summary",
                     "worksNote",
@@ -18541,6 +18842,7 @@
                     "mandateRef",
                     "mandateRev",
                     "dailyRunLimit",
+                    "noEffectReviewLimit",
                     "createdAt",
                     "updatedAt",
                     "completedAt",
@@ -18642,8 +18944,13 @@
             },
             "type": "array"
           },
+          "noEffectReviewLimit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
           "ownerSessionId": {
-            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session and may name another.",
+            "description": "Session that owns the goal. Non-session callers must name it; session callers default to their own session. Agent sessions may name another; plain sessions only themselves.",
             "minLength": 1,
             "type": "string"
           },
@@ -18660,6 +18967,49 @@
             "maximum": 100,
             "minimum": 0,
             "type": "integer"
+          },
+          "reviewCadence": {
+            "oneOf": [
+              {
+                "properties": {
+                  "everyMs": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "const": "every",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "everyMs"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "cron": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "cron",
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "default": "UTC",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "status": {
             "enum": [
@@ -18745,6 +19095,42 @@
                       "null"
                     ]
                   },
+                  "metric": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "baseline": {
+                            "type": "number"
+                          },
+                          "direction": {
+                            "enum": [
+                              "increase",
+                              "decrease"
+                            ],
+                            "type": "string"
+                          },
+                          "name": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "target",
+                          "direction",
+                          "baseline"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "metrics": {
                     "additionalProperties": {
                       "type": [
@@ -18764,6 +19150,9 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "noEffectReviewLimit": {
+                    "type": "number"
                   },
                   "ownerSessionId": {
                     "type": "string"
@@ -18825,6 +19214,7 @@
                   "type",
                   "priority",
                   "metrics",
+                  "metric",
                   "doneTest",
                   "summary",
                   "worksNote",
@@ -18833,6 +19223,7 @@
                   "mandateRef",
                   "mandateRev",
                   "dailyRunLimit",
+                  "noEffectReviewLimit",
                   "createdAt",
                   "updatedAt",
                   "completedAt",
@@ -21468,7 +21859,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -21756,6 +22146,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "topicKey": {
+                          "type": "string"
                         },
                         "updatedAt": {
                           "type": "number"
@@ -22551,7 +22944,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -23210,6 +23602,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -23477,7 +23872,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -23746,6 +24140,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -24013,7 +24410,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -24283,6 +24679,9 @@
                           "string",
                           "null"
                         ]
+                      },
+                      "topicKey": {
+                        "type": "string"
                       },
                       "updatedAt": {
                         "type": "number"
@@ -25080,7 +25479,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25201,7 +25599,6 @@
                                 "doing",
                                 "blocked",
                                 "done",
-                                "failed",
                                 "removed"
                               ],
                               "type": "string"
@@ -25522,6 +25919,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -25789,7 +26189,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -26058,6 +26457,9 @@
                       "null"
                     ]
                   },
+                  "topicKey": {
+                    "type": "string"
+                  },
                   "updatedAt": {
                     "type": "number"
                   }
@@ -26325,7 +26727,6 @@
                         "doing",
                         "blocked",
                         "done",
-                        "failed",
                         "removed"
                       ],
                       "type": "string"
@@ -31251,6 +31652,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -32045,7 +32449,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -33267,6 +33670,54 @@
             "type": "object"
           }
         ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "neo.projects.list",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "projects": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "folders": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "folders",
+                "updatedAt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "type": "object"
       }
     },
     {
@@ -38247,6 +38698,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -39566,6 +40018,9 @@
                             "null"
                           ]
                         },
+                        "topicKey": {
+                          "type": "string"
+                        },
                         "updatedAt": {
                           "type": "number"
                         }
@@ -40360,7 +40815,6 @@
                               "doing",
                               "blocked",
                               "done",
-                              "failed",
                               "removed"
                             ],
                             "type": "string"
@@ -41539,7 +41993,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -41913,7 +42366,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42287,7 +42739,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -42962,7 +43413,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43345,7 +43795,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -43709,7 +44158,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44097,7 +44545,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44489,7 +44936,6 @@
                       "doing",
                       "blocked",
                       "done",
-                      "failed",
                       "removed"
                     ],
                     "type": "string"
@@ -44570,6 +45016,68 @@
             },
             "required": [
               "ok"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "from": {
+            "maxLength": 12,
+            "minLength": 1,
+            "type": "string"
+          },
+          "to": {
+            "maxLength": 12,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "neo.topic.merge",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "merged": {
+                "type": "number"
+              },
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok",
+              "merged"
             ],
             "type": "object"
           }
@@ -44760,6 +45268,72 @@
                 "type": "object"
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "harness": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "providerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "providerId",
+          "harness"
+        ],
+        "type": "object"
+      },
+      "name": "oxap.settings.save",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "accepted"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
           }
         ]
       }
@@ -47381,7 +47955,8 @@
                   "parent_required",
                   "parent_not_found",
                   "nested_clone",
-                  "parent_unavailable"
+                  "parent_unavailable",
+                  "harness_unsupported"
                 ],
                 "type": "string"
               }
@@ -48117,7 +48692,8 @@
                   "self_parent",
                   "parent_is_child",
                   "has_children",
-                  "unsupported_session"
+                  "unsupported_session",
+                  "owns_goals"
                 ],
                 "type": "string"
               }
@@ -54792,6 +55368,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -55913,6 +56490,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -56305,6 +56883,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -56438,6 +57017,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -56655,6 +57235,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -57237,6 +57818,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -57958,6 +58540,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -58079,6 +58662,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -58265,6 +58849,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"
@@ -58406,6 +58991,7 @@
                   "busy",
                   "human_only",
                   "live_todo",
+                  "not_started_by_us",
                   "todo_required"
                 ],
                 "type": "string"

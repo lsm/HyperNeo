@@ -10,6 +10,8 @@ import {
   type OperationCaller,
   type OperationCallerRole,
 } from '../operations/registry.ts';
+import { codexSessionRefusal, thinkingRefusal } from '../agent/session-engine.ts';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { stripRejectedSessionConfig } from './create-session-config.ts';
 import { admitSpaceStage } from './ensure-agent-session.ts';
 import type { CreateSessionParams } from './session-lifecycle.ts';
@@ -30,6 +32,7 @@ const SPAWN_REJECTIONS = [
   'parent_not_found',
   'nested_clone',
   'parent_unavailable',
+  'harness_unsupported',
 ] as const;
 
 type SpawnInput = z.infer<typeof SpawnInputSchema>;
@@ -83,7 +86,7 @@ export function resolveParentId(
 
 export function loadParent(
   parentId: string,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSession'>
 ): { value: Session } | { reason: SpawnRejection } {
   const parent = deps.getSession(parentId);
   if (!parent) return { reason: reject('parent_not_found', `Session not found: ${parentId}`) };
@@ -105,7 +108,7 @@ export function loadParent(
 
 export async function admitSpaceParent(
   parent: Session,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'getSpace' | 'resolveRole'>
 ): Promise<{ value: Session } | { reason: SpawnRejection }> {
   const spaceId = parent.context?.spaceId;
   if (!spaceId) return { value: parent };
@@ -119,14 +122,25 @@ export async function admitSpaceParent(
   return { value: parent };
 }
 
+export function admitCloneThinking(
+  parent: Session,
+  input: SpawnInput
+): { value: Session } | { reason: SpawnRejection } {
+  const message =
+    (isOxapHarness(parent.config.harness)
+      ? codexSessionRefusal(parent.config, false, false)
+      : undefined) ?? thinkingRefusal(parent.config.harness, input.thinkingLevel);
+  return message ? { reason: reject('harness_unsupported', message) } : { value: parent };
+}
+
 export async function buildCloneParams(
   parent: Session,
   input: SpawnInput,
-  deps: SpawnSessionCloneDependencies
+  deps: Pick<SpawnSessionCloneDependencies, 'isGitRepo'>
 ): Promise<CreateSessionParams> {
   const workspacePath = parent.worktree?.mainRepoPath ?? parent.workspacePath;
   const isGit = workspacePath ? await deps.isGitRepo(workspacePath) : false;
-  const config = stripRejectedSessionConfig(parent.config);
+  const { thinkingLevel, ...config } = stripRejectedSessionConfig(parent.config);
   const parentBranch = parent.worktree?.branch ?? parent.gitBranch ?? undefined;
   return {
     workspacePath,
@@ -139,6 +153,9 @@ export async function buildCloneParams(
     toolProfile: parent.config.toolProfile,
     config: {
       ...config,
+      ...(isOxapHarness(parent.config.harness) && !oxapHarness(parent.config.harness).thinking
+        ? {}
+        : { thinkingLevel }),
       ...(input.model ? { model: input.model } : {}),
       ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel as ThinkingLevel } : {}),
     },
@@ -182,14 +199,15 @@ export async function createClone(
 }
 
 const SPAWN_DESCRIPTION =
-  'Spawn a 分身 (clone) of a session: a new session with the same configuration and workspace (its own git worktree when the workspace is a repository) but none of the conversation, optionally with a different model or thinking level. A brief, when given, becomes the first message and asks the clone to report back through session.clone.return. An agent or session calling through invoke clones itself; the RPC door names parentSessionId. A clone of a Space agent session acts as that agent. Rejects nested_clone (clones cannot clone), parent_unavailable (inactive session, task or workflow worker, or a paused, stopped or archived Space), parent_not_found and caller_denied.';
+  'Spawn a 分身 (clone) of a session: a new session with the same configuration and workspace (its own git worktree when the workspace is a repository) but none of the conversation, optionally with a different model or thinking level. A brief, when given, becomes the first message and asks the clone to report back through session.clone.return. An agent or session calling through invoke clones itself; the RPC door names parentSessionId. A clone of a Space agent session acts as that agent. Rejects harness_unsupported (thinking cannot be enforced), nested_clone (clones cannot clone), parent_unavailable (inactive session, task or workflow worker, or a paused, stopped or archived Space), parent_not_found and caller_denied.';
 
 export function createSpawnSessionCloneOperation(deps: SpawnSessionCloneDependencies) {
-  const spawn = (superpipe({ deps })('spawn-session-clone') as PipelineAPI)
+  const spawn = (superpipe({ deps })('session.clone.spawn') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(resolveParentId, ['input', 'caller'], 'result:outcome')
     .pipe(loadParent, ['outcome', 'deps'], 'result:outcome')
     .pipe(admitSpaceParent, ['outcome', 'deps'], 'result:outcome')
+    .pipe(admitCloneThinking, ['outcome', 'input'], 'result:outcome')
     .pipe(buildCloneParams, ['outcome', 'input', 'deps'], 'params')
     .pipe(createClone, ['outcome', 'params', 'input', 'deps'], 'outcome')
     .endAsync('outcome') as (input: SpawnInput, caller: OperationCaller) => Promise<SpawnResult>;

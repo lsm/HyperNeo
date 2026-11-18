@@ -77,7 +77,7 @@ const DESCRIPTION =
   'List tasks linked to a goal as a bounded page of compact summaries ordered newest-first; paginate with before/beforeId. Default limit 20, maximum 100. Returns { accepted: true, total, tasks, hasMore } or { accepted: false, reason }.';
 
 export function createListGoalTasksOperation(deps: ListGoalTasksDependencies) {
-  const listGoalTasks = (superpipe({ deps })('goal-tasks-list') as PipelineAPI)
+  const listGoalTasks = (superpipe({ deps })('goal.task.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalTaskListing, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(readGoalTaskPage, ['outcome', 'input', 'deps'], 'outcome')

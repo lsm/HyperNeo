@@ -40,7 +40,7 @@ async function apply(input: Input, saved: Saved, deps: Dependencies): Promise<Re
   };
   return { ok: true, changed: saved.changed, ...application };
 }
-const activate = (superpipe({})('activate-session-tool-choice') as PipelineAPI)
+const activate = (superpipe({})('session.tools.setChoice') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(persist, ['input', 'deps'], 'result:activation')
   .pipe(apply, ['input', 'activation', 'deps'], 'activation')

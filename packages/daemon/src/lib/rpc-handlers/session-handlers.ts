@@ -39,6 +39,12 @@ import {
   type ResolveClones,
 } from '../session/clone-cascade.ts';
 import { admitUpdateSessionConfig } from '../session/create-session-config.ts';
+import {
+  codexSessionRefusal,
+  engineForProvider,
+  thinkingRefusal,
+} from '../agent/session-engine.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
   hasRuntimeWorkerOperations,
@@ -110,6 +116,20 @@ export interface SessionHandlerDeps {
   resolveClones?: ResolveClones;
   listClones?: (parentId: string) => Session[];
   primaryAgentFor?: (sessionId: string) => { id: string; displayName: string } | null;
+  runsGoal?: (sessionId: string) => boolean;
+}
+
+function goalSessionRefusal(
+  deps: SessionHandlerDeps | undefined,
+  session: { id: string; title?: string } | null
+): { success: false; reason: 'owns_goals'; clones: { id: string; title: string }[] } | null {
+  return session && deps?.runsGoal?.(session.id)
+    ? {
+        success: false,
+        reason: 'owns_goals',
+        clones: [{ id: session.id, title: session.title ?? '' }],
+      }
+    : null;
 }
 
 function agentPrimarySessionRefusal(
@@ -352,7 +372,11 @@ export function setupSessionHandlers(
     const configUpdate = admitUpdateSessionConfig(
       updates.config,
       currentSelection,
-      existingConfig?.harness
+      existingConfig,
+      (provider) =>
+        engineForProvider(provider, () =>
+          sessionManager.getDatabase().providers.getProviderByProviderId(provider)
+        )
     );
     if (configUpdate) {
       updates.config = configUpdate;
@@ -466,6 +490,9 @@ export function setupSessionHandlers(
     };
     const owned = agentPrimarySessionRefusal(deps, targetSessionId);
     if (owned) return owned;
+    const runsGoal =
+      deps?.runsGoal && goalSessionRefusal(deps, sessionManager.getSessionFromDB(targetSessionId));
+    if (runsGoal) return runsGoal;
     const clones = await deps?.resolveClones?.(
       targetSessionId,
       isCloneChoice(children) ? children : undefined,
@@ -512,6 +539,8 @@ export function setupSessionHandlers(
     }
     const owned = agentPrimarySessionRefusal(deps, targetSessionId);
     if (owned) return owned;
+    const runsGoal = goalSessionRefusal(deps, session);
+    if (runsGoal) return runsGoal;
 
     const hadWorktree = !!session.worktree;
     const spaceIdForArchive = session.context?.spaceId;
@@ -702,6 +731,10 @@ export function setupSessionHandlers(
 
     const session = agentSession.getSessionData();
     const previousMode = session.config.coordinatorMode ?? false;
+    const refusal =
+      isOxapHarness(session.config.harness) &&
+      codexSessionRefusal({ coordinatorMode }, false, false);
+    if (refusal) return { success: false, coordinatorMode: previousMode, error: refusal };
 
     if (previousMode === coordinatorMode) {
       return { success: true, coordinatorMode };
@@ -729,7 +762,8 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    if (neoCoordinatorBinding(sessionManager.getDatabase(), targetSessionId))
+    const db = sessionManager.getDatabase();
+    if (neoCoordinatorBinding(db, targetSessionId))
       return {
         success: false,
         sandboxEnabled: false,
@@ -744,9 +778,13 @@ export function setupSessionHandlers(
     }
 
     const updatedSandbox = {
-      ...(session.config.sandbox ?? sessionManager.getDatabase().getGlobalSettings().sandbox),
+      ...(session.config.sandbox ?? db.getGlobalSettings().sandbox),
       enabled: sandboxEnabled,
     };
+    if (isOxapHarness(session.config.harness)) {
+      const refusal = codexSessionRefusal({ sandbox: updatedSandbox }, false, false);
+      if (refusal) return { success: false, sandboxEnabled: previousMode, error: refusal };
+    }
 
     await sessionManager.updateSession(targetSessionId, {
       config: { ...session.config, sandbox: updatedSandbox },
@@ -771,6 +809,8 @@ export function setupSessionHandlers(
     }
 
     const thinkingLevel = normalizeThinkingLevel(level);
+    const refusal = thinkingRefusal(agentSession.getSessionData().config.harness, thinkingLevel);
+    if (refusal) throw new Error(refusal);
 
     await sessionManager.updateSession(targetSessionId, {
       config: {

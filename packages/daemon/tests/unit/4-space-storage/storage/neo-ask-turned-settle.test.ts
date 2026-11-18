@@ -222,7 +222,7 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
   test('generates the outcome from the step list when Neo wrote none', async () => {
     add('alpha', 'done');
     add('gamma', 'removed', { reason: 'Superseded' });
-    add('delta', 'failed');
+    add('delta', 'removed', { reason: 'Failed' });
     consumedWake('ask');
     await sweep();
     const ask = store.getAsk('ask')!;
@@ -234,7 +234,7 @@ describe('Auto-settle after a consumed stalled-ask turn', () => {
 
   test('drops the ask when no step finished', async () => {
     add('gone', 'removed', { reason: 'No longer needed' });
-    add('broken', 'failed');
+    add('broken', 'removed', { reason: 'Failed' });
     consumedWake('ask');
     await sweep();
     expect(store.getAsk('ask')).toMatchObject({ status: 'dropped' });

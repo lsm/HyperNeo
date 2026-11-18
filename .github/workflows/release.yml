@@ -288,7 +288,7 @@ jobs:
     name: Desktop Release ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     needs: wait-for-ci
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.arch == 'darwin-x64' && 90 || 45 }}
     defaults:
       run:
         shell: bash

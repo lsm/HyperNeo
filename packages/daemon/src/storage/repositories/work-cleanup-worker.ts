@@ -65,7 +65,7 @@ class WorkCleanupRepository {
     const bindings = this.db
       .prepare(`${removed} SELECT s.ref, t.state, t.id AS todoId,
         EXISTS (SELECT 1 FROM neo_todo_sessions peer JOIN neo_todos live ON live.id = peer.todo_id
-          WHERE live.state IN ('todo', 'doing', 'blocked', 'failed')
+          WHERE live.state IN ('todo', 'doing', 'blocked')
             AND COALESCE(json_extract(peer.ref, '$.adapter'), json_extract(peer.target, '$.ref.adapter')) = json_extract(s.ref, '$.adapter')
             AND COALESCE(json_extract(peer.ref, '$.id'), json_extract(peer.target, '$.ref.id')) = json_extract(s.ref, '$.id')
             AND COALESCE(json_extract(peer.ref, '$.daemon'), json_extract(peer.target, '$.ref.daemon')) IS NULL
@@ -145,7 +145,7 @@ class WorkCleanupRepository {
         .all(),
       ...this.db
         .prepare(
-          `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked', 'failed')`
+          `SELECT ${TODO_COLUMNS} FROM neo_todos WHERE state IN ('todo', 'doing', 'blocked')`
         )
         .all(),
     ]
@@ -190,7 +190,7 @@ class WorkCleanupRepository {
       this.db
         .prepare(`SELECT COALESCE(s.ref, json_extract(s.target, '$.ref')) AS ref, t.id AS todoId, t.state
         FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
-        WHERE t.state IN ('todo', 'doing', 'blocked', 'failed')
+        WHERE t.state IN ('todo', 'doing', 'blocked')
           AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS NULL
           AND (COALESCE(s.ref, json_extract(s.target, '$.ref')) IS NOT NULL OR t.state = 'doing')`)
         .all() as { ref: string | null; todoId: string; state: NeoTodo['state'] }[]

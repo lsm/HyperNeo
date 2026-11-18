@@ -15,6 +15,7 @@ const REJECTIONS = [
   'parent_is_child',
   'has_children',
   'unsupported_session',
+  'owns_goals',
 ] as const;
 
 type Input = z.infer<typeof InputSchema>;
@@ -40,6 +41,7 @@ export interface SetSessionParentDependencies {
   readonly getSession: (sessionId: string) => Session | null;
   readonly listChildren: (sessionId: string) => Session[];
   readonly sessionSpaceId: (session: Session) => string | undefined;
+  readonly ownsActiveGoal: (sessionId: string) => boolean;
   readonly setParent: (sessionId: string, parentId: string | null) => Promise<void>;
 }
 
@@ -83,18 +85,25 @@ export function requireOneLevel(move: Move, deps: SetSessionParentDependencies):
   return { value: move };
 }
 
+export function requireNoGoals(move: Move, deps: SetSessionParentDependencies): Gate<Move> {
+  return deps.ownsActiveGoal(move.session.id)
+    ? reject('owns_goals', 'This session runs an active goal; close the goal first')
+    : { value: move };
+}
+
 async function applyMove(move: Move, deps: SetSessionParentDependencies): Promise<Result> {
   const parentSessionId = move.parent?.id ?? null;
   await deps.setParent(move.session.id, parentSessionId);
   return { accepted: true, sessionId: move.session.id, parentSessionId };
 }
 
-const setParent = (superpipe({})('session-parent-set') as PipelineAPI)
+const setParent = (superpipe({})('session.parent.set') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(requireHumanCaller, 'caller', 'result:move')
   .pipe(loadMove, ['input', 'deps'], 'result:move')
   .pipe(requirePlainSessions, ['move', 'deps'], 'result:move')
   .pipe(requireOneLevel, ['move', 'deps'], 'result:move')
+  .pipe(requireNoGoals, ['move', 'deps'], 'result:move')
   .pipe(applyMove, ['move', 'deps'], 'move')
   .endAsync('move') as (
   input: Input,
@@ -106,7 +115,7 @@ export function createSetSessionParentOperation(deps: SetSessionParentDependenci
   return defineOperation({
     name: 'session.parent.set',
     description:
-      'Move a session under another top-level session, or back to the top level with a null parentSessionId. One level deep only; Neo and Space sessions are not movable. Rejects caller_denied, session_not_found, parent_not_found, self_parent, parent_is_child, has_children and unsupported_session.',
+      'Move a session under another top-level session, or back to the top level with a null parentSessionId. One level deep only; Neo and Space sessions are not movable. Rejects caller_denied, session_not_found, parent_not_found, self_parent, parent_is_child, has_children, unsupported_session and owns_goals (the session owns an active or paused goal).',
     inputSchema: InputSchema,
     resultSchema: ResultSchema,
     execute: async (input, caller) => setParent(input, caller, deps),

@@ -13,13 +13,16 @@ import { prepareCodingTodoStorage } from '../../../../src/lib/neo/packs/coding/s
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
+import { catalogModel, driverCodingLines } from '../../helpers/coding-lines.ts';
 import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'archived' | 'interrupted';
+type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'gone' | 'archived' | 'interrupted';
 
 function setup() {
   const db = new Database(':memory:');
@@ -27,7 +30,7 @@ function setup() {
   createTables(db);
   prepareCodingTodoStorage(db);
   const todos = new NeoAskTodoRepository(db);
-  for (const id of ['feature', 'other'])
+  for (const id of ['feature', 'other', 'third', 'fourth'])
     todos.openAsk({
       id,
       projectId: null,
@@ -61,7 +64,12 @@ function setup() {
       ).run(added.id, inRepo);
     return added;
   };
-  const worked = (item: NeoTodo, session: string, name?: string, state?: 'doing' | 'done') => {
+  const worked = (
+    item: NeoTodo,
+    session: string,
+    name?: string,
+    state?: 'doing' | 'done' | 'removed'
+  ) => {
     db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
       item.id,
       JSON.stringify(name ? start(name) : { verb: 'send', ref: ref(session) }),
@@ -70,8 +78,10 @@ function setup() {
     if (state) db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, item.id);
   };
   const live: Record<string, Live> = {};
+  const models: Record<string, { model: string; provider: string }> = {};
   const status = async (work: WorkRef): Promise<OperationOutcome> => {
     const state = live[work.id] ?? 'idle';
+    if (state === 'gone') return { kind: 'completed', value: { ok: false, reason: 'not_found' } };
     if (state === 'unreachable')
       return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'offline' };
     return {
@@ -89,6 +99,7 @@ function setup() {
                 ? 'stopped'
                 : state,
           ...(state === 'archived' ? { archived: true } : {}),
+          ...models[work.id],
           lastActivityAt: 1,
         },
       },
@@ -119,27 +130,223 @@ function setup() {
   );
   const asks: unknown[] = [];
   const failing = { ask: false, before: null as null | (() => void) };
-  const decide = (item: NeoTodo, target: Parameters<typeof decideCodingSessionTarget>[2]) =>
-    decideCodingSessionTarget(db, item, target, status, async (input) => {
-      failing.before?.();
-      if (failing.ask) {
-        asks.push('failed');
-        return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'synthetic' };
-      }
-      const value = await askSetting!.execute(
-        { askId: item.askId, ...input },
-        { source: 'internal', sessionId: 'neo', role: 'neo' }
-      );
-      asks.push(value);
-      return { kind: 'completed' as const, value };
-    });
+  const decide = (
+    item: NeoTodo,
+    target: Parameters<typeof decideCodingSessionTarget>[2],
+    lines?: CodingLines
+  ) =>
+    decideCodingSessionTarget(
+      db,
+      item,
+      target,
+      status,
+      async (input) => {
+        failing.before?.();
+        if (failing.ask) {
+          asks.push('failed');
+          return {
+            kind: 'failed' as const,
+            code: 'execution_failed' as const,
+            message: 'synthetic',
+          };
+        }
+        const value = await askSetting!.execute(
+          { askId: item.askId, ...input },
+          { source: 'internal', sessionId: 'neo', role: 'neo' }
+        );
+        asks.push(value);
+        return { kind: 'completed' as const, value };
+      },
+      lines
+    );
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
   const agentAsk = (input: Record<string, unknown>) =>
     askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
-  return { db, todos, todo, worked, live, decide, questions, asks, agentAsk, failing };
+  return { db, todos, todo, worked, live, models, decide, questions, asks, agentAsk, failing };
 }
 
 describe('coding session target decision', () => {
+  const catalog = [catalogModel('glm-6', 'glm'), catalogModel('claude-opus-5-5', 'anthropic')];
+  const glmHold = [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }];
+  const routed = (kinds: string[], held: boolean) =>
+    driverCodingLines(catalog, held ? { holds: glmHold } : {}, kinds);
+  const glm = { verb: 'start' as const, adapter: 'hyperneo', model: 'glm-6', name: 'backend' };
+  const opus = { ...glm, model: 'claude-opus-5-5' };
+
+  test('a hyperneo start is ranked again as coding.write and moves off a held line', async () => {
+    const { todo, decide } = setup();
+    const kinds: string[] = [];
+    expect(await decide(todo(), glm, routed(kinds, false))).toEqual({ value: glm });
+    expect(await decide(todo('other'), glm, routed(kinds, true))).toEqual({
+      value: opus,
+      note: `Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: held (rate_limit) until ${new Date(4e12).toISOString()}.`,
+    });
+    expect(kinds).toEqual([`coding.write ${repo}`, `coding.write ${repo}`]);
+    expect(await decide(todo('third'), start('desktop'), routed(kinds, true))).toEqual({
+      value: start('desktop'),
+    });
+    expect(kinds).toHaveLength(2);
+  });
+
+  test('a start that keeps its own line says nothing about other refused lines', async () => {
+    const { todo, decide } = setup();
+    const opusHold = [{ provider: 'anthropic', model: 'claude-opus-5-5', retryAt: 4e12 }];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { holds: opusHold }))).toEqual({
+      value: glm,
+    });
+  });
+
+  test('a route moves a start to its preferred usable line, and nothing usable waits with the reasons', async () => {
+    const { todo, decide } = setup();
+    const routes = [
+      { kind: 'coding.write', lines: [{ provider: 'anthropic', model: 'claude-opus-5-5' }] },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { routes }))).toEqual({
+      value: opus,
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: the route ranks it lower.',
+    });
+    expect(await decide(todo('other'), glm, driverCodingLines(catalog, { ready: [] }))).toEqual({
+      reason:
+        'No usable model line for coding.write: glm/glm-6 via hyperneo: not configured; anthropic/claude-opus-5-5 via hyperneo: not configured.',
+    });
+  });
+
+  test('the owning ask project is in scope: never skips the line, only keeps it', async () => {
+    const { db, todo, decide } = setup();
+    db.exec(
+      "INSERT INTO neo_concerns (id,title,summary,context,revision,created_at,updated_at) VALUES ('p1','P1','','',1,0,0)"
+    );
+    db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'feature'").run();
+    const line = { provider: 'glm', model: 'glm-6' };
+    const kinds: string[] = [];
+    const never = driverCodingLines(
+      catalog,
+      { rules: [{ line, never: { projects: ['p1'] } }] },
+      kinds
+    );
+    const only = driverCodingLines(catalog, { rules: [{ line, only: { projects: ['p1'] } }] });
+    expect(await decide(todo(), glm, never)).toEqual({
+      value: opus,
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: excluded by a rule.',
+    });
+    expect(kinds).toEqual([`coding.write ${repo} p1`]);
+    expect(await decide(todo('other'), glm, only)).toEqual({
+      value: opus,
+      note: 'Started on anthropic/claude-opus-5-5 via hyperneo instead of glm/glm-6 via hyperneo: excluded by a rule.',
+    });
+    db.prepare("UPDATE neo_asks SET project_id = 'p1' WHERE id = 'third'").run();
+    expect(await decide(todo('third'), glm, only)).toEqual({ value: glm });
+  });
+
+  const saveWrite = (db: ReturnType<typeof setup>['db'], model: string, effort: string) => {
+    const save = db.prepare(`INSERT INTO neo_pack_preferences
+      (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', ?, ?, ?, 'human', 1)`);
+    save.run(repo, 'write.model', JSON.stringify(model));
+    save.run(repo, 'write.effort', JSON.stringify(effort));
+  };
+  const routingOff = () => ({ ...driverCodingLines(catalog), active: () => false });
+  const bare = { verb: 'start' as const, adapter: 'hyperneo', name: 'backend' };
+
+  test('saved legacy write model and effort apply to a start that names neither, with routing off', async () => {
+    const { db, todo, decide } = setup();
+    saveWrite(db, 'glm-6', 'high');
+    expect(await decide(todo(), bare, routingOff())).toEqual({
+      value: { ...bare, model: 'glm-6', effort: 'high' },
+    });
+    expect(await decide(todo('other'), { ...glm, effort: 'low' }, routingOff())).toEqual({
+      value: { ...glm, effort: 'low' },
+    });
+    expect(await decide(todo('third'), start('desktop'), routingOff())).toEqual({
+      value: start('desktop'),
+    });
+    const remote = { ...bare, place: { machine: 'm', name: 'w', daemon: 'other-host' } };
+    expect(await decide(todo('fourth'), remote, routingOff())).toEqual({ value: remote });
+  });
+
+  test('a stale saved write model or effort is dropped, so the start still runs on the default', async () => {
+    const { db, todo, decide } = setup();
+    saveWrite(db, 'retired-9', 'bogus');
+    expect(await decide(todo(), bare, routingOff())).toEqual({ value: bare });
+    const other = setup();
+    saveWrite(other.db, 'retired-9', 'high');
+    expect(await other.decide(other.todo(), bare, routingOff())).toEqual({
+      value: { ...bare, effort: 'high' },
+    });
+  });
+
+  test('a ranked start reads its saved write values and line scope through the stage-target read op', async () => {
+    const { db, todo, decide } = setup();
+    const gateway = gatewayFor(db);
+    const call = gateway.call.bind(gateway);
+    const seen: string[] = [];
+    gateway.call = ((op: { name: string }, method: string, ...rest: unknown[]) => {
+      seen.push(`${op.name}.${method}`);
+      return (call as (...args: unknown[]) => unknown)(op, method, ...rest);
+    }) as typeof gateway.call;
+    expect(await decide(todo(), glm, driverCodingLines(catalog))).toEqual({ value: glm });
+    expect(seen).toEqual(
+      expect.arrayContaining([
+        'coding.stageTarget.reads.stagePreference',
+        'coding.stageTarget.reads.lineScope',
+      ])
+    );
+  });
+
+  test('an idle worker whose status names no provider is ranked as the line it resolves to', async () => {
+    const { db, todo, models, decide } = setup();
+    const prior = todo('other');
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+      prior.id,
+      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
+      JSON.stringify({ adapter: 'hyperneo', id: 'old-worker' })
+    );
+    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
+    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
+      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'old-worker' } },
+    });
+    models['old-worker'] = { model: 'glm-6' } as { model: string; provider: string };
+    const rules = [
+      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
+      value: { verb: 'start', model: 'claude-opus-5-5' },
+    });
+  });
+
+  test('a new feature does not reuse an idle worker on an excluded line; it starts on a usable one', async () => {
+    const { db, todo, models, decide } = setup();
+    const prior = todo('other');
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+      prior.id,
+      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
+      JSON.stringify({ adapter: 'hyperneo', id: 'glm-worker' })
+    );
+    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
+    models['glm-worker'] = { model: 'glm-6', provider: 'glm' };
+    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
+      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'glm-worker' } },
+    });
+    const rules = [
+      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
+    ];
+    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
+      value: { verb: 'start', adapter: 'hyperneo', model: 'claude-opus-5-5' },
+    });
+  });
+
+  test('a send to an existing session is not ranked', async () => {
+    const { todo, worked, decide } = setup();
+    const first = todo();
+    await decide(first, start('backend'));
+    worked(first, 'backend-1', 'backend', 'done');
+    const kinds: string[] = [];
+    expect(await decide(todo(), start(), routed(kinds, true))).toEqual({
+      value: { verb: 'send', ref: ref('backend-1') },
+    });
+    expect(kinds).toEqual([]);
+  });
+
   test('leaves a todo outside any coding repository to the target Neo chose', async () => {
     const { todo, decide } = setup();
     expect(await decide(todo('feature', ''), start('docs'))).toEqual({ value: start('docs') });
@@ -160,6 +367,31 @@ describe('coding session target decision', () => {
     live['backend-1'] = 'unreachable';
     expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
   });
+
+  test('an unreachable session shared with active work still blocks a fresh start', async () => {
+    const { todo, worked, live, decide } = setup();
+    worked(todo('other'), 'shared', 'backend', 'done');
+    worked(todo('other'), 'shared', 'backend', 'doing');
+    live.shared = 'unreachable';
+    expect(await decide(todo(), start('backend'))).toMatchObject({ reason: expect.any(String) });
+  });
+
+  test.each(['done', 'removed'] as const)(
+    'a %s owner keeps a live feature session but releases a missing one',
+    async (state) => {
+      const { todo, worked, live, decide } = setup();
+      const first = todo();
+      await decide(first, start('backend'));
+      worked(first, 'owner', 'backend', state);
+      expect(await decide(todo(), start('other'))).toEqual({
+        value: { verb: 'send', ref: ref('owner') },
+      });
+      live.owner = 'unreachable';
+      expect(await decide(todo(), start('other'))).toMatchObject({ reason: expect.any(String) });
+      live.owner = 'gone';
+      expect(await decide(todo(), start('other'))).toEqual({ value: start('other') });
+    }
+  );
 
   test('unrelated work reuses an idle session of its work type before starting one', async () => {
     const { todo, worked, live, decide } = setup();

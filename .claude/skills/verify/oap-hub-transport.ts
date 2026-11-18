@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
 import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
@@ -57,6 +58,7 @@ let client: OapHubClient | undefined;
 let releaseResult: (() => void) | undefined;
 const evidence: Record<string, unknown> = { synthetic: true, binaryVersion: version, binarySha256: sha256 };
 try {
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true },
     verbose: false,
@@ -77,7 +79,8 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP transport', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  await hub.request('providers.create', oxapCodexProvider);
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP transport', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   client = new OapHubClient({ command: binary, args: ['serve', '--stdio', '--config', config, '--session-history', join(run, 'hub/history.jsonl')], cwd: join(run, 'hub'), env: { HOME: join(run, 'hub'), CODEX_HOME: join(run, 'codex-home') } });
   await client.connect();
   const opened = await client.request('open', { adapter: 'codex', directory: join(run, 'workspace'), request: { protocol: 'open-agent-protocol', version: '0.1', profile: 'open-agent-protocol.agent-control-core', type: 'session.open.request', id: 'synthetic-open', payload: { session_id: sessionId } } }) as { payload?: { session_id?: string } };

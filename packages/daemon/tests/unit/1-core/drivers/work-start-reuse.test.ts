@@ -534,6 +534,22 @@ describe('work.start provider-aware reuse', () => {
   );
 });
 
+describe('work.start reuse for a shared model id whose default is not the first provider', () => {
+  test('a bare start may reuse any idle worker; the pinned selector starts fresh on another provider', async () => {
+    const config = {
+      adapter: 'hyperneo',
+      model: 'gpt-6.1-sol',
+      provider: 'first',
+      requestedProvider: 'second',
+    };
+    const bare = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
+    expect((await bare.start(neo, false, {})).value?.ref.id).toBe('idle-first');
+    const pinned = harness([{ id: 'idle-first', status: 'done' }], ['idle-first'], config);
+    expect((await pinned.start(neo, false, { model: 'Sol 6.1' })).value?.ref.id).toBe('fresh');
+    expect(pinned.sent).toEqual([]);
+  });
+});
+
 describe('work.start effort-only reuse', () => {
   test.each([
     { model: 'gpt-6.1-sol', unresolvedDefault: false, reuse: true },

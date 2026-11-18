@@ -329,7 +329,7 @@ describe('durable worker follow-ups', () => {
     }
   );
 
-  test.each(['todo', 'failed', 'blocked'] as const)(
+  test.each(['todo', 'blocked'] as const)(
     'a pre-start %s follow-up waiting for a busy worker sends no blocked report',
     async (state) => {
       const h = fixture();

@@ -31,6 +31,7 @@ import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { sessionSdkPath } from '../session/sdk-path.ts';
+import { decideSwitch, engineForProvider } from './session-engine.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
@@ -341,7 +342,13 @@ export class ModelSwitchHandler {
   }
 
   async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
-    const { session } = this.ctx;
+    const { session, db } = this.ctx;
+    const switched = decideSwitch(
+      session.config,
+      newProvider,
+      engineForProvider(newProvider, () => db.providers.getProviderByProviderId(newProvider))
+    );
+    if (switched !== true) return switched;
     const sessionApiKey =
       newProvider === session.config.provider ? session.config.providerConfig?.apiKey : undefined;
     return (await isValidModel(newModel, 'global', newProvider, sessionApiKey))

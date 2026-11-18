@@ -152,7 +152,7 @@ test('installed builtins keep identity and settings select without rebuilding th
 });
 
 test.each(
-  (['todo', 'doing', 'blocked', 'failed'] as const).flatMap((state) =>
+  (['todo', 'doing', 'blocked'] as const).flatMap((state) =>
     [
       { kind: 'yesno' as const, answer: 'no', via: 'button' as const },
       { kind: 'yesno' as const, answer: 'no', via: 'chat' as const },

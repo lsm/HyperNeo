@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
   DeviceKind,
@@ -5,8 +6,8 @@ import type {
 } from '../../storage/repositories/device-pairing-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { PairingLimiter } from './pairing-limiter.ts';
 import type { PairWaits } from './pair-waits.ts';
+import type { PairingLimiter } from './pairing-limiter.ts';
 import { createDeviceRevoker } from './revoke-device.ts';
 
 export const SESSION_DOOR_PRINCIPAL = 'session-door';
@@ -69,6 +70,10 @@ export function planPairingCode(
   return paired.humans === 0 ? { reason: NO_HUMAN_DEVICE } : { approved: false };
 }
 
+type Refusal = z.infer<typeof Refused>;
+type Gate<T> = { value: T } | { reason: Refusal };
+type Run<Result> = (input: unknown, caller: OperationCaller) => Promise<Awaited<Result> | Refusal>;
+
 export function createDevicePairingOperations({
   repo: pairing,
   limiter,
@@ -84,21 +89,170 @@ export function createDevicePairingOperations({
   const isPhone = (caller: OperationCaller) =>
     isPairedHuman(caller) && !caller.device?.deviceId.startsWith('local-rpc:');
   const isLocal = (caller: OperationCaller) => isLocalUser(caller) || fromDoor(caller);
-  const decidePending = async (
-    caller: OperationCaller,
-    notPaired: string,
-    codeId: string,
-    write: (deviceId: string) => Promise<string>,
-    door = false
-  ) => {
-    if (!isLocalUser(caller) && !(door && fromDoor(caller))) return refused;
-    if (caller.device?.kind !== 'human') return { ok: false as const, reason: notPaired };
-    const decided = await write(caller.device.deviceId);
-    waits.release(codeId);
-    if (decided === 'not_paired') return { ok: false as const, reason: notPaired };
-    const reason = DECIDED_REASON[decided];
-    return reason ? { ok: false as const, reason } : { ok: true as const };
-  };
+  const requireLocal = (caller: OperationCaller): Gate<OperationCaller> =>
+    isLocal(caller) ? { value: caller } : { reason: refused };
+  const admitDecision =
+    (notPaired: string, door: boolean) =>
+    (caller: OperationCaller): Gate<string> => {
+      if (!isLocalUser(caller) && !(door && fromDoor(caller))) return { reason: refused };
+      if (caller.device?.kind !== 'human') return { reason: { ok: false, reason: notPaired } };
+      return { value: caller.device.deviceId };
+    };
+  const settleDecision =
+    (notPaired: string) =>
+    (decided: string, input: { codeId: string }): { ok: true } | Refusal => {
+      waits.release(input.codeId);
+      if (decided === 'not_paired') return { ok: false, reason: notPaired };
+      const reason = DECIDED_REASON[decided];
+      return reason ? { ok: false, reason } : { ok: true };
+    };
+
+  const createCode = (
+    input: { kind: DeviceKind; name?: string; confirm?: 'two-way' },
+    caller: OperationCaller
+  ) =>
+    pairing().createCodeAsync({
+      kind: input.kind,
+      name: input.name ?? null,
+      caller: {
+        source: caller.source,
+        principal: caller.principal,
+        device: caller.device
+          ? { deviceId: caller.device.deviceId, kind: caller.device.kind }
+          : undefined,
+      },
+      now: now(),
+      twoWay: input.confirm === 'two-way',
+    });
+  const create = (superpipe({})('device.pair.create') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(createCode, ['input', 'caller'], 'created')
+    .endAsync('created') as Run<ReturnType<typeof createCode>>;
+
+  const listPending = () => ({ ok: true as const, pending: pairing().listPending(now()) });
+  const pending = (superpipe({})('device.pair.pending') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller): Gate<OperationCaller> =>
+        isPhone(caller) ||
+        (isLocal(caller) && caller.device?.kind === 'human' && pairing().terminalMayApprove())
+          ? { value: caller }
+          : { reason: { ok: false, reason: NEEDS_PAIRED_HUMAN } },
+      'caller',
+      'result:pending'
+    )
+    .pipe(listPending, 'caller', 'pending')
+    .endAsync('pending') as Run<ReturnType<typeof listPending>>;
+
+  const approve = (superpipe({})('device.pair.approve') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitDecision(ALLOW_NEEDS_PAIRED_HUMAN, true), 'caller', 'result:approved')
+    .pipe(
+      (
+        deviceId: string,
+        input: { codeId: string; confirmCode?: string },
+        caller: OperationCaller
+      ) =>
+        pairing().approveAsync({
+          codeId: input.codeId,
+          deviceId,
+          door: fromDoor(caller),
+          confirmCode: input.confirmCode,
+          now: now(),
+        }),
+      ['approved', 'input', 'caller'],
+      'decided'
+    )
+    .pipe(settleDecision(ALLOW_NEEDS_PAIRED_HUMAN), ['decided', 'input'], 'approved')
+    .endAsync('approved') as Run<{ ok: true }>;
+
+  const readTerminalApproval = () => ({ ok: true as const, enabled: pairing().terminalApproval() });
+  const terminalApprovalGet = (superpipe({})('device.pair.terminal_approval.get') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:approval')
+    .pipe(readTerminalApproval, 'caller', 'approval')
+    .endAsync('approval') as Run<ReturnType<typeof readTerminalApproval>>;
+
+  const terminalApprovalSet = (superpipe({})('device.pair.terminal_approval.set') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:approval')
+    .pipe(
+      (input: { enabled: boolean }, caller: OperationCaller): Gate<string> =>
+        input.enabled && !isPhone(caller)
+          ? { reason: { ok: false, reason: TERMINAL_APPROVAL_NEEDS_PHONE } }
+          : { value: caller.device?.deviceId ?? caller.sessionId ?? caller.source },
+      ['input', 'caller'],
+      'result:approval'
+    )
+    .pipe(
+      async (input: { enabled: boolean }, changedBy: string) =>
+        (await pairing().setTerminalApprovalAsync(input.enabled, changedBy, now()))
+          ? { ok: true as const, enabled: input.enabled }
+          : { ok: false as const, reason: TERMINAL_APPROVAL_NEEDS_PHONE },
+      ['input', 'approval'],
+      'approval'
+    )
+    .endAsync('approval') as Run<{ ok: true; enabled: boolean }>;
+
+  const deny = (superpipe({})('device.pair.deny') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(admitDecision(DENY_NEEDS_PAIRED_HUMAN, false), 'caller', 'result:denied')
+    .pipe(
+      (deviceId: string, input: { codeId: string }) =>
+        pairing().denyAsync(input.codeId, deviceId, now()),
+      ['denied', 'input'],
+      'decided'
+    )
+    .pipe(settleDecision(DENY_NEEDS_PAIRED_HUMAN), ['decided', 'input'], 'denied')
+    .endAsync('denied') as Run<{ ok: true }>;
+
+  const listDevices = (caller: OperationCaller) => ({
+    ok: true as const,
+    devices: pairing()
+      .listDevices()
+      .map((device) => ({ ...device, current: device.id === caller.device?.deviceId })),
+  });
+  const list = (superpipe({})('device.list') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:devices')
+    .pipe(
+      (caller: OperationCaller): Gate<OperationCaller> =>
+        fromDoor(caller) || isPairedHuman(caller)
+          ? { value: caller }
+          : { reason: { ok: false, reason: NEEDS_PAIRED_HUMAN } },
+      'caller',
+      'result:devices'
+    )
+    .pipe(listDevices, 'caller', 'devices')
+    .endAsync('devices') as Run<ReturnType<typeof listDevices>>;
+
+  const listUnpaired = () => ({ ok: true as const, connections: pairing().listUnpaired() });
+  const unpaired = (superpipe({})('device.unpaired.list') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:connections')
+    .pipe(listUnpaired, 'caller', 'connections')
+    .endAsync('connections') as Run<ReturnType<typeof listUnpaired>>;
+
+  const listWouldRefuse = () => ({ ok: true as const, requests: pairing().listWouldRefuse() });
+  const wouldRefuse = (superpipe({})('device.would_refuse.list') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:requests')
+    .pipe(listWouldRefuse, 'caller', 'requests')
+    .endAsync('requests') as Run<ReturnType<typeof listWouldRefuse>>;
+
+  const resetLockout = (superpipe({})('device.pair.reset_lockout') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(requireLocal, 'caller', 'result:reset')
+    .pipe(
+      () => {
+        limiter.reset();
+        return { ok: true as const };
+      },
+      'caller',
+      'reset'
+    )
+    .endAsync('reset') as Run<{ ok: true }>;
+
   return [
     defineOperation({
       name: 'device.pair.create',
@@ -122,20 +276,7 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (input, caller) =>
-        pairing().createCodeAsync({
-          kind: input.kind,
-          name: input.name ?? null,
-          caller: {
-            source: caller.source,
-            principal: caller.principal,
-            device: caller.device
-              ? { deviceId: caller.device.deviceId, kind: caller.device.kind }
-              : undefined,
-          },
-          now: now(),
-          twoWay: input.confirm === 'two-way',
-        }),
+      execute: (input, caller) => create(input, caller),
     }),
     defineOperation({
       name: 'device.pair.pending',
@@ -160,11 +301,7 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (_input, caller) =>
-        isPhone(caller) ||
-        (isLocal(caller) && caller.device?.kind === 'human' && pairing().terminalMayApprove())
-          ? { ok: true as const, pending: pairing().listPending(now()) }
-          : { ok: false as const, reason: NEEDS_PAIRED_HUMAN },
+      execute: (input, caller) => pending(input, caller),
     }),
     defineOperation({
       name: 'device.pair.approve',
@@ -178,21 +315,7 @@ export function createDevicePairingOperations({
         })
         .strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: (input, caller) =>
-        decidePending(
-          caller,
-          ALLOW_NEEDS_PAIRED_HUMAN,
-          input.codeId,
-          (deviceId) =>
-            pairing().approveAsync({
-              codeId: input.codeId,
-              deviceId,
-              door: fromDoor(caller),
-              confirmCode: input.confirmCode,
-              now: now(),
-            }),
-          true
-        ),
+      execute: (input, caller) => approve(input, caller),
     }),
     defineOperation({
       name: 'device.pair.terminal_approval.get',
@@ -201,8 +324,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true), enabled: z.boolean() }), Refused]),
-      execute: async (_input, caller) =>
-        isLocal(caller) ? { ok: true as const, enabled: pairing().terminalApproval() } : refused,
+      execute: (input, caller) => terminalApprovalGet(input, caller),
     }),
     defineOperation({
       name: 'device.pair.terminal_approval.set',
@@ -211,15 +333,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ enabled: z.boolean() }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true), enabled: z.boolean() }), Refused]),
-      execute: async (input, caller) => {
-        if (!isLocal(caller)) return refused;
-        if (input.enabled && !isPhone(caller))
-          return { ok: false as const, reason: TERMINAL_APPROVAL_NEEDS_PHONE };
-        const changedBy = caller.device?.deviceId ?? caller.sessionId ?? caller.source;
-        return (await pairing().setTerminalApprovalAsync(input.enabled, changedBy, now()))
-          ? { ok: true as const, enabled: input.enabled }
-          : { ok: false as const, reason: TERMINAL_APPROVAL_NEEDS_PHONE };
-      },
+      execute: (input, caller) => terminalApprovalSet(input, caller),
     }),
     defineOperation({
       name: 'device.pair.deny',
@@ -227,10 +341,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({ codeId: z.string().min(1) }).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: (input, caller) =>
-        decidePending(caller, DENY_NEEDS_PAIRED_HUMAN, input.codeId, (deviceId) =>
-          pairing().denyAsync(input.codeId, deviceId, now())
-        ),
+      execute: (input, caller) => deny(input, caller),
     }),
     defineOperation({
       name: 'device.list',
@@ -256,17 +367,7 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (_input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        if (!fromDoor(caller) && !isPairedHuman(caller))
-          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
-        return {
-          ok: true as const,
-          devices: pairing()
-            .listDevices()
-            .map((device) => ({ ...device, current: device.id === caller.device?.deviceId })),
-        };
-      },
+      execute: (input, caller) => list(input, caller),
     }),
     defineOperation({
       name: 'device.unpaired.list',
@@ -292,10 +393,7 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (_input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        return { ok: true as const, connections: pairing().listUnpaired() };
-      },
+      execute: (input, caller) => unpaired(input, caller),
     }),
     defineOperation({
       name: 'device.would_refuse.list',
@@ -320,10 +418,7 @@ export function createDevicePairingOperations({
         }),
         Refused,
       ]),
-      execute: async (_input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        return { ok: true as const, requests: pairing().listWouldRefuse() };
-      },
+      execute: (input, caller) => wouldRefuse(input, caller),
     }),
     defineOperation({
       name: 'device.revoke',
@@ -340,11 +435,7 @@ export function createDevicePairingOperations({
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
-      execute: async (_input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        limiter.reset();
-        return { ok: true as const };
-      },
+      execute: (input, caller) => resetLockout(input, caller),
     }),
   ];
 }

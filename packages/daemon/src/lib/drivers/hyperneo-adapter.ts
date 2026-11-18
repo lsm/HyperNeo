@@ -851,7 +851,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     resolveStartConfiguration: async (request) => {
       const result = await requireHyperneoStartConfiguration(request, deps);
       if ('reason' in result) return result.reason;
-      if (request.model === undefined && request.effort !== undefined) {
+      if (request.model === undefined) {
         const model = await deps.sessions.resolveDefaultModel?.();
         return model
           ? { ok: true, value: { ...result.value, model: model.id, provider: model.provider } }

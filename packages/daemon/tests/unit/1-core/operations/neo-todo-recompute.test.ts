@@ -257,11 +257,11 @@ describe('ordered ask progression from facts', () => {
   );
 
   test.each(['failed', 'blocked'] as const)(
-    '%s does not advance to a later todo',
+    'a %s check does not advance to a later todo',
     async (state) => {
       const f = fixture();
       f.add('previous', 'done');
-      f.add('first', state);
+      f.add('first', 'blocked');
       f.add('next');
       f.facts.set(
         'first',
@@ -270,7 +270,7 @@ describe('ordered ask progression from facts', () => {
           : { state: 'blocked', reason: 'Synthetic blocker' }
       );
       await f.refresh();
-      expect(f.store.getTodo('first')?.state).toBe(state);
+      expect(f.store.getTodo('first')?.state).toBe('blocked');
       expect(f.store.getTodo('next')?.state).toBe('todo');
       expect(f.starts).toHaveLength(0);
     }

@@ -88,7 +88,7 @@ export function readNeoConversationPage<T extends { sequence: number }>(
   };
 }
 
-export const readNeoPublicationPage = (superpipe({})('neo-publication-read') as PipelineAPI)
+export const readNeoPublicationPage = (superpipe({})('neo.publication.read') as PipelineAPI)
   .input(['page', 'caller', 'repo', 'ledger'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository) =>

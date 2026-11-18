@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import { generateUUID, type Session } from '@hyperneo/shared';
+import { generateUUID, type ProviderRecord, type Session } from '@hyperneo/shared';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OapQueryRuntime } from '../agent/query-runner.ts';
@@ -9,6 +9,7 @@ import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
 import type { OapQueryHub } from './oap-query.ts';
 import { withOapRecovery } from './oap-recovery.ts';
 import { openOapSession, type OapReopenStore, type OapReopenEvents } from './oap-reopen.ts';
+import { decideOxapOpen } from '../agent/session-engine.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -18,11 +19,16 @@ function validateSession(session: Session): { sessionId: string; directory: stri
   return { sessionId: session.id, directory };
 }
 
-function openPlan(input: { sessionId: string; directory: string }, id: string): OpenPlan {
+function openPlan(
+  input: { sessionId: string; directory: string },
+  id: string,
+  open: { adapter: string } | string
+): OpenPlan {
+  if (typeof open === 'string') throw new Error(open);
   return {
     ...input,
     request: {
-      adapter: 'codex',
+      adapter: open.adapter,
       directory: input.directory,
       request: {
         protocol: 'open-agent-protocol',
@@ -37,10 +43,15 @@ function openPlan(input: { sessionId: string; directory: string }, id: string): 
 }
 
 const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
-  .input(['session', 'id'])
+  .input(['session', 'id', 'record'])
   .pipe(validateSession, 'session', 'placement')
-  .pipe(openPlan, ['placement', 'id'], 'plan')
-  .end('plan') as (session: Session, id: string) => OpenPlan;
+  .pipe(
+    (session: Session, record: ProviderRecord | null) => decideOxapOpen(session.config, record),
+    ['session', 'record'],
+    'open'
+  )
+  .pipe(openPlan, ['placement', 'id', 'open'], 'plan')
+  .end('plan') as (session: Session, id: string, record: ProviderRecord | null) => OpenPlan;
 
 type SessionSlot = {
   session: Session;
@@ -99,10 +110,11 @@ const clearSession = (superpipe({})('oap.runtime.clear') as PipelineAPI)
 
 export function createOapRuntime(
   engine: OapEngine,
-  options?: OapEngineOptions,
+  hubOptions?: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
   events?: InternalEventBus<DaemonInternalEventMap>,
   db?: OapReopenStore,
-  messageHub?: OapReopenEvents
+  messageHub?: OapReopenEvents,
+  providerRecord: (providerId: string) => ProviderRecord | null = () => null
 ): (session: Session) => OapQueryRuntime {
   const sessions = new Map<string, SessionSlot>();
   events?.subscribe(
@@ -140,9 +152,14 @@ export function createOapRuntime(
       get hub() {
         return (async () => {
           if (!slot || slot.deleted) throw new Error('Codex session was deleted or is unavailable');
-          if (!options) throw new Error('Codex OAP configuration is incomplete');
+          if (!hubOptions?.installed())
+            throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
           if (!db || !messageHub) throw new Error('Codex OAP session storage is unavailable');
-          const plan = prepareOpen(session, generateUUID());
+          const plan = prepareOpen(
+            session,
+            generateUUID(),
+            session.config.provider ? providerRecord(session.config.provider) : null
+          );
           if (slot.directory && slot.directory !== plan.directory) {
             throw new Error('Codex session workspace changed; reopen is required');
           }
@@ -155,7 +172,7 @@ export function createOapRuntime(
           if (!slot.opening) {
             slot.directory = plan.directory;
             slot.opening = engine
-              .getHub(options)
+              .getHub(hubOptions.read)
               .then(async (client) => {
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.client = client;

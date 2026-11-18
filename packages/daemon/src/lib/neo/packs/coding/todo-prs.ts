@@ -510,7 +510,7 @@ export function createCodingTodoPolicy(
       const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
       const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
       for (const peer of peers) {
-        if (peer.id === draft.id || ['done', 'removed', 'failed'].includes(peer.state)) continue;
+        if (peer.id === draft.id || ['done', 'removed'].includes(peer.state)) continue;
         const named =
           peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
             ? peer.check.params.urls

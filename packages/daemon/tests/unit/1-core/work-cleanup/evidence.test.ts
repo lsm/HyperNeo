@@ -27,6 +27,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const realNow = Date.now;
@@ -221,6 +222,7 @@ describe('createWorkCleanupRuntime', () => {
     mkdirSync(join(locked, 'tree'), { recursive: true });
     chmodSync(locked, 0o000);
     const worker = (todoId: string, id: string, directory: string) => {
+      recordWorkerStarted(db, { adapter: 'codex-desktop', id });
       mkdirSync(directory, { recursive: true });
       const finished = todos.addTodo(
         todoId,

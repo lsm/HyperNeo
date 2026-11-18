@@ -9,7 +9,7 @@ import { type NeoStepFacts, nextStepOwner } from './owner.ts';
 export type NeoStepRow = { todo: NeoTodo; facts: Omit<NeoStepFacts, 'todo'> };
 export type NeoStepRead = { todo: NeoTodo; facts: Omit<NeoStepFacts, 'todo' | 'now'> };
 type Facts = ReturnType<NeoTodoSessionRepository['neoStepFacts']>;
-type Limits = { running: number; perGroup: number };
+type Limits = { running: number; perGroup: number; hold?: string | null };
 
 const owner = ({ todo, facts }: NeoStepRow) => nextStepOwner({ ...facts, todo });
 

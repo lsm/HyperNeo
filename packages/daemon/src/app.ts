@@ -18,6 +18,7 @@ import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { releaseFailedStartup } from './lib/startup-cleanup.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createSetupRoute, mintSetupToken, type SetupLink } from './lib/pairing/setup-token.ts';
 import { createPair2Route } from './lib/pairing/pair2-route.ts';
 import { createAskMarkdownHandler } from './lib/neo/ask-markdown.ts';
 import { createRequestGuard } from './lib/pairing/origin-host.ts';
@@ -139,7 +140,7 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   armStallDetectionWhenStartupSettles,
   startEventLoopWatchdog,
@@ -211,6 +212,10 @@ import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 import { OapEngine } from './lib/oap/oap-engine.ts';
 import { createOapRuntime } from './lib/oap/oap-query.ts';
+import { readHubOptions, type OxapSettingsDeps } from './lib/oap/oxap-settings.ts';
+import { installOxapHub } from './lib/oap/oxap-install.ts';
+import { getDataDir } from './lib/data-dir.ts';
+import { providerRpcWrites, providerWriter } from './storage/repositories/provider-rpc-writes.ts';
 
 const mailboxLog = new Logger('mailbox');
 
@@ -363,8 +368,10 @@ export interface CreateDaemonAppOptions {
 
 export interface DaemonAppContext {
   oapEngine: OapEngine;
+  oxapSettings: OxapSettingsDeps;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
+  handleSetup: (req: Request) => Promise<Response>;
   handlePair2: ((req: Request, remoteAddress: string | null) => Promise<Response>) | null;
   handleAskMarkdown: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
   handleMessageImage: (req: Request, remoteAddress: string | null) => Promise<Response | null>;
@@ -810,6 +817,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logScratchError(error);
     }
 
+    const oxapStateDirectory = join(getDataDir(), 'oap');
+    const oxapSettings: OxapSettingsDeps = {
+      settings: () => settingsManager.getGlobalSettings(),
+      writeHub: (oxapHub) => settingsManager.updateGlobalSettings({ oxapHub }),
+      records: () => db.providers.listProviders(),
+      writeProvider: async (id, configJson) => {
+        await providerWriter(db.providers).call(providerRpcWrites, 'updateProvider', id, {
+          configJson,
+        });
+      },
+      key: async (providerId) => {
+        const credentials = await credentialManager.getCredentials(providerId);
+        return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
+      },
+      install: (installed) => installOxapHub(join(oxapStateDirectory, 'install'), installed),
+      engine: oapEngine,
+      stateDirectory: oxapStateDirectory,
+      environment: process.env,
+    };
     startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
@@ -833,7 +859,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
         ),
-      createOapRuntime(oapEngine, config.oap, internalEventBus, reactiveDb.db, messageHub)
+      createOapRuntime(
+        oapEngine,
+        {
+          installed: () => !!oxapSettings.settings().oxapHub,
+          read: () => readHubOptions(oxapSettings),
+        },
+        internalEventBus,
+        reactiveDb.db,
+        messageHub,
+        (providerId) => db.providers.getProviderByProviderId(providerId)
+      )
     );
 
     sessionManager.setLoginRecovery(loginRecoveryPort);
@@ -1164,6 +1200,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         liveQueries,
         skillsManager,
         mcpImportService,
+        oxapSettings,
       },
       spaceModule && spaceManager && spaceExternalEvents
         ? (rpcDeps, host) =>
@@ -1238,6 +1275,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       limiter: daemonPairingLimiter,
       now: Date.now,
       waits: daemonPairWaits,
+    });
+    let setupLink: SetupLink | null = null;
+    const handleSetup = createSetupRoute({
+      db: db.gateway,
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+      link: () => setupLink,
     });
     const authenticateUpgrade = createUpgradeAuthenticator({
       db: () => db.gateway,
@@ -1383,6 +1427,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
 
         if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
+        if (url.pathname === '/setup' && req.method === 'POST') return handleSetup(req);
         if (handlePair2 && url.pathname.startsWith('/pair2/'))
           return handlePair2(req, client?.remoteAddress ?? null);
         if (url.pathname === '/neo-peer/message' && req.method === 'POST')
@@ -1431,12 +1476,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
-    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR)
+    if (process.env.NODE_ENV !== 'test' || process.env.HYPERNEO_DATA_DIR) {
       await ensureLocalCredential(
         db.gateway,
         'agent',
         new URL(`http://${dialableHost(config.host)}:${server.port}`).origin
       );
+      setupLink = await mintSetupToken(db.gateway);
+    }
 
     startupTimer.start('post-bind jobs + background services');
     void db.startSdkMessageColumnsBackfill(() => {
@@ -1815,8 +1862,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     return {
       oapEngine,
+      oxapSettings,
       server,
       handlePair,
+      handleSetup,
       handlePair2,
       handleAskMarkdown,
       handleMessageImage,

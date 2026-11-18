@@ -64,6 +64,32 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+describe('session tool preference writer on an OXAP chat', () => {
+  it('refuses tool, skill and MCP preferences before it writes', async () => {
+    const OXAP = 'writer-oxap';
+    const config = {
+      ...createTestSession(OXAP).config,
+      provider: 'anthropic-codex',
+      harness: 'oxap-codex',
+    } as const;
+    repo.createSession({ ...createTestSession(OXAP), config });
+    const before = repo.getSession(OXAP)!.config;
+    for (const request of [
+      { kind: 'skills', disabledSkills: [] },
+      { kind: 'mcp', serverId: 'browser', enabled: true },
+      { kind: 'mcp', serverId: 'browser', enabled: null },
+    ] as const) {
+      expect(await write(OXAP, request, { disabledSkills: [] })).toEqual({
+        ok: false,
+        reason: 'harness_unsupported',
+      });
+    }
+    expect(repo.getSession(OXAP)!.config).toEqual(before);
+    expect(data.mcpEnablement.getOverride('session', OXAP, 'browser')).toBeNull();
+    expect(notices).toEqual([]);
+  });
+});
+
 describe('session tool preference writer', () => {
   it('stores a multi-skill save with canonical choices and preserves aliases/native settings', async () => {
     const tools = { disabledSkills: [], useClaudeCodePreset: false };

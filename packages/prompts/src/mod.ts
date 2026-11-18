@@ -161,6 +161,7 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 };
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
+import mdgoalsSessionCycle from './goals/session-cycle.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
 import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
 import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
@@ -196,6 +197,7 @@ import mdToolAskOpen from './neo/tools/neo.ask.open.md' with { type: 'text' };
 import mdToolAskOutcome from './neo/tools/neo.ask.outcome.md' with { type: 'text' };
 import mdToolAskTopic from './neo/tools/neo.ask.topic.md' with { type: 'text' };
 import mdToolAskSettle from './neo/tools/neo.ask.settle.md' with { type: 'text' };
+import mdToolTopicMerge from './neo/tools/neo.topic.merge.md' with { type: 'text' };
 import mdToolConversationAsksRead from './neo/tools/neo.conversation.asks.read.md' with {
   type: 'text',
 };
@@ -437,6 +439,7 @@ const registry: Record<string, string> = {
   'agent/task-notification-continue.md': mdagentTaskNotificationContinue,
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
+  'goals/session-cycle.md': mdgoalsSessionCycle,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
   'drivers/codex-worker.md': mddriversCodexWorker,
   'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
@@ -509,6 +512,7 @@ export const {
   NEO_PACK_DELEGATION_INSTRUCTIONS,
   NEO_SESSION_TRACK,
   NEO_GOAL_CYCLE,
+  GOAL_SESSION_CYCLE,
   NEO_QUICK_ACK,
   NEO_QUICK_ACK_LISTENING,
   NEO_FOCUSED_DISCUSSION,
@@ -659,6 +663,7 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.ask.outcome.md': mdToolAskOutcome,
     'neo/tools/neo.ask.topic.md': mdToolAskTopic,
     'neo/tools/neo.ask.settle.md': mdToolAskSettle,
+    'neo/tools/neo.topic.merge.md': mdToolTopicMerge,
     'neo/tools/neo.conversation.asks.read.md': mdToolConversationAsksRead,
     'neo/tools/neo.conversation.image.read.md': mdToolConversationImageRead,
     'neo/tools/neo.question.answer.md': mdToolQuestionAnswer,

@@ -6,8 +6,10 @@ Use the shared isolated daemon setup in `../SKILL.md`.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding-stage-preferences.ts
 ```
 
-The helper saves all nine Write/Review/Verify preferences through authenticated
-WebSocket RPC, rejects invalid values and checks human provenance after restart.
+The helper saves the six Write/Review/Verify harness and effort preferences
+through authenticated WebSocket RPC, refuses model keys (model choices are
+model-routing routes), rejects invalid values and checks human provenance after
+restart. A saved legacy model row is seeded directly and still read.
 It exercises the retained Verify assignment selector directly through the daemon
 DB gateway for default-first ordering, preferred targets and fallback explanations.
 An unanswered repository retains its default without saving values.
