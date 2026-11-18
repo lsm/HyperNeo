@@ -84,14 +84,21 @@ which free worker another todo may reuse (rule 2 below):
     `proposalLocale` uses the machine locale, which produced an English card for a human
     who writes to Neo in Chinese; with `system` it uses the language of the human's latest
     message to Neo instead, and the machine locale only when there is none.
-- It applies in `reuseIdleWorker` (`drivers/work-operations.ts`) through the candidate
-  filter of `chooseReusableWorker`. "Worked on this ask" reads `neo_todo_sessions` until
+- It applies in `reuseIdleWorker` (`drivers/work-operations.ts`). For `long_lived` and
+  `per_todo` it is a candidate filter of `chooseReusableWorker`, which sees free workers
+  only. For `per_ask` the fact step also reads the ask's workers that are busy (daemon
+  workers that worked on the ask, with their `work.status`). When no free one qualifies
+  and one is busy, the decision is "wait": the start is queued on that worker through
+  the existing todo queue (`todoWorker.wait`, the path `requireFreeWorker` already takes
+  for a busy send) instead of returning null and starting new. "Worked on this ask" reads `neo_todo_sessions` until
   PR 4, then `neo_todo_roles`.
-- Saved coding `sessionStrategy` values move once: a repository value to each project
+- Saved coding `sessionStrategy` values are copied once: a repository value to each project
   that owns the repository (the most recently set wins when one project owns several), a
   global value to global. A repository with no owning project is reported to Neo and not
   moved. `long_lived` → `long_lived`, `per_task` → `per_todo`, `per_pr` → `per_todo` (a
-  PR is one todo). The coding pack stops asking its own question in this PR.
+  PR is one todo). The old rows stay until PR 2, which removes the pack's read of them in
+  the same change, so no repository falls back to `long_lived` in between. The coding pack
+  stops asking its own question in this PR.
 
 **PR 2: the coding pack stops picking sessions.** Mostly deletions.
 
