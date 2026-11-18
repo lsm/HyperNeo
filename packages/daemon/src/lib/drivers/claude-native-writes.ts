@@ -182,7 +182,12 @@ export async function readClaudeWorkerSandbox(directory: string | undefined, dae
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
     throw error;
   });
-  if (marker === null) return null;
+  if (marker === null) {
+    const settings = await readClaudeWorkSettings(directory).catch(() => null);
+    if (settings?.existing.env?.HYPERNEO_EVIDENCE !== undefined)
+      await (await prepareClaudeWorkEnvironment(directory))();
+    return null;
+  }
   const { roots } = Marker.parse(JSON.parse(marker));
   const existing = await readFile(settingsPath(directory), 'utf8')
     .then(JSON.parse)
@@ -233,9 +238,11 @@ export async function prepareClaudeWorkEnvironment(directory: string) {
     await queueSettingsWrite(path, async () => {
       const { folder, existing } = await readClaudeWorkSettings(directory);
       await mkdir(folder, { recursive: true });
+      const env: Record<string, unknown> = { ...existing.env, ...workerWorkEnvironment(directory) };
+      delete env.HYPERNEO_EVIDENCE;
       await writeAtomic(path, {
         ...existing,
-        env: { ...existing.env, ...workerWorkEnvironment(directory) },
+        env,
       });
     });
   };

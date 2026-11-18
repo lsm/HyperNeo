@@ -17,7 +17,7 @@ import {
   planWorkPlacement,
   procFolderInUse,
 } from '../../../../src/lib/drivers/work-placement';
-import { workerWorkLocations } from '../../../../src/lib/work-locations';
+import { workerWorkKey, workerWorkLocations } from '../../../../src/lib/work-locations';
 
 const runs: string[] = [];
 afterEach(() => {
@@ -122,6 +122,11 @@ describe('archive removes the worker work folders', () => {
     process.env.HYPERNEO_DATA_DIR = priorDataDir;
   });
 
+  const locationsWithLegacyEvidence = (root: string) => ({
+    ...workerWorkLocations(root),
+    evidence: join(process.env.HYPERNEO_DATA_DIR!, 'work', 'evidence', workerWorkKey(root)),
+  });
+
   function setup(label: string) {
     const run = realpathSync(mkdtempSync(join(tmpdir(), `worker-folders-${label}-`)));
     runs.push(run);
@@ -132,13 +137,13 @@ describe('archive removes the worker work folders', () => {
     const sibling = join(workers, 'sibling');
     parent.git('worktree', 'add', '--detach', folder, 'HEAD');
     for (const root of [folder, sibling]) {
-      const places = workerWorkLocations(root);
+      const places = locationsWithLegacyEvidence(root);
       for (const place of [places.builds, places.scratch, places.ghConfig, places.evidence]) {
         mkdirSync(place, { recursive: true });
         writeFileSync(join(place, 'synthetic'), 'synthetic');
       }
     }
-    return { run, parent, workers, folder, places: workerWorkLocations(folder), sibling };
+    return { run, parent, workers, folder, places: locationsWithLegacyEvidence(folder), sibling };
   }
 
   test('a removed worktree takes its builds, scratch and gh-config folders with it', async () => {
@@ -151,7 +156,7 @@ describe('archive removes the worker work folders', () => {
     expect(existsSync(places.scratch)).toBe(false);
     expect(existsSync(places.ghConfig)).toBe(false);
     expect(readFileSync(join(places.evidence, 'synthetic'), 'utf8')).toBe('synthetic');
-    const others = workerWorkLocations(sibling);
+    const others = locationsWithLegacyEvidence(sibling);
     for (const place of [others.builds, others.scratch, others.ghConfig, others.evidence])
       expect(readFileSync(join(place, 'synthetic'), 'utf8')).toBe('synthetic');
     expect(await cleanupOwnedWorktree(folder, [workers])).toEqual({
