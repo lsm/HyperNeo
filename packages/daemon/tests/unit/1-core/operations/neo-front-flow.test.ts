@@ -13,6 +13,7 @@ import { createNeoService } from '../../helpers/neo-service.ts';
 import { createNeoFrontHandler } from '../../../../src/lib/neo/front-job.ts';
 import { handOffToNeo } from '../../../../src/lib/neo/front-handoff.ts';
 import { createNeoRetryOperation } from '../../../../src/lib/neo/retry-operation.ts';
+import { createNeoConversationAskReadOperation } from '../../../../src/lib/neo/conversation-ask-read-operation.ts';
 import { settleConvoInput } from '../../../../src/lib/neo/front-outcome.ts';
 import { neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { frontSession } from '../../../../src/lib/neo/front-session.ts';
@@ -2849,4 +2850,77 @@ test('retry keeps the quoted question, answers it, and gives Neo its reference',
   );
   expect(delivered).toContain('<reference');
   expect(delivered).toContain('Which report?');
+});
+
+test('a retried photo keeps the original thumbnail in the public conversation', async () => {
+  const id = crypto.randomUUID();
+  const content = [
+    { type: 'text' as const, text: 'Compare these photos' },
+    {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'AAAA' },
+    },
+    {
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'AAAA' },
+    },
+  ];
+  await service.asks.acceptPrompt(
+    conversationId,
+    neoIntakeMessage({ sessionId: root, requestId: id, content }),
+    'immediate',
+    db.getSDKMessageRepo(),
+    db.getJobQueueRepo()
+  );
+  service.asks.recordImages(conversationId, id, [
+    { index: 1, width: 64, height: 48, thumbnail: { mediaType: 'image/jpeg', data: 'dGh1bWI=' } },
+    { index: 2, width: null, height: null, thumbnail: null },
+  ]);
+  expect(new NeoFrontInputRepository(db.getDatabase()).claim(conversationId, [id], 'neo')).toBe(
+    'claimed'
+  );
+  await db.saveUserMessage(
+    root,
+    neoIntakeMessage({ sessionId: root, requestId: id, content }),
+    'consumed'
+  );
+  await db.saveSDKMessage(root, {
+    type: 'result',
+    subtype: 'success',
+    uuid: crypto.randomUUID(),
+    session_id: root,
+    is_error: true,
+    api_error_status: 400,
+    result: 'Provider refused',
+    user_message_uuid: id,
+  } as import('@hyperneo/shared/sdk').SDKMessage);
+  const result = (await createNeoRetryOperation(service).execute(
+    { conversationId, requestId: id },
+    { source: 'rpc', principal: 'local' }
+  )) as { accepted: true; requestId: string } | { accepted: false; reason: string };
+  expect(result.accepted).toBe(true);
+  if (!result.accepted) throw new Error(result.reason);
+  const operation = createNeoConversationAskReadOperation(service.repo, service.asks);
+  const page = await operation.execute(
+    { conversationId, after: 0, limit: 50, imageRefs: true },
+    { source: 'rpc', principal: 'local' }
+  );
+  expect(page).toMatchObject({
+    ok: true,
+    items: expect.arrayContaining([
+      expect.objectContaining({
+        requestId: result.requestId,
+        content: [
+          expect.anything(),
+          expect.objectContaining({
+            type: 'image_ref',
+            thumbnail: { mediaType: 'image/jpeg', data: 'dGh1bWI=' },
+            width: 64,
+            height: 48,
+          }),
+          expect.objectContaining({ type: 'image_ref', thumbnail: null }),
+        ],
+      }),
+    ]),
+  });
 });
