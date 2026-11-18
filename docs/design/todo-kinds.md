@@ -10,8 +10,8 @@ A design or plan is finished only when the work it describes is filed and done. 
 - A todo counts as producing more work only if Neo sets `producesFollowUp` on
   `neo.todo.add` (`todo-operations.ts`). If Neo forgets, nothing checks, and a design with
   four planned steps can end after step 1.
-- The follow-up guard (`todo-follow-up.ts`) runs only when the ask settles and looks only
-  at the ask's last todo, so a later unrelated todo or a removed follow-up passes it.
+- The follow-up guard (`todo-follow-up.ts`) needs only one live dependent todo, however
+  many steps the design described, and nothing checks that the filed steps match it.
 - Review requirements are per repository (`neo_pack_preferences`). Turning cross-model
   review off for small fixes also turns it off for designs.
 
@@ -34,13 +34,14 @@ A check stops counting when the steps change.
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
 plan, its live steps, its check and its answered cards, and returns the first unmet
 requirement or null. A fact step reads those; the function is the only rule. It replaces
-`neoTodoFollowUpRefusal` and is called from:
+`neoTodoFollowUpRefusal` and `neoTodoWithoutFollowUp` at their call sites:
 
 | Where | Refuses |
 |---|---|
 | `planNeoQuestion` (a card on a plan) | a card that does not name the plan's steps, or a plan with no steps or no current check |
-| `planNeoTodoDone` | a plan missing any of the three |
-| the `neo.ask.settle` superpipe | an ask with a plan missing any of the three |
+| `planNeoTodoDone` and the `done` input of `planNeoTodoEdit` | a plan missing any of the three |
+| the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | an ask with a plan missing any of the three |
+| the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`neo-todo-session-repository.ts`) | the same: such an ask is not settled, and Neo is woken |
 | `planNeoTodoRemove` | removing a plan's last live step without `replacedBy` |
 
 Steps wait without new code: they depend on the plan, so they start when it is done
@@ -54,7 +55,7 @@ Steps wait without new code: they depend on the plan, so they start when it is d
   reviewer to compare them with the design's change plan; a missing, extra or misordered
   step is a finding. A passing `neo.coding.result` on a plan writes `checked` with those
   step ids.
-- For a plan, the review stage runs whatever the repository's `crossModelReview` says
+- A plan is always reviewed, even when the repository's `crossModelReview` is off
   (`packs/coding/daemon-merge-gates.ts`).
 
 Other packs mark plans the same way when they need to.
@@ -63,7 +64,7 @@ Other packs mark plans the same way when they need to.
 
 Each slice is one PR from `dev`, failing tests first.
 
-1. **Core.** `neoPlanRefusal` and its fact step, the four call sites, `checked` on
+1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, `checked` on
    `neo.todo.edit`, tool text.
 2. **Coding.** Mark design PRs as plans, the review brief, `checked` from
    `neo.coding.result`, review regardless of `crossModelReview` for plans.
@@ -80,3 +81,4 @@ Acceptance, one integration case per row:
 | the last live step removed without `replacedBy` | refused |
 | a repository with cross-model review off, a design PR | still reviewed and checked |
 | a todo that is not a plan | unchanged |
+| a plan already done before the upgrade, its ask still open | held to the old rule (one live dependent); the new rule applies to plans not yet done |
