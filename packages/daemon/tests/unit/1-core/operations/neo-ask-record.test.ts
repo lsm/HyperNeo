@@ -18,6 +18,7 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
   source: 'mcp',
@@ -140,6 +141,36 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('rejects oversized proposal cards before creating an ask', async () => {
+    const { call, store } = setup();
+    const result = await call(
+      'neo.ask.open',
+      { title: 'Long', request: 'x'.repeat(401) },
+      turn('long')
+    );
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('card_too_long') });
+    expect(store.listOpenAsks()).toEqual([]);
+  });
+
+  test('a chat reply leaves the approval card open for its buttons', async () => {
+    const { call, store } = setup();
+    const opened = await call(
+      'neo.ask.open',
+      { title: 'Chat proposal', request: 'Improve the workflow' },
+      turn('open')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const question = store.listQuestions(opened.ask.id)[0];
+    const replyTo = { kind: 'question' as const, id: question.id };
+    recordNeoReplyAnswer(
+      { ok: true, requestId: 'input', messageId: 'input', created: true },
+      readNeoReply(replyTo, store),
+      { sessionId: 'neo-a', requestId: 'input', content: 'yes', replyTo },
+      store,
+      'neo-a'
+    );
+    expect(store.getQuestion(question.id)).toMatchObject({ state: 'open' });
+  });
   test('a proposal opens a human decision card and refuses todos until approved', async () => {
     const { call, store } = setup();
     const result = await call(
