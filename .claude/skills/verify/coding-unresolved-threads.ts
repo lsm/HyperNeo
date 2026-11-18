@@ -249,6 +249,14 @@ try {
   await sweep('another finding arrives', 77);
   await sweep('findings unchanged', 78);
   assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
+  const replacement = { adapter: 'hyperneo', id: 'replacement-author' };
+  db.prepare("UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'author-todo'").run(JSON.stringify(replacement));
+  told.length = 0;
+  const reassigned = await sweep('owner reassigned while CI fails', 79);
+  assert.equal(reassigned.owner, 'hyperneo:replacement-author');
+  assert.equal(told.filter((item) => JSON.stringify(item.ref) === JSON.stringify(replacement) && item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
+  await sweep('unchanged reassignment', 80);
+  assert.equal(told.filter((item) => JSON.stringify(item.ref) === JSON.stringify(replacement) && item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
   writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened, lateReview: told }, null, 2));
 } finally {
   db.close();
