@@ -45,6 +45,7 @@ const save = (row: ConnectionStatus) => db.gateway.call(googleConnectionWrites, 
 let persist: typeof save;
 const make = () =>
   createConnectionLifecycle({
+    provider: 'google',
     read,
     save: (row) => persist(row),
     vault,

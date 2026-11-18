@@ -14,8 +14,9 @@ import {
 import { createCredentialStore } from '../credentials/credential-store.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { ConnectionVault } from './vault.ts';
-import { googleClient, googleConnectionAttempt, googleConnections } from './status.ts';
+import { googleClient, googleConnectionAttempt, type ConnectionStatus } from './status.ts';
 import { startGoogleLogin } from './google-login.ts';
+import { startMicrosoftLogin } from './microsoft-login.ts';
 import { createConnectionLifecycle } from './lifecycle.ts';
 
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
@@ -30,44 +31,59 @@ export type GoogleConnectionDependencies = {
 type ServiceEntry = {
   deps: GoogleConnectionDependencies;
   closed: AbortController;
-  pending?: Promise<ReturnType<typeof createConnectionLifecycle>>;
+  pending: Map<ConnectionStatus['provider'], Promise<ReturnType<typeof createConnectionLifecycle>>>;
 };
 const services = new WeakMap<Database, ServiceEntry>();
 
 export function configureGoogleConnections(db: Database, deps: GoogleConnectionDependencies) {
-  if (!services.has(db)) services.set(db, { deps, closed: new AbortController() });
+  if (!services.has(db))
+    services.set(db, { deps, closed: new AbortController(), pending: new Map() });
   return services.get(db)!.closed;
 }
 
 export function getGoogleConnectionService(sql: Database, deps: GoogleConnectionDependencies = {}) {
+  return getConnectionService(sql, 'google', deps);
+}
+
+export function getConnectionService(
+  sql: Database,
+  provider: ConnectionStatus['provider'],
+  deps: GoogleConnectionDependencies = {}
+) {
   configureGoogleConnections(sql, deps);
   const entry = services.get(sql)!;
   entry.closed.signal.throwIfAborted();
   const configured = entry.deps;
-  let pending = entry.pending;
+  let pending = entry.pending.get(provider);
   if (!pending) {
     const gateway = gatewayFor(sql);
     pending = gateway.call(artifactIdentityWrites, 'ensure', randomUUID()).then((identity) => {
       entry.closed.signal.throwIfAborted();
       return createConnectionLifecycle({
-        read: () => gateway.call(googleConnectionReads, 'list').then(googleConnections),
+        read: () =>
+          gateway
+            .call(googleConnectionReads, 'list')
+            .then((rows) => rows.filter((row) => row.provider === provider)),
+        provider,
         save: (connection) => gateway.call(googleConnectionWrites, 'put', connection),
         vault: new ConnectionVault(
           (configured.createStore ?? createCredentialStore)(sql),
           identity
         ),
         startLogin:
-          configured.startLogin ??
-          ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl })),
+          provider === 'microsoft'
+            ? (client) => startMicrosoftLogin(client, { fetchImpl: configured.fetchImpl })
+            : (configured.startLogin ??
+              ((client) => startGoogleLogin(client, { fetchImpl: configured.fetchImpl }))),
         fetchImpl: configured.fetchImpl,
         now: configured.now,
         apiTimeoutMs: configured.apiTimeoutMs,
         closed: AbortSignal.any([gateway.closeSignal, entry.closed.signal]),
       });
     });
-    entry.pending = pending;
+    entry.pending.set(provider, pending);
     void pending.catch(() => {
-      entry.pending = undefined;
+      entry.pending.delete(provider);
     });
   }
   return pending;
