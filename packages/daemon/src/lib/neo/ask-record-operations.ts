@@ -1,3 +1,5 @@
+import { proposalQuestionId } from './proposal.ts';
+import { openHumanCard } from './human-card.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -192,6 +194,39 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
+      (
+        context: { sessionId: string; projectId: string | null; goalId: string | null },
+        input: z.infer<typeof Open>
+      ) => {
+        const prior = store.findAsk(context.sessionId, null, input.title, context.goalId);
+        return {
+          context,
+          hasTodos: input.todos.length > 0,
+          proposal: prior ? !!store.getQuestion(proposalQuestionId(prior.id)) : true,
+        };
+      },
+      ['outcome', 'input'],
+      'proposalFacts'
+    )
+    .pipe(
+      (facts: {
+        context: { sessionId: string; projectId: string | null; goalId: string | null };
+        hasTodos: boolean;
+        proposal: boolean;
+      }) =>
+        facts.hasTodos && facts.proposal
+          ? {
+              reason: {
+                ok: false as const,
+                reason:
+                  'proposal_todos: open the proposal without todos and wait for human approval.',
+              },
+            }
+          : { value: facts.context },
+      'proposalFacts',
+      'result:outcome'
+    )
+    .pipe(
       async (
         {
           sessionId,
@@ -294,6 +329,11 @@ export function createNeoAskRecordOperations(
           ? store.getAsk(priorAsk.id)
           : store.findAsk(sessionId, origin, input.title, goalId);
         if (priorAsk && !current) return { ok: false, reason: 'not_found: no such ask.' };
+        if (input.todos.length && (!current || store.getQuestion(proposalQuestionId(current.id))))
+          return {
+            ok: false,
+            reason: 'proposal_todos: open the proposal without todos and wait for human approval.',
+          };
         const taken = current
           ? null
           : neoAskMatterRefusal(
@@ -304,16 +344,34 @@ export function createNeoAskRecordOperations(
         if (taken) return { ok: false, reason: taken };
         const ask =
           current ??
-          store.openAsk({
-            id: crypto.randomUUID(),
-            projectId,
-            goalId,
-            sessionId,
-            originMessageId: origin,
-            title: input.title,
-            topic: input.topic ?? null,
-            request: input.request,
-            createdAt: Date.now(),
+          store.inTransaction(() => {
+            const now = Date.now();
+            const opened = store.openAsk({
+              id: crypto.randomUUID(),
+              projectId,
+              goalId,
+              sessionId,
+              originMessageId: origin,
+              title: input.title,
+              topic: input.topic ?? null,
+              request: input.request,
+              createdAt: now,
+            });
+            openHumanCard(
+              store,
+              proposalQuestionId(opened.id),
+              opened.id,
+              {
+                text: input.request,
+                kind: 'yesno',
+                options: null,
+                multiple: false,
+                noLabel: "Don't",
+                yesLabel: 'Do it',
+              },
+              now
+            );
+            return opened;
           });
         recorded.push(...family(ask));
         const records: string[] = [];

@@ -61,7 +61,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
       expect(NEO_GOAL_CYCLE).toContain(section);
     }
     expect(NEO_ROOT_PROMPT).toContain("the human's words");
-    expect(NEO_GOAL_CYCLE).toContain('ask the human first');
+    expect(NEO_GOAL_CYCLE).toContain('wait for the human to choose Do it');
     expect(NEO_GOAL_CYCLE).toContain('resources or limits');
   });
   test('teaches standing-outcome setup with explicit frequent cadence', () => {

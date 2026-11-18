@@ -127,7 +127,8 @@ export function createNeoWorkerQuestionWriter(
   sessions: NeoTodoSessionRepository,
   language: () => LanguageSetting | undefined,
   readSource: (ref: WorkRef) => Promise<NeoQuestionSource | null>,
-  stored: (question: NeoQuestion) => void = () => {}
+  stored: (question: NeoQuestion) => void = () => {},
+  cause?: string
 ) {
   const write = (superpipe({})('neo.question.storeWorkerReport') as PipelineAPI)
     .input(['ref', 'raw'])
@@ -225,6 +226,7 @@ export function createNeoWorkerQuestionWriter(
                 todoId: todo.id,
                 sourceSession: source,
                 document: input.report,
+                cause,
               },
               Date.now()
             );

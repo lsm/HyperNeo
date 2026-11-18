@@ -41133,7 +41133,7 @@
             "type": "array"
           },
           "askId": {
-            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.",
+            "description": "For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. A session-request ask is for the reply only; open a separate proposal to do work.",
             "minLength": 1,
             "type": "string"
           },
@@ -55998,7 +55998,7 @@
           },
           "notice": {
             "const": true,
-            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "description": "A Neo reply to a session that sent it a message; omit todoId.",
             "type": "boolean"
           },
           "ref": {
@@ -56023,7 +56023,7 @@
             "type": "object"
           },
           "todoId": {
-            "description": "The open todo this send belongs to. A Neo send needs this or notice.",
+            "description": "The open todo on an accepted human request this send belongs to.",
             "minLength": 1,
             "type": "string"
           }
@@ -56743,7 +56743,7 @@
           },
           "notice": {
             "const": true,
-            "description": "This send is a notice, not a piece of work. Neo sends need this or todoId.",
+            "description": "A Neo reply to a session that sent it a message; omit todoId.",
             "type": "boolean"
           },
           "ref": {
@@ -56768,7 +56768,7 @@
             "type": "object"
           },
           "todoId": {
-            "description": "The open todo this send belongs to. A Neo send needs this or notice.",
+            "description": "The open todo on an accepted human request this send belongs to.",
             "minLength": 1,
             "type": "string"
           }
@@ -57115,7 +57115,7 @@
             "type": "string"
           },
           "todoId": {
-            "description": "Todo reference for bookkeeping; missing or stale references are recorded without blocking, but such a start does not reuse a worker a todo has used.",
+            "description": "Agents must provide an open todo on an accepted human request.",
             "minLength": 1,
             "type": "string"
           }

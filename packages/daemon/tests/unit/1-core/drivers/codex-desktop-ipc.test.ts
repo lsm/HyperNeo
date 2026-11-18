@@ -754,6 +754,8 @@ describe('withCodexDesktopIpc', () => {
                 adapters: () => [driver],
                 daemonName: 'test',
                 isOpenTodo: (todoId: string) => todoId === 'open-todo',
+                acceptedTodo: () => true,
+                noticeReply: () => true,
                 remote: { list: () => [], invoke: async () => ({}) },
               })
             ),
@@ -939,6 +941,8 @@ describe('withCodexDesktopIpc', () => {
             adapters: () => [driver],
             daemonName: 'test',
             isOpenTodo: () => true,
+            acceptedTodo: () => true,
+            noticeReply: () => true,
             remote: { list: () => [], invoke: async () => ({}) },
           })
         );
@@ -1051,6 +1055,8 @@ describe('withCodexDesktopIpc', () => {
             adapters: () => [driver],
             daemonName: 'test',
             isOpenTodo: () => true,
+            acceptedTodo: () => true,
+            noticeReply: () => true,
             remote: { list: () => [], invoke: async () => ({}) },
           })
         );
@@ -1305,6 +1311,8 @@ describe('withCodexDesktopIpc', () => {
           adapters: () => [driver],
           daemonName: 'test',
           isOpenTodo: (todoId) => todoId === 'open-todo',
+          acceptedTodo: () => true,
+          noticeReply: () => true,
           remote: { list: () => [], invoke: async () => ({}) },
         })
       );

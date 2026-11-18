@@ -127,6 +127,8 @@ async function start(
         },
       },
       isOpenTodo: (id, owner) => id === 'todo' && owner === sessionId,
+      acceptedTodo: () => true,
+      noticeReply: () => true,
       startPlace: neoStartPlace({
         db,
         machine: 'local',

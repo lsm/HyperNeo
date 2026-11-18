@@ -6,5 +6,7 @@ Use the shared isolated setup:
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/new-work-source.ts
 ```
 
-The real Neo MCP call opens a proposal. The human snapshot shows its open
-approval card. The evidence records the tool reply and snapshot.
+The real Neo MCP calls refuse an untracked start, a proposal with todos and a
+todo on an unapproved proposal. The human snapshot shows the approval card; a
+human RPC approval permits a todo and a refusal drops a second ask. The evidence
+records the replies and snapshot.
