@@ -87,6 +87,16 @@ describe('InputActionsMenu', () => {
       expect(text).toContain('Tools');
     });
 
+    it('shows one separator before attachment when tools are unavailable', () => {
+      const { getByRole } = render(<InputActionsMenu {...defaultProps} isOpen showTools={false} />);
+      const attach = getByRole('button', { name: 'Attach image' });
+      const separators = [...attach.parentElement!.children].filter(
+        (element) =>
+          element.classList.contains('h-px') && getComputedStyle(element).display !== 'none'
+      );
+      expect(separators).toHaveLength(1);
+    });
+
     it('should show attach image option in menu', () => {
       const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
       const text = container.textContent;

@@ -21,3 +21,6 @@ then retains `sdk-provider-retry.png`.
 It also saves OXAP after an 11-second synthetic release download. The real
 installer validates and installs a local fixture archive; the UI stays pending
 beyond the default timeout, then shows success and the saved hub after reload.
+
+In each theme the OXAP actions menu shows exactly one separator above the disabled
+attachment action. Keep `oxap-menu-light.png` and `oxap-menu-dark.png`.

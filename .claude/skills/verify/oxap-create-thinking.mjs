@@ -72,7 +72,11 @@ try {
     if (!before) {
       await page.getByText(/This harness accepts text only/).waitFor();
       await page.getByTitle('More options').click();
-      assert.equal(await page.getByRole('button', { name: 'Attach image' }).isDisabled(), true);
+      const attach = page.getByRole('button', { name: 'Attach image' });
+      assert.equal(await attach.isDisabled(), true);
+      const separators = await attach.evaluate(el => [...el.parentElement.children].filter(child => child.classList.contains('h-px') && getComputedStyle(child).display !== 'none').length);
+      await page.screenshot({ path: `${output}/oxap-menu-${theme}.png`, animations: 'disabled' });
+      assert.equal(separators, 1, 'OXAP attachment menu must show one separator');
       assert.equal(await page.getByRole('button', { name: 'Tools', exact: true }).count(), 0);
       await page.getByTitle('More options').click();
     }
