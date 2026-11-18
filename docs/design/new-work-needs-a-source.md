@@ -85,7 +85,7 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 
 ## Slices
 
-Two PRs, as the human asked:
+Two PRs, as the human asked, in this order so a proposal can never be approved by a relayed answer:
 
-1. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`.
-2. **Remove relayed answers**: everything listed in rule 4.
+1. **Remove relayed answers**: everything listed in rule 4. Removal only.
+2. **The rule**: the proposal card, the checks in `neo.ask.open`, `neo.todo.add`, `start-work` and `work.send`/`work.queue`, the tests, and the matching tool text in `neo.ask.open.md` and `goal-cycle.md`. It merges only after slice 1.
