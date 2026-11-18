@@ -26,6 +26,14 @@ const policy = {
 } as const;
 
 describe('decideCodingDaemonMerge', () => {
+  test('identifies unresolved threads when GitHub reports the merge blocked', () => {
+    expect(
+      decideCodingDaemonMerge(
+        { ...facts, passingCommitStatus: false, threads: { head, unresolved: 1 } },
+        policy
+      )
+    ).toEqual({ kind: 'skip', reason: 'review_threads_unresolved_or_stale' });
+  });
   test('admits an unowned PR without a todo or Review/Verify assignments', () => {
     expect(decideCodingDaemonMerge(facts, policy)).toEqual({ kind: 'merge', head });
   });
