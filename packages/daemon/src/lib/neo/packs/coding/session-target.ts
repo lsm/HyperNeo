@@ -5,7 +5,7 @@ import type { OperationOutcome } from '../../../operations/invoke.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
-import type { NeoLineScope, NeoPack, NeoWorkerTargetDecision } from '../../pack-contract.ts';
+import type { NeoLineScope, NeoWorkerTargetDecision } from '../../pack-contract.ts';
 import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
@@ -22,7 +22,6 @@ import {
 } from './stage-lines.ts';
 
 type Status = (ref: WorkRef) => Promise<OperationOutcome>;
-type AskSetting = Parameters<NonNullable<NeoPack['workerTarget']>>[3];
 type Pooled = { ref: WorkRef; name: string; held: boolean; terminalOnly: boolean };
 type Facts = {
   repo: string;
@@ -115,7 +114,7 @@ const readFacts = (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
   });
 
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
-  .input(['db', 'todo', 'target', 'status', 'askSetting', 'lines'])
+  .input(['db', 'todo', 'target', 'status', 'lines'])
   .pipe(readFacts, ['db', 'todo', 'target'], 'facts')
   .pipe(
     async (
@@ -265,6 +264,5 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   todo: NeoTodo,
   target: NeoTodoTarget,
   status: Status,
-  askSetting: AskSetting,
   lines?: CodingLines
 ) => Promise<NeoWorkerTargetDecision>;

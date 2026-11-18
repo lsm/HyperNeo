@@ -41,6 +41,7 @@ import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo
 import { sessionReuseQuestion } from '../../neo/session-reuse.ts';
 import { neoAskInputReads } from '../../../storage/repositories/neo-ask-input-worker.ts';
 import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { Logger } from '../../logger.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -123,6 +124,7 @@ import { usableModels } from '../../usable-models.ts';
 import { planWorkPlacement, type GitCheckout } from '../../drivers/work-placement.ts';
 
 const WORK_CHAT_LIMIT = 200;
+const log = new Logger('work-operations');
 const SEARCH_REUSE_MS = 2_000;
 
 export function newestAvailableModel(models: readonly ModelInfo[]): ModelInfo | null {
@@ -723,17 +725,22 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
             'sessionReuseQuestionState',
             prefix
           );
-          if (!existing || existing === 'retired')
-            await invokeOperation(
+          if (!existing || existing === 'retired') {
+            const outcome = await invokeOperation(
               context.deps.sessionManager.getOperationRegistry(),
               'pack.preferences.ask',
               question,
               caller
             );
+            if (outcome.kind !== 'completed' || !(outcome.value as { ok?: boolean })?.ok)
+              log.warn('Session reuse question could not be opened', { todoId, outcome });
+          }
         });
         pendingReuseQuestions.set(prefix, ask);
         try {
           await ask;
+        } catch (error) {
+          log.warn('Session reuse question could not be opened', { todoId }, error);
         } finally {
           if (pendingReuseQuestions.get(prefix) === ask) pendingReuseQuestions.delete(prefix);
         }

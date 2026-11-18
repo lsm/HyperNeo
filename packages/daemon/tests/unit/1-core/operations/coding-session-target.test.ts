@@ -127,41 +127,15 @@ function setup() {
     () => 'en',
     async () => {}
   );
-  const asks: unknown[] = [];
-  const failing = { ask: false, before: null as null | (() => void) };
   const decide = (
     item: NeoTodo,
     target: Parameters<typeof decideCodingSessionTarget>[2],
     lines?: CodingLines
-  ) =>
-    decideCodingSessionTarget(
-      db,
-      item,
-      target,
-      status,
-      async (input) => {
-        failing.before?.();
-        if (failing.ask) {
-          asks.push('failed');
-          return {
-            kind: 'failed' as const,
-            code: 'execution_failed' as const,
-            message: 'synthetic',
-          };
-        }
-        const value = await askSetting!.execute(
-          { askId: item.askId, ...input },
-          { source: 'internal', sessionId: 'neo', role: 'neo' }
-        );
-        asks.push(value);
-        return { kind: 'completed' as const, value };
-      },
-      lines
-    );
+  ) => decideCodingSessionTarget(db, item, target, status, lines);
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
   const agentAsk = (input: Record<string, unknown>) =>
     askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
-  return { db, todos, todo, worked, live, models, decide, questions, asks, agentAsk, failing };
+  return { db, todos, todo, worked, live, models, decide, questions, agentAsk };
 }
 
 describe('coding session target decision', () => {
@@ -473,13 +447,12 @@ describe('coding session target decision', () => {
   });
 
   test('the first dispatch uses the saved strategy without asking for it', async () => {
-    const { todo, worked, decide, questions, asks } = setup();
+    const { todo, worked, decide, questions } = setup();
     worked(todo('other'), 'idle', 'dev', 'done');
     expect(await decide(todo(), start('dev'))).toEqual({
       value: { verb: 'send', ref: ref('idle') },
     });
     expect(questions('feature')).toEqual([]);
-    expect(asks).toEqual([]);
   });
 
   test('unfinished work on a feature session does not hide an unreadable status', async () => {

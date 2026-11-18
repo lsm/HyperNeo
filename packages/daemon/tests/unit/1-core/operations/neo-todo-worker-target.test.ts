@@ -80,8 +80,7 @@ function world(coding = false) {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
-    workerTarget: (todo, target, status, askSetting) =>
-      decideCodingSessionTarget(db, todo, target, status, askSetting),
+    workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
     workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
     workerTargetRefused: (todo) =>
       gatewayFor(db).call(codingSessionAssignmentWrites, 'releaseFeature', { todoId: todo.id }),
