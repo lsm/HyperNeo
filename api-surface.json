@@ -45179,6 +45179,130 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "reviewedListId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "neo.workerOwnership.apply",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "const": false,
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "reason"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "name": "neo.workerOwnership.candidates",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "adapter": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "basis": {
+                      "type": "string"
+                    },
+                    "claimedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": "number"
+                    },
+                    "strength": {
+                      "type": "string"
+                    },
+                    "verbs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "basis",
+                    "startedAt",
+                    "claimedBy",
+                    "verbs",
+                    "strength"
+                  ],
+                  "type": "object"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "adapter",
+                "id",
+                "evidence"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "counts": {
+            "additionalProperties": false,
+            "properties": {
+              "candidates": {
+                "type": "number"
+              },
+              "examined": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "candidates",
+              "examined"
+            ],
+            "type": "object"
+          },
+          "notice": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice",
+          "candidates",
+          "counts"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
           "name": {
             "minLength": 1,
             "type": "string"

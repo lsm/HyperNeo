@@ -68,6 +68,8 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.session.mute',
   'neo.snapshot',
   'neo.todo.retarget',
+  'neo.workerOwnership.apply',
+  'neo.workerOwnership.candidates',
   'neo.topic.merge',
   'outlook.calendar_list',
   'outlook.draft',
