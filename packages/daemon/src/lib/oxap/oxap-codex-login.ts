@@ -72,7 +72,8 @@ async function status(
   isAuthenticating: boolean,
   db: OxapReopenStore,
   hub: OxapReopenEvents,
-  error?: string
+  error?: string,
+  initial = false
 ): Promise<void> {
   const message: AuthMessage = {
     type: 'auth_status',
@@ -82,9 +83,10 @@ async function status(
     isAuthenticating,
     ...(error ? { error } : {}),
   };
-  const saved = isAuthenticating
-    ? await db.saveSDKMessage(sessionId, message)
-    : await db.updateAuthStatusMessage(sessionId, message);
+  const saved =
+    isAuthenticating || initial
+      ? await db.saveSDKMessage(sessionId, message)
+      : await db.updateAuthStatusMessage(sessionId, message);
   if (!saved) throw new Error('Could not save auth status');
   hub.event(
     'state.sdkMessages.delta',
@@ -127,8 +129,23 @@ export async function checkCodexLogin(
           },
           exited
         ));
-    const code = await login.code;
     const uuid = generateUUID() as AuthMessage['uuid'];
+    let code: Code;
+    try {
+      code = await login.code;
+    } catch (error) {
+      await status(
+        sessionId,
+        uuid,
+        [],
+        false,
+        db,
+        hub,
+        error instanceof Error ? error.message : String(error),
+        true
+      );
+      throw new Error(SIGN_IN_FAILURE);
+    }
     await status(
       sessionId,
       uuid,

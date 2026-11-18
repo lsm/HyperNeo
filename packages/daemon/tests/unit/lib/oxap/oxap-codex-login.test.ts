@@ -6,6 +6,8 @@ const fake = vi.hoisted(() => ({
   account: null as object | null,
   exits: [] as Array<() => void>,
   commands: [] as unknown[],
+  failStart: false,
+  rejectStart: undefined as ((error: Error) => void) | undefined,
 }));
 
 vi.mock('../../../../src/lib/drivers/codex-app-server.ts', () => ({
@@ -21,6 +23,10 @@ vi.mock('../../../../src/lib/drivers/codex-app-server.ts', () => ({
       call: async (method: string, params: Record<string, unknown>) => {
         fake.calls.push({ method, params });
         if (method === 'account/read') return { account: fake.account };
+        if (method === 'account/login/start' && fake.failStart)
+          return await new Promise((_resolve, reject) => {
+            fake.rejectStart = reject;
+          });
         if (method === 'account/login/start')
           return { loginId: 'login-1', verificationUrl: 'https://example.com', userCode: 'CODE' };
         return {};
@@ -65,6 +71,8 @@ beforeEach(() => {
   fake.exits.length = 0;
   fake.commands.length = 0;
   fake.account = null;
+  fake.failStart = false;
+  fake.rejectStart = undefined;
 });
 afterEach(() => vi.useRealTimers());
 
@@ -97,6 +105,35 @@ describe('checkCodexLogin', () => {
     expect(f.messages[2]?.message.uuid).toBe(
       f.messages.find((item) => item.sessionId === f.messages[2]?.sessionId)?.message.uuid
     );
+  });
+
+  it('shows start failures to every waiting chat', async () => {
+    fake.failStart = true;
+    const f = fixture();
+    const result = (id: string) =>
+      checkCodexLogin(id, f.db, f.hub, '/synthetic/codex').then(
+        () => null,
+        (error: Error) => error.message
+      );
+    const one = result('one');
+    const two = result('two');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.calls.filter((call) => call.method === 'account/login/start')).toHaveLength(1);
+    fake.rejectStart!(new Error('Device login unavailable'));
+    expect(await Promise.all([one, two])).toEqual([
+      'Codex is not signed in. Sign in, then send again.',
+      'Codex is not signed in. Sign in, then send again.',
+    ]);
+    expect(
+      f.messages.map(({ sessionId, message }) => ({
+        sessionId,
+        authenticating: message.isAuthenticating,
+        error: message.error,
+      }))
+    ).toEqual([
+      { sessionId: 'one', authenticating: false, error: 'Device login unavailable' },
+      { sessionId: 'two', authenticating: false, error: 'Device login unavailable' },
+    ]);
   });
 
   it('shows the server error and refuses the open when login fails', async () => {
