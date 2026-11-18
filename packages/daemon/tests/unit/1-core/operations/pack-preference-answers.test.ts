@@ -159,6 +159,28 @@ describe('immutable human settings proposals', () => {
     expect(question.text).toContain('Second behavior');
     expect(question.text).not.toContain('| --- |');
     expect(question.options).toEqual(['One', 'Two', 'Use the default for now']);
+
+    db.updateGlobalSettings({ language: 'system' });
+    db.getDatabase()
+      .prepare(`INSERT INTO neo_conversation_asks
+      (conversation_id, request_id, payload_json, created_at) VALUES (?, ?, ?, ?)`)
+      .run(
+        'synthetic',
+        'last-human',
+        JSON.stringify({ content: '请使用中文' }),
+        new Date().toISOString()
+      );
+    const chinese = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'chinese-choice',
+      alternatives: [[choice('one')], [choice('two')]],
+    });
+    const translated = service.todos.getQuestion(
+      (chinese as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(translated.text).toContain('选择哪个设置？');
+    expect(translated.text).toContain('第一个行为');
+    expect(translated.options).toEqual(['一', '二', '暂时使用默认设置']);
   });
 
   test('a settings question holds the ask work unless it is asked with hold false', async () => {
@@ -610,7 +632,7 @@ describe('immutable human settings proposals', () => {
         'Long-lived work-type sessions',
         'One session per task',
         'One session per PR',
-        'Keep current settings',
+        'Use the default for now',
       ],
     });
     expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
@@ -647,10 +669,12 @@ describe('immutable human settings proposals', () => {
     const reply = (await choice(5)) as { value: { questionId: string } };
     const questionId = reply.value.questionId;
     expect(service.todos.getQuestion(questionId)!.options).toHaveLength(6);
+    expect(service.todos.getQuestion(questionId)!.text).toContain('Choose one of these settings?');
+    expect(service.todos.getQuestion(questionId)!.text).not.toContain('| --- |');
     await chat(questionId, 'F');
     expect(service.todos.getQuestion(questionId)).toMatchObject({
       state: 'answered',
-      answer: ['Keep current settings'],
+      answer: ['Use the default for now'],
     });
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
   });
