@@ -1,3 +1,4 @@
+import { todoEvidenceFile } from '../work-locations.ts';
 import type { NeoWorkerNameSource } from './worker-name.ts';
 import { Logger } from '../logger.ts';
 import { neoTrackerReads } from '../../storage/repositories/neo-tracker-mirror.ts';
@@ -344,6 +345,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
   const workerBrief = (todo: NeoTodo, instruction: string, harness: string, existing = true) => {
+    if (
+      todo.check?.pack === 'core' &&
+      todo.check.kind === 'evidence' &&
+      todo.check.params.path === todoEvidenceFile(todo.id)
+    ) {
+      instruction += `\n\nThis legacy check requires ${todoEvidenceFile(todo.id)}. Satisfy it privately; if it is outside your sandbox, report blocked until authorized access is available.`;
+    }
     instruction += `\n\nEven when told to stay quiet, report questions or blockers requiring a human decision with message.send {to: the sending Neo, kind: question or blocked, text: original report, question: {todoId: "${todo.id}", title: short question, options: 2–6 short options, language: en or zh-Hans}} in the human's configured language. Do not keep working while waiting for that answer.`;
     instruction = [
       ...(deps.enabledPacks?.() ?? deps.packs()).map((pack) => pack.workerContext?.()),

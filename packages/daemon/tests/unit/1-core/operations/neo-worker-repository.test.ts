@@ -60,9 +60,17 @@ describe('coding worker repository admission', () => {
   });
   test('accepts non-coding work and coding work without a known repository', () => {
     expect(
-      policy.refuse({ ...draft, check: { pack: 'core', kind: 'evidence', params: {} } }, [], {
-        ask: null,
-      })
+      policy.refuse(
+        {
+          ...draft,
+          named: null,
+          check: { pack: 'core', kind: 'evidence', params: { path: '/visible/result' } },
+        },
+        [],
+        {
+          ask: null,
+        }
+      )
     ).toBeNull();
     expect(policy.refuse({ ...draft, named: null }, [], { ask: null })).toBeNull();
   });
@@ -111,7 +119,7 @@ test.each([
     };
     const reason = policy.refuse(edited, [], {
       ask: null,
-      todo: { id: 'edited' },
+      todo: { id: 'edited', check: null },
       edit: true,
       workerRemotes: remotes,
     });

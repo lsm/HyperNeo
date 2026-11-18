@@ -46,7 +46,7 @@ export type NeoTodoPolicyScope = {
   workerRemotes?: readonly string[];
   edit?: true;
   ask: Pick<NeoAsk, 'id'> | null;
-  todo?: Pick<NeoTodo, 'id'> | null;
+  todo?: Pick<NeoTodo, 'id' | 'check'> | null;
   start?: true;
 };
 
