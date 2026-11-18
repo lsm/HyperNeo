@@ -23,12 +23,16 @@ or when a pack marks it from its own facts. A plan:
 
 1. **has steps:** at least one live todo that depends on it (`after`);
 2. **was checked:** a passing check, recorded on the plan, by a session that is not its
-   doer and runs another model, listing exactly the current steps;
+   doer, listing exactly the current steps. The checker runs another model when the human
+   has one available; when only the doer's model is usable, another session on the same
+   model counts;
 3. **was signed:** a sign-off card on it, naming those steps, answered by the human.
 
 **The check is one field.** `neo.todo.edit` gains `checked: { ref, stepIds }`, written by
 Neo when a checker passes the plan, into one new nullable column `neo_todos.checked_json`
-with the checker's confirmed model read from its work status at write time.
+with the checker's confirmed model read from its work status at write time, and whether
+another model was available then: `chooseLine` (`pack-selection.ts`) over the configured
+lines without the doer's model returns a usable line.
 A check stops counting when the steps change.
 
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
@@ -76,7 +80,9 @@ Acceptance, one integration case per row:
 | a plan with no steps asks for sign-off | refused: steps missing |
 | steps filed, no check, sign-off asked | refused: check missing |
 | check recorded, then a step removed | refused until checked again |
-| check by the plan's own session or same model | not accepted |
+| check by the plan's own session | not accepted |
+| check on the doer's model while another model is usable | not accepted |
+| check on the doer's model when it is the only usable model | accepted |
 | plan done | its steps start in order |
 | the last live step removed without `replacedBy` | refused |
 | a repository with cross-model review off, a design PR | still reviewed and checked |
