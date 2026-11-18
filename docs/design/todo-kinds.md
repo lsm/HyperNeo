@@ -46,24 +46,18 @@ follow-up and needs no new sign-off. Only rule 1 still applies, through the last
 guard below, so a done plan's ask can always settle.
 
 **Check.** It is written by the daemon, never by Neo, into one new column
-`neo_todos.checked_json`:
+`neo_todos.checked_json`. In every pack, coding included, the checker is a worker Neo
+started with `work.start` and the plan's `todoId` (recorded in `work_delivery_inputs`),
+given the plan and its steps. It reports with `message.send` to Neo carrying
+`check: { verdict, stepIds }`. The daemon records a pass only from a session that got a
+delivery for this plan and is not its doer, with the checker's confirmed model and
+whether another model was usable: `chooseLine` (`pack-selection.ts`) over the configured
+lines without the doer's model.
 
-- In coding, a passing `neo.coding.result` from the review stage on a plan writes it,
-  with the step ids from the review brief and the reviewer's confirmed model. The review
-  brief (`packs/coding/assign-operation.ts`) lists the steps and asks the reviewer to
-  compare them with the design's change plan; a missing or extra step is a finding.
-- Elsewhere, the checker is a worker Neo started with `work.start` and the plan's
-  `todoId` (recorded in `work_delivery_inputs`); it reports with `message.send` to Neo
-  carrying `check: { verdict, stepIds }`. The daemon records a pass only from a session
-  that got a delivery for this plan and is not its doer.
-- Either way the record holds whether another model was usable: `chooseLine`
-  (`pack-selection.ts`) over the configured lines without the doer's model.
-
-For plans the coding review stage runs whatever `crossModelReview` says, and
-`codingReviewerPolicy` (`packs/coding/stage-facts.ts`, which refuses a same-model reviewer
-today) takes that availability fact, so the single-model case is allowed. Its other
-caller, the merge gate's `codingCrossModelReviewed` (`stage-facts.ts`), passes "another
-model usable" as today, so merges of non-plan PRs are unchanged.
+The coding pack's review stage, reviewer policy (`codingReviewerPolicy` and its four
+callers), review-bot routing and merge checks are not touched: a design PR is reviewed and
+merged exactly as today, and the plan check is a separate core check on the plan todo.
+This is why the plan check works the same in a repository whose reviews go to a bot.
 
 **Old todos.** The migration adds `checked_json TEXT` with no default and fills only that
 new column with `{"legacy":true}` on existing rows in one `UPDATE`; no other data
@@ -83,28 +77,25 @@ their call sites:
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge, `todo-runner.ts`) | leaves the plan open with the unmet item as its reason and wakes Neo |
 | `neo.ask.settle` (`ask-record-operations.ts`) | settling `done`; `dropped` stays allowed |
 | the settle sweep (`service.ts`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: not settled `done`, Neo is woken |
-| `planNeoTodoRemove`, and an `after` change in `planNeoTodoEdit` | removing a plan's last live step without `replacedBy`, or taking the plan out of its last live step's `after` |
+| `planNeoTodoRemove`, and an `after` change in `planNeoTodoEdit` | removing a plan's last live step unless its `replacedBy` is another live step of the plan, or taking the plan out of its last live step's `after` |
 
 Steps wait without new code: they depend on the plan, so they become ready when it is
 done (`neoTodoReady` in `todo-dependencies.ts`).
 
 `bun run system-map impact` on `todo-follow-up.ts`, `todo-operations.ts`,
-`question-operations.ts`, `todo-runner.ts` and `packs/coding/stage-facts.ts`: `neo.todo.done`
-and `neo.todo.remove` are also called by the web todo controls
-(`packages/web/src/neo/todo-controls.ts`) and the daemon's cards (`daemon-cards.ts`)
-through `todo-mutation-operation.ts`, so the same rule covers them and the web shows the
-refusal. `stage-facts.ts` has 12 importers in the coding pack; only `codingReviewerPolicy`'s
-inputs change, and its merge-gate caller keeps today's input.
+`question-operations.ts` and `todo-runner.ts`: `neo.todo.done` and `neo.todo.remove` are
+also called by the web todo controls (`packages/web/src/neo/todo-controls.ts`) and the
+daemon's cards (`daemon-cards.ts`) through `todo-mutation-operation.ts`, so the same rule
+covers them and the web shows the refusal.
 
 ## Change plan
 
-Two PRs from `dev`, failing tests first.
+Two PRs from `dev`, failing tests first; the second is a few lines.
 
 1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, `signoff` cards,
    the `check` report and its recording, the column, tool text.
-2. **Coding.** Design PRs are plans, the review brief, `checked_json` from
-   `neo.coding.result`, the review stage for plans regardless of `crossModelReview`, the
-   availability fact in `codingReviewerPolicy`.
+2. **Coding.** A todo whose PR changes `docs/design/**` is a plan, read from the PR facts
+   the pack already has. Nothing else in the pack changes.
 
 ## Acceptance
 
@@ -125,10 +116,10 @@ lines resolve to a single model.
 | all steps done | the plan still has its steps; the ask settles |
 | the last live step removed without `replacedBy`, or edited off the plan's `after` | refused |
 | an abandoned plan's ask settled `dropped` | allowed |
-| a repository with `crossModelReview` off, a design PR | a review stage runs and its pass writes `checked_json` with a reviewer model other than the author's |
-| the same, one usable model | the review runs on another session of that model and counts |
+| a design PR in a repository whose reviews go to a bot, `crossModelReview` off | the PR is reviewed and merged as today; the plan stays open until a checker worker on another model reports a pass and the human signs |
+| the same, one usable model | a checker on another session of that model counts |
+| the last live step removed with `replacedBy` pointing at a todo that is not a step of the plan | refused |
 | a todo that existed before the upgrade, including an open design PR todo | reads legacy; old rule only |
 | a sign-off card whose plan's check already passes | stays open until answered |
 | a step added after the plan is done | no new check or sign-off; the ask settles |
-| a non-plan PR in a `crossModelReview` repository | merge gate unchanged |
 | a todo that is not a plan | unchanged |
