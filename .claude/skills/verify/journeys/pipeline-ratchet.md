@@ -12,6 +12,8 @@ The first prints all four counts and exits zero at the committed baseline. The
 second exercises the CLI against disposable repositories and checks that each
 count increase, an increased baseline, and a malformed baseline fail. A decrease
 requires `bun run check:pipeline-ratchet --update` to lower the baseline.
+The task-message route regression runs with `bun run test:system-map` after
+dependency installation; the ratchet CLI tests also run before installation in CI.
 
 For a full-source proof, add an untracked source file under `packages/daemon/src`
 containing `defineOperation({ name: 'proof.ratchet', execute: () => 1 });`, run
