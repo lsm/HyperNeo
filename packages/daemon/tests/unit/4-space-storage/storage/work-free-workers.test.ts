@@ -256,17 +256,32 @@ describe('readFreeWorkers', () => {
 });
 
 describe('session reuse preference migration', () => {
-  test('copies a repository strategy to its project without removing the old value', () => {
+  test.each([
+    ['example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
+    ['github.com/example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
+    ['github.com/example/project', 'repo:example/project\u0000host', 'per_task', 'per_todo'],
+    [
+      'github.com/example/project',
+      'repository:github.com/example/project',
+      'long_lived',
+      'long_lived',
+    ],
+  ])('copies %s using %s and preserves the original', (repo, alias, strategy, expected) => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
     db.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at)
-      VALUES ('project', 'Project', '', '', 1, 1, 1);
-      INSERT INTO neo_project_workspaces (alias, project_id)
-      VALUES ('repository:github.com/example/project', 'project');
-      INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-      VALUES ('coding', 'repo', 'example/project', 'sessionStrategy', '"per_pr"', 'human', 1);
-      DELETE FROM migration_markers WHERE key = 'migration_525'`);
+      VALUES ('project', 'Project', '', '', 1, 1, 1)`);
+    db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(
+      alias,
+      'project'
+    );
+    db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', ?, 'sessionStrategy', ?, 'human', 1)`).run(
+      repo,
+      JSON.stringify(strategy)
+    );
+    db.exec("DELETE FROM migration_markers WHERE key = 'migration_525'");
     runMigrations(db, () => {});
     expect(
       db
@@ -274,14 +289,14 @@ describe('session reuse preference migration', () => {
       WHERE pack = 'core' AND scope_kind = 'project' AND scope_key = 'project'
       AND key = 'sessionReuse'`)
         .get()
-    ).toEqual({ value: '"per_todo"' });
+    ).toEqual({ value: JSON.stringify(expected) });
     expect(
       db
         .prepare(`SELECT value_json AS value FROM neo_pack_preferences
-      WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = 'example/project'
+      WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ?
       AND key = 'sessionStrategy'`)
-        .get()
-    ).toEqual({ value: '"per_pr"' });
+        .get(repo)
+    ).toEqual({ value: JSON.stringify(strategy) });
     db.close();
   });
 });
