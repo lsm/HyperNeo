@@ -71,9 +71,7 @@ export function planNeoQuestionPrune(
 ): { value: NeoQuestionPrune } | { reason: 'unchanged' } {
   const active = family.some(
     (todo) =>
-      todo.id === question.todoId &&
-      todo.askId === question.askId &&
-      !['done', 'removed'].includes(todo.state)
+      todo.id === question.todoId && todo.askId === question.askId && todo.state !== 'removed'
   );
   if (question.todoId && !active) return { value: { retire: 'todo no longer active' } };
   if (
