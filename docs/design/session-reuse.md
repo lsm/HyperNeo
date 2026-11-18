@@ -73,7 +73,9 @@ Four PRs from `dev`, in order, failing tests first.
 4. **Roles in core.** `work.start` takes `role`. A new table
    `neo_todo_roles (todo_id, role, adapter, id, at, model, effort)` gets a row per round,
    seeded with `do` from `neo_todo_sessions` for refs that have a start record. The
-   superpipe above. A prepared start reuses only a session with the same preparation.
+   superpipe above. Today `reuseIdleWorker` never reuses when a start carries
+   `preparation` (worker sandbox), which review and write starts do; PR 4 lifts that and
+   reuses only a session whose record has the same preparation.
    Coding passes `do` / `review` / `verify` and the earlier reviewer's model, and drops
    its own `excludeRefs`. The one-worker-per-todo claim becomes per role.
 
