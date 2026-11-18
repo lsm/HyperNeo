@@ -2,13 +2,13 @@ import { isAbsolute } from 'node:path';
 import { generateUUID, type ProviderRecord, type Session } from '@hyperneo/shared';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { OapQueryRuntime } from '../agent/query-runner.ts';
+import type { OxapQueryRuntime } from '../agent/query-runner.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
-import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
-import type { OapQueryHub } from './oap-query.ts';
-import { withOapRecovery } from './oap-recovery.ts';
-import { openOapSession, type OapReopenStore, type OapReopenEvents } from './oap-reopen.ts';
+import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
+import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import type { OxapQueryHub } from './oxap-query.ts';
+import { withOxapRecovery } from './oxap-recovery.ts';
+import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
 import { decideOxapOpen } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
 
@@ -57,17 +57,17 @@ const prepareOpen = (superpipe({})('oap.runtime.open') as PipelineAPI)
 type SessionSlot = {
   session: Session;
   directory?: string;
-  opening?: Promise<OapQueryHub>;
-  client?: OapHubClient;
-  hub?: OapQueryHub;
+  opening?: Promise<OxapQueryHub>;
+  client?: OxapHubClient;
+  hub?: OxapQueryHub;
   deleted: boolean;
 };
 
 function planClear(
   session: Session,
   slot: SessionSlot | undefined,
-  db: OapReopenStore | undefined,
-  _hub: OapQueryHub
+  db: OxapReopenStore | undefined,
+  _hub: OxapQueryHub
 ): Session['metadata'] {
   if (!slot || slot.deleted || !db || !session.sdkSessionId)
     throw new Error('Codex thread is unavailable for clearing');
@@ -76,7 +76,7 @@ function planClear(
 
 async function recordClear(
   session: Session,
-  db: OapReopenStore | undefined,
+  db: OxapReopenStore | undefined,
   metadata: Session['metadata']
 ): Promise<true> {
   if ((await db!.updateSession(session.id, { metadata })) !== 'written')
@@ -86,7 +86,7 @@ async function recordClear(
 }
 
 async function reopenClearedSession(
-  runtime: OapQueryRuntime,
+  runtime: OxapQueryRuntime,
   slot: SessionSlot | undefined,
   _recorded: true
 ): Promise<void> {
@@ -98,25 +98,25 @@ async function reopenClearedSession(
 
 const clearSession = (superpipe({})('oap.runtime.clear') as PipelineAPI)
   .input(['runtime', 'session', 'slot', 'db'])
-  .pipe((runtime: OapQueryRuntime) => runtime.hub, 'runtime', 'hub')
+  .pipe((runtime: OxapQueryRuntime) => runtime.hub, 'runtime', 'hub')
   .pipe(planClear, ['session', 'slot', 'db', 'hub'], 'metadata')
   .pipe(recordClear, ['session', 'db', 'metadata'], 'recorded')
   .pipe(reopenClearedSession, ['runtime', 'slot', 'recorded'], 'cleared')
   .endAsync('cleared') as (
-  runtime: OapQueryRuntime,
+  runtime: OxapQueryRuntime,
   session: Session,
   slot: SessionSlot | undefined,
-  db: OapReopenStore | undefined
+  db: OxapReopenStore | undefined
 ) => Promise<void>;
 
-export function createOapRuntime(
-  engine: OapEngine,
-  hubOptions?: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
+export function createOxapRuntime(
+  engine: OxapEngine,
+  hubOptions?: { installed: () => boolean; read: () => Promise<OxapEngineOptions> },
   events?: InternalEventBus<DaemonInternalEventMap>,
-  db?: OapReopenStore,
-  messageHub?: OapReopenEvents,
+  db?: OxapReopenStore,
+  messageHub?: OxapReopenEvents,
   providerRecord: (providerId: string) => ProviderRecord | null = () => null
-): (session: Session) => OapQueryRuntime {
+): (session: Session) => OxapQueryRuntime {
   const sessions = new Map<string, SessionSlot>();
   events?.subscribe(
     'session.deleted',
@@ -132,7 +132,8 @@ export function createOapRuntime(
       try {
         await slot.client.request('close', { session_id: sessionId });
       } catch (error) {
-        if (!(error instanceof OapHubRequestError) || error.code !== 'unknown_session') throw error;
+        if (!(error instanceof OxapHubRequestError) || error.code !== 'unknown_session')
+          throw error;
       }
     },
     { subscriberName: 'oap-runtime' }
@@ -145,7 +146,7 @@ export function createOapRuntime(
       slot.session = session;
       sessions.set(session.id, slot);
     }
-    const runtime: OapQueryRuntime = {
+    const runtime: OxapQueryRuntime = {
       openDirectorySupported: true,
       clear() {
         return clearSession(runtime, session, slot, db);
@@ -178,11 +179,11 @@ export function createOapRuntime(
               .then(async (client) => {
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.client = client;
-                await openOapSession(client, plan, session, db, messageHub, events, () => {
+                await openOxapSession(client, plan, session, db, messageHub, events, () => {
                   if (slot.deleted) throw new Error('Codex session was deleted');
                 });
                 if (slot.deleted) throw new Error('Codex session was deleted');
-                slot.hub = withOapRecovery(
+                slot.hub = withOxapRecovery(
                   engine.createQueryHub(client, {
                     adapter,
                     id: () => {

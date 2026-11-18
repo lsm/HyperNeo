@@ -9,7 +9,7 @@ import {
   OXAP_VERSION,
   publishedSum,
   releaseName,
-} from '../../../../src/lib/oap/oxap-install';
+} from '../../../../src/lib/oxap/oxap-install';
 
 const roots: string[] = [];
 const sha = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');

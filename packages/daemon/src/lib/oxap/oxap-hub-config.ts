@@ -3,7 +3,7 @@ import type { ProviderRecord } from '@hyperneo/shared';
 import type { OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { engineForProvider } from '../agent/session-engine.ts';
 
-export interface OapHubConfig {
+export interface OxapHubConfig {
   adapters: Record<string, Record<string, unknown>>;
   environment: Record<string, string>;
 }
@@ -38,8 +38,8 @@ export function buildHubConfig(
   harnesses: Readonly<Record<string, OxapHarness>>,
   environment: Readonly<Record<string, string | undefined>>,
   keys: Readonly<Record<string, string | undefined>>
-): { value: OapHubConfig } | { reason: string } {
-  const config: OapHubConfig = { adapters: {}, environment: {} };
+): { value: OxapHubConfig } | { reason: string } {
+  const config: OxapHubConfig = { adapters: {}, environment: {} };
   const owners: Record<string, string> = {};
   for (const record of records) {
     const harness = harnessOf(record);

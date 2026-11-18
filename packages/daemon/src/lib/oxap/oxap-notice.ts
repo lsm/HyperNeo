@@ -1,12 +1,12 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { OapReopenEvents, OapReopenStore } from './oap-reopen.ts';
+import type { OxapReopenEvents, OxapReopenStore } from './oxap-reopen.ts';
 
-export async function announceOapNotice(
+export async function announceOxapNotice(
   sessionId: string,
   text: string,
-  db: OapReopenStore,
-  hub: OapReopenEvents,
+  db: OxapReopenStore,
+  hub: OxapReopenEvents,
   ensureLive: () => void
 ): Promise<void> {
   const message = {

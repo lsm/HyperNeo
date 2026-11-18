@@ -7,7 +7,7 @@ import type {
 } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-export interface OapTranslatorState {
+export interface OxapTranslatorState {
   sessionId: string;
   terminal: boolean;
   tools: ReadonlyArray<{ id: string; settled: boolean }>;
@@ -26,18 +26,18 @@ interface PendingMessage {
   content: ContentPart[];
 }
 
-export interface OapTranslatorEvent {
+export interface OxapTranslatorEvent {
   type: string;
   id: string;
   payload: Record<string, unknown>;
 }
 
-export interface OapTranslation {
-  state: OapTranslatorState;
+export interface OxapTranslation {
+  state: OxapTranslatorState;
   messages: SDKMessage[];
 }
 
-export function initialOapTranslatorState(sessionId: string): OapTranslatorState {
+export function initialOxapTranslatorState(sessionId: string): OxapTranslatorState {
   return { sessionId, terminal: false, tools: [], pending: [], segments: [] };
 }
 
@@ -70,7 +70,10 @@ function zeroUsage() {
   };
 }
 
-function assistantMessage(state: OapTranslatorState, pending: PendingMessage): SDKAssistantMessage {
+function assistantMessage(
+  state: OxapTranslatorState,
+  pending: PendingMessage
+): SDKAssistantMessage {
   return {
     type: 'assistant',
     uuid: eventUuid(state.sessionId, pending.id),
@@ -93,7 +96,7 @@ function assistantMessage(state: OapTranslatorState, pending: PendingMessage): S
   };
 }
 
-function translateContent(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
+function translateContent(state: OxapTranslatorState, event: OxapTranslatorEvent): OxapTranslation {
   const part = record(event.payload.part);
   const content: ContentPart | null =
     part.type === 'text' && typeof part.text === 'string'
@@ -146,7 +149,7 @@ function count(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function usageFor(event: OapTranslatorEvent) {
+function usageFor(event: OxapTranslatorEvent) {
   const usage = record(event.payload.usage);
   return {
     ...zeroUsage(),
@@ -159,8 +162,8 @@ function usageFor(event: OapTranslatorEvent) {
 }
 
 function toolUse(
-  state: OapTranslatorState,
-  event: OapTranslatorEvent,
+  state: OxapTranslatorState,
+  event: OxapTranslatorEvent,
   id: string
 ): SDKAssistantMessage {
   return {
@@ -193,8 +196,8 @@ function toolUse(
 }
 
 function toolResult(
-  state: OapTranslatorState,
-  event: OapTranslatorEvent,
+  state: OxapTranslatorState,
+  event: OxapTranslatorEvent,
   id: string
 ): SDKUserMessage {
   const failed = event.type !== 'action.call.completed';
@@ -217,7 +220,7 @@ function toolResult(
   };
 }
 
-function translateTool(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
+function translateTool(state: OxapTranslatorState, event: OxapTranslatorEvent): OxapTranslation {
   const id = event.payload.tool_call_id;
   if (typeof id !== 'string' || !id) return { state, messages: [] };
   const prior = state.tools.find((tool) => tool.id === id);
@@ -234,7 +237,7 @@ function translateTool(state: OapTranslatorState, event: OapTranslatorEvent): Oa
   return { state: { ...state, tools }, messages };
 }
 
-function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): SDKResultMessage {
+function terminalMessage(state: OxapTranslatorState, event: OxapTranslatorEvent): SDKResultMessage {
   const failed = event.type !== 'run.completed';
   const error = record(event.payload.error);
   const reason = typeof event.payload.stop_reason === 'string' ? event.payload.stop_reason : null;
@@ -269,7 +272,7 @@ function terminalMessage(state: OapTranslatorState, event: OapTranslatorEvent): 
   };
 }
 
-function translate(state: OapTranslatorState, event: OapTranslatorEvent): OapTranslation {
+function translate(state: OxapTranslatorState, event: OxapTranslatorEvent): OxapTranslation {
   if (state.terminal) return { state, messages: [] };
   if (event.type === 'content.delta') {
     return translateContent(state, event);
@@ -303,7 +306,10 @@ function translate(state: OapTranslatorState, event: OapTranslatorEvent): OapTra
   return { state, messages: [] };
 }
 
-export const translateOapEvent = (superpipe({})('oap.sdk.translate') as PipelineAPI)
+export const translateOxapEvent = (superpipe({})('oap.sdk.translate') as PipelineAPI)
   .input(['state', 'event'])
   .pipe(translate, ['state', 'event'], 'translation')
-  .end('translation') as (state: OapTranslatorState, event: OapTranslatorEvent) => OapTranslation;
+  .end('translation') as (
+  state: OxapTranslatorState,
+  event: OxapTranslatorEvent
+) => OxapTranslation;

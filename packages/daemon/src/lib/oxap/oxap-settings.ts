@@ -4,8 +4,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
-import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
-import { buildHubConfig, harnessOf, missingSetting } from './oap-hub-config.ts';
+import type { OxapEngine, OxapEngineOptions } from './oxap-engine.ts';
+import { buildHubConfig, harnessOf, missingSetting } from './oxap-hub-config.ts';
 import type { OxapHubBinary } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
@@ -15,7 +15,7 @@ export interface OxapSettingsDeps {
   readonly writeProvider: (id: string, configJson: string) => Promise<void>;
   readonly key: (providerId: string) => Promise<string | undefined>;
   readonly install: (installed: OxapHubBinary | undefined) => Promise<OxapHubBinary>;
-  readonly engine: Pick<OapEngine, 'restart'>;
+  readonly engine: Pick<OxapEngine, 'restart'>;
   readonly stateDirectory: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
 }
@@ -36,7 +36,7 @@ function hubOptions(
   deps: OxapSettingsDeps,
   records: Records,
   keys: Record<string, string | undefined>
-): OapEngineOptions {
+): OxapEngineOptions {
   const binary = deps.settings().oxapHub;
   if (!binary) throw new Error('OXAP hub is not installed; choose an OXAP harness in Settings');
   const hub = buildHubConfig(records, OXAP_HARNESSES, deps.environment, keys);
@@ -54,7 +54,7 @@ export const readHubOptions = (superpipe({})('oxap.hub.inputs') as PipelineAPI)
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
   .pipe(readKeys, ['records', 'deps'], 'keys')
   .pipe(hubOptions, ['deps', 'records', 'keys'], 'options')
-  .endAsync('options') as (deps: OxapSettingsDeps) => Promise<OapEngineOptions>;
+  .endAsync('options') as (deps: OxapSettingsDeps) => Promise<OxapEngineOptions>;
 
 const SaveInput = z.object({
   providerId: z.string().min(1),

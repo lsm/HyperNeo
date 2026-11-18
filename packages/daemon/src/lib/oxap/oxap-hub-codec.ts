@@ -1,7 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 
-export type OapHubFrame =
+export type OxapHubFrame =
   | { kind: 'response'; id: number; result: unknown }
   | {
       kind: 'refusal';
@@ -52,7 +52,7 @@ function readFrame(line: string): z.infer<typeof WireFrame> {
   return WireFrame.parse(JSON.parse(line));
 }
 
-function classifyFrame(frame: z.infer<typeof WireFrame>): OapHubFrame {
+function classifyFrame(frame: z.infer<typeof WireFrame>): OxapHubFrame {
   if (frame.ok === undefined)
     return { kind: 'event', id: frame.id, event: frame.event, data: frame };
   if (!frame.ok) {
@@ -87,7 +87,7 @@ const encode = (superpipe({})('oap.hub.encode') as PipelineAPI)
   .pipe(writeRequest, 'request', 'line')
   .end('line') as (id: number, op: string, parameters: Record<string, unknown>) => string;
 
-export function encodeOapHubRequest(
+export function encodeOxapHubRequest(
   id: number,
   op: string,
   parameters: Record<string, unknown> = {}
@@ -95,8 +95,8 @@ export function encodeOapHubRequest(
   return encode(id, op, parameters);
 }
 
-export const decodeOapHubLine = (superpipe({})('oap.hub.decode') as PipelineAPI)
+export const decodeOxapHubLine = (superpipe({})('oap.hub.decode') as PipelineAPI)
   .input('line')
   .pipe(readFrame, 'line', 'frame')
   .pipe(classifyFrame, 'frame', 'decoded')
-  .end('decoded') as (line: string) => OapHubFrame;
+  .end('decoded') as (line: string) => OxapHubFrame;

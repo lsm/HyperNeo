@@ -1,30 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine';
+import { OxapHubRequestError, type OxapHubClient } from '../../../../src/lib/oxap/oxap-hub-client';
+import { createOxapRuntime } from '../../../../src/lib/oxap/oxap-runtime';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
 
 vi.mock('@hyperneo/shared/types/oxap-harnesses', async (importOriginal) =>
   (await import('../../../helpers/synthetic-oxap-harness')).withSyntheticOxapRow(importOriginal)
 );
 
-const options: OapEngineOptions = {
-  binaryPath: '/synthetic/oapx',
+const options: OxapEngineOptions = {
+  binaryPath: '/synthetic/oxap',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
 };
 const record = { providerId: 'synthetic-memory', configJson: '{"harness":"oxap-synthetic"}' };
-const bind = createOapRuntime as unknown as (
-  engine: OapEngine,
-  options: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
+const bind = createOxapRuntime as unknown as (
+  engine: OxapEngine,
+  options: { installed: () => boolean; read: () => Promise<OxapEngineOptions> },
   events: ReturnType<typeof createDaemonInternalEventBus>,
   db: unknown,
   messageHub: unknown,
   providerRecord: (providerId: string) => typeof record | null
-) => (session: Session) => { hub: Promise<OapQueryHub>; clear(): Promise<void> };
+) => (session: Session) => { hub: Promise<OxapQueryHub>; clear(): Promise<void> };
 
 function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: string } = {}) {
   const operations: Array<{ op: string; params: Record<string, unknown> }> = [];
@@ -42,7 +42,7 @@ function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: str
     if (op === 'work.status') {
       if (opened) return status();
       if (config.known) return status(false);
-      throw new OapHubRequestError('unknown_session', 'absent');
+      throw new OxapHubRequestError('unknown_session', 'absent');
     }
     if (op === 'capabilities')
       return {
@@ -53,7 +53,7 @@ function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: str
     if (op === 'open') {
       const payload = (params.request as { payload: { reopen?: boolean } }).payload;
       if (payload.reopen && config.refuseReopen)
-        throw new OapHubRequestError('unknown_session', 'missing');
+        throw new OxapHubRequestError('unknown_session', 'missing');
       if (!payload.reopen) count += 1;
       opened = true;
       return { type: 'session.open.response', payload: { session_id: 'session-m' } };
@@ -65,10 +65,10 @@ function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: str
     throw new Error(`unexpected operation ${op}`);
   });
   const engine = {
-    getHub: vi.fn(async () => ({ request }) as unknown as OapHubClient),
+    getHub: vi.fn(async () => ({ request }) as unknown as OxapHubClient),
     isCurrentHub: vi.fn(() => true),
     createQueryHub: vi.fn(() => ({ submit: vi.fn(), release: vi.fn() })),
-  } as unknown as OapEngine;
+  } as unknown as OxapEngine;
   const db = {
     updateSession: vi.fn(async () => 'written'),
     getSDKMessages: vi.fn(() => ({ messages: [], hasMore: false })),

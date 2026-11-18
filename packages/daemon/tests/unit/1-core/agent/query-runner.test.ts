@@ -38,9 +38,9 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import * as oapQueryModule from '../../../../src/lib/oap/oap-query';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import { OxapHubRequestError, type OxapHubClient } from '../../../../src/lib/oxap/oxap-hub-client';
+import * as oxapQueryModule from '../../../../src/lib/oxap/oxap-query';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { hyperneoWorkStatus } from '../../../../src/lib/drivers/hyperneo-adapter';
@@ -486,7 +486,7 @@ describe('QueryRunner', () => {
         },
         db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
+        oxap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
       });
       const sent = queue.enqueueWithId('codex-admission', 'prompt', false, { durable: true });
       runner = new QueryRunner(ctx);
@@ -532,7 +532,7 @@ describe('QueryRunner', () => {
         throw new Error(`unexpected write ${operation}`);
       });
       const submit = mock(async () => {
-        throw new OapHubRequestError(code, 'synthetic refusal');
+        throw new OxapHubRequestError(code, 'synthetic refusal');
       });
       const ctx = createContext({
         session: {
@@ -541,7 +541,7 @@ describe('QueryRunner', () => {
         },
         db: { ...mockDb, writeSDKMessage: write } as unknown as Database,
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: { submit, events: async function* () {}, cancel: async () => {} },
         },
@@ -579,7 +579,7 @@ describe('QueryRunner', () => {
           }),
         } as unknown as Database,
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: {
             submit,
@@ -625,7 +625,7 @@ describe('QueryRunner', () => {
         },
         db: { ...mockDb, writeSDKMessage: mock(async () => []) } as unknown as Database,
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+        oxap: { openDirectorySupported: true, hub: { submit, events, cancel } },
       });
       void queue
         .enqueueWithId('codex-old-accept', 'old prompt', false, { durable: true })
@@ -680,7 +680,7 @@ describe('QueryRunner', () => {
             config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
-          oap: {
+          oxap: {
             openDirectorySupported: true,
             hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
           },
@@ -773,7 +773,7 @@ describe('QueryRunner', () => {
             config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
-          oap: {
+          oxap: {
             openDirectorySupported: true,
             hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
           },
@@ -850,7 +850,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+        oxap: { openDirectorySupported: true, hub: { submit, events, cancel } },
       });
       const sent = queue
         .enqueueWithId('codex-text', 'Synthetic prompt', false, { durable: true })
@@ -898,7 +898,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: { submit, events, cancel } },
+        oxap: { openDirectorySupported: true, hub: { submit, events, cancel } },
       });
       const firstSent = queue
         .enqueueWithId('codex-first', 'first prompt', false, { durable: true })
@@ -916,7 +916,7 @@ describe('QueryRunner', () => {
     });
 
     it('delivers a prompt queued while an OAP result is being handled', async () => {
-      type Listener = Parameters<OapHubClient['subscribe']>[1];
+      type Listener = Parameters<OxapHubClient['subscribe']>[1];
       let listener!: Listener;
       let runCount = 0;
       let releaseResult!: () => void;
@@ -954,12 +954,12 @@ describe('QueryRunner', () => {
           payload: { accepted: true, session_id: ctx.session.id, run_id: runId },
         };
       });
-      const createOapQueryHub = (
-        oapQueryModule as unknown as {
-          createOapQueryHub(client: OapHubClient): OapQueryHub;
+      const createOxapQueryHub = (
+        oxapQueryModule as unknown as {
+          createOxapQueryHub(client: OxapHubClient): OxapQueryHub;
         }
-      ).createOapQueryHub;
-      const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+      ).createOxapQueryHub;
+      const hub = createOxapQueryHub({ subscribe, request } as unknown as OxapHubClient);
       const messages: SDKMessage[] = [];
       onSDKMessageSpy.mockImplementation(async (message: SDKMessage) => {
         messages.push(message);
@@ -975,7 +975,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub },
+        oxap: { openDirectorySupported: true, hub },
       });
       const first = queue
         .enqueueWithId('window-first', 'first', false, { durable: true })
@@ -996,8 +996,8 @@ describe('QueryRunner', () => {
     });
 
     it('does not submit after the Codex workspace open is superseded', async () => {
-      let release!: (hub: OapQueryHub) => void;
-      const opening = new Promise<OapQueryHub>((resolve) => {
+      let release!: (hub: OxapQueryHub) => void;
+      const opening = new Promise<OxapQueryHub>((resolve) => {
         release = resolve;
       });
       const submit = mock(async () => ({ runId: 'unexpected' }));
@@ -1007,7 +1007,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: opening as unknown as OapQueryHub },
+        oxap: { openDirectorySupported: true, hub: opening as unknown as OxapQueryHub },
       });
       void queue.enqueueWithId('opening-stale', 'prompt', false, { durable: true }).catch(() => {});
       runner = new QueryRunner(ctx);
@@ -1037,7 +1037,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
+        oxap: { openDirectorySupported: true, hub: { submit, events, cancel: async () => {} } },
       });
       void queue.enqueueWithId('codex-stale', 'prompt', false, { durable: true }).catch(() => {});
       runner = new QueryRunner(ctx);
@@ -1058,7 +1058,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: false,
           hub: { submit, events: async function* () {}, cancel: async () => {} },
         },
@@ -1087,7 +1087,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex', ...config },
         } as Session,
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: { submit, events: async function* () {}, cancel: async () => {} },
         },
@@ -1114,7 +1114,7 @@ describe('QueryRunner', () => {
           { matcher: 'Bash', pattern: 'git push', decision: 'deny', reason: 'synthetic' },
         ],
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: { submit, events: async function* () {}, cancel: async () => {} },
         },
@@ -1140,7 +1140,7 @@ describe('QueryRunner', () => {
           config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
         },
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: { submit, cancel: async () => {}, events: async function* () {} },
         },
@@ -1177,7 +1177,7 @@ describe('QueryRunner', () => {
             config: { model: 'unit', provider: providerId, harness: 'oxap-codex' },
           },
           messageQueue: queue,
-          oap: {
+          oxap: {
             openDirectorySupported: true,
             hub: { submit, cancel: async () => {}, events: async function* () {} },
           },
@@ -1231,7 +1231,7 @@ describe('QueryRunner', () => {
         },
         isCleaningUp: () => cleaning,
         messageQueue: queue,
-        oap: {
+        oxap: {
           openDirectorySupported: true,
           hub: { submit, cancel: async () => {}, events: async function* () {} },
         },

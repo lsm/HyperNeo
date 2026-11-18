@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
-import { decodeOapHubLine, encodeOapHubRequest, type OapHubFrame } from './oap-hub-codec.ts';
+import { decodeOxapHubLine, encodeOxapHubRequest, type OxapHubFrame } from './oxap-hub-codec.ts';
 
-type HubEvent = Extract<OapHubFrame, { kind: 'event' }>;
+type HubEvent = Extract<OxapHubFrame, { kind: 'event' }>;
 type Listener = (event: HubEvent | Error) => void;
 type Pending = {
   line: string;
@@ -20,7 +20,7 @@ type Dispatch =
   | { kind: 'resolve'; value: unknown }
   | { kind: 'reject'; code: string; message: string; feature?: string };
 
-export interface OapHubClientOptions {
+export interface OxapHubClientOptions {
   command: string;
   args: string[];
   cwd?: string;
@@ -29,20 +29,20 @@ export interface OapHubClientOptions {
   onFailure?: (error: Error) => void;
 }
 
-export class OapHubRequestError extends Error {
+export class OxapHubRequestError extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly feature?: string
   ) {
     super(message);
-    this.name = 'OapHubRequestError';
+    this.name = 'OxapHubRequestError';
   }
 }
 
-export function isDefiniteOapRefusal(error: unknown): error is OapHubRequestError {
+export function isDefiniteOxapRefusal(error: unknown): error is OxapHubRequestError {
   return (
-    error instanceof OapHubRequestError &&
+    error instanceof OxapHubRequestError &&
     [
       'busy',
       'capability_degraded',
@@ -60,7 +60,7 @@ export function isDefiniteOapRefusal(error: unknown): error is OapHubRequestErro
   );
 }
 
-function decideFrame(frame: OapHubFrame, waiting: boolean, retried: boolean): Dispatch {
+function decideFrame(frame: OxapHubFrame, waiting: boolean, retried: boolean): Dispatch {
   if (frame.kind === 'event') return { kind: 'event', frame };
   if (!waiting) return { kind: 'ignore' };
   if (frame.kind === 'response') return { kind: 'resolve', value: frame.result };
@@ -75,7 +75,7 @@ const planFrame = (superpipe({})('oap.hub.dispatch') as PipelineAPI)
   .end('dispatch') as typeof decideFrame;
 
 function decideCleanupFailure(error: Error): { kind: 'fail' } | { kind: 'warn'; code: string } {
-  return error instanceof OapHubRequestError && error.code !== 'timeout'
+  return error instanceof OxapHubRequestError && error.code !== 'timeout'
     ? { kind: 'warn', code: error.code }
     : { kind: 'fail' };
 }
@@ -131,7 +131,7 @@ function notify(listener: Listener | undefined, frame: HubEvent | Error) {
   }
 }
 
-export class OapHubClient {
+export class OxapHubClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private exited: Promise<void> = Promise.resolve();
   private failure: Error | null = null;
@@ -142,7 +142,7 @@ export class OapHubClient {
   private readonly pending = new Map<number, Pending>();
   private readonly listeners = new Map<number, Listener>();
 
-  constructor(private readonly options: OapHubClientOptions) {
+  constructor(private readonly options: OxapHubClientOptions) {
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
@@ -225,7 +225,7 @@ export class OapHubClient {
     if (this.failure) throw this.failure;
     if (!this.child) throw new Error('OAP hub client is not connected');
     const id = ++this.nextId;
-    const line = encodeOapHubRequest(id, op, parameters);
+    const line = encodeOxapHubRequest(id, op, parameters);
     const answer = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         const waiting = this.pending.get(id);
@@ -233,7 +233,7 @@ export class OapHubClient {
         this.pending.delete(id);
         clearTimeout(waiting.retryTimer);
         this.listeners.delete(id);
-        reject(new OapHubRequestError('timeout', `OAP hub ${op} timed out`));
+        reject(new OxapHubRequestError('timeout', `OAP hub ${op} timed out`));
         if (listener && !this.failure)
           void this.request('unsubscribe', { subscription: id }).catch((error: Error) => {
             const decision = planCleanupFailure(error);
@@ -274,14 +274,14 @@ export class OapHubClient {
       }
       this.buffer = decision.remaining;
       try {
-        this.dispatch(decodeOapHubLine(decision.line));
+        this.dispatch(decodeOxapHubLine(decision.line));
       } catch (error) {
         this.fail(error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
 
-  private dispatch(frame: OapHubFrame): void {
+  private dispatch(frame: OxapHubFrame): void {
     const waiting = this.pending.get(frame.id);
     const decision = planFrame(frame, !!waiting, waiting?.retried ?? false);
     if (decision.kind === 'event') {
@@ -300,7 +300,7 @@ export class OapHubClient {
     clearTimeout(waiting.timer);
     clearTimeout(waiting.retryTimer);
     if (decision.kind === 'resolve') waiting.resolve(decision.value);
-    else waiting.reject(new OapHubRequestError(decision.code, decision.message, decision.feature));
+    else waiting.reject(new OxapHubRequestError(decision.code, decision.message, decision.feature));
   }
 
   private fail(error: Error, diagnostic = true): void {
