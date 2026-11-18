@@ -71,7 +71,11 @@ else
   chmod +x "$RUN/bin/npm"
 fi
 chmod +x "$RUN/bin/curl"
-env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test \
+DAEMON_PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin"
+if [[ "$MODE" == pnpm-failure || "$MODE" == mirror-failure ]]; then
+  DAEMON_PATH="$RUN/bin"
+fi
+env -i HOME="$RUN/home" PATH="$DAEMON_PATH" TMPDIR="$RUN" NODE_ENV=test \
   HYPERNEO_DATA_DIR="$RUN/data" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 PID=$!
 trap 'kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true' EXIT
