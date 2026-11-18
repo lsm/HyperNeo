@@ -27,7 +27,7 @@ PR changes `docs/design/**`. A plan cannot be marked done, and its ask cannot se
 2. **was checked:** a passing check, recorded on the plan, by a session other than its
    doer, listing exactly the current steps. The checker runs another model when one is
    usable; when the doer's model is the only usable one, another session on that model
-   counts. A check stops counting when the steps change;
+   counts. A check stops counting when the steps change before the plan is done;
 3. **was signed:** an answered sign-off card naming those steps.
 
 Each item is needed: (1) is the bug; (2) is what catches steps that do not match the
@@ -39,6 +39,10 @@ option signs. It meets the existing link rule in `planNeoQuestion` (a todo card 
 `retireWhen` or a todo `check`): it retires when answered or when the steps change. For
 a design PR this card is the sign-off; the PR still merges the way the repository's
 `humanSignoff` says (`packs/coding/human-signoff.ts`), and no merge gate is added.
+
+**After a plan is done** its check and sign-off stay valid: a step added later is a normal
+follow-up and needs no new sign-off. Only rule 1 still applies, through the last-step
+guard below, so a done plan's ask can always settle.
 
 **Check.** It is written by the daemon, never by Neo, into one new column
 `neo_todos.checked_json`:
@@ -56,12 +60,13 @@ a design PR this card is the sign-off; the PR still merges the way the repositor
 
 For plans the coding review stage runs whatever `crossModelReview` says, and
 `codingReviewerPolicy` (`packs/coding/stage-facts.ts`, which refuses a same-model reviewer
-today) takes that availability fact, so the single-model case is allowed.
+today) takes that availability fact, so the single-model case is allowed. Its other
+caller, the merge gate's `codingCrossModelReviewed` (`stage-facts.ts`), passes "another
+model usable" as today, so merges of non-plan PRs are unchanged.
 
-**Old todos.** The migration adds `checked_json TEXT DEFAULT '{"legacy":true}'`, so every
-existing row reads legacy with no rewrite; the todo insert
-(`packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts`) writes NULL for new
-rows. A legacy todo keeps the old rule: one live dependent if it was marked
+**Old todos.** The migration adds `checked_json TEXT` with no default and fills only that
+new column with `{"legacy":true}` on existing rows in one `UPDATE`; no other data
+changes. New rows get NULL without any insert change. A legacy todo keeps the old rule: one live dependent if it was marked
 `producesFollowUp`, nothing otherwise.
 
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
@@ -87,7 +92,7 @@ and `neo.todo.remove` are also called by the web todo controls
 (`packages/web/src/neo/todo-controls.ts`) and the daemon's cards (`daemon-cards.ts`)
 through `todo-mutation-operation.ts`, so the same rule covers them and the web shows the
 refusal. `stage-facts.ts` has 12 importers in the coding pack; only `codingReviewerPolicy`'s
-inputs change.
+inputs change, and its merge-gate caller keeps today's input.
 
 ## Change plan
 
@@ -121,4 +126,6 @@ lines resolve to a single model.
 | a repository with `crossModelReview` off, a design PR | a review stage runs and its pass writes `checked_json` with a reviewer model other than the author's |
 | the same, one usable model | the review runs on another session of that model and counts |
 | a todo that existed before the upgrade | reads legacy; old rule only |
+| a step added after the plan is done | no new check or sign-off; the ask settles |
+| a non-plan PR in a `crossModelReview` repository | merge gate unchanged |
 | a todo that is not a plan | unchanged |
