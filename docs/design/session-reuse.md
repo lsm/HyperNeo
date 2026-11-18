@@ -50,22 +50,48 @@ keeps all three apart. A pack cannot loosen the third rule.
 
 ## Step 1
 
-Three PRs, in this order.
+Four PRs, in this order.
 
-**PR 1: the coding pack stops picking sessions.** Mostly deletions.
+**PR 1: the reuse setting, asked on a card.** A core preference `sessionReuse` decides
+which free worker another todo may reuse (rule 2 below):
+
+| Value | Rule 2 | Label |
+|---|---|---|
+| `long_lived` (default) | any free daemon worker in the same folder, one that worked on the same ask first (today's core rule) | Long-lived sessions |
+| `per_ask` | only a free worker that already worked on this todo's ask; if it is busy, wait for it | One session per matter |
+| `per_todo` | none; start new | One session per step |
+
+- Core declares it (pack id `core`, read by `neo/preference-operations.ts`), scope
+  `project` (the todo's ask project), then `global`.
+- **It is asked on a card, never on a settings page.** The first time a Neo start in a
+  project could reuse a worker and no value is saved for that project or globally, core
+  asks one card through `pack.preferences.ask`, without holding the work (`hold: false`),
+  as the coding pack's question does today (`neo/packs/coding/session-strategy.ts`).
+  Until it is answered, `long_lived` applies and nothing is saved. When the human says
+  they want to change it, Neo asks the same card again.
+- It applies in `reuseIdleWorker` (`drivers/work-operations.ts`) through the candidate
+  filter of `chooseReusableWorker`. "Worked on this ask" reads `neo_todo_sessions` until
+  PR 4, then `neo_todo_roles`.
+- Saved coding `sessionStrategy` values move once: a repository value to each project
+  that owns the repository (the most recently set wins when one project owns several), a
+  global value to global. A repository with no owning project is reported to Neo and not
+  moved. `long_lived` → `long_lived`, `per_task` → `per_todo`, `per_pr` → `per_todo` (a
+  PR is one todo). The coding pack stops asking its own question in this PR.
+
+**PR 2: the coding pack stops picking sessions.** Mostly deletions.
 
 - `NeoPack.workerTarget` in the coding pack keeps model-line ranking and stage
   model/effort (the second half of `session-target.ts`) and drops the session part: the
-  `sessionStrategy` preference and its first-dispatch question, the feature reservation
+  `sessionStrategy` preference (already replaced by PR 1), the feature reservation
   (its writes and reads; the table is left unused), PR-holder routing, takeover and
   work-type session names. Every coding start then goes through core's reuse, which only
   picks daemon-started workers. This closes the misroute without a separate guard.
 - A PR's review findings and CI failures still reach the author through the PR sweep
   (`neo/packs/coding/pr-sweep.ts`, `deps.tell(row.owner, …)`). This is not dispatch.
-- Until PR 3 lands, a new review round may start a new reviewer. That is safe, only
+- Until PR 4 lands, a new review round may start a new reviewer. That is safe, only
   less economical.
 
-**PR 2: the start record.** A session counts as started by the daemon only when it has
+**PR 3: the start record.** A session counts as started by the daemon only when it has
 a start record. Today `work_started_sessions` keeps only `adapter, id, started_at,
 unusable_at, released_at, claimed_by, role`, so it cannot say for whom or on what a
 session was started. The daemon writes one record when `work.start` starts new work, in
@@ -93,7 +119,7 @@ only when its record exists, and writes the reason and time into the record's en
 fields (`neo/todo-release.ts`, `neo/session-archive-operation.ts`). Reuse picks only
 sessions whose record exists and has no end.
 
-**PR 3: roles in core.**
+**PR 4: roles in core.**
 
 - `work.start` takes an optional `role` (a short label). A start without a role is role
   `do`. With a `todoId`, core writes one row per assignment in a new table
@@ -107,9 +133,8 @@ sessions whose record exists and has no end.
   rules), decide with one pure function, then send, wait or start new. The decision:
   1. this todo already has a session for this role and it is usable → send there; if
      busy, wait for it (`todoWorker.wait`, extended to a todo that is already doing);
-  2. otherwise today's core rule (free worker in the same folder, same ask first),
-     skipping any session that plays another role on this todo unless the pack's rules
-     allow sharing;
+  2. otherwise the `sessionReuse` rule from PR 1, skipping any session that plays
+     another role on this todo unless the pack's rules allow sharing;
   3. otherwise start new.
 - A prepared start (worker sandbox on) reuses only a session whose start record has the
   same `preparation_pack` and `sandbox`. The round's parameters (PR, head) go in the
@@ -135,9 +160,9 @@ Neo's explicit `send` to a named session is unchanged.
 `neo/todo-release.ts` and `neo/session-archive-operation.ts`: `work_started_sessions` is
 read and written only in `work-started-sessions.ts`, so the start record's columns and the
 `role` → `kind` rename stay in that file and its 6 importers. `work-operations.ts` has 29
-importers and defines every `work.*` operation; PR 3 adds one optional `role` input to
+importers and defines every `work.*` operation; PR 4 adds one optional `role` input to
 `work.start` and changes no other operation. `session-target.ts` has one importer, the
-coding pack, so PR 1's deletions do not reach core.
+coding pack, so PR 2's deletions do not reach core.
 
 Acceptance, one integration case per row:
 
@@ -153,16 +178,14 @@ Acceptance, one integration case per row:
 | a new start | its record names who started it, for which ask, todo and role, the machine and folder, and the confirmed harness, provider, model and effort |
 | a session with no start record | never released, archived or reclaimed by the daemon |
 | a non-coding todo started with role `check` | never the session that did it |
+| no `sessionReuse` saved, first reusable start in a project | one card asks; the work goes on as `long_lived` meanwhile |
+| `per_ask`, a free worker that only worked on another ask | not reused; a new worker starts |
+| `per_ask`, the ask's worker is busy | the todo waits for it |
+| `per_todo`, a free worker from another todo | not reused |
+| a repository saved as `per_pr` | its owning project reads `per_todo` |
 
 ## Later, only when needed
 
-- **How free workers are reused across todos.** Step 1 keeps today's rule (any free
-  daemon worker in the folder, same ask first). A core preference `sessionReuse`
-  (`long_lived` / `per_ask` / `per_todo`, project then global scope) would change rule 2.
-  The human sets it by answering a card, the way packs already ask
-  (`pack.preferences.ask`): Neo asks once when it first matters, and asks again when the
-  human says they want to change it. No settings page is needed. Saved coding
-  `sessionStrategy` values would move there (`per_task` and `per_pr` → `per_todo`).
 - **A role that needs another model.** A role rule `otherModel: true`, so a check on a
   contract runs on a different model than the edit, the way the coding pack's
   cross-model review does today.
