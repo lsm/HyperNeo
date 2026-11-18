@@ -22,7 +22,6 @@ import type {
   NeoCardReplyContext,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
-import { fromDoor } from '../pairing/pairing-operations.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { TodoCheck, requireNeoOpenAsk } from './todo-operations.ts';
@@ -352,17 +351,7 @@ type Relay = { todoId?: string; session?: string; title: string; options: string
 const Answer = z.object({
   questionId: Text,
   answer: z.union([z.string(), z.array(z.string())]),
-  where: z.string().optional().describe('Session door only: where the human said the answer.'),
-  when: z.string().optional().describe('Session door only: when the human said the answer.'),
 });
-
-export type NeoRelayedAnswer = {
-  questionId: string;
-  sender: string;
-  where: string;
-  when: string;
-  words: string;
-};
 
 const Get = z.object({
   questionId: z
@@ -663,31 +652,8 @@ export function createNeoQuestionOperations(
     ok: false,
     reason: 'no_worker_question: this todo has no worker question to relay.',
   }),
-  language: () => LanguageSetting | undefined = () => undefined,
-  relayAnswer: (
-    input: NeoRelayedAnswer
-  ) => Promise<{ value: string } | { reason: Rejection }> = async () => ({
-    reason: { ok: false, reason: 'relay_unavailable: this daemon does not take relayed answers.' },
-  })
+  language: () => LanguageSetting | undefined = () => undefined
 ) {
-  const relayed = async (
-    input: z.infer<typeof Answer>,
-    sender: string
-  ): Promise<QuestionReceipt | Rejection> => {
-    const written = await relayAnswer({
-      questionId: input.questionId,
-      sender,
-      where: input.where ?? '',
-      when: input.when ?? '',
-      words: [input.answer].flat().join(' '),
-    });
-    if ('reason' in written) return written.reason;
-    await deliverAnswers(written.value);
-    const question = store.getQuestion(written.value);
-    return question
-      ? { ok: true, question }
-      : { ok: false, reason: 'not_found: no such question.' };
-  };
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -902,14 +868,7 @@ export function createNeoQuestionOperations(
 
   const answer = (superpipe({})('neo.question.answer') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(
-      async (input: z.infer<typeof Answer>, caller: OperationCaller) =>
-        fromDoor(caller) && caller.sessionId
-          ? { reason: await relayed(input, caller.sessionId) }
-          : requireLocalUser(caller),
-      ['input', 'caller'],
-      'result:outcome'
-    )
+    .pipe((caller: OperationCaller) => requireLocalUser(caller), 'caller', 'result:outcome')
     .pipe(
       (input: z.infer<typeof Answer>) =>
         planNeoQuestionAnswer(store.getQuestion(input.questionId), input.answer),

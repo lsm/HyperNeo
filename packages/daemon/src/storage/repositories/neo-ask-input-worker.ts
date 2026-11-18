@@ -1,13 +1,6 @@
-import { SettingsRepository } from './settings-repository.ts';
-import { planNeoRelayAnswer, type NeoRelayInput } from '../../lib/neo/relay-plan.ts';
-import { enqueueMailboxEntry } from '../../lib/mailbox/enqueue.ts';
-import { createMailboxEntry } from '../../lib/mailbox/entry.ts';
-import { renderAddress } from '../../lib/mailbox/address.ts';
-import { JobQueueRepository } from './job-queue-repository.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NEO_ANSWER_NOTE, NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
+import { NeoAskTodoRepository } from './neo-ask-todo-repository.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
-import { planNeoRemovedPrerequisiteAnswer } from '../../lib/neo/todo-removal.ts';
 
 export type NeoAskInputClaim = {
   sessionId: string;
@@ -19,95 +12,6 @@ export type NeoAskInputClaim = {
 
 class NeoAskInputs {
   constructor(private readonly db: Database) {}
-
-  relayAnswer(input: NeoRelayInput): { value: string } | { reason: { ok: false; reason: string } } {
-    return this.db.transaction(
-      (): { value: string } | { reason: { ok: false; reason: string } } => {
-        const store = new NeoAskTodoRepository(this.db);
-        const question = store.getQuestion(input.questionId);
-        const links = this.db
-          .prepare(`SELECT
-        EXISTS(SELECT 1 FROM neo_rule_proposals WHERE question_id=?) AS ruleProposal,
-        EXISTS(SELECT 1 FROM neo_pack_preference_proposals WHERE question_id=?) AS preferenceProposal`)
-          .get(input.questionId, input.questionId) as {
-          ruleProposal: number;
-          preferenceProposal: number;
-        };
-        const plan = planNeoRelayAnswer(
-          new SettingsRepository(this.db).getGlobalSettings().neo,
-          question
-            ? {
-                ...question,
-                ruleProposal: !!links.ruleProposal,
-                preferenceProposal: !!links.preferenceProposal,
-              }
-            : null,
-          input
-        );
-        if ('reason' in plan) return { reason: { ok: false, reason: plan.reason } };
-        const ask = store.getAsk(question!.askId);
-        if (!ask)
-          return { reason: { ok: false, reason: 'ask_missing: the card’s ask is unavailable.' } };
-        const effects = planNeoRemovedPrerequisiteAnswer(
-          question!,
-          store.listFamilyTodos(question!.askId),
-          plan.answer,
-          input.at
-        );
-        const answered = store.answerQuestion(
-          question!,
-          plan.answer,
-          'chat',
-          input.at,
-          undefined,
-          plan.provenance,
-          effects
-        );
-        if (!answered)
-          return {
-            reason: { ok: false, reason: 'question_not_open: the card was already answered.' },
-          };
-        const to = { kind: 'session' as const, sessionId: ask.sessionId };
-        const queued = enqueueMailboxEntry(
-          new JobQueueRepository(this.db),
-          createMailboxEntry({
-            to,
-            origin: renderAddress(to),
-            messageUuid: `${NEO_ANSWER_NOTE.relay}${question!.id}`,
-            message: {
-              type: 'user',
-              parent_tool_use_id: null,
-              inputKind: 'system',
-              neoWakeEvent: true,
-              message: {
-                content: `Relayed by ${plan.provenance.viaName}, ${input.when}, ${input.where}:\n${input.words}\n\nAnswer to card ${question!.id}: ${question!.text}`,
-              },
-            },
-          })
-        );
-        if (queued.kind === 'rejected') throw new Error(queued.reason);
-        return { value: answered.id };
-      }
-    )();
-  }
-
-  recentRelaySenders(conversation: string | null, recipient: string | null) {
-    if (!conversation || !recipient) return [];
-    return this.db
-      .prepare(`SELECT sender, COALESCE(NULLIF(name, ''), sender) AS name, lastMessageAt
-      FROM (
-        SELECT from_session AS sender, from_name AS name, created_at AS lastMessageAt, sequence,
-          ROW_NUMBER() OVER (PARTITION BY from_session ORDER BY created_at DESC, sequence DESC) AS rank
-        FROM neo_session_messages
-        WHERE conversation_id = ? AND to_session = ? AND from_session <> ?
-          AND kind = 'session' AND from_session NOT GLOB 'daemon:*'
-      ) WHERE rank = 1 ORDER BY lastMessageAt DESC, sequence DESC LIMIT 10`)
-      .all(conversation, recipient, recipient) as {
-      sender: string;
-      name: string;
-      lastMessageAt: string;
-    }[];
-  }
 
   owner(sessionId: string, messageId: string): string | null {
     const row = this.db
@@ -152,9 +56,7 @@ class NeoAskInputs {
 
 export const neoAskInputReads = defineRepositoryOp('neo.askInputs.read', 'read', NeoAskInputs, [
   'owner',
-  'recentRelaySenders',
 ]);
 export const neoAskInputWrites = defineRepositoryOp('neo.askInputs.write', 'write', NeoAskInputs, [
   'claimNeoInputAsk',
-  'relayAnswer',
 ]);

@@ -41,26 +41,6 @@ export function planSessionCommand(
   sender: string
 ): { value: { name: string; input: unknown } } | { reason: string } {
   const [command, target, ...rest] = args;
-  if (command === 'relay') {
-    const [whereFlag, where, whenFlag, when, separator, ...words] = rest;
-    return target &&
-      whereFlag === '--where' &&
-      where?.trim() &&
-      whenFlag === '--when' &&
-      when?.trim() &&
-      separator === '--' &&
-      words.join(' ').trim()
-      ? {
-          value: {
-            name: 'neo.question.answer',
-            input: { questionId: target, where, when, answer: words.join(' ') },
-          },
-        }
-      : {
-          reason:
-            'relay_incomplete: use relay <questionId> --where <place> --when <time> -- <exact words>.',
-        };
-  }
   if (command === 'send' && target && rest[0] === '--kind') {
     const kind = WORKER_REPORT_KINDS.find((value) => value === rest[1]);
     const text = rest.slice(2).join(' ');
@@ -187,10 +167,6 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     return 1;
   }
   const value = outcome.value as { kind?: string; ok?: boolean; reason?: string; health?: string };
-  if (args[0] === 'relay' && value.ok === false) {
-    console.error(value.reason);
-    return 1;
-  }
   console.log(JSON.stringify(value, null, 2));
   return value.kind === 'rejected' || value.ok === false || value.health === 'fail' ? 1 : 0;
 }

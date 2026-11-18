@@ -26,12 +26,6 @@ class GlobalSettingsWriter extends SettingsRepository {
     super.updateGlobalSettings({ driverHealth: { ...this.readDriverHealth(), [id]: health } });
   }
 
-  neoRelaySenders(
-    relaySenders: NonNullable<GlobalSettings['neo']>['relaySenders']
-  ): GlobalSettings {
-    return super.updateGlobalSettings({ neo: { ...this.getGlobalSettings().neo, relaySenders } });
-  }
-
   neoPreferences(preferences: NeoModelPreference): GlobalSettings {
     const neo = this.getGlobalSettings().neo;
     const fallbacks = preferences.fallbacks ?? neo?.preferences?.fallbacks;
@@ -142,6 +136,5 @@ export const globalSettingsWrites = defineRepositoryOp(
     'neoRules',
     'driverHealth',
     'readDriverHealth',
-    'neoRelaySenders',
   ]
 );
