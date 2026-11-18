@@ -88,6 +88,7 @@ test('every facade SDK writer uses the gateway without a proxy write', async () 
   };
   const methods = [
     'saveSDKMessage',
+    'updateAuthStatusMessage',
     'saveUserMessage',
     'updateMessageStatus',
     'updateMessageTimestamp',
@@ -163,7 +164,7 @@ test('the typed live-writer inventory permits raw SDK writers only inside synchr
   );
   expect(JSON.parse(child.stdout)).toMatchObject({
     pass: true,
-    registeredWriters: 28,
+    registeredWriters: 29,
     violations: [],
   });
 }, 40_000);
