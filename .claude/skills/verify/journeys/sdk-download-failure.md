@@ -16,3 +16,11 @@ message snapshot, an idle session, and a plain failure response. The slow
 fixture is still running at the 45-second wait limit; retry joins that download
 without a second curl call, then reports its failure. Evidence is in `$RUN/evidence/`. Retain evidence outside the
 run and remove the synthetic data after the owned processes exit.
+
+For UI changes, run the helper once on the base and once on the changed build
+with `VERIFY_WEB=before` or `VERIFY_WEB=after`, `VERIFY_MESSAGE_RETRIES=1`,
+`VERIFY_BROWSER` set to the isolated Chromium executable, and `NODE_PATH`
+pointing to Playwright. The browser pairs with the isolated daemon, captures
+light and dark screenshots with the workspace path masked, and checks the Retry
+button. In after mode it clicks Retry and checks that it starts one download.
+Run the slow fixture separately to check the 45-second download message.

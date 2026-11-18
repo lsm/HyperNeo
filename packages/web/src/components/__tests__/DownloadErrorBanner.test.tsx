@@ -1,13 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ErrorBanner } from '../ErrorBanner.tsx';
+import { locale } from '../../lib/i18n/index.ts';
 const retryClaudeDownload = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/api-helpers.ts', () => ({ retryClaudeDownload }));
-const downloadProps = { downloadFailure: true } as unknown as Record<string, never>;
 
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+  locale.value = 'en';
 });
 
 describe('ErrorBanner', () => {
@@ -17,11 +18,7 @@ describe('ErrorBanner', () => {
       reason: "Can't download Claude Code: registry unavailable.",
     });
     render(
-      <ErrorBanner
-        {...downloadProps}
-        error="Claude Code is still downloading."
-        onDismiss={vi.fn()}
-      />
+      <ErrorBanner downloadFailure error="Claude Code is still downloading." onDismiss={vi.fn()} />
     );
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(retryClaudeDownload).toHaveBeenCalledTimes(1));
@@ -33,8 +30,30 @@ describe('ErrorBanner', () => {
   it('clears the error after a successful download', async () => {
     const dismiss = vi.fn();
     vi.mocked(retryClaudeDownload).mockResolvedValue({ accepted: true });
-    render(<ErrorBanner {...downloadProps} error="Download failed." onDismiss={dismiss} />);
+    render(<ErrorBanner downloadFailure error="Download failed." onDismiss={dismiss} />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(1));
+  });
+  it('localizes the registry cause and retry action', () => {
+    locale.value = 'zh-Hans';
+    render(
+      <ErrorBanner
+        downloadFailure
+        error="Can't download Claude Code: Cannot reach the npm registry."
+        onDismiss={vi.fn()}
+      />
+    );
+    expect(screen.getByText('无法下载 Claude Code：无法连接 npm 软件源。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
+  });
+
+  it('does not start another download while retry is pending', async () => {
+    vi.mocked(retryClaudeDownload).mockReturnValue(new Promise(() => {}));
+    render(<ErrorBanner downloadFailure error="Download failed." onDismiss={vi.fn()} />);
+    const button = screen.getByRole('button', { name: 'Retry' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(retryClaudeDownload).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Retrying…' }).hasAttribute('disabled')).toBe(true);
   });
 });

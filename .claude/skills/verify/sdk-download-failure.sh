@@ -14,7 +14,7 @@ cat > "$RUN/bin/curl" <<'CURL'
 #!/bin/sh
 echo call >> "$HYPERNEO_DATA_DIR/curl.log"
 if [ "$DOWNLOAD_FIXTURE" = html ]; then printf '<html>blocked</html>'; exit 0; fi
-if [ "$DOWNLOAD_FIXTURE" = slow ]; then /bin/sleep 50; fi
+if [ "$DOWNLOAD_FIXTURE" = slow ]; then /bin/sleep 65; fi
 echo 'curl: connection failed' >&2
 exit 7
 CURL
@@ -22,7 +22,7 @@ chmod +x "$RUN/bin/curl"
 clean=(env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test)
 "${clean[@]}" "$(command -v bun)" .claude/skills/verify/neo-model-settings-mock.ts "$MOCK" > "$RUN/mock.log" 2>&1 &
 MOCK_PID=$!
-"${clean[@]}" DOWNLOAD_FIXTURE="$MODE" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
+"${clean[@]}" DOWNLOAD_FIXTURE="$MODE" HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES="${VERIFY_MESSAGE_RETRIES:-8}" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 PID=$!
 trap 'kill "$PID" "$MOCK_PID" 2>/dev/null || true; wait "$PID" "$MOCK_PID" 2>/dev/null || true' EXIT
 rpc() { VERIFY_PORT=$PORT HYPERNEO_DATA_DIR="$RUN/data" bun .claude/skills/verify/rpc.ts "$@"; }
@@ -42,6 +42,14 @@ rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN
 bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; const e=r.error; const episode=r.sessionInfo.metadata.queryFailureEpisode; if(e?.details?.metadata?.kind!=="package_download_failure" || e.details.category!=="session" || !(/^(Can\x27t download Claude Code:|Claude Code is still downloading)/.test(e.message)) || /JSON|ETIMEDOUT|ECONNREFUSED/.test(e.message) || episode?.failures!==0 || r.agentState.status!=="idle") { console.error(JSON.stringify({error:e,episode,status:r.agentState.status})); process.exit(1); } console.log("session_cause=package_download_failure governor_failures=0 status=idle");' "$RUN/evidence/state.json"
 if [[ "$MODE" = slow ]]; then
   bun -e 'const e=JSON.parse(await Bun.file(process.argv[1]).text()).reply.error; if(e.message!=="Claude Code is still downloading. Try again shortly.") process.exit(1); console.log("slow_download=still_running");' "$RUN/evidence/state.json"
+fi
+if [[ -n "${VERIFY_WEB:-}" ]]; then
+  bun .claude/skills/verify/sdk-download-failure-web.mjs "$RUN" "$PORT" "$SESSION" "$VERIFY_WEB" "$MODE"
+fi
+if [[ "$MODE" = slow && "${VERIFY_WEB:-}" = after ]]; then
+  cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
+  printf 'slow_browser_retry=joined_existing_download exit=0\n'
+  exit 0
 fi
 before=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
 rpc daemon.retryClaudeDownload '{}' > "$RUN/evidence/retry.json"
