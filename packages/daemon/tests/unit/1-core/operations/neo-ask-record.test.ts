@@ -155,6 +155,20 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const retry = await call('neo.ask.open', opening, turn('retry'));
     expect(retry.ok).toBe(false);
   });
+
+  test('a settled proposal retry records that no new todo was added', async () => {
+    const { call, store } = setup();
+    const input = { title: 'Settled proposal', request: 'Review the finished work' };
+    const opened = await call('neo.ask.open', input, turn('proposal'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const question = store.listQuestions(opened.ask.id)[0];
+    store.answerQuestion(question, 'yes', 'button', 2);
+    store.openAsk({ ...opened.ask, id: 'settled-proposal-child', parentId: opened.ask.id });
+    store.settleAsk(store.getAsk(opened.ask.id)!, 'done', 'Finished', 3);
+    const retry = await call('neo.ask.open', { ...input, todos: opening.todos }, turn('retry'));
+    expect(retry).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
+    expect(store.listTodos(opened.ask.id)).toEqual([]);
+  });
   test('ask retries read each repository scope once and refresh facts on the next operation', async () => {
     const { db, legacyCall: call, store } = setup();
     const base = { title: 'Repository query budget', request: 'Reuse recorded work' };
