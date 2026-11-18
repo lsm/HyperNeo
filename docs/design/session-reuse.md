@@ -157,13 +157,12 @@ Acceptance, one integration case per row:
 ## Later, only when needed
 
 - **How free workers are reused across todos.** Step 1 keeps today's rule (any free
-  daemon worker in the folder, same ask first). If the human wants "one session per
-  matter" or "one session per step", add a core preference `sessionReuse`
-  (`long_lived` / `per_ask` / `per_todo`, project then global scope) that changes rule 2,
-  and a block on the settings page to set and clear it
-  (`packages/web/src/components/settings/PackSettings.tsx`, plus a human-only
-  `pack.preferences.clear`). Saved coding `sessionStrategy` values would move there
-  (`per_task` and `per_pr` → `per_todo`).
+  daemon worker in the folder, same ask first). A core preference `sessionReuse`
+  (`long_lived` / `per_ask` / `per_todo`, project then global scope) would change rule 2.
+  The human sets it by answering a card, the way packs already ask
+  (`pack.preferences.ask`): Neo asks once when it first matters, and asks again when the
+  human says they want to change it. No settings page is needed. Saved coding
+  `sessionStrategy` values would move there (`per_task` and `per_pr` → `per_todo`).
 - **A role that needs another model.** A role rule `otherModel: true`, so a check on a
   contract runs on a different model than the edit, the way the coding pack's
   cross-model review does today.
