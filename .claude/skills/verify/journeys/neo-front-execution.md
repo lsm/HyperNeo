@@ -15,8 +15,8 @@ then require two direct Neo publications for that input to succeed with
 publishedBy neo. A third input ends without a Front reply. The fixture makes its
 input ineligible during the Front model turn, so the real handoff admission
 refuses it. Require a failed handoff outcome, failed Front SDK input status,
-and no publication for that input. The conversation reader's missing failure
-status is tracked in issue #11082.
+and no publication for that input. Require the public conversation asks reader
+to report the input's failed message status and delivery state.
 Switch to single-model mode and preserve the same front SDK session identity.
 
 Retain neo-front-execution.json with passed and resourcesClosed true and wrapper
