@@ -9,7 +9,7 @@ import { SettingsRepository } from './settings-repository.ts';
 function readNeoRuleProposal(db: Database, questionId: string) {
   const row = db
     .prepare(`SELECT p.edit_json, p.question_text, p.applied_at,
-      q.state, q.kind, q.options, q.answer, q.answered_by, q.text, a.session_id FROM neo_rule_proposals p
+      q.state, q.kind, q.options, q.labels, q.answer, q.answered_by, q.text, a.session_id FROM neo_rule_proposals p
       JOIN neo_questions q ON q.id=p.question_id JOIN neo_asks a ON a.id=q.ask_id WHERE p.question_id=?`)
     .get(questionId) as
     | {
@@ -20,6 +20,7 @@ function readNeoRuleProposal(db: Database, questionId: string) {
         state: string;
         kind: string;
         options: string | null;
+        labels: string | null;
         answer: string | null;
         answered_by: string | null;
         text: string;
@@ -73,6 +74,25 @@ export function applyNeoRuleAnswer(
   })();
 }
 
+function historicalLetterAnswer(
+  words: string,
+  proposal: { kind: string; options: string[] | null; labels: string | null }
+): string[] | null {
+  const match = words
+    .trim()
+    .match(
+      /^(?:我?选(?:择|项)?|option|choice|pick)?\s*([a-f](?:(?:\s*[,，、&和与]\s*|\s+and\s+)[a-f])*)\s*(?:吧|好了)?\s*[.。!！]?$/i
+    );
+  if (proposal.kind !== 'choice' || !proposal.options || !match) return null;
+  const labels = proposal.labels ? (JSON.parse(proposal.labels) as string[]) : null;
+  const letters = [...new Set(match[1].toUpperCase().split(/\s*[,，、&和与]\s*|\s+AND\s+/))];
+  if (letters.length !== 1) return null;
+  const index = proposal.options.findIndex(
+    (_, i) => (labels?.[i] ?? String.fromCharCode(65 + i)) === letters[0]
+  );
+  return index < 0 ? null : [proposal.options[index]];
+}
+
 export function readNeoRuleApproval(
   db: Database,
   human: NeoConversationAsk | null,
@@ -102,7 +122,9 @@ export function readNeoRuleApproval(
     !applied(proposal) ||
     proposal.answered_by !== 'chat' ||
     picked === 'invalid' ||
-    JSON.stringify(picked ?? words.trim()) !== proposal.answer ||
+    (JSON.stringify(picked ?? words.trim()) !== proposal.answer &&
+      (proposal.applied_at === null ||
+        JSON.stringify(historicalLetterAnswer(words, proposal)) !== proposal.answer)) ||
     proposal.text !== proposal.question_text
   )
     return false;
