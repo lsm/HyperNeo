@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { revealAsk } from './queue-ask.mjs';
+import { pairPage } from './pair-page.mjs';
 
 export async function verifyTodoCollapse(page, { port, run, width }) {
   assert.notEqual(String(port), '8399');
@@ -10,8 +12,8 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   const record = (step) => { observed.steps.push(step); writeFileSync(`${run}/evidence/todo-collapse-${width}.json`, JSON.stringify(observed, null, 2)); };
   await page.goto(`http://127.0.0.1:${port}/neo`);
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = page.locator('[data-ask="collapse-card"]:visible');
-  const other = page.locator('[data-ask="other-card"]:visible');
+  const card = await revealAsk(page, 'collapse-card');
+  const other = await revealAsk(page, 'other-card');
   await card.waitFor();
   await card.screenshot({ path: `${run}/evidence/todo-collapsed-${width}.png` });
   record({ name: 'initial', details: await card.locator('[data-todo-details]').count(), all: await card.getByRole('button', { name: /^All · / }).count() });
@@ -46,6 +48,8 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   await first().click();
   await page.reload();
   if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
+  await revealAsk(page, 'collapse-card');
+  await revealAsk(page, 'other-card');
   await card.waitFor();
   assert.equal(await card.locator('[data-todo-details]').count(), 1);
   assert.equal(await other.locator('[data-todo-details]').count(), 0);
@@ -68,7 +72,9 @@ if (typeof process !== 'undefined' && process.argv[1] && import.meta.url === pat
   try {
     for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US', isMobile: width < 800, hasTouch: width < 800 });
-      await verifyTodoCollapse(await context.newPage(), { port, run, width });
+      const page = await context.newPage();
+      await pairPage(page, port, run);
+      await verifyTodoCollapse(page, { port, run, width });
       await context.close();
     }
   } finally { await browser.close(); }

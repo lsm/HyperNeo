@@ -33,7 +33,7 @@ async function handoff(task: SpaceTask, deps: HandoffWorkerSessionDependencies):
 }
 
 export function createHandoffWorkerSessionOperation(deps: HandoffWorkerSessionDependencies) {
-  const run = (superpipe({ deps })('handoff-worker-session') as PipelineAPI)
+  const run = (superpipe({ deps })('task.workerSession.handoff') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitHandoff, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(handoff, ['outcome', 'deps'], 'outcome')

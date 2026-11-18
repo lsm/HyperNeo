@@ -1,5 +1,6 @@
 import { parseJson, type SessionConfig, type ToolsConfig } from '@hyperneo/shared';
 import type { SessionToolSelection } from '@hyperneo/shared/types/session-tool-choice';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { Database } from '../sqlite-compat.ts';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import { ChangeRecorder, defineRepositoryOp } from '../db-gateway/db-op.ts';
@@ -41,6 +42,8 @@ function capture(
   const snapshot = db.captureSessionRuntimeSettings(id);
   if (!snapshot) return { reason: { ok: false as const, reason: 'session_not_found' as const } };
   const config = JSON.parse(snapshot.config) as SessionConfig;
+  if (isOxapHarness(config.harness))
+    return { reason: { ok: false as const, reason: 'harness_unsupported' as const } };
   if (Object.hasOwn(config, 'toolSelection') && !config.toolSelection)
     return { reason: { ok: false as const, reason: 'selection_version_unsupported' as const } };
   const session = { id, context: parseJson<{ spaceId?: string }>(snapshot.sessionContext, {}) };

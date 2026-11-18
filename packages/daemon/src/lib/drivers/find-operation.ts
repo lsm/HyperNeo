@@ -388,7 +388,7 @@ export function combineFindResults(
   };
 }
 
-const runFindWork = (superpipe({})('find-work') as PipelineAPI)
+const runFindWork = (superpipe({})('work.find') as PipelineAPI)
   .input(['input', 'deps', 'budget', 'own'])
   .pipe(searchFindSession, 'input', 'input')
   .pipe(selectFindAdapters, ['input', 'deps'], 'adapters')

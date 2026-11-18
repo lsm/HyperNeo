@@ -31,6 +31,17 @@ notice, because the limit counts the goal's runs, not the schedule's. After the
 clock moves 24 hours past the first run and the goal is reactivated again, the
 next due time is `fired`.
 
+The Neo-owned goal's separate review is then fired through the daemon handler.
+Its mailbox wake contains the journal review instruction, and a review result
+appended through RPC is readable through `goal.journal.list`.
+With an empty journal, the review wake does not suggest a paging call.
+`operations.describe` for goal creation and updates also states that ordinary
+top-level session owners do not receive a review schedule.
+The opened Neo session's actual system prompt states the same exclusion. This
+does not exercise an SDK model turn.
+An RPC update to the review cadence also records `reviewCadence` as a changed
+field in the synthetic daemon's audit log.
+
 Inspect `goal-work-wakes.json` for each wake's outcome, delivery and text.
 Before the change the second due time is `skipped_unchanged` and nothing is
 delivered.

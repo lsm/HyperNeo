@@ -352,6 +352,10 @@ impl Drivers {
             return Ok(json!({"dialogs": dialogs, "texts": texts}));
         }
         #[cfg(test)]
+        if request.action == "fixture-dialog-buttons" {
+            return Ok(json!({"buttons": grants::dialog_buttons()}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(
@@ -526,8 +530,12 @@ impl Drivers {
                     )
                     .await;
                     let sent = active.channel.sent;
+                    let mut body = Value::Null;
                     let mut reason = match call {
-                        Ok(Ok(_)) => Value::Null,
+                        Ok(Ok(result)) => {
+                            body = result;
+                            Value::Null
+                        }
                         Ok(Err(error)) => json!(error.to_string()),
                         Err(_) => json!("driver call timed out"),
                     };
@@ -536,11 +544,20 @@ impl Drivers {
                             reason = json!(format!("stop_unconfirmed: {error}"));
                         }
                     }
-                    let reply = finish(bundle, class, "allowed", reason, sent);
+                    // The driver reports tool failures in its result, not on the channel.
+                    if body["isError"] == true {
+                        reason = json!("driver_error");
+                    }
+                    let mut reply = finish(bundle, class, "allowed", reason, sent);
                     log::info!(
                         "Desktop dispatch {worker}: {reply}",
                         worker = request.worker
                     );
+                    for key in ["content", "structuredContent"] {
+                        if !body[key].is_null() {
+                            reply[key] = body[key].take();
+                        }
+                    }
                     return Ok(Some(reply));
                 }
                 "stop" => {

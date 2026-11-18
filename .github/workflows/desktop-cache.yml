@@ -1,0 +1,52 @@
+name: Warm Intel desktop cache
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/desktop-cache.yml'
+      - 'packages/desktop/src-tauri/Cargo.lock'
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm-cache:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Select Xcode 26
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Setup Rust target
+        run: rustup target add x86_64-apple-darwin
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: desktop-cargo-${{ runner.os }}-x86_64-apple-darwin-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            desktop-cargo-${{ runner.os }}-x86_64-apple-darwin-
+      - name: Install Tauri CLI
+        run: |
+          if ! cargo tauri --version >/dev/null 2>&1; then
+            cargo install tauri-cli --version "^2" --locked
+          fi
+      - name: Build desktop without bundling
+        run: |
+          cd packages/desktop
+          bash build-sidecar.sh
+          cargo tauri build --target x86_64-apple-darwin --no-bundle

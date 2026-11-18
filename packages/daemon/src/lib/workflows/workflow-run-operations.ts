@@ -193,20 +193,20 @@ const REPLACE_RUN_DESCRIPTION =
   'Cancel an unfinished workflow run and start a fresh one on another workflow with the same title, naming the target by workflowId or workflowHandle and optionally replacing the description. This is destructive: the current run is cancelled before the replacement starts, so its in-flight work is lost. Returns outcome "switched" with the new run, its seeded tasks and the cancelled previousRunId, or "switch_failed" with previousRunId when the replacement could not start — the original run stays cancelled either way. Rejects run_not_found, run_finished for a run already done or cancelled, workflow_not_found and workflow_disabled for an unusable target, space_not_resolved when no Space is in scope, and caller_not_admitted when the calling session is not an active member of this Space.';
 
 export function createWorkflowRunOperations(deps: WorkflowRunDependencies): OperationDefinition[] {
-  const getRun = (superpipe({ deps })('get-space-workflow-run') as PipelineAPI)
+  const getRun = (superpipe({ deps })('workflow.run.get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitRunReader, ['input', 'caller'], 'result:outcome')
     .pipe(loadRunDetail, ['input', 'outcome', 'deps'], 'result:outcome')
     .end('outcome') as (input: GetRunInput, caller: OperationCaller) => GetRunResult;
 
-  const updateRun = (superpipe({ deps })('update-space-workflow-run') as PipelineAPI)
+  const updateRun = (superpipe({ deps })('workflow.run.update') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitRunWriter, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(loadChangeableRun, ['input', 'outcome', 'deps'], 'result:outcome')
     .pipe(applyRunDescription, ['input', 'outcome', 'deps'], 'outcome')
     .end('outcome') as (input: UpdateRunInput, caller: OperationCaller) => UpdateRunResult;
 
-  const replaceRun = (superpipe({ deps })('replace-space-workflow-run') as PipelineAPI)
+  const replaceRun = (superpipe({ deps })('workflow.run.replace') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitRunWriter, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(loadChangeableRun, ['input', 'outcome', 'deps'], 'result:outcome')

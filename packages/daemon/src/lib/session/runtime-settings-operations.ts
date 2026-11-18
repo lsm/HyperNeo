@@ -1,4 +1,4 @@
-import type { Provider, ThinkingLevel } from '@hyperneo/shared';
+import type { Provider, Session, ThinkingLevel } from '@hyperneo/shared';
 import { normalizeThinkingLevel, PROVIDER_THINKING_MODES } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -7,6 +7,7 @@ import type {
   RuntimeSettingsPatch,
 } from '../../storage/repositories/session-runtime-settings-write.ts';
 import { snapshotProcessingStatus } from '../agent/model-switch-handler.ts';
+import { decideSwitch, thinkingRefusal, type SessionEngine } from '../agent/session-engine.ts';
 import { getAvailableModels, isCuratedOutModel } from '../model-service.ts';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -26,6 +27,7 @@ export interface RuntimeSettingsDependencies extends RuntimeSettingsReadDependen
   readonly isPreparing: (id: string) => boolean;
   readonly hasPendingWork: (id: string) => boolean;
   readonly notify: (id: string) => Promise<void>;
+  readonly engineOf: (provider: string) => SessionEngine;
 }
 
 const InputSchema = z.object({
@@ -130,6 +132,18 @@ function validatePair(target: Target, input: Input) {
   return { value: target };
 }
 
+function gateHarness(target: Target, input: Input, deps: RuntimeSettingsDependencies) {
+  const current = JSON.parse(target.snapshot.config) as Session['config'];
+  const provider =
+    input.model !== undefined || input.provider !== undefined
+      ? (input.provider ?? current.provider ?? inferProviderForModel(input.model ?? current.model))
+      : undefined;
+  const switched = provider ? decideSwitch(current, provider, deps.engineOf(provider)) : true;
+  const reason =
+    switched === true ? thinkingRefusal(current.harness, input.thinkingLevel) : switched;
+  return reason ? { reason: { ok: false, reason } as Failure } : { value: target };
+}
+
 async function applySettings(
   target: Target,
   input: Input,
@@ -203,10 +217,11 @@ function projectUpdate(target: Target, input: Input, deps: RuntimeSettingsDepend
   };
 }
 
-const updateSettings = (superpipe({})('update-session-runtime-settings') as PipelineAPI)
+const updateSettings = (superpipe({})('session.runtimeSettings.update') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(captureTarget, ['input', 'caller', 'deps'], 'result:update')
   .pipe(gateReady, ['update', 'input', 'deps'], 'result:update')
+  .pipe(gateHarness, ['update', 'input', 'deps'], 'result:update')
   .pipe(validatePair, ['update', 'input'], 'result:update')
   .pipe(applySettings, ['update', 'input', 'caller', 'deps'], 'result:update')
   .pipe(projectUpdate, ['update', 'input', 'deps'], 'update')

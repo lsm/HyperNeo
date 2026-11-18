@@ -24,7 +24,7 @@ export function createCodingResultOperation(
   assignments: CodingAssignmentsRepository,
   ledger: CodingPrLedgerRepository
 ) {
-  const record = (superpipe({})('coding.record-assigned-result') as PipelineAPI)
+  const record = (superpipe({})('neo.coding.result') as PipelineAPI)
     .input(['input'])
     .pipe(
       (input: Input) => {

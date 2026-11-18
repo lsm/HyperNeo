@@ -14,8 +14,13 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test PATH="$PATH"
   bun .claude/skills/verify/desktop-call.ts "$RUN"
 ```
 
-Pass prints `desktop.call journey PASS host_requests=1 audit_rows=1
-refused_paths=5 described_tools=12`: operations.describe lists every catalog tool. The JSON evidence is in `evidence/desktop-call.json`. RPC,
+Pass prints `desktop.call journey PASS host_requests=2 audit_rows=2
+driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
+The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
+A driver result with isError must come back as an MCP tool error (`isError: true`)
+with `ok: false, reason: driver_error`
+with the driver's text and image as MCP content blocks after the JSON reply. Its
+audit row records `driver_error` and none of the driver's content. The JSON evidence is in `evidence/desktop-call.json`. RPC,
 session door, caller impersonation, unlisted tools and an unapproved todo must
 produce no host requests. The accepted request must use the caller session and
 its daemon-owned workspace, and persist the host outcome without arguments in

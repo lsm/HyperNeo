@@ -29,7 +29,11 @@ export interface FamilyOperationContext {
   readonly workAdapters?: (read: () => readonly WorkAdapter[]) => void;
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
+  readonly startupTasks?: Promise<void>[];
   readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
+  readonly defaultNeoSession?: () => string | undefined;
+  readonly neoChanged?: () => void;
+  readonly ensureNeo?: () => Promise<string>;
   readonly neoPacks: () => readonly NeoPack[];
   readonly extensionAdapters?: (host: DaemonAdapterHost) => readonly WorkAdapter[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;

@@ -18,6 +18,7 @@ import {
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../helpers/legacy-agent-session-id';
 import type { Session, MessageHub } from '@hyperneo/shared';
+import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import { initializeProviders } from '../../../../src/lib/providers/factory';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -163,6 +164,7 @@ describe('QueryRunner', () => {
     updateMessageStatusSpy = mock(() => {});
     mockDb = {
       getSession: () => mockSession,
+      getGlobalSettings: () => DEFAULT_GLOBAL_SETTINGS,
       saveSDKMessage: saveSDKMessageSpy,
       writeSDKMessage: mock(async () => []),
       updateSession: updateSessionSpy,

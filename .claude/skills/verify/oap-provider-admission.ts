@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
@@ -46,6 +47,7 @@ let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { syntheticHub: true };
 try {
   await client.connect();
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: { ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }), disableWorktrees: true, disableGoalProcessing: true },
     verbose: false,
@@ -61,28 +63,34 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false, createSocket: createLocalSocket });
   rpc.registerTransport(transport);
   await transport.initialize();
-  const create = async (harness?: 'oxap-codex') => {
+  await rpc.request('providers.create', oxapCodexProvider);
+  const create = async (oxap: boolean) => {
     const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', {
       workspacePath: join(run, 'workspace'),
-      title: harness ?? 'SDK provider hold',
-      config: { model: 'haiku', provider: 'anthropic', ...(harness ? { harness } : {}) },
+      title: oxap ? 'oxap-codex' : 'SDK provider hold',
+      config: oxap ? { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } : { model: 'haiku', provider: 'anthropic' },
     });
     return sessionId;
   };
-  const codex = await create('oxap-codex');
+  const codex = await create(true);
+  assert.equal(app.db.getSession(codex)?.config.harness, 'oxap-codex');
   const agent = app.sessionManager.getSession(codex);
   assert(agent);
+  const legacy = { ...agent.getSessionData().config, tools: { type: 'preset', preset: 'claude_code' } } as typeof agent.session.config;
+  await app.db.updateSession(codex, { config: legacy });
+  agent.getSessionData().config = legacy;
   (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
     openDirectorySupported: true,
     hub: createOapQueryHub(client),
   };
+  await app.db.updateGlobalSettings({ permissionMode: 'plan' });
   await rpc.request('message.send', { sessionId: codex, content: 'Hello from Codex' });
   const deadline = Date.now() + 15_000;
   while (app.db.getSDKMessages(codex).messages.filter((row) => row.type === 'result').length !== 1) {
     assert(Date.now() < deadline, 'Codex did not reach OAP without provider login');
     await new Promise((done) => setTimeout(done, 25));
   }
-  const sdk = await create();
+  const sdk = await create(false);
   await rpc.request('message.send', { sessionId: sdk, content: 'SDK must wait' });
   const sdkDeadline = Date.now() + 10_000;
   while (!JSON.stringify(app.db.getSDKMessages(sdk)).includes('No model service is logged in')) {
@@ -97,7 +105,8 @@ try {
   evidence.oapSubmissions = stats.attempts;
   evidence.sdkEnqueued = 1;
   evidence.sdkResults = 0;
-  evidence.providerLoginConfigured = false;
+  evidence.sdkProviderLoginConfigured = false;
+  evidence.oxapHarness = app.db.getSession(codex)?.config.harness;
   writeFileSync(join(run, 'evidence/result.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ ...evidence, exitCode: 0 }));
 } finally {

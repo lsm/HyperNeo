@@ -54,6 +54,11 @@ const Open = z.object({
 const Outcome = z.object({ askId: Text, outcome: Text.max(4000) });
 
 const TopicInput = z.object({ askId: Text, topic: Topic });
+const TopicMerge = z.object({ from: Topic, to: Topic });
+const TopicMerged = z.union([
+  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({ ok: z.literal(true), merged: z.number() }),
+]);
 
 const Settle = z.object({
   askId: Text,
@@ -436,6 +441,26 @@ export function createNeoAskRecordOperations(
     caller: OperationCaller
   ) => AskReceipt | Rejection;
 
+  const mergeTopic = (superpipe({})('neo.topic.merge') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) => requireNeoAskSession(caller, isNeoSession),
+      'caller',
+      'result:merged'
+    )
+    .pipe(
+      (input: z.infer<typeof TopicMerge>) => ({
+        ok: true as const,
+        merged: store.mergeTopic(input.from, input.to),
+      }),
+      'input',
+      'merged'
+    )
+    .end('merged') as (
+    input: z.infer<typeof TopicMerge>,
+    caller: OperationCaller
+  ) => z.infer<typeof TopicMerged>;
+
   const refKey = (ref: WorkRef | null) =>
     ref ? JSON.stringify([ref.adapter, ref.id, ref.daemon ?? null]) : null;
   const settle = (superpipe({})('neo.ask.settle') as PipelineAPI)
@@ -551,6 +576,14 @@ export function createNeoAskRecordOperations(
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => present(await settle(input, caller)),
+    }),
+    defineOperation({
+      name: 'neo.topic.merge',
+      description: neoToolDescription('neo.topic.merge'),
+      inputSchema: TopicMerge,
+      resultSchema: TopicMerged,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: async (input, caller) => mergeTopic(input, caller),
     }),
   ];
 }

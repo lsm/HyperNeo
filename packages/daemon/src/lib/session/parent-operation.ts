@@ -97,7 +97,7 @@ async function applyMove(move: Move, deps: SetSessionParentDependencies): Promis
   return { accepted: true, sessionId: move.session.id, parentSessionId };
 }
 
-const setParent = (superpipe({})('session-parent-set') as PipelineAPI)
+const setParent = (superpipe({})('session.parent.set') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(requireHumanCaller, 'caller', 'result:move')
   .pipe(loadMove, ['input', 'deps'], 'result:move')

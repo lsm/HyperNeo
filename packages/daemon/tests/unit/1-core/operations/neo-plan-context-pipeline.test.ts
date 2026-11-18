@@ -37,6 +37,18 @@ describe('neo.plan.context', () => {
     expect(await createNeoPlanContext(async () => facts)('prompt')).toContain('ask-11');
   });
 
+  test('opens the full context with the 30-day topic list', async () => {
+    const context = createNeoPlanContext(async () => ({
+      asks,
+      todos: [step],
+      questions: [],
+      topics: [{ topic: '邮件', count: 2 }],
+    }));
+    expect(await context('startup')).toContain(
+      'Open plans\nTopics used in the last 30 days (asks open or settled): 邮件 2\n'
+    );
+  });
+
   test('retains every owner over budget and leaves the last delivered context intact on read failure', async () => {
     let fail = false;
     const facts = { asks, todos: [step], questions: [] };

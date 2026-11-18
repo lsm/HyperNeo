@@ -1,15 +1,16 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 
-type Step = Pick<NeoTodo, 'id' | 'title' | 'position' | 'state' | 'producesFollowUp'>;
+type Step = Pick<NeoTodo, 'id' | 'title' | 'state' | 'producesFollowUp' | 'dependsOn'>;
 
 export function neoTodoWithoutFollowUp<T extends Step>(todos: readonly T[]): T | null {
-  const last = todos
-    .filter((todo) => todo.state !== 'removed')
-    .reduce<T | null>(
-      (latest, todo) => (!latest || todo.position > latest.position ? todo : latest),
-      null
-    );
-  return last?.producesFollowUp && last.state === 'done' ? last : null;
+  return (
+    todos.find(
+      (todo) =>
+        todo.producesFollowUp &&
+        todo.state === 'done' &&
+        !todos.some((other) => other.state !== 'removed' && other.dependsOn?.includes(todo.id))
+    ) ?? null
+  );
 }
 
 export function neoTodoFollowUpRefusal(todos: readonly Step[]): string | null {

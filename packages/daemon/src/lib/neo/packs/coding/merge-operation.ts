@@ -67,7 +67,7 @@ export function createCodingMergeOperation(deps: Deps) {
   const gh = (args: string[]) => runGhJson(['gh', ...args], homedir(), spawnProcess);
   const local = (input: Input, head: string) =>
     deps.todos.deliveryFacts.mergeLocalCurrent({ ...input, head });
-  const prepare = (superpipe({})('coding.admit-recorded-manual-merge') as PipelineAPI)
+  const prepare = (superpipe({})('neo.coding.merge.prepare') as PipelineAPI)
     .input('input')
     .pipe(
       (input: Input) => {

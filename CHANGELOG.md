@@ -4,6 +4,26 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.59.0] - 2026-11-17
+
+- Add goal schedules, reviews, metrics, and dedicated goal sessions (#10895, #10912, #10967, #10991, #10996).
+- Let Neo organize asks into topics and merge related topics (#10946, #10966, #10972).
+- Allow the first device to connect through the first-run setup link (#10930).
+- Add OpenAI Realtime live voice and improve desktop control and error reporting (#10887, #10909).
+- Preserve sessions the daemon did not start and brief replacement coding workers (#10965, #10956).
+- Hold new starts when disk space is low and improve cleanup of finished work (#10937, #10899, #10962).
+- Improve GitHub rate-limit handling, review tracking, and worker routing (#10888, #10907, #10944).
+- Put Allow on the right of the desktop permission dialog (#10904).
+
+### API compatibility
+
+Compared with v0.58.0, the pinned phone source inventory reports 5 breaking, 1 risky, and 3 safe methods. Across all schema changes, the report lists 26 breaking, 14 risky, and 118 safe changes.
+
+- Neo ask and question results remove `startTodos`; Neo open and snapshot remove `sessionMessages`.
+- Neo ask todo union alternatives and publication text length constraints changed and require compatibility review.
+- The pinned phone source inventory describes source usage, not proof of the installed binary's compatibility.
+
 ## [0.58.0] - 2026-11-13
 
 - Rework Neo around a minimal ask/todo/card model: cards confirm, choose or reply, a card covers a list of todos, todos complete without a gate, and waiting on the human is read from cards (#10477, #10490, #10494, #10502, #10503, #10537).

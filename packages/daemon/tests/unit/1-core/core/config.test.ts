@@ -46,27 +46,18 @@ describe('getConfig', () => {
     expect(config.structuredLogMaxPendingBytes).toBe(2 * 1024 * 1024);
   });
 
-  test('does not add OAP settings to an unconfigured daemon', () => {
-    delete process.env.HYPERNEO_OAP_BINARY_PATH;
-    expect(getConfig()).not.toHaveProperty('oap');
-  });
-
-  test('configures an explicitly pinned OAP binary without changing the SDK default', () => {
-    process.env.HYPERNEO_DATA_DIR = '/synthetic/hyperneo';
-    delete process.env.HYPERNEO_OAP_BINARY_PATH;
-    expect((getConfig() as ReturnType<typeof getConfig> & { oap?: unknown }).oap).toBeUndefined();
+  test('ignores the removed OAP environment variables; the hub comes from settings', () => {
     process.env.HYPERNEO_OAP_BINARY_PATH = '/synthetic/bin/oapx';
     process.env.HYPERNEO_OAP_VERSION = 'synthetic-1';
     process.env.HYPERNEO_OAP_SHA256 = 'a'.repeat(64);
     process.env.HYPERNEO_OAP_CODEX_EXECUTABLE = '/synthetic/bin/codex';
     process.env.HYPERNEO_OAP_CODEX_HOME = '/synthetic/codex-home';
-    expect((getConfig() as ReturnType<typeof getConfig> & { oap?: unknown }).oap).toEqual({
-      binaryPath: '/synthetic/bin/oapx',
-      identity: { version: 'synthetic-1', sha256: 'a'.repeat(64) },
-      stateDirectory: '/synthetic/hyperneo/oap',
-      codexExecutable: '/synthetic/bin/codex',
-      codexHome: '/synthetic/codex-home',
-    });
+    try {
+      expect(getConfig()).not.toHaveProperty('oap');
+    } finally {
+      for (const name of ['BINARY_PATH', 'VERSION', 'SHA256', 'CODEX_EXECUTABLE', 'CODEX_HOME'])
+        delete process.env[`HYPERNEO_OAP_${name}`];
+    }
   });
 
   test('uses environment variables when set', () => {

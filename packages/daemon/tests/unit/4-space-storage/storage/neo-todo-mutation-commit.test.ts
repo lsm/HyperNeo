@@ -136,6 +136,16 @@ describe('Atomic todo mutation commits', () => {
     expect(changes).toEqual([]);
   });
 
+  test('refuses to finish a todo while its human card is unanswered', async () => {
+    replyCard();
+    const before = snapshot();
+    expect(await commit({ kind: 'done', todoId: 'first', reason: 'Finished' })).toEqual({
+      ok: false,
+      reason: 'card_unanswered: card reply is still waiting for the human.',
+    });
+    expect(snapshot()).toEqual(before);
+  });
+
   test('a passed current check completes and prunes its card atomically', async () => {
     store.addTodo(
       'gone',

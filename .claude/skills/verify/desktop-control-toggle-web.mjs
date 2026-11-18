@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, out, run] = process.argv.slice(2);
 assert(port && out && run, 'usage: desktop-control-toggle-web.mjs <port> <evidence-dir> <run-dir>');
@@ -45,6 +46,7 @@ const open = async (viewport, touch) => {
   await press(page.getByRole('button', { name: 'Pair this browser' }), touch);
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/neo`);
+  if (!touch) await revealAsk(page, 'desktop-ask');
   return { context, page };
 };
 const reachable = async (page, touch) => {
@@ -86,6 +88,7 @@ try {
   await page.getByText('Let it use this computer', { exact: true }).click();
   await lit('dentist').first().waitFor();
   await page.reload();
+  await revealAsk(page, 'desktop-ask');
   await lit('dentist').first().waitFor();
   observations.push({ todo: 'dentist', litAfterReload: await lit('dentist').count() });
   await shot('todo-on.png');
@@ -101,6 +104,7 @@ try {
   await phone.page.waitForTimeout(1500);
   const sheet = (await work.count()) > 0;
   if (sheet) await work.first().tap();
+  await revealAsk(phone.page, 'desktop-ask');
   await phone.page.locator('[data-ask-todo="visa"]').first().waitFor();
   await phone.page.screenshot({ path: join(out, 'phone-390.png') });
   observations.push({ width: 390, workSheet: sheet, reachable: await reachable(phone.page, true) });

@@ -38,6 +38,7 @@ import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyper
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
 import type { SessionToolInventory } from '@hyperneo/shared/types/observed-tool-inventory';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { sdkFallbackProviders } from './session-engine.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SDKTranscriptCheck } from '../sdk-session-file-manager.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
@@ -3242,7 +3243,7 @@ export class AgentSession
         model: this.session.config.model || 'sonnet',
         settings: this.db.getGlobalSettings(),
       },
-      registry.getAll()
+      sdkFallbackProviders(registry.getAll(), (id) => this.db.providers.getProviderByProviderId(id))
     );
     if (plan.kind === 'wait') {
       if (!this.providerWaitAnnounced) {

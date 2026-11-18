@@ -84,4 +84,20 @@ describe('Neo scheduled goal-cycle guidance', () => {
     expect(neoPrompt([])).toContain('On other turns');
     expect(neoPrompt([])).toContain('End every other turn with exactly "No response requested."');
   });
+  test.each([false, true])(
+    'delivers guidance for answered goal reviews with packs: %s',
+    (packsEnabled) => {
+      const prompt = packsEnabled ? neoPrompt(neoSettingsPackBriefs()) : neoPrompt([]);
+      for (const guidance of [
+        'no-effect review question is answered',
+        'neo.snapshot',
+        'goal.session.get',
+        'goal.session.update',
+        'nextSteps',
+        'status to active',
+        'status to completed',
+      ])
+        expect(prompt).toContain(guidance);
+    }
+  );
 });

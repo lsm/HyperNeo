@@ -288,7 +288,7 @@ jobs:
     name: Desktop Release ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     needs: wait-for-ci
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.arch == 'darwin-x64' && 90 || 45 }}
     defaults:
       run:
         shell: bash
@@ -297,12 +297,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
-            rust-target: aarch64-apple-darwin
-            arch: darwin-arm64
           - runner: macos-15-intel
             rust-target: x86_64-apple-darwin
             arch: darwin-x64
+          - runner: macos-latest
+            rust-target: aarch64-apple-darwin
+            arch: darwin-arm64
           - runner: ubuntu-latest
             rust-target: x86_64-unknown-linux-gnu
             arch: linux-x64

@@ -26,7 +26,7 @@ async function validateFolders(
   }
 }
 
-const addProjectFolder = (superpipe({})('workspace-project-add-folder') as PipelineAPI)
+const addProjectFolder = (superpipe({})('work.project.addFolder') as PipelineAPI)
   .input(['input', 'repository'])
   .pipe(validateFolders, ['input', 'repository'], 'result:result')
   .pipe(
