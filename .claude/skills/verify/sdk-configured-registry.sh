@@ -39,7 +39,27 @@ exit 1
 SCRIPT
   chmod +x "$RUN/bin/pnpm"
 fi
-chmod +x "$RUN/bin/npm" "$RUN/bin/curl"
+if [[ "$MODE" == pnpm-failure ]]; then
+  rm "$RUN/bin/npm"
+  INTEGRITY=$(openssl dgst -sha512 -binary "$RUN/fixture.tgz" | openssl base64 -A)
+  cat > "$RUN/bin/pnpm" <<SCRIPT
+#!/bin/sh
+printf called > "$RUN/pnpm-called"
+exit 1
+SCRIPT
+  cat > "$RUN/bin/curl" <<SCRIPT
+#!/bin/sh
+printf called > "$RUN/curl-called"
+case "\$*" in
+  *-fL*) while [ "\$1" != '-o' ]; do shift; done; /bin/cp "$RUN/fixture.tgz" "\$2" ;;
+  *) printf '%s' '{"dist":{"tarball":"https://registry.example.test/fixture.tgz","integrity":"sha512-$INTEGRITY"}}' ;;
+esac
+SCRIPT
+  chmod +x "$RUN/bin/pnpm"
+else
+  chmod +x "$RUN/bin/npm"
+fi
+chmod +x "$RUN/bin/curl"
 env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test \
   HYPERNEO_DATA_DIR="$RUN/data" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 PID=$!
@@ -56,6 +76,10 @@ if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
   ! grep -q 'private-token-example' "$RUN/daemon.log"
   [[ "$count" -eq 4 && ! -e "$RUN/pnpm-called" && ! -e "$RUN/curl-called" ]]
   echo 'PASS: npm failure was reported without fallback or stderr'
+elif [[ "$MODE" == pnpm-failure ]]; then
+  grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log"
+  [[ -e "$RUN/pnpm-called" && -e "$RUN/curl-called" ]]
+  echo 'PASS: daemon downloaded the SDK after pnpm failed'
 elif grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log" && [[ "$count" -eq 4 ]]; then
   echo 'PASS: daemon downloaded the SDK through fake npm'
 else

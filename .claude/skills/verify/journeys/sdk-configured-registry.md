@@ -11,3 +11,6 @@ fixtures; this journey proves the compiled daemon's npm path.
 
 Pass `npm-failure` as the fifth argument to make npm fail. The daemon must
 report its exit code and network classification without logging stderr or invoking pnpm or curl.
+
+Pass `pnpm-failure` as the fifth argument to serve the local tarball after a
+fake pnpm fails. The daemon must report the SDK ready through fake curl.

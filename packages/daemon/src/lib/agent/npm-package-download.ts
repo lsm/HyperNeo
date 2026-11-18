@@ -144,7 +144,9 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
   return new Promise((resolve, reject) => {
     execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
       if (!err) return resolve(String(stdout).trim());
-      if (err.code === 'ENOENT') return resolve(null);
+      if (err.code === 'ENOENT' || command === 'pnpm') return resolve(null);
+      if (command === 'npm' && process.platform === 'win32' && typeof err.code === 'string')
+        return resolve(null);
       const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
       if (command === 'npm') {
         const code =
