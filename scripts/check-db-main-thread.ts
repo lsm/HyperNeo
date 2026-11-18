@@ -22,6 +22,7 @@ const workers = new Set([
   'storage/repositories/session-goal-review-read-worker.ts',
   'storage/repositories/anthropic-usage-read.ts',
   'storage/repositories/worker-input-worker.ts',
+  'storage/repositories/worker-ownership-read-worker.ts',
   'storage/repositories/work-cleanup-worker.ts',
   'storage/repositories/neo-peer-repository.ts',
   'storage/repositories/neo-todo-move-worker.ts',

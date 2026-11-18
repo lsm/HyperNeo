@@ -1,9 +1,10 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
+import { workerOwnershipFacts } from '../../storage/repositories/worker-ownership-read-worker.ts';
 import { defineOperation } from '../operations/registry.ts';
 
-type Row = {
+export type WorkerOwnershipRow = {
   adapter: string;
   id: string;
   startedAt: number;
@@ -11,9 +12,17 @@ type Row = {
   releasedAt: number | null;
   role: string | null;
 };
-type Touch = { adapter: string; id: string; verb: string; humanNamed: boolean };
+export type WorkerOwnershipTouch = {
+  adapter: string;
+  id: string;
+  verb: string;
+  humanNamed: boolean;
+};
 
-export function inferWorkerOwnership(rows: readonly Row[], touches: readonly Touch[]) {
+export function inferWorkerOwnership(
+  rows: readonly WorkerOwnershipRow[],
+  touches: readonly WorkerOwnershipTouch[]
+) {
   const candidates = rows.flatMap((row) => {
     if (row.role || row.releasedAt !== null) return [];
     const related = touches.filter((touch) => touch.adapter === row.adapter && touch.id === row.id);
@@ -41,40 +50,8 @@ export function inferWorkerOwnership(rows: readonly Row[], touches: readonly Tou
   };
 }
 
-function readFacts(db: Database) {
-  const raw = db.getDatabase();
-  const rows = raw
-    .prepare(
-      `SELECT adapter, id, started_at AS startedAt, claimed_by AS claimedBy, released_at AS releasedAt, role FROM work_started_sessions ORDER BY adapter, id`
-    )
-    .all() as Row[];
-  const bindings = raw
-    .prepare(
-      `SELECT s.ref, s.target, t.named FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id`
-    )
-    .all() as { ref: string | null; target: string; named: string | null }[];
-  const touches: Touch[] = [];
-  for (const binding of bindings) {
-    const target = JSON.parse(binding.target) as {
-      verb: string;
-      ref?: { adapter: string; id: string; daemon?: string };
-    };
-    const named = binding.named ? (JSON.parse(binding.named) as { session?: unknown }) : null;
-    const refs = [
-      binding.ref
-        ? (JSON.parse(binding.ref) as { adapter: string; id: string; daemon?: string })
-        : null,
-      target.ref,
-    ];
-    for (const ref of refs)
-      if (ref && !ref.daemon)
-        touches.push({
-          adapter: ref.adapter,
-          id: ref.id,
-          verb: target.verb,
-          humanNamed: named?.session != null,
-        });
-  }
+async function readFacts(db: Database) {
+  const { rows, touches } = await db.gateway.call(workerOwnershipFacts, 'readFacts');
   return inferWorkerOwnership(rows, touches);
 }
 
