@@ -9,5 +9,5 @@ four arguments. The run directory retains the daemon log and fixture arguments.
 The pnpm-only registry and HTML error cases are covered by the package download
 fixtures; this journey proves the compiled daemon's npm path.
 
-Pass `fallback` as the fifth argument to make npm fail and serve a local tarball
-through fake pnpm and curl. The daemon must still report the SDK ready.
+Pass `npm-failure` as the fifth argument to make npm fail. The daemon must
+report its exit code without logging stderr or invoking pnpm or curl.

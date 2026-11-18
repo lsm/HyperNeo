@@ -20,23 +20,22 @@ cat > "$RUN/bin/curl" <<'SCRIPT'
 #!/bin/sh
 exit 7
 SCRIPT
-if [[ "$MODE" == fallback ]]; then
-  INTEGRITY=$(openssl dgst -sha512 -binary "$RUN/fixture.tgz" | openssl base64 -A)
+if [[ "$MODE" == npm-failure ]]; then
   cat > "$RUN/bin/npm" <<SCRIPT
 #!/bin/sh
 printf '%s\n' "\$@" > "$RUN/npm-args"
+printf 'private-token-example' >&2
 exit 7
 SCRIPT
-  cat > "$RUN/bin/pnpm" <<'SCRIPT'
+  cat > "$RUN/bin/pnpm" <<SCRIPT
 #!/bin/sh
-printf 'https://mirror.example.test\n'
+printf called > "$RUN/pnpm-called"
+exit 1
 SCRIPT
   cat > "$RUN/bin/curl" <<SCRIPT
 #!/bin/sh
-case "\$*" in
-  *-fL*) while [ "\$1" != '-o' ]; do shift; done; /bin/cp "$RUN/fixture.tgz" "\$2" ;;
-  *) printf '%s' '{"dist":{"tarball":"https://mirror.example.test/fixture.tgz","integrity":"sha512-$INTEGRITY"}}' ;;
-esac
+printf called > "$RUN/curl-called"
+exit 1
 SCRIPT
   chmod +x "$RUN/bin/pnpm"
 fi
@@ -52,8 +51,13 @@ for _ in $(seq 1 120); do
 done
 if [[ -f "$RUN/npm-args" ]]; then count=$(wc -l < "$RUN/npm-args" | tr -d ' '); else count=0; fi
 printf 'npm argument count: %s\n' "$count"
-if grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log" && [[ "$count" -eq 4 ]]; then
-  echo "PASS: daemon downloaded the SDK using $MODE fixture"
+if [[ "$MODE" == npm-failure ]]; then
+  grep -q 'npm could not download the package (exit 7); check your npm registry and login' "$RUN/daemon.log"
+  ! grep -q 'private-token-example' "$RUN/daemon.log"
+  [[ "$count" -eq 4 && ! -e "$RUN/pnpm-called" && ! -e "$RUN/curl-called" ]]
+  echo 'PASS: npm failure was reported without fallback or stderr'
+elif grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log" && [[ "$count" -eq 4 ]]; then
+  echo 'PASS: daemon downloaded the SDK through fake npm'
 else
   echo 'FAIL: daemon did not download the SDK through fake npm'
   exit 1
