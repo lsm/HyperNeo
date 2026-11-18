@@ -115,6 +115,17 @@ export function formatPreferenceChoice(
       : zh
         ? '选择一项设置？'
         : 'Choose one of these settings?';
+  const scopes = new Map(
+    alternatives
+      .flat()
+      .filter(({ scope }) => scope.kind !== 'global')
+      .map(({ scope }) => [`${scope.kind}\0${scope.key}`, scope])
+  );
+  const targets = [...scopes.values()].map(({ kind, key }) =>
+    kind === 'project'
+      ? `${zh ? '项目：' : 'Project: '}${markdown(key)}`
+      : `${zh ? '仓库：' : 'Repository: '}${markdown(key)}`
+  );
   const lines = alternatives.map((values, index) => {
     const descriptions = values.map((input) => {
       const { declaration, label } = valueLabel(input, packs, locale);
@@ -131,6 +142,7 @@ export function formatPreferenceChoice(
   return {
     text: [
       title,
+      ...targets,
       lines.join('\n'),
       ...(!saved
         ? [

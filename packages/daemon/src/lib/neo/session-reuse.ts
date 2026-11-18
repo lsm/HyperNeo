@@ -2,7 +2,6 @@ import type { SessionReuseFacts } from '../../storage/repositories/neo-ask-input
 import type { NeoPackPreferenceDeclaration } from './pack-contract.ts';
 
 export const SESSION_REUSE_VALUES = ['long_lived', 'per_ask', 'per_todo'] as const;
-export type SessionReuse = (typeof SESSION_REUSE_VALUES)[number];
 
 export const SESSION_REUSE_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Session reuse', 'zh-Hans': '会话复用' },
