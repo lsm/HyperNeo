@@ -247,7 +247,7 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
-  test('keeps a daemon-started worker after work was sent to it', async () => {
+  test('archives a daemon-started worker after work was sent to it', async () => {
     const h = setup();
     try {
       recordWorkerStarted(h.db, worker);
@@ -258,7 +258,7 @@ describe('neo todo runner refresh releases finished workers', () => {
       );
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
-      expect(h.archived).toEqual([]);
+      expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
     } finally {
       h.db.close();
@@ -300,14 +300,14 @@ describe('neo todo runner refresh releases finished workers', () => {
     }
   });
 
-  test('keeps a worker sent work without invoking archive', async () => {
+  test('does not release a worker sent work when the archive does not succeed', async () => {
     const h = setup();
     try {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
-      expect(h.archived).toEqual([]);
-      expect(h.released()).toHaveLength(1);
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toEqual([]);
     } finally {
       h.db.close();
     }
@@ -634,6 +634,24 @@ describe('releaseNeoTodoWorkers', () => {
 });
 
 describe('neo todo runner refresh settles shared and local-only work', () => {
+  test('releases a reused worker after its live follow-up finishes', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      const followUp = h.add({ verb: 'send', ref: worker });
+      h.queueOn(followUp.id);
+      await h.refresh();
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toHaveLength(1);
+      await h.finishTodo(followUp);
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(h.released()).toHaveLength(2);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('records a second finished todo on a worker the first already released', async () => {
     const h = setup();
     try {

@@ -34,10 +34,11 @@ const service = createNeoService(app.db, app.sessionManager, app.messageHub, app
 const evidence: Record<string, unknown> = {};
 try {
   assert.notEqual(app.server.port, 8399);
-  const root = `neo:${crypto.randomUUID()}`, worker = crypto.randomUUID(), now = new Date(start).toISOString();
-  const session = async (id: string) => app.db.createSession({ id, title: 'Release proof', workspacePath: workspace, createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  const root = `neo:${crypto.randomUUID()}`, worker = crypto.randomUUID(), reused = crypto.randomUUID(), now = new Date(start).toISOString();
+  const session = async (id: string, folder = workspace) => app.db.createSession({ id, title: 'Release proof', workspacePath: folder, createdAt: now, lastActiveAt: now, status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   await session(root);
   await session(worker);
+  await session(reused, run);
   const db = app.db.getDatabase();
   new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   recordWorkerStarted(db, { adapter: 'hyperneo', id: worker });
@@ -46,9 +47,23 @@ try {
   service.todoSessions.create(todo.id, { verb: 'start', adapter: 'hyperneo' });
   db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id: worker }), todo.id);
   service.todos.updateTodo(todo, { state: 'done', finishedAt: start }, start);
+  const reusedRef = { adapter: 'hyperneo', id: reused };
+  recordWorkerStarted(db, reusedRef);
+  const initial = service.todos.addTodo('initial-todo', ask.id, { title: 'Initial', doneWhen: 'Done', instruction: null, named: null, check: null }, start);
+  service.todoSessions.create(initial.id, { verb: 'start', adapter: 'hyperneo' });
+  db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify(reusedRef), initial.id);
+  service.todos.updateTodo(initial, { state: 'done', finishedAt: start }, start);
+  const followUp = service.todos.addTodo('follow-up', ask.id, { title: 'Follow up', doneWhen: 'Done', instruction: null, named: null, check: null }, start);
+  service.todoSessions.create(followUp.id, { verb: 'send', ref: reusedRef });
+  service.todoSessions.queueOn(followUp.id, reusedRef, 'Follow up');
   const notices = () => (db.prepare("SELECT payload FROM job_queue WHERE queue = 'mailbox' ORDER BY rowid").all() as { payload: string }[]).filter(row => row.payload.includes('pending release for 24 hours')).map(row => JSON.parse(row.payload));
   await service.refreshDriverWork();
+  assert.equal((await app.db.getSession(reused))?.status, 'active');
+  db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify(reusedRef), followUp.id);
+  service.todos.updateTodo(service.todos.getTodo(followUp.id)!, { state: 'done', finishedAt: start }, start);
   await service.refreshDriverWork();
+  evidence.reusedStatus = (await app.db.getSession(reused))?.status;
+  assert.equal(evidence.reusedStatus, 'archived');
   assert.equal(notices().length, 0);
   clock += 24 * 60 * 60 * 1000;
   await service.refreshDriverWork();

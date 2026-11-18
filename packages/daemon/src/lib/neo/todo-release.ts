@@ -39,7 +39,7 @@ const daemon: OperationCaller = {
 };
 
 export function planNeoTodoRelease(row: FinishedWorker): { value: WorkRef } | { reason: Kept } {
-  if (row.target.verb === 'send') return { reason: { kept: 'sent_to_existing' } };
+  if (row.target.verb === 'send' && !row.owned) return { reason: { kept: 'sent_to_existing' } };
   if (row.humanNamed) return { reason: { kept: 'named_by_human' } };
   if (row.shared) return { reason: { kept: 'bound_to_live_todo' } };
   if (row.ref.daemon) return { reason: { kept: 'remote_worker' } };
