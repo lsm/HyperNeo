@@ -108,12 +108,18 @@ class CodingSessionAssignments {
       .slice(0, WORK_START_EXCLUDE_REFS_MAX);
   }
 
+  repo(todoId: string) {
+    return (
+      (
+        this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(todoId) as {
+          repo: string | null;
+        } | null
+      )?.repo ?? null
+    );
+  }
+
   dispatchFacts(input: { todoId: string; featureKey: string; adapter: string; prUrl?: string }) {
-    const repo = (
-      this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(input.todoId) as {
-        repo: string | null;
-      } | null
-    )?.repo;
+    const repo = this.repo(input.todoId);
     if (!repo) return null;
     const saved = savedCodingSessionStrategy(this.db, repo);
     const strategy = saved ?? 'long_lived';
@@ -209,7 +215,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts', 'actorRefs']
+  ['owner', 'dispatchFacts', 'actorRefs', 'repo']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',

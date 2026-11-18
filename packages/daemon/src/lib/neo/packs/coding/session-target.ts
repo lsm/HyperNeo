@@ -5,6 +5,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { NeoTodoTarget } from '../../driver-work.ts';
 import type { NeoWorkerTargetDecision } from '../../pack-contract.ts';
 import { codingStageTargetReads } from './stage-target-db.ts';
+import { codingSessionAssignmentReads } from './session-assignments-worker.ts';
 import {
   type CodingLines,
   codingCandidateLine,
@@ -22,7 +23,7 @@ export const decideCodingSessionTarget = (superpipe({})('coding.session-target')
   .pipe(
     async (db: Database, todo: NeoTodo, target: NeoTodoTarget, lines: CodingLines | undefined) => {
       if (target.verb !== 'start') return { value: target };
-      const repo = await gatewayFor(db).call(codingStageTargetReads, 'repo', todo.id);
+      const repo = await gatewayFor(db).call(codingSessionAssignmentReads, 'repo', todo.id);
       const saved =
         repo && rankedHere(target)
           ? await gatewayFor(db).call(codingStageTargetReads, 'stagePreference', {
