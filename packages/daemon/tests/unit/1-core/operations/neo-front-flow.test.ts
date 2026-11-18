@@ -1469,7 +1469,7 @@ test('a front reply over the shared line limit is told to shorten, not to add de
   });
   expect(refused.accepted).toBe(false);
   expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
-  expect(refused.reason).toContain('at most 150 characters and 5 lines');
+  expect(refused.reason).toContain('at most 150 characters.');
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
 
@@ -1948,6 +1948,7 @@ test('a reply that answers hands the input to the full session with that answer 
   expect(said).toContain('<already-said>');
   expect(said).toContain('The build passed.');
   expect(said).not.toContain('Front');
+  expect(said).toMatch(/\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [^)]+\)/);
 });
 
 test('the hand-off tells the full session whether the reply answered or promised work', async () => {

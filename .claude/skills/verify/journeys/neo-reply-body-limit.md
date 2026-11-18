@@ -8,18 +8,17 @@ TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evid
 ```
 
 Neo is asked to write at most 60 words. Separately, the server refuses reply text
-over 400 characters or 5 lines counting every line including blank ones, the
-title counting as a line; it counts characters and lines, not words. The limit applies with or
-without details, so a text over it is refused either way: without details as
-`reply_needs_details`, with details as `reply_summary_too_long`, each explained
+over 400 characters; it counts characters, not words or lines, so a title with
+several bullets fits as long as it stays under 400 characters. The limit applies
+with or without details, so a text over it is refused either way: without details
+as `reply_needs_details`, with details as `reply_summary_too_long`, each explained
 with "keep the title, the conclusion and any decision in text and supporting
 material in details".
 
-Neo publishes six bodies over the limit: a long sentence alone, a six-line list,
-a five-line body padded with blank lines, a long translation sent without the
-deliverable flag, a long sentence with longer details, and the same sentence with
-shorter details that would fold into it. All six are refused, so blank lines
-cannot buy space and the flag is what exempts a deliverable rather than its size.
+Neo publishes four bodies over the limit: a long sentence alone, a long
+translation sent without the deliverable flag, a long sentence with longer
+details, and the same sentence with shorter details that would fold into it. All
+four are refused, so the flag is what exempts a deliverable rather than its size.
 
 A long drafted email sent with `deliverable: true` is exempt from the limit and
 accepted; the same email with details is refused as `deliverable_with_details`
@@ -27,9 +26,9 @@ because a deliverable is the whole message. The accepted deliverable is above
 16,000 characters, which proves the exemption clears the ordinary field cap and
 stops at the deliverable's own 64,000-character ceiling.
 
-A short text with the long text in details and a three-line Markdown
-body are accepted, alongside the deliverable. The human reader shows exactly
-those three, in order, and the delivered deliverable is read back in full.
+A short text with the long text in details, a three-line Markdown body and an
+eight-line title-and-bullets body under 400 characters are accepted, alongside
+the deliverable. The human reader shows exactly those four, in order, and the delivered deliverable is read back in full.
 
 The limit counts characters, not UTF-16 code units: 400 emoji measure 800 code
 units but exactly 400 characters, so that reply is accepted and read back in

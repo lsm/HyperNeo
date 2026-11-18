@@ -21,11 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
-import {
-  NEO_REPLY_CHAR_LIMIT,
-  NEO_REPLY_LINE_LIMIT,
-  neoCharCount,
-} from '@hyperneo/shared/types/neo-publication';
+import { NEO_REPLY_CHAR_LIMIT, neoCharCount } from '@hyperneo/shared/types/neo-publication';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -578,21 +574,12 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_summary_too_long',
     });
-    for (const [requestId, text] of [
-      ['six-lines', 'Status\n- a\n- b\n- c\n- d\n- e'],
-      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
-      ['blank-runs', 'Merged.\n\n\nCI green.\nReviewed.\nDone.'],
-      ['trailing-blank', 'Title\n- a\n- b\n- c\n- d\n\n'],
-      ['trailing-run', 'Title\n- a\n- b\n- c\n- d\n\n\n'],
-    ] as const)
-      expect(await send(requestId, text)).toMatchObject({
-        accepted: false,
-        reason: 'reply_needs_details',
-      });
     expect(ledger.list(conversationId) ?? []).toHaveLength(0);
 
     for (const [requestId, text] of [
       ['chars-at-limit', 'x'.repeat(NEO_REPLY_CHAR_LIMIT)],
+      ['many-lines', 'Status\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h'],
+      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
       ['five-lines', 'Title\n- a\n- b\n- c\n- d'],
       ['blank-inside-five', 'Merged.\n\n- CI green\n- Reviewed\n- Docs updated'],
       ['terminal-newline', 'Title\n- a\n- b\n- c\n- d\n'],

@@ -2,6 +2,7 @@
 name: coding-pack
 description: Neo's coding pack guidance. Load it before planning, assigning, reviewing or merging any software work in a git repository, such as pull requests, CI, review, merge rules and coding workers.
 ---
+When telling the human about a pull request or issue, say in a few plain words what it changes before its number, for example "the reply length fix (HyperNeo#10631)".
 Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Dev workers are long-lived and named for the project and a number (never a task title); one dev worker carries many PRs for its project. Use work.rename if a session inherits a task title.
 For multi-PR work, use one PR per todo, with all steps added up front. Order comes only
