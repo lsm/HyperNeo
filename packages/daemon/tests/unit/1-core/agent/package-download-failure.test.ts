@@ -20,7 +20,7 @@ describe('downloadVerifiedTarball', () => {
 
   for (const [failure, response] of [
     ['a registry block page', "printf '<html>blocked</html>'"],
-    ['a failed connection', "echo 'curl: connection failed' >&2; exit 7"],
+    ['a failed connection', "echo 'private-token-example' >&2; exit 7"],
   ]) {
     it(`reports ${failure} as a package download failure`, async () => {
       writeFileSync(join(run, 'curl'), `#!/bin/sh\n${response}\n`, { mode: 0o755 });
@@ -31,7 +31,7 @@ describe('downloadVerifiedTarball', () => {
       );
       expect(error).toBeInstanceOf(Error);
       expect(error?.name).toBe('PackageDownloadError');
-      expect(error?.message).not.toMatch(/JSON|parse/i);
+      expect(error?.message).not.toMatch(/JSON|parse|private-token-example/i);
       expect(isNetworkUnreachableError(error?.message ?? '')).toBe(false);
     });
   }

@@ -49,10 +49,10 @@ if [ "$7" != "-fL" ] && [ "$8" != "-fL" ]; then
 fi
 echo "$*" >> "${log}"
 while [ "$1" != "-o" ]; do shift; done
-cp "${tarballPath}" "$2"
+/bin/cp "${tarballPath}" "$2"
 exit ${downloadExit}
 `
   );
   chmodSync(script, 0o755);
-  return { log, path: `${directory}:/usr/bin:/bin` };
+  return { log, path: directory };
 }
