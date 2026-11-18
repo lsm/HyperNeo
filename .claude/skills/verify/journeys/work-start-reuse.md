@@ -32,3 +32,7 @@ End state, from `evidence/work-start-reuse.json`:
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.
 - `neoBuildBesideFreeHumanReviewer.gotReviewer` is false: the free human-opened
   session is never reused, so the build gets a new session and the count grows by one.
+
+`evidence/session-reuse-dispatch.json` additionally records a fresh session under
+`per_todo` and a doing todo returning to the queue when its ask's workers are busy
+under `per_ask`.

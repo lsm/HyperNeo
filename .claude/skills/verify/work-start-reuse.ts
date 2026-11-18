@@ -17,12 +17,8 @@ const folder = join(run, 'project');
 mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(folder, { recursive: true });
 assert.equal(spawnSync('git', ['init', '-q', '--initial-branch=dev', folder]).status, 0);
-assert.equal(
-  spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'initial'], { cwd: folder }).status,
-  0
-);
 const app = await createDaemonApp({
-  config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
+  config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true },
   verbose: false,
 });
 const place = { machine: hostname(), folder, name: 'Synthetic' };
@@ -56,6 +52,8 @@ store.addTodo('todo-plan', 'synthetic-ask', { title: 'Plan', doneWhen: 'Syntheti
 try {
   assert.notEqual(app.server.port, 8399);
   const first = await start('first', neo);
+  const questions = db.prepare("SELECT count(*) AS n FROM neo_pack_preference_proposals WHERE request_id LIKE 'core.sessionReuse:%'").get() as { n: number };
+  assert.equal(questions.n, 1, 'the first eligible start opens a reuse question');
   await settle([first.id]);
   const byHuman = await start('human', human);
   await settle([first.id, byHuman.id]);
@@ -104,6 +102,25 @@ try {
   assert.equal(build.reused, false);
   assert.equal(observed.neoBuildBesideFreeHumanReviewer.gotReviewer, false);
   assert.equal(observed.neoBuildBesideFreeHumanReviewer.sessionsAfter, beforeBuild + 1);
+  lease(build.id, 'doing', true);
+  db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+    VALUES ('core', 'global', '', 'sessionReuse', '"per_todo"', 'human', 1)`).run();
+  store.addTodo('todo-separate', 'synthetic-ask', { title: 'Separate', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 4);
+  const separate = await start('separate', neo, 'todo-separate');
+  assert.equal(separate.reused, false);
+  assert(![first.id, byHuman.id, third.id, build.id].includes(separate.id));
+  await settle([first.id, third.id, build.id, separate.id]);
+  lease(separate.id, 'doing', true);
+  db.prepare(`UPDATE neo_pack_preferences SET value_json='"per_ask"' WHERE pack='core' AND key='sessionReuse'`).run();
+  store.addTodo('todo-wait', 'synthetic-ask', { title: 'Wait', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 5);
+  todos.create('todo-wait', { verb: 'start', adapter: 'hyperneo', place });
+  store.updateTodo(store.getTodo('todo-wait')!, { state: 'doing', startedAt: 5 }, 5);
+  const waiting = await invokeOperation(app.sessionManager.getOperationRegistry(), 'work.start', input('wait', 'todo-wait'), neo);
+  assert.equal(waiting.kind, 'completed');
+  assert.equal((waiting as { value: { reason?: string } }).value.reason, 'worker_busy');
+  assert.equal(store.getTodo('todo-wait')?.state, 'todo');
+  assert.equal(todos.get('todo-wait')?.verb, 'send');
+  writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb } }, null, 2));
 } finally {
   await app.cleanup();
 }
