@@ -26,14 +26,27 @@ or when a pack marks it from its own facts. A plan:
    doer, listing exactly the current steps. The checker runs another model when the human
    has one available; when only the doer's model is usable, another session on the same
    model counts;
-3. **was signed:** a sign-off card on it, naming those steps, answered by the human.
+3. **was signed:** a sign-off card on it, naming those steps, that the human approved.
 
-**The check is one field.** `neo.todo.edit` gains `checked: { ref, stepIds }`, written by
-Neo when a checker passes the plan, into one new nullable column `neo_todos.checked_json`
+**The sign-off card.** `neo.question.ask` gains `signoff: true`. It is valid only on a
+plan, only as a one-option choice (the option approves; Reply stays for anything else),
+and its `todos` must be exactly the plan's live steps. Only an answer choosing that option
+signs the plan. Other cards on a plan, such as an early blocking question, are unchanged.
+
+**The check is one field.** In any pack, Neo checks a plan by starting another worker
+session (`work.start` with the plan's `todoId`) and giving it the plan and its steps; when
+that session reports a pass, Neo records it. `neo.todo.edit` gains
+`checked: { ref, stepIds }`, accepted only when `ref` is a session the daemon started and
+not the plan's doer, written into one new nullable column `neo_todos.checked_json`
 with the checker's confirmed model read from its work status at write time, and whether
 another model was available then: `chooseLine` (`pack-selection.ts`) over the configured
 lines without the doer's model returns a usable line.
 A check stops counting when the steps change.
+
+**Plans already done.** The migration that adds `checked_json` writes `{"legacy": true}`
+on every todo that is already a plan and already done. `neoPlanRefusal` holds a legacy plan
+only to the old rule (one live dependent). Plans not yet done get no marker and follow the
+new rule; Neo checks and signs them as above.
 
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
 plan, its live steps, its check and its answered cards, and returns the first unmet
@@ -42,7 +55,7 @@ requirement or null. A fact step reads those; the function is the only rule. It 
 
 | Where | Refuses |
 |---|---|
-| `planNeoQuestion` (a card on a plan) | a card that does not name the plan's steps, or a plan with no steps or no current check |
+| `planNeoQuestion` (a `signoff` card) | a card that does not name exactly the plan's live steps, or a plan with no steps or no current check |
 | `planNeoTodoDone` and the `done` input of `planNeoTodoEdit` | a plan missing any of the three |
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge in `todo-runner.ts`) | it does not mark such a plan done; the plan stays open with the unmet requirement as its reason, and Neo is woken |
 | the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | an ask with a plan missing any of the three |
@@ -91,3 +104,4 @@ Acceptance, one integration case per row:
 | a repository with cross-model review off, a design PR | still reviewed and checked |
 | a todo that is not a plan | unchanged |
 | a plan already done before the upgrade, its ask still open | held to the old rule (one live dependent); the new rule applies to plans not yet done |
+| a `no`-style reply or a non-signoff card on a plan | does not sign it |
