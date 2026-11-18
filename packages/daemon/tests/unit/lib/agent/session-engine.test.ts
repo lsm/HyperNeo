@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { SessionConfig } from '@hyperneo/shared';
 import { isOxapHarness, OXAP_HARNESSES } from '@hyperneo/shared/types/oxap-harnesses';
 import {
   codexSessionRefusal,
+  decideOxapOpen,
   decideSwitch,
   effectiveOxapConfig,
   engineForProvider,
@@ -155,5 +157,26 @@ describe('thinkingRefusal', () => {
     expect(thinkingRefusal('oxap-codex', undefined)).toBeUndefined();
     expect(thinkingRefusal('oxap-codex', 'off')).toBeUndefined();
     expect(thinkingRefusal(undefined, 'think16k')).toBeUndefined();
+  });
+});
+
+describe('decideOxapOpen', () => {
+  const chat = { harness: 'oxap-codex', provider: 'anthropic-codex' } as Pick<
+    SessionConfig,
+    'harness' | 'provider'
+  >;
+
+  it('opens on the adapter entry named for the chat provider', () => {
+    expect(decideOxapOpen(chat, { configJson: '{"harness":"oxap-codex"}' })).toEqual({
+      adapter: 'anthropic-codex',
+    });
+  });
+
+  it('refuses a chat whose provider moved to another harness or back to Claude Code', () => {
+    const refusal =
+      'This chat ran on OXAP Codex, which this provider no longer uses; start a new chat';
+    expect(decideOxapOpen(chat, { configJson: '{}' })).toBe(refusal);
+    expect(decideOxapOpen(chat, null)).toBe(refusal);
+    expect(decideOxapOpen(chat, { configJson: '{' })).toBe(refusal);
   });
 });

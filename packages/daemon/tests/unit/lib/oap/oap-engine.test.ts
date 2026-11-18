@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { OapEngine } from '../../../../src/lib/oap/oap-engine';
+import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
 import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 
@@ -33,16 +33,22 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
 `;
   await writeFile(binaryPath, script);
   await chmod(binaryPath, 0o700);
-  const options = {
+  const options: OapEngineOptions = {
     binaryPath,
     identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') },
     stateDirectory: join(root, 'state'),
-    codexExecutable: join(root, 'codex'),
-    codexHome: join(root, 'codex-home'),
+    hub: {
+      adapters: { 'anthropic-codex': { type: 'codex', executable: join(root, 'codex') } },
+      environment: { HOME: join(root, 'home'), CODEX_HOME: join(root, 'codex-home') },
+    },
   };
   const engine = new OapEngine();
   engines.push(engine);
-  return { root, calls, options, engine };
+  const read =
+    (value: typeof options = options) =>
+    async () =>
+      value;
+  return { root, calls, options, engine, read };
 }
 
 afterEach(async () => {
@@ -65,9 +71,9 @@ describe('OapEngine', () => {
   });
 
   test('starts one validated hub lazily for concurrent callers and stops it on close', async () => {
-    const { engine, options, calls, root } = await fixture();
+    const { engine, options, calls, root, read } = await fixture();
     expect(existsSync(calls)).toBe(false);
-    const [first, second] = await Promise.all([engine.getHub(options), engine.getHub(options)]);
+    const [first, second] = await Promise.all([engine.getHub(read()), engine.getHub(read())]);
     expect(first).toBe(second);
     const pid = (await first.request('ping')) as number;
     expect(await readFile(calls, 'utf8')).toBe('start\nping\n');
@@ -81,28 +87,19 @@ describe('OapEngine', () => {
       join(root, 'state', 'session-history.jsonl'),
     ]);
     delete launch.env.__CF_USER_TEXT_ENCODING;
-    expect(launch.env).toEqual({ HOME: options.stateDirectory, CODEX_HOME: options.codexHome });
+    expect(launch.env).toEqual(options.hub.environment);
     expect(JSON.parse(await readFile(join(root, 'state', 'oap-serve.json'), 'utf8'))).toEqual({
-      adapters: {
-        codex: {
-          type: 'codex',
-          executable: options.codexExecutable,
-          environment: ['CODEX_HOME'],
-          any_directory: true,
-          approval_policy: 'on-request',
-          sandbox: 'workspace-write',
-        },
-      },
+      adapters: options.hub.adapters,
     });
     await engine.close();
     expect(() => process.kill(pid, 0)).toThrow();
-    await expect(engine.getHub(options)).rejects.toThrow('closed');
+    await expect(engine.getHub(read())).rejects.toThrow('closed');
   });
 
   test('starts verified bytes when the installed path is replaced during version checking', async () => {
-    const { engine, options, root } = await fixture(true);
+    const { engine, options, root, read } = await fixture(true);
     const outcome = await engine
-      .getHub(options)
+      .getHub(read())
       .then((hub) => hub.request('ping'))
       .catch(() => false);
     expect(typeof outcome).toBe('number');
@@ -113,12 +110,12 @@ describe('OapEngine', () => {
   });
 
   test('removes a stale snapshot from a hard crash before starting a fresh hub', async () => {
-    const { engine, options } = await fixture();
+    const { engine, options, read } = await fixture();
     const stale = join(options.stateDirectory, 'oap-verified-x');
     await mkdir(stale, { recursive: true });
     await writeFile(join(stale, 'old-binary'), 'stale bytes');
     await writeFile(join(options.stateDirectory, 'unrelated'), 'keep');
-    const hub = await engine.getHub(options);
+    const hub = await engine.getHub(read());
     expect(existsSync(stale)).toBe(false);
     expect(typeof (await hub.request('ping'))).toBe('number');
     expect(await readFile(join(options.stateDirectory, 'unrelated'), 'utf8')).toBe('keep');
@@ -127,38 +124,42 @@ describe('OapEngine', () => {
   });
 
   test('rejects a mismatched binary before starting or writing configuration', async () => {
-    const { engine, options, calls } = await fixture();
+    const { engine, options, calls, read } = await fixture();
     await expect(
-      engine.getHub({ ...options, identity: { ...options.identity, sha256: '0'.repeat(64) } })
+      engine.getHub(read({ ...options, identity: { ...options.identity, sha256: '0'.repeat(64) } }))
     ).rejects.toThrow('sha256_mismatch');
     expect(existsSync(calls)).toBe(false);
     expect(existsSync(join(options.stateDirectory, 'oap-serve.json'))).toBe(false);
   });
 
   test('removes its verified copy when configuration cannot be written', async () => {
-    const { engine, options } = await fixture();
+    const { engine, options, read } = await fixture();
     await mkdir(join(options.stateDirectory, 'oap-serve.json'), { recursive: true });
-    await expect(engine.getHub(options)).rejects.toThrow();
+    await expect(engine.getHub(read())).rejects.toThrow();
     expect(await readdir(options.stateDirectory)).toEqual(['oap-serve.json']);
   });
 
   test('rejects an incomplete expected binary identity', async () => {
-    const { engine, options } = await fixture();
+    const { engine, options, read } = await fixture();
     await expect(
-      engine.getHub({ ...options, identity: { version: '', sha256: options.identity.sha256 } })
+      engine.getHub(
+        read({ ...options, identity: { version: '', sha256: options.identity.sha256 } })
+      )
     ).rejects.toThrow('invalid OAP binary identity');
     await expect(
-      engine.getHub({ ...options, identity: { version: 'synthetic-1', sha256: 'not-a-sha256' } })
+      engine.getHub(
+        read({ ...options, identity: { version: 'synthetic-1', sha256: 'not-a-sha256' } })
+      )
     ).rejects.toThrow('invalid OAP binary identity');
   });
 
   test('does not resend the failed request when a crashed hub is restarted on later use', async () => {
-    const { engine, options, calls } = await fixture();
-    const first = await engine.getHub(options);
+    const { engine, options, calls, read } = await fixture();
+    const first = await engine.getHub(read());
     expect(engine.isCurrentHub(first)).toBe(true);
     await expect(first.request('crash')).rejects.toThrow('code=7');
     expect(engine.isCurrentHub(first)).toBe(false);
-    const second = await engine.getHub(options);
+    const second = await engine.getHub(read());
     expect(second).not.toBe(first);
     expect(engine.isCurrentHub(first)).toBe(false);
     expect(engine.isCurrentHub(second)).toBe(true);
@@ -168,17 +169,57 @@ describe('OapEngine', () => {
     expect(engine.isCurrentHub(second)).toBe(false);
   });
 
-  test('does not allow a second configuration to silently replace a running hub', async () => {
-    const { engine, options } = await fixture();
-    await engine.getHub(options);
+  test('keeps the running hub without reading settings again until restart', async () => {
+    const { engine, read } = await fixture();
+    const first = await engine.getHub(read());
+    let reads = 0;
+    const second = await engine.getHub(async () => {
+      reads += 1;
+      throw new Error('settings must not be read for a running hub');
+    });
+    expect(second).toBe(first);
+    expect(reads).toBe(0);
+  });
+
+  test('restart stops the running hub and the next start writes the newly saved settings', async () => {
+    const { engine, options, calls, root, read } = await fixture();
+    const first = await engine.getHub(read());
+    const pid = (await first.request('ping')) as number;
+    await engine.restart();
+    expect(engine.isCurrentHub(first)).toBe(false);
+    expect(() => process.kill(pid, 0)).toThrow();
+    const saved = {
+      ...options,
+      hub: {
+        adapters: { 'second-codex': { type: 'codex', executable: join(root, 'codex-2') } },
+        environment: { HOME: join(root, 'home') },
+      },
+    };
+    const second = await engine.getHub(read(saved));
+    expect(engine.isCurrentHub(second)).toBe(true);
+    await second.request('ping');
+    expect(JSON.parse(await readFile(join(root, 'state', 'oap-serve.json'), 'utf8'))).toEqual({
+      adapters: saved.hub.adapters,
+    });
+    expect(await readFile(calls, 'utf8')).toBe('start\nping\nstart\nping\n');
+  });
+
+  test('a start that fails after restart is retried from the same saved settings', async () => {
+    const { engine, options, read } = await fixture();
+    await engine.getHub(read());
+    await engine.restart();
     await expect(
-      engine.getHub({ ...options, codexHome: join(options.codexHome, 'other') })
-    ).rejects.toThrow('configuration');
+      engine.getHub(async () => {
+        throw new Error('settings unreadable');
+      })
+    ).rejects.toThrow('settings unreadable');
+    const hub = await engine.getHub(read());
+    expect(typeof (await hub.request('ping'))).toBe('number');
   });
 
   test('closing during startup prevents a late hub from being orphaned', async () => {
-    const { engine, options, calls } = await fixture();
-    const starting = engine.getHub(options);
+    const { engine, options, calls, read } = await fixture();
+    const starting = engine.getHub(read());
     const closed = engine.close();
     await expect(starting).rejects.toThrow('closed');
     await closed;

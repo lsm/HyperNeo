@@ -14,15 +14,16 @@ const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
-  codexExecutable: '/synthetic/codex',
-  codexHome: '/synthetic/home',
+  hub: { adapters: {}, environment: {} },
 };
+const record = { providerId: 'synthetic-memory', configJson: '{"harness":"oxap-synthetic"}' };
 const bind = createOapRuntime as unknown as (
   engine: OapEngine,
-  options: OapEngineOptions,
+  options: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
   events: ReturnType<typeof createDaemonInternalEventBus>,
   db: unknown,
-  messageHub: unknown
+  messageHub: unknown,
+  providerRecord: (providerId: string) => typeof record | null
 ) => (session: Session) => { hub: Promise<OapQueryHub>; clear(): Promise<void> };
 
 function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: string } = {}) {
@@ -30,7 +31,7 @@ function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: str
   let opened = false;
   let count = 0;
   const status = (held?: false) => ({
-    ref: { adapter: 'memory', session_id: 'session-m' },
+    ref: { adapter: 'synthetic-memory', session_id: 'session-m' },
     directory: '/synthetic/workspace',
     ...(held === false
       ? { held: false }
@@ -75,9 +76,14 @@ function memoryHub(config: { known?: boolean; refuseReopen?: boolean; link?: str
     saveSDKMessage: vi.fn(async () => true),
     getSDKMessageRepo: vi.fn(() => ({ getDeliveryContent: () => ({ inputKind: 'human' }) })),
   };
-  const runtime = bind(engine, options, createDaemonInternalEventBus(), db, {
-    event: vi.fn(),
-  });
+  const runtime = bind(
+    engine,
+    { installed: () => true, read: async () => options },
+    createDaemonInternalEventBus(),
+    db,
+    { event: vi.fn() },
+    (providerId) => (providerId === record.providerId ? record : null)
+  );
   return { operations, db, runtime };
 }
 
@@ -92,12 +98,24 @@ function session(nativeId?: string, messageCount = 0): Session {
 }
 
 describe('a second OXAP row runs open, clear and reopen from its own table entry', () => {
-  it('opens on the row adapter and stores the id its link parser reads', async () => {
+  it('refuses to open when the provider no longer uses the chat harness', async () => {
+    const host = memoryHub();
+    const moved = {
+      ...session(),
+      config: { harness: 'oxap-synthetic', provider: 'synthetic-memory-2' },
+    };
+    await expect(host.runtime(moved as unknown as Session).hub).rejects.toThrow(
+      'This chat ran on OXAP Synthetic, which this provider no longer uses; start a new chat'
+    );
+    expect(host.operations.filter(({ op }) => op === 'open')).toEqual([]);
+  });
+
+  it('opens on the provider adapter entry and stores the id its link parser reads', async () => {
     const host = memoryHub();
     const current = session();
     await host.runtime(current).hub;
     const opens = host.operations.filter(({ op }) => op === 'open');
-    expect(opens.map(({ params }) => params.adapter)).toEqual(['memory']);
+    expect(opens.map(({ params }) => params.adapter)).toEqual(['synthetic-memory']);
     expect(current.sdkSessionId).toBe('native-1');
   });
 
@@ -111,13 +129,13 @@ describe('a second OXAP row runs open, clear and reopen from its own table entry
     expect(current.sdkSessionId).toBe('native-2');
   });
 
-  it('reopens with the row adapter capabilities and names the row in its recovery notice', async () => {
+  it('reopens with the provider adapter capabilities and names the row in its recovery notice', async () => {
     const host = memoryHub({ known: true, refuseReopen: true });
     const current = session('native-0', 2);
     await host.runtime(current).hub;
     expect(
       host.operations.filter(({ op }) => op === 'capabilities').map(({ params }) => params)
-    ).toEqual([{ adapter: 'memory' }]);
+    ).toEqual([{ adapter: 'synthetic-memory' }]);
     expect(current.sdkSessionId).toBe('native-1');
     const notice = JSON.stringify(host.db.saveSDKMessage.mock.calls[0]);
     expect(notice).toContain('The previous OXAP Synthetic thread cannot be resumed');

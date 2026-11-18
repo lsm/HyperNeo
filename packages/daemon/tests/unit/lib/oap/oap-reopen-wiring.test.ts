@@ -3,7 +3,7 @@ import type { Session } from '@hyperneo/shared';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
 import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime';
+import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 
@@ -11,8 +11,7 @@ const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
-  codexExecutable: '/synthetic/codex',
-  codexHome: '/synthetic/home',
+  hub: { adapters: {}, environment: {} },
 };
 const bind = createOapRuntime as unknown as (
   engine: OapEngine,
@@ -27,7 +26,7 @@ function session(nativeId?: string, messageCount = 0): Session {
     id: 'session-a',
     workspacePath: '/synthetic/workspace',
     sdkSessionId: nativeId,
-    config: { harness: 'oxap-codex' },
+    config: { harness: 'oxap-codex', provider: 'anthropic-codex' },
     metadata: { messageCount },
   } as Session;
 }
@@ -59,12 +58,12 @@ function fixture(
       if (!opened && !config.known) throw new OapHubRequestError('unknown_session', 'absent');
       return opened
         ? {
-            ref: { adapter: 'codex', session_id: 'session-a' },
+            ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
             directory: '/synthetic/workspace',
             link: config.link ?? `codex://threads/${threadId}`,
           }
         : {
-            ref: { adapter: 'codex', session_id: 'session-a' },
+            ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
             directory: '/synthetic/workspace',
             held: false,
             state: 'live',

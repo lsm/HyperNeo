@@ -1,60 +1,85 @@
 import { describe, expect, test } from 'bun:test';
-import { buildOapHubConfig } from '../../../../src/lib/oap/oap-hub-config';
+import { OXAP_HARNESSES, type OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
+import { buildHubConfig } from '../../../../src/lib/oap/oap-hub-config';
 
-describe('buildOapHubConfig', () => {
-  test('sets the attended Codex approval and workspace sandbox posture', () => {
-    const result = buildOapHubConfig({
-      stateDirectory: '/synthetic/hub',
-      codexExecutable: '/synthetic/bin/codex',
-      codexHome: '/synthetic/codex-home',
-    });
-    expect(result.config.adapters.codex).toMatchObject({
-      any_directory: true,
-      approval_policy: 'on-request',
-      sandbox: 'workspace-write',
-    });
-  });
+const codex = (providerId: string, settings: Record<string, string> = {}) => ({
+  providerId,
+  configJson: JSON.stringify({
+    harness: 'oxap-codex',
+    harnessSettings: { executable: '/synthetic/bin/codex', ...settings },
+  }),
+});
 
-  test('generates only supported adapter fields, environment names, and isolated launch paths', () => {
-    const result = buildOapHubConfig({
-      stateDirectory: '/synthetic/hub',
-      codexExecutable: '/synthetic/bin/codex',
-      codexHome: '/synthetic/codex-home',
-    });
-    expect(result.config).toEqual({
-      adapters: {
-        codex: {
-          type: 'codex',
-          executable: '/synthetic/bin/codex',
-          environment: ['CODEX_HOME'],
-          any_directory: true,
-          approval_policy: 'on-request',
-          sandbox: 'workspace-write',
+describe('buildHubConfig', () => {
+  test('gives each OXAP provider its own adapter entry and lists environment names only', () => {
+    const result = buildHubConfig(
+      [codex('anthropic-codex'), { providerId: 'anthropic', configJson: '{}' }],
+      OXAP_HARNESSES,
+      { HOME: '/synthetic/home', CODEX_HOME: '/synthetic/codex-home', PATH: '/usr/bin' },
+      {}
+    );
+    expect(result).toEqual({
+      value: {
+        adapters: {
+          'anthropic-codex': {
+            type: 'codex',
+            executable: '/synthetic/bin/codex',
+            environment: ['HOME', 'CODEX_HOME'],
+            any_directory: true,
+            approval_policy: 'on-request',
+            sandbox: 'workspace-write',
+          },
         },
+        environment: { HOME: '/synthetic/home', CODEX_HOME: '/synthetic/codex-home' },
       },
     });
-    expect(result.args).toEqual([
-      'serve',
-      '--stdio',
-      '--config',
-      '/synthetic/hub/oap-serve.json',
-      '--session-history',
-      '/synthetic/hub/session-history.jsonl',
-    ]);
-    expect(result.environment).toEqual({
-      HOME: '/synthetic/hub',
-      CODEX_HOME: '/synthetic/codex-home',
-    });
-    expect(JSON.stringify(result.config)).not.toContain('/synthetic/codex-home');
   });
-  test('rejects paths that could resolve against a shared working directory', () => {
-    const valid = {
-      stateDirectory: '/synthetic/hub',
-      codexExecutable: '/synthetic/bin/codex',
-      codexHome: '/synthetic/codex-home',
+
+  test('lists CODEX_HOME only when the human has set one', () => {
+    const result = buildHubConfig([codex('anthropic-codex')], OXAP_HARNESSES, { HOME: '/h' }, {});
+    expect(result).toMatchObject({
+      value: {
+        adapters: { 'anthropic-codex': { environment: ['HOME'] } },
+        environment: { HOME: '/h' },
+      },
+    });
+  });
+
+  test('refuses a harness setting that is not an absolute path', () => {
+    expect(
+      buildHubConfig([codex('anthropic-codex', { executable: 'codex' })], OXAP_HARNESSES, {}, {})
+    ).toEqual({ reason: 'anthropic-codex needs an absolute executable path' });
+  });
+
+  test('puts a provider key only in the hub environment, never in the adapter entry', () => {
+    const keyed: OxapHarness = {
+      ...OXAP_HARNESSES['oxap-codex'],
+      providers: ['anthropic-codex'],
+      key: 'SYNTHETIC_API_KEY',
     };
-    for (const key of ['stateDirectory', 'codexExecutable', 'codexHome'] as const) {
-      expect(() => buildOapHubConfig({ ...valid, [key]: 'relative' })).toThrow('absolute');
-    }
+    const harnesses = { 'oxap-codex': keyed };
+    const same = buildHubConfig(
+      [codex('anthropic-codex')],
+      harnesses,
+      {},
+      {
+        'anthropic-codex': 'sk-synthetic-a',
+      }
+    );
+    expect(same).toMatchObject({
+      value: {
+        adapters: { 'anthropic-codex': { environment: ['SYNTHETIC_API_KEY'] } },
+        environment: { SYNTHETIC_API_KEY: 'sk-synthetic-a' },
+      },
+    });
+    expect(JSON.stringify((same as { value: { adapters: unknown } }).value.adapters)).not.toContain(
+      'sk-synthetic-a'
+    );
+  });
+
+  test('skips an unreadable provider record instead of failing every OXAP chat', () => {
+    expect(
+      buildHubConfig([{ providerId: 'anthropic-codex', configJson: '{' }], OXAP_HARNESSES, {}, {})
+    ).toEqual({ value: { adapters: {}, environment: {} } });
   });
 });
