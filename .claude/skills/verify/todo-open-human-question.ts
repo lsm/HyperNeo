@@ -32,6 +32,7 @@ try {
   const doneDescription = await rpc('operations.describe', { name: 'neo.todo.done' });
   const questionDescription = await rpc('operations.describe', { name: 'neo.question.ask' });
   assert(JSON.stringify(doneDescription).includes('unanswered card linked to this todo refuses completion'));
+  assert(!JSON.stringify(doneDescription).includes('explicitly retire the card'));
   assert(JSON.stringify(questionDescription).includes('Marking the todo done is refused while the linked card is open'));
   evidence.push({ doneDescription, questionDescription });
   const store = service.todos;
