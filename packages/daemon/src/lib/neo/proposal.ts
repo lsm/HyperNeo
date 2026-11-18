@@ -3,6 +3,9 @@ import { neoDerivedId } from './derived-id.ts';
 
 export const proposalQuestionId = (askId: string) => neoDerivedId(`neo-proposal:${askId}`);
 
+export const isHumanWorkDecision = (question: NeoQuestion) =>
+  question.id === proposalQuestionId(question.askId) || question.cause === 'relay-session-proposal';
+
 export function requireAcceptedAsk(
   ask: NeoAsk,
   proposal: NeoQuestion | null,

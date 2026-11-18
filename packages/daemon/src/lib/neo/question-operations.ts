@@ -34,6 +34,7 @@ import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { StagedWorkerQuestion } from '../work-queue/follow-through.ts';
 import { planNeoRemovedPrerequisiteAnswer } from './todo-removal.ts';
+import { isHumanWorkDecision } from './proposal.ts';
 
 const ReportLine = z
   .string()
@@ -587,6 +588,8 @@ export function requireNeoQuestionReplaceable(
   if (!replaced) return fail(`not_found: no question ${replaces}.`);
   if (replaced.askId !== ask.id)
     return fail(`other_ask: question ${replaces} belongs to another ask; replace only this ask's.`);
+  if (replaced.state === 'open' && isHumanWorkDecision(replaced))
+    return fail('human_decision_required: the human must answer this work decision.');
   return { value: replaced.state === 'open' ? replaced : null };
 }
 
@@ -834,6 +837,8 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> | { reason: QuestionReceipt } => {
         if (question.state !== 'open') return { reason: { ok: true, question } };
+        if (isHumanWorkDecision(question))
+          return fail('human_decision_required: the human must answer this work decision.');
         if (question.heldAt) return fail(QUESTION_HELD);
         const open = requireNeoOpenAsk(store.getAsk(question.askId));
         return 'reason' in open ? open : { value: question };

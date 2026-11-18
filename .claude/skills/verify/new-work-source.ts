@@ -92,10 +92,10 @@ try {
   const protectedCard = async (askId: string, questionId: string, label: string) => {
     const replacement = await mcp('neo.question.ask', { askId, replaces: questionId, kind: 'choice', text: 'Choose an option?', options: ['Continue'], retireWhen: draft.check });
     evidence[`${label}Replace`] = replacement;
-    assert.equal(replacement.ok, false, JSON.stringify(replacement));
+    assert.equal(replacement.reason, 'human_decision_required: the human must answer this work decision.', JSON.stringify(replacement));
     const retired = await mcp('neo.question.retire', { questionId, reason: 'No longer needed' });
     evidence[`${label}Retire`] = retired;
-    assert.equal(retired.ok, false, JSON.stringify(retired));
+    assert.equal(retired.reason, 'human_decision_required: the human must answer this work decision.', JSON.stringify(retired));
     assert.equal(new NeoAskTodoRepository(db).getQuestion(questionId)?.state, 'open');
   };
   await protectedCard(opened.ask.id, question.id, 'proposal');
