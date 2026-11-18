@@ -9,19 +9,19 @@ REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/tmp" "$RUN/bin" "$RUN/evidence"
 cp "$REPO/.claude/skills/verify/gh-stub.sh" "$RUN/bin/gh"
 cd "$REPO"
-git rev-parse HEAD > "$RUN/evidence/head.txt"
+printf '%s\n' "${VERIFY_HEAD:-$(git rev-parse HEAD)}" > "$RUN/evidence/head.txt"
 (cd packages/web && bun run build) > "$RUN/evidence/build.log" 2>&1
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
   HYPERNEO_DATA_DIR="$RUN/data" HYPERNEO_WORKSPACE_PATH="$RUN/home" \
   bun packages/cli/main.ts --host 127.0.0.1 --port "$PORT" --db-path "$RUN/data/daemon.db" \
   > "$RUN/daemon.log" 2>&1 &
 DAEMON_PID=$!
-trap 'kill "$DAEMON_PID" 2>/dev/null || true; wait "$DAEMON_PID" 2>/dev/null || true' EXIT
+trap 'kill "$DAEMON_PID" 2>/dev/null || true; wait "$DAEMON_PID" 2>/dev/null || true; rm -rf "$RUN/home" "$RUN/data" "$RUN/tmp" "$RUN/bin"' EXIT
 for _ in $(seq 1 120); do
   kill -0 "$DAEMON_PID" 2>/dev/null || { cat "$RUN/daemon.log"; exit 1; }
   if curl -fs -o /dev/null "http://127.0.0.1:$PORT/"; then break; fi
   sleep 1
 done
 env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" TMPDIR="$RUN/tmp" NODE_ENV=test \
-  NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
+  HYPERNEO_DATA_DIR="$RUN/data" NODE_PATH="${NODE_PATH:-}" VERIFY_BROWSER="${VERIFY_BROWSER:-}" \
   node .claude/skills/verify/neo-web-message-status.mjs "$PORT" "$RUN"

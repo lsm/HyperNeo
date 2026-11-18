@@ -254,6 +254,42 @@ describe('public ask photo references', () => {
 });
 
 describe('failed public asks', () => {
+  it('does not send a second retry while the first is pending', async () => {
+    const conversation = view([{ type: 'text', text: 'Please process this' }]);
+    const entries = conversation.entries.map((entry) =>
+      entry.kind === 'ask'
+        ? {
+            ...entry,
+            ask: {
+              ...entry.ask,
+              messageStatus: 'failed' as const,
+              delivery: { state: 'failed' as const, reason: 'Provider refused' },
+            },
+          }
+        : entry
+    );
+    let release!: (accepted: boolean) => void;
+    const onRetryUndelivered = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        })
+    );
+    render(
+      <NeoPublicConversation
+        conversation={{ ...conversation, entries }}
+        onRetryUndelivered={onRetryUndelivered}
+      />
+    );
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    fireEvent.click(retry);
+    expect(retry.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(retry);
+    expect(onRetryUndelivered).toHaveBeenCalledTimes(1);
+    release(false);
+    await waitFor(() => expect(retry.hasAttribute('disabled')).toBe(false));
+  });
+
   it('shows the failure reason and lets the human retry once', async () => {
     const conversation = view([{ type: 'text', text: 'Please process this' }]);
     const entries = conversation.entries.map((entry) =>

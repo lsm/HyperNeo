@@ -311,6 +311,8 @@ export const en = {
   'chat.sending': 'Sending',
   'chat.notSent': 'Not sent',
   'chat.notSentReason': 'Not sent: {reason}',
+  'chat.refused': 'Neo could not process this message.',
+  'chat.retried': 'Retried',
   'chat.retry': 'Retry',
   'chat.edit': 'Edit',
   'chat.public': 'Public conversation',

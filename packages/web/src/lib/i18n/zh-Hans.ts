@@ -310,6 +310,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.sending': '正在发送',
   'chat.notSent': '未发送',
   'chat.notSentReason': '未发送：{reason}',
+  'chat.refused': 'Neo 无法处理这条消息。',
+  'chat.retried': '已重试',
   'chat.retry': '重试',
   'chat.edit': '编辑',
   'chat.public': '公开对话',
