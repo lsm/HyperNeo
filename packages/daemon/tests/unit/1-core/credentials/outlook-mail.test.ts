@@ -74,6 +74,18 @@ beforeEach(async () => {
     if (mode === 'rate') return new Response('synthetic-sensitive-error', { status: 429 });
     if (url.pathname === '/v1.0/me/messages') {
       expect(url.searchParams.get('$select')).not.toContain('body,');
+      if (mode === 'crowded') {
+        const crowded = url.searchParams.get('$select')!.includes('toRecipients');
+        const recipients = Array.from({ length: 500 }, (_, i) => ({
+          emailAddress: { name: `Member ${i}`, address: `member-${i}@lists.example.test` },
+        }));
+        return Response.json({
+          value: ['c1', 'c2'].map((id) => ({
+            ...message(id),
+            toRecipients: crowded ? recipients : undefined,
+          })),
+        });
+      }
       const filter = url.searchParams.get('$filter');
       if (filter) {
         expect(filter).toBe("conversationId eq 'conversation-one'");
@@ -280,4 +292,18 @@ test('a grant stored with fully qualified Graph scopes still admits Outlook read
     client: { clientId: 'synthetic-client' },
   });
   expect((await search()).ok).toBe(true);
+});
+
+test('a page too large for its recipient lists still returns headers, marked truncated', async () => {
+  mode = 'crowded';
+  const page = await search();
+  expect(page.ok).toBe(true);
+  expect(page.items.map((item: { id: string }) => item.id)).toEqual(['c1', 'c2']);
+  expect(
+    page.items.every((item: { to: string; truncated: boolean }) => item.to === '' && item.truncated)
+  ).toBe(true);
+  expect(page.truncated).toBe(true);
+  const thread = await read();
+  expect(thread.ok).toBe(true);
+  expect(thread.items).toHaveLength(2);
 });
