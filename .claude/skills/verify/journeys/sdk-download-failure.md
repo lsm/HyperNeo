@@ -32,3 +32,8 @@ Run the slow fixture separately to check the 45-second download message.
 For a localized curl network failure, use `curl-network` as the fixture mode,
 `VERIFY_WEB=after`, and `VERIFY_LOCALE=zh-Hans`. The browser must show the
 registry host in the Chinese cause and Retry must invoke only the download.
+
+Use `timeout` with `VERIFY_WEB=after` to keep fake npm running beyond the
+180-second browser request timeout. Pass requires the banner to keep saying
+Claude Code is downloading, expose Retry again, and avoid a second download.
+The helper confirms the synthetic download is alive before it cleans up.

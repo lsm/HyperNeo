@@ -25,7 +25,7 @@ try {
   await page.getByText('This browser is paired.').waitFor();
   await page.goto(`${base}/session/${sessionId}`);
   const banner = page.getByTestId('error-banner');
-  await banner.getByText(fixture === 'slow' ? /Claude Code is still downloading/ : failureText).waitFor({ timeout: 30000 });
+  await banner.getByText(fixture === 'slow' || fixture === 'timeout' ? /Claude Code is still downloading/ : failureText).waitFor({ timeout: 30000 });
   for (const scheme of ['dark', 'light']) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.waitForTimeout(500);
@@ -37,8 +37,18 @@ try {
     assert.equal(await page.getByRole('button', { name: retryLabel, exact: true }).count(), 1);
     const count = () => execFileSync('/usr/bin/wc', ['-l', join(run, 'data/download.log')], { encoding: 'utf8' }).trim().split(/\s/)[0];
     const before = Number(count());
+    const clickedAt = Date.now();
     await retry.click();
-    if (fixture === 'slow') {
+    if (fixture === 'timeout') {
+      await banner.getByRole('button', { name: 'Retrying…', exact: true }).waitFor();
+      await retry.waitFor({ timeout: 185000 });
+      assert(Date.now() - clickedAt >= 179000, 'retry returned before its timeout');
+      assert.match(await banner.innerText(), /Claude Code is still downloading/);
+      assert.doesNotMatch(await banner.innerText(), /Can't retry the Claude Code download/);
+      assert.equal(Number(count()), before);
+      await page.screenshot({ path: join(run, 'evidence', 'download-timeout-after.png'), mask: [page.getByTestId('chat-header-folder')], maskColor: '#f8f8fa' });
+      console.log('browser_retry_timeout=still_downloading');
+    } else if (fixture === 'slow') {
       await banner.getByText(failureText).waitFor({ timeout: 30000 });
       assert.equal(Number(count()), before);
     } else {

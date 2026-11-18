@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { retryClaudeDownload } from '../lib/api-helpers.ts';
 import { t } from '../lib/i18n/index.ts';
 
+const DOWNLOAD_STILL_RUNNING = 'Claude Code is still downloading. Try again shortly.';
+
 export interface ErrorBannerAction {
   label: string;
   onClick: () => void;
@@ -37,8 +39,13 @@ export function ErrorBanner({
       const result = await retryClaudeDownload();
       if (result.accepted) onDismiss();
       else setDownloadError(result.reason);
-    } catch {
-      setDownloadError(t('download.retryFailed'));
+    } catch (error) {
+      setDownloadError(
+        error instanceof Error &&
+          /^Request timeout: operation\.invoke \(\d+ms\)$/.test(error.message)
+          ? DOWNLOAD_STILL_RUNNING
+          : t('download.retryFailed')
+      );
     } finally {
       pending.current = false;
       setRetrying(false);
@@ -116,7 +123,6 @@ function downloadMessage(message: string): string {
     )
   )
     return t('download.npmFailure');
-  if (message === 'Claude Code is still downloading. Try again shortly.')
-    return t('download.stillDownloading');
+  if (message === DOWNLOAD_STILL_RUNNING) return t('download.stillDownloading');
   return message;
 }
