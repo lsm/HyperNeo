@@ -23,7 +23,7 @@ c=sqlite3.connect(sys.argv[1])
 for project_id,title,path in [('synth','neo-read',sys.argv[2]),('busy','occupied',sys.argv[3]),('fail','refused',sys.argv[4]),('hidden','hidden-worker',sys.argv[5]),('archived','archived-chat',sys.argv[6])]:
     c.execute("INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?, '', '',1,1,1)", (project_id,title))
     c.execute('INSERT INTO neo_project_workspaces(alias,project_id) VALUES (?,?)', ('folder:'+socket.gethostname()+'\0'+os.path.realpath(path), project_id))
-for project_id,title in [('empty','folderless'), ('remote','remote-work'), ('linked','linked-ask')]:
+for project_id,title in [('empty','folderless'), ('remote','remote-work'), ('linked','linked-ask'), ('inbox','Inbox')]:
     c.execute("INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?, '', '',1,1,1)", (project_id,title))
 c.execute('INSERT INTO neo_project_workspaces(alias,project_id) VALUES (?,?)', ('folder:elsewhere\0/synthetic/remote', 'remote'))
 c.execute("INSERT INTO neo_asks(id,session_id,project_id,title,request,status,created_at,updated_at) VALUES ('open-ask','neo:synthetic','linked','Open ask','Request','open',1,1)")

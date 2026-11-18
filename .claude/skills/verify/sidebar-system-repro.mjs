@@ -68,6 +68,11 @@ try {
   await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
   if (process.env.VERIFY_INJECT_FAILURE) console.log('Work lookup recovered after the project list refreshed');
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
+  const inbox = page.getByRole('button', {name: 'Remove project Inbox'});
+  await inbox.waitFor({state:'attached'});
+  assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
+  assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
+  console.log('Protected Inbox cannot be forgotten');
   const archived = page.getByRole('button', {name: 'Remove project archived-chat'});
   await archived.waitFor({state: 'attached'});
   assert(await archived.isDisabled());

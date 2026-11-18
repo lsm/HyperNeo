@@ -396,6 +396,24 @@ describe('SessionsSidebar', () => {
     await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
   });
 
+  it('disables removal of a protected project', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'inbox',
+        name: 'Inbox',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+        isProtected: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Inbox' });
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('This project cannot be forgotten.');
+  });
+
   it('refuses when a project has work that cannot be checked', async () => {
     mockListSystemProjects.mockResolvedValue([
       {
