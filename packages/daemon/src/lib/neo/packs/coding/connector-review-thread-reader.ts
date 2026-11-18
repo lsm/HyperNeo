@@ -10,6 +10,7 @@ import {
   RATE_LIMIT_MIN_BACKOFF_MS,
 } from '../../../session/rate-limit-detector.ts';
 import { codingConnectorPrTarget } from './connector-pr-reader.ts';
+import { CodingPollFactsRepository } from './poll-facts.ts';
 
 const Page = z.object({
   data: z.object({
@@ -42,6 +43,22 @@ type Fetched =
       kind: 'partial' | 'rate_limited' | 'failed';
       outcome: Extract<ConnectorOutcome, { ok: false }>;
     };
+const ThreadFacts = z.object({ headOid: z.string(), unresolvedThreadUrls: z.array(z.string()) });
+
+export function readCodingReviewThreads(db: Database, url: string, now: number) {
+  const page = new CodingPollFactsRepository(db).read(
+    {
+      credentialId: 'github-connector',
+      url: url.toLowerCase(),
+      accept: 'application/vnd.hyperneo.pr-review-threads+json',
+      apiVersion: 'v1',
+    },
+    now,
+    Infinity
+  ).page;
+  const parsed = page.status === 'known' ? ThreadFacts.safeParse(page.value) : null;
+  return parsed?.success ? parsed.data : null;
+}
 const partial = (): Fetched => ({
   kind: 'partial',
   outcome: { ok: false, error: 'GitHub review-thread facts unavailable: partial' },

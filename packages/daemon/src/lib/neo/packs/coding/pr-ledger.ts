@@ -46,6 +46,7 @@ import { Logger } from '../../../logger.ts';
 import type { LedgerQuota } from './ledger-quota.ts';
 import { codingPrKey } from './pr-key.ts';
 import type { CodingLedgerRead } from './pr-ledger-source.ts';
+import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export {
   codingLedgerArgs,
@@ -67,6 +68,15 @@ export type CodingPrState =
   | 'waiting_cross_review'
   | 'merged'
   | 'closed';
+
+const THREAD_STATE_PRECEDENCE: readonly CodingPrState[] = [
+  'draft',
+  'dirty',
+  'failing',
+  'closed',
+  'merged',
+  'waiting_cross_review',
+];
 
 export const CODING_LEDGER_MIN_RATE = 500;
 export const CODING_LEDGER_KEEP_MS = 7 * 24 * 60 * 60_000;
@@ -256,7 +266,14 @@ export function planCodingLedgerRead(
   raw: unknown,
   now: number,
   readPolicy: (repo: string) => CodingMergePolicy = () => ({}),
-  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => []
+  readStageFacts: (repo: string, number: number) => readonly CodingStageFact[] = () => [],
+  readThreads: (
+    repo: string,
+    number: number
+  ) => {
+    headOid: string;
+    unresolvedThreadUrls: string[];
+  } | null = () => null
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number | null } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -272,14 +289,20 @@ export function planCodingLedgerRead(
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => {
       const facts = policy.crossModelReview ? readStageFacts(canonical, pr.number) : [];
-      const findings = codingCrossModelFindings(pr.headRefOid, facts);
+      const threads = readThreads(canonical, pr.number);
+      const unresolved = threads?.headOid === pr.headRefOid ? threads.unresolvedThreadUrls : [];
+      const findings = [...codingCrossModelFindings(pr.headRefOid, facts), ...unresolved];
+      const state = codingPrState(pr, repoHasCi, policy, facts);
       return {
         repo: canonical,
         number: pr.number,
         title: pr.title,
         branch: pr.headRefName,
         head: pr.headRefOid,
-        state: codingPrState(pr, repoHasCi, policy, facts),
+        state:
+          unresolved.length && !THREAD_STATE_PRECEDENCE.includes(state)
+            ? ('changes_requested' as const)
+            : state,
         ...(findings.length ? { findings } : {}),
         ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
         replyAt: codingPrReplyAt(pr),
@@ -489,7 +512,8 @@ export class CodingPrLedgerRepository {
     raw: unknown,
     now: number,
     observedAt: number,
-    seen: readonly string[]
+    seen: readonly string[],
+    failedThreads: readonly number[] = []
   ) {
     if (!this.watches(repo))
       return { canonical: null, transitions: [] as CodingPrTransition[], warning: null };
@@ -501,6 +525,12 @@ export class CodingPrLedgerRepository {
       (repo, number) =>
         this.stageFacts.read(
           `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`
+        ),
+      (repo, number) =>
+        readCodingReviewThreads(
+          this.db,
+          `https://${process.env.GH_HOST ?? 'github.com'}/${repo}/pull/${number}`,
+          now
         )
     );
     const cycle = planLedgerHealth(raw, planned !== null, now);
@@ -509,7 +539,7 @@ export class CodingPrLedgerRepository {
     if (planned && planned.repo !== repo.toLowerCase()) this.dropRepo(repo.toLowerCase());
     const transitions =
       planned && !seen.includes(planned.repo)
-        ? this.replace(planned.repo, planned.rows, now, observedAt)
+        ? this.replace(planned.repo, planned.rows, now, observedAt, failedThreads)
         : [];
     return {
       canonical: planned?.repo ?? null,
@@ -672,9 +702,25 @@ export class CodingPrLedgerRepository {
     repo: string,
     rows: readonly CodingLedgerRow[],
     now: number,
-    observedAt = now
+    observedAt = now,
+    failedThreads: readonly number[] = []
   ): CodingPrTransition[] {
     return this.db.transaction(() => {
+      const before = new Map(
+        (
+          this.db
+            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+            .all(repo) as { number: number; state: CodingPrState }[]
+        ).map((row) => [row.number, row.state])
+      );
+      rows = rows.map((row) =>
+        failedThreads.includes(row.number) &&
+        before.has(row.number) &&
+        !['closed', 'merged'].includes(before.get(row.number)!) &&
+        !THREAD_STATE_PRECEDENCE.includes(row.state)
+          ? { ...row, state: before.get(row.number)! }
+          : row
+      );
       const handedOff = this.humanHandoffs();
       rows = rows.map((row) =>
         ['approved_green', 'approved_pending', 'waiting_ci', 'waiting_human'].includes(row.state) &&
@@ -685,13 +731,6 @@ export class CodingPrLedgerRepository {
         )
           ? { ...row, state: 'waiting_human' }
           : row
-      );
-      const before = new Map(
-        (
-          this.db
-            .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
-            .all(repo) as { number: number; state: CodingPrState }[]
-        ).map((row) => [row.number, row.state])
       );
       this.upsert(rows, now, observedAt);
       this.db
@@ -1009,7 +1048,12 @@ export async function reconcileCodingPrLedger(
   ledger: CodingPrLedgerRepository,
   repos: readonly string[],
   read: CodingLedgerRead,
-  now: number
+  now: number,
+  refreshThreads?: (
+    url: string,
+    cwd: string,
+    quota?: LedgerQuota
+  ) => Promise<{ ok: boolean; data?: unknown; retryable?: boolean }>
 ): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
   const transitions: CodingPrTransition[] = [];
@@ -1019,7 +1063,62 @@ export async function reconcileCodingPrLedger(
     if (!context.watched) continue;
     const observedAt = Date.now();
     const raw = await read(repo, context.health?.quota);
-    const observation = await ledger.write('observePoll', repo, raw, now, observedAt, [...seen]);
+    const parsed = Response.safeParse(raw);
+    const quota = context.health?.quota;
+    let canRefresh =
+      (parsed.success ? (parsed.data.data.rateLimit.remaining ?? CODING_LEDGER_MIN_RATE) : 0) >=
+        CODING_LEDGER_MIN_RATE &&
+      !(quota?.retryAt && quota.retryAt > observedAt) &&
+      !(
+        quota?.resource === 'graphql' &&
+        quota.remaining !== null &&
+        quota.remaining < CODING_LEDGER_MIN_RATE &&
+        (!quota.resetAt || quota.resetAt > observedAt)
+      );
+    const failedThreads: number[] = [];
+    if (refreshThreads && parsed.success && !parsed.data.errors?.length) {
+      const canonical = parsed.data.data.repository.nameWithOwner.toLowerCase();
+      for (const pr of parsed.data.data.repository.open.nodes) {
+        const url = `https://${process.env.GH_HOST ?? 'github.com'}/${canonical}/pull/${pr.number}`;
+        const page = await ledger.pollFacts.readCurrent(
+          {
+            credentialId: 'github-connector',
+            url: url.toLowerCase(),
+            accept: 'application/vnd.hyperneo.pr-review-threads+json',
+            apiVersion: 'v1',
+          },
+          observedAt,
+          10 * 60_000
+        );
+        if (
+          page.page.status !== 'known' ||
+          !z.object({ headOid: z.string() }).safeParse(page.page.value).success ||
+          (page.page.value as { headOid?: string }).headOid !== pr.headRefOid
+        ) {
+          if (!canRefresh) {
+            failedThreads.push(pr.number);
+            continue;
+          }
+          const refreshed = await refreshThreads(url, '', quota);
+          const current = refreshed.ok
+            ? z.object({ headOid: z.string() }).safeParse(refreshed.data)
+            : null;
+          if (!current?.success || current.data.headOid !== pr.headRefOid) {
+            failedThreads.push(pr.number);
+            if (refreshed.retryable) canRefresh = false;
+          }
+        }
+      }
+    }
+    const observation = await ledger.write(
+      'observePoll',
+      repo,
+      raw,
+      now,
+      observedAt,
+      [...seen],
+      failedThreads
+    );
     if (observation.warning)
       log.warn('PR ledger coverage missed three eligible cycles', {
         repo,
