@@ -37,6 +37,8 @@ function harness(
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
+    reuse?: 'long_lived' | 'per_ask' | 'per_todo';
+    sameAsk?: string[];
   },
   history?: ReadonlyMap<string, { sameAskAt: number | null; settledAt: number | null }>,
   claim?: Pick<WorkVerbDeps, 'claimWorker' | 'unclaimWorker'>
@@ -45,6 +47,7 @@ function harness(
   const messages: string[] = [];
   const started: string[] = [];
   const unusable: WorkRef[] = [];
+  const waiting: string[] = [];
   const adapter: WorkAdapter = {
     id: config?.adapter ?? 'claude-desktop',
     supportsStartEffort: true,
@@ -139,6 +142,18 @@ function harness(
           ? new Map(free.map((id) => [id, history.get(id) ?? { sameAskAt: null, settledAt: null }]))
           : new Set(free),
       markUnusable: (ref) => void unusable.push(ref),
+      ...(config?.reuse
+        ? {
+            reusePolicy: async () => ({ mode: config.reuse!, sameAsk: config.sameAsk ?? [] }),
+            todoWorker: {
+              on: () => false,
+              wait: async (_todoId: string, ref: WorkRef) => {
+                waiting.push(ref.id);
+                return 'instruction' as const;
+              },
+            },
+          }
+        : {}),
       ...claim,
     })
   );
@@ -163,8 +178,40 @@ function harness(
     if (outcome.kind !== 'completed') throw new Error(outcome.message);
     return outcome.value as { ok: boolean; value?: { ref: WorkRef; reused?: true } };
   };
-  return { start, sent, started, unusable, messages };
+  return { start, sent, started, unusable, messages, waiting };
 }
+
+describe('work.start session reuse preference', () => {
+  test('per todo starts a new session even when another worker is free', async () => {
+    const run = harness([{ id: 'other', status: 'done' }], ['other'], {
+      adapter: 'claude-desktop',
+      reuse: 'per_todo',
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+
+  test('per ask never borrows another matter’s worker', async () => {
+    const run = harness([{ id: 'other', status: 'done' }], ['other'], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: [],
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.sent).toEqual([]);
+  });
+
+  test('per ask waits when that matter’s worker is busy', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).ok).toBe(false);
+    expect(run.waiting).toEqual(['own']);
+    expect(run.started).toEqual([]);
+  });
+});
 
 describe('work.start against a worker release', () => {
   const claims = () => {
