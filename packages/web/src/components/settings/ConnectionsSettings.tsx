@@ -38,27 +38,38 @@ const update = (superpipe({})('connection-settings') as PipelineAPI)
     'receipt'
   )
   .pipe(
-    (provider: Provider, _receipt: Receipt | null) =>
+    (provider: Provider | null, _receipt: Receipt | null) =>
       Promise.all([
         call<{ connections: Account[] }>('connections.list'),
-        call<Attempt>(`connections.${provider}.login`),
+        ...((provider ? [provider] : ['google', 'microsoft']) as Provider[]).map(async (name) => ({
+          provider: name,
+          attempt: await call<Attempt>(`connections.${name}.login`),
+        })),
       ]),
     ['provider', 'receipt'],
     'snapshot'
   )
   .pipe(
-    ([rows, attempt]: [{ connections: Account[] }, Attempt], receipt: Receipt | null) => ({
-      accounts: rows.connections,
-      attempt,
-      receipt,
-    }),
+    (
+      [rows, ...attempts]: [
+        { connections: Account[] },
+        ...{ provider: Provider; attempt: Attempt }[],
+      ],
+      receipt: Receipt | null
+    ) => {
+      const selected =
+        attempts.find(({ attempt }) => attempt.state === 'pending') ??
+        attempts.find(({ attempt }) => attempt.state !== 'missing') ??
+        attempts[0];
+      return { accounts: rows.connections, ...selected, receipt };
+    },
     ['snapshot', 'receipt'],
     'view'
   )
   .endAsync('view') as (
-  provider: Provider,
+  provider: Provider | null,
   command?: Command
-) => Promise<View & { receipt: Receipt | null }>;
+) => Promise<View & { provider: Provider; receipt: Receipt | null }>;
 
 const scopeLabels: Record<string, MessageKey> = {
   openid: 'connections.identity',
@@ -99,15 +110,16 @@ export function ConnectionsSettings() {
   const [error, setError] = useState('');
   const [readError, setReadError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [provider, setProvider] = useState<Provider>('google');
+  const [provider, setProvider] = useState<Provider | null>(null);
   const [setup, setSetup] = useState<{ connectionId?: string } | null>(null);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [consentUrl, setConsentUrl] = useState('');
   const popup = useRef<Window | null>(null);
-  const reload = useCallback(async (from: Provider, command?: Command) => {
+  const reload = useCallback(async (from: Provider | null, command?: Command) => {
     const next = await update(from, command);
     setReadError('');
+    if (from === null) setProvider((current) => current ?? next.provider);
     setView(next);
     return next.receipt;
   }, []);
@@ -119,7 +131,7 @@ export function ConnectionsSettings() {
     const timer = setInterval(load, view.attempt.state === 'pending' ? 1000 : 15000);
     return () => clearInterval(timer);
   }, [reload, provider, view.attempt.state]);
-  const text = copy[provider];
+  const text = copy[provider ?? 'google'];
   const act = async (command: Command) => {
     setBusy(true);
     setError('');
@@ -201,7 +213,7 @@ export function ConnectionsSettings() {
           onSubmit={(event) => {
             event.preventDefault();
             void act({
-              provider,
+              provider: provider ?? 'google',
               action: 'connect',
               input: {
                 ...setup,

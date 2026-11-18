@@ -271,7 +271,7 @@ it('keeps the account and closes the blank popup when the daemon rejects a diffe
     'Sign in with the same Google account to reconnect.'
   );
   expect(screen.getByText('one@example.test')).toBeTruthy();
-  expect(popup.close).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(popup.close).toHaveBeenCalledTimes(1));
 });
 
 it('asks for client configuration after disconnect erased it, preserving the reconnect account', async () => {
