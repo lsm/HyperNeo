@@ -216,7 +216,6 @@ it('keeps Google pending and its consent link while opening Microsoft setup', as
   expect(screen.getByRole('alert').textContent).toContain(
     'Sign in with the same Google account to reconnect.'
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Connect Google' }));
   fireEvent.click(screen.getByRole('button', { name: 'Connect Microsoft' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
 });

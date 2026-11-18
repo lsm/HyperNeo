@@ -204,7 +204,10 @@ export function ConnectionsSettings() {
             key={next}
             disabled={busy}
             onClick={() => {
-              if (view.attempt.state === 'failed' && view.provider !== next) watched.current = null;
+              if (view.attempt.state === 'failed' && view.provider !== next) {
+                watched.current = null;
+                setView((current) => ({ ...current, attempt: { state: 'missing' } }));
+              }
               setProvider(next);
               setError('');
               setClientId('');
