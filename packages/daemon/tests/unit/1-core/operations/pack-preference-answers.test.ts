@@ -114,6 +114,53 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('a settings choice explains each option without a table', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    const declaration = {
+      scope: 'global' as const,
+      type: { kind: 'enum' as const, values: ['one', 'two'] },
+      default: 'one',
+      ask: 'Choose a setting',
+      label: { en: 'Setting', 'zh-Hans': '设置' },
+      question: { en: 'Which setting?', 'zh-Hans': '选择哪个设置？' },
+      valueLabels: {
+        one: { en: 'One', 'zh-Hans': '一' },
+        two: { en: 'Two', 'zh-Hans': '二' },
+      },
+      valueDescriptions: {
+        one: { en: 'First behavior', 'zh-Hans': '第一个行为' },
+        two: { en: 'Second behavior', 'zh-Hans': '第二个行为' },
+      },
+    };
+    service.filePacks = [
+      {
+        id: 'synthetic',
+        describe: 'Synthetic',
+        instructions: () => null,
+        preferences: { mode: declaration },
+      },
+    ];
+    const choice = (value: string) => ({
+      pack: 'synthetic',
+      scope: { kind: 'global', key: '' },
+      key: 'mode',
+      value,
+    });
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'described-choice',
+      alternatives: [[choice('one')], [choice('two')]],
+    });
+    const question = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(question.text).toContain('Which setting?');
+    expect(question.text).toContain('First behavior');
+    expect(question.text).toContain('Second behavior');
+    expect(question.text).not.toContain('| --- |');
+    expect(question.options).toEqual(['One', 'Two', 'Use the default for now']);
+  });
+
   test('a settings question holds the ask work unless it is asked with hold false', async () => {
     const work = service.todos.addTodo(
       'held-work',
