@@ -43,6 +43,7 @@ process.env.CLAUDE_CONFIG_DIR = join(run, 'sdk');
 process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
 const humanId = crypto.randomUUID();
 const handoffId = crypto.randomUUID();
+const failedDeliveryId = crypto.randomUUID();
 const requests: string[] = [];
 const stages = new Map<string, number>();
 let exaRequests = 0;
@@ -80,7 +81,7 @@ const fixture = createServer(async (request, response) => {
   const history = JSON.stringify(body.messages);
   if (!front && history.includes('<already-said') && history.includes('I will handle that.'))
     evidence.neoSawAcknowledgment = true;
-  const active = [handoffId, humanId].find(id => history.includes(id)) ?? humanId;
+  const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   const stage = stages.get(active) ?? 0;
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0 && active === humanId) {
@@ -349,6 +350,18 @@ try {
     evidence.neoPublishedDirectly = true;
     evidence.multipleRepliesAccepted = true;
     await waitFor(() => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle');
+    assert.equal((await invoke<{ ok: boolean }>('neo.message.send', {
+      sessionId: root,
+      requestId: failedDeliveryId,
+      content: 'Handle this request.',
+    })).ok, true);
+    const failedJob = () => app!.db.getJobQueueRepo().listJobs({ queue: 'neo.front' })
+      .find((job) => job.payload.messageId === failedDeliveryId);
+    await waitFor(() => failedJob()?.status === 'completed');
+    evidence.handoffOutcome = failedJob()?.result;
+    evidence.failedInputStatus = app.db.getSDKMessageRepo().getUserSendStatus(front, failedDeliveryId);
+    assert.equal(evidence.failedInputStatus, 'failed');
+    assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
     assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
     assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
     const rows = replies();
