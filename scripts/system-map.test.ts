@@ -282,3 +282,26 @@ test('where finds every space agent RPC handler by its registered name', () => {
     }
   }
 });
+
+test('routes prints an exported pipeline and rejects a missing runner', () => {
+  const route = Bun.spawnSync([
+    'bun',
+    'scripts/system-map.ts',
+    'routes',
+    'packages/web/src/neo/neo-file-question.ts',
+    'neoFileQuestionText',
+  ]);
+  expect(route.exitCode).toBe(0);
+  expect(route.stdout.toString()).toContain('neo-file-question-text');
+  expect(route.stdout.toString()).toContain('path');
+  expect(route.stdout.toString()).toContain('reference');
+  const missing = Bun.spawnSync([
+    'bun',
+    'scripts/system-map.ts',
+    'routes',
+    'packages/web/src/neo/neo-file-question.ts',
+    'missing',
+  ]);
+  expect(missing.exitCode).not.toBe(0);
+  expect(missing.stderr.toString()).toContain('not describable:');
+});
