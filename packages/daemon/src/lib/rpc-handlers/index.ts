@@ -144,7 +144,10 @@ export interface RPCHandlerDependencies {
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
   mcpImportService: McpImportService;
+  oxapSettings?: OxapSettingsDeps;
 }
+
+import type { OxapSettingsDeps } from '../oap/oxap-settings.ts';
 
 const log = new Logger('rpc-handlers');
 

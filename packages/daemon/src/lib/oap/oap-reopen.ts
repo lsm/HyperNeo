@@ -74,8 +74,11 @@ async function open(client: OapHubClient, plan: OapOpenPlan, revision?: string):
     throw new Error('OAP returned an invalid session open response');
 }
 
-async function reopenRevision(client: OapHubClient, session: Session): Promise<string | undefined> {
-  const adapter = sessionHarness(session).adapter;
+async function reopenRevision(
+  client: OapHubClient,
+  session: Session,
+  adapter: unknown
+): Promise<string | undefined> {
   const response = (await client.request('capabilities', { adapter })) as {
     type?: unknown;
     capability_revision?: unknown;
@@ -122,7 +125,7 @@ async function openAfterClear(
 ): Promise<WorkStatus> {
   let current = status?.held === false ? undefined : status;
   if (status?.held === false && oldId) {
-    const revision = await reopenRevision(client, session);
+    const revision = await reopenRevision(client, session, plan.request.adapter);
     ensureLive();
     if (revision) {
       try {
@@ -190,7 +193,7 @@ export async function openOapSession(
     if (prior) {
       if (!session.sdkSessionId && !status) fallback = true;
       else {
-        const revision = await reopenRevision(client, session);
+        const revision = await reopenRevision(client, session, plan.request.adapter);
         ensureLive();
         if (!revision) fallback = true;
         else
