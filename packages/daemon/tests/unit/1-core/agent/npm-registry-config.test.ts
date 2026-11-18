@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { downloadVerifiedTarball } from '../../../../src/lib/agent/npm-package-download.ts';
+import { isNetworkUnreachableError } from '../../../../src/lib/agent/network-outage-pause.ts';
 import { integrityOf, npmTarball } from '../../helpers/npm-tarball.ts';
 
 describe('configured package downloads', () => {
@@ -54,6 +55,22 @@ describe('configured package downloads', () => {
     }
     expect(existsSync(join(run, 'pnpm-called'))).toBe(false);
     expect(existsSync(join(run, 'curl-called'))).toBe(false);
+  });
+
+  it('preserves npm network failure classification without exposing stderr', async () => {
+    for (const code of ['ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']) {
+      script('npm', `printf 'npm error code ${code}\\nprivate-token-example\\n' >&2; exit 1`);
+      try {
+        await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
+        throw new Error('expected failure');
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain('(exit 1)');
+        expect(message).toContain(code);
+        expect(message).not.toContain('private-token-example');
+        expect(isNetworkUnreachableError(message)).toBe(true);
+      }
+    }
   });
 
   it('uses the pnpm registry when npm is absent', async () => {
