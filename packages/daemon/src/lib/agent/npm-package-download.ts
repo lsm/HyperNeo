@@ -162,15 +162,17 @@ export async function downloadVerifiedTarball(
   }
 }
 
-export function waitForDownload<T>(download: Promise<T>, waitMs: number, name: string): Promise<T> {
+export function waitForDownload<T>(
+  download: Promise<T>,
+  waitMs: number,
+  name: string,
+  timeoutError = () => new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     download,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)),
-        waitMs
-      );
+      timer = setTimeout(() => reject(timeoutError()), waitMs);
     }),
   ]).finally(() => clearTimeout(timer));
 }

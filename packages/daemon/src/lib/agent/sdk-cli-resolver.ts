@@ -21,6 +21,8 @@ import {
   extractFileFromTarGz,
   isMusl,
   PackageDownloadError,
+  PACKAGE_DOWNLOAD_WAIT_MS,
+  waitForDownload,
 } from './npm-package-download.ts';
 
 // oxlint-disable-next-line no-console
@@ -305,7 +307,12 @@ export async function warmupSDKCliBinary(): Promise<WarmupResult> {
 }
 
 export async function awaitSDKCliPathForQuery(): Promise<string | undefined> {
-  return awaitSDKCliPath();
+  return waitForDownload(
+    awaitSDKCliPath(),
+    PACKAGE_DOWNLOAD_WAIT_MS,
+    'Claude Code binary',
+    () => new PackageDownloadError('Claude Code is still downloading. Try again shortly.')
+  );
 }
 
 export async function awaitSDKCliPath(): Promise<string | undefined> {

@@ -14,6 +14,7 @@ cat > "$RUN/bin/curl" <<'CURL'
 #!/bin/sh
 echo call >> "$HYPERNEO_DATA_DIR/curl.log"
 if [ "$DOWNLOAD_FIXTURE" = html ]; then printf '<html>blocked</html>'; exit 0; fi
+if [ "$DOWNLOAD_FIXTURE" = slow ]; then /bin/sleep 50; fi
 echo 'curl: connection failed' >&2
 exit 7
 CURL
@@ -32,11 +33,16 @@ for _ in $(seq 1 120); do
 done
 rpc rpc:providers.create '{"params":{"providerId":"anthropic","displayName":"Anthropic (mock)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}' > "$RUN/evidence/provider.json"
 SESSION=$(rpc rpc:session.create "{\"workspacePath\":\"$RUN/home\",\"worktreeMode\":\"direct\"}" | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).reply.sessionId)')
-rpc rpc:message.send "{\"sessionId\":\"$SESSION\",\"content\":\"hello\"}" 4 > "$RUN/evidence/send.json"
+WAIT=4
+[[ "$MODE" != slow ]] || WAIT=47
+rpc rpc:message.send "{\"sessionId\":\"$SESSION\",\"content\":\"hello\"}" "$WAIT" > "$RUN/evidence/send.json"
 rpc rpc:state.session "{\"sessionId\":\"$SESSION\"}" > "$RUN/evidence/state.json"
 rpc rpc:session.get "{\"sessionId\":\"$SESSION\"}" > "$RUN/evidence/session.json"
 rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/messages.json"
-bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; const e=r.error; const episode=r.sessionInfo.metadata.queryFailureEpisode; if(e?.details?.metadata?.kind!=="package_download_failure" || e.details.category!=="session" || !e.message.startsWith("Can\x27t download Claude Code:") || /JSON|ETIMEDOUT|ECONNREFUSED/.test(e.message) || episode?.failures!==0 || r.agentState.status!=="idle") { console.error(JSON.stringify({error:e,episode,status:r.agentState.status})); process.exit(1); } console.log("session_cause=package_download_failure governor_failures=0 status=idle");' "$RUN/evidence/state.json"
+bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; const e=r.error; const episode=r.sessionInfo.metadata.queryFailureEpisode; if(e?.details?.metadata?.kind!=="package_download_failure" || e.details.category!=="session" || !(/^(Can\x27t download Claude Code:|Claude Code is still downloading)/.test(e.message)) || /JSON|ETIMEDOUT|ECONNREFUSED/.test(e.message) || episode?.failures!==0 || r.agentState.status!=="idle") { console.error(JSON.stringify({error:e,episode,status:r.agentState.status})); process.exit(1); } console.log("session_cause=package_download_failure governor_failures=0 status=idle");' "$RUN/evidence/state.json"
+if [[ "$MODE" = slow ]]; then
+  bun -e 'const e=JSON.parse(await Bun.file(process.argv[1]).text()).reply.error; if(e.message!=="Claude Code is still downloading. Try again shortly.") process.exit(1); console.log("slow_download=still_running");' "$RUN/evidence/state.json"
+fi
 before=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
 rpc daemon.retryClaudeDownload '{}' > "$RUN/evidence/retry.json"
 after=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
@@ -44,6 +50,10 @@ rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN
 bun -e 'const a=JSON.parse(await Bun.file(process.argv[1]).text()).reply.sdkMessages; const b=JSON.parse(await Bun.file(process.argv[2]).text()).reply.sdkMessages; if(JSON.stringify(a)!==JSON.stringify(b)) process.exit(1); console.log(`messages_before=${a.length} messages_after=${b.length}`)' "$RUN/evidence/messages.json" "$RUN/evidence/messages-after.json"
 cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
 printf 'download_attempts_before=%s after=%s\n' "$before" "$after"
-[[ "$after" -eq $((before + 1)) ]]
+if [[ "$MODE" = slow ]]; then
+  [[ "$after" -eq "$before" ]]
+else
+  [[ "$after" -eq $((before + 1)) ]]
+fi
 bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; console.log(JSON.stringify(r)); if (r.accepted !== false || !r.reason?.includes("Can\x27t download Claude Code")) process.exit(1)' "$RUN/evidence/retry.json"
-printf 'retry_calls=1 exit=0\n'
+printf 'retry_requests=1 exit=0\n'

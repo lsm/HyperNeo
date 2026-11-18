@@ -715,8 +715,21 @@ describe('warmupSDKCliBinary', () => {
     vi.useFakeTimers();
     try {
       mocks.existsSync.mockReturnValue(false);
-      mocks.execFile.mockImplementation(() => {});
+      let finishDownload: ((error: Error, stdout: string, stderr: string) => void) | undefined;
+      let calls = 0;
+      mocks.execFile.mockImplementation(
+        (
+          _file: string,
+          _args: string[],
+          _options: unknown,
+          done: (error: Error, stdout: string, stderr: string) => void
+        ) => {
+          calls++;
+          finishDownload = done;
+        }
+      );
       const result = awaitSDKCliPathForQuery().catch((error: Error) => error);
+      const warmup = warmupSDKCliBinary();
 
       await vi.advanceTimersByTimeAsync(45_001);
       const error = await Promise.race([result, Promise.resolve('still waiting')]);
@@ -725,6 +738,10 @@ describe('warmupSDKCliBinary', () => {
         name: 'PackageDownloadError',
         message: 'Claude Code is still downloading. Try again shortly.',
       });
+      expect(calls).toBe(1);
+      expect(finishDownload).toBeDefined();
+      finishDownload?.(Object.assign(new Error('offline'), { code: 7 }), '', 'curl: offline');
+      expect((await warmup).status).toBe('failed');
     } finally {
       vi.useRealTimers();
     }
