@@ -662,6 +662,15 @@ describe('immutable human settings proposals', () => {
     expect(reply).toMatchObject({ value: { ok: true } });
     const questionId = (reply as { value: { questionId: string } }).value.questionId;
     expect(await ask('strategy')).toEqual(reply);
+    expect(service.todos.getQuestion(questionId)!.text).toContain(
+      'How should coding sessions be reused in this repository?'
+    );
+    db.updateGlobalSettings({ language: 'zh-Hans' });
+    const translated = (await ask('strategy-chinese')) as { value: { questionId: string } };
+    expect(service.todos.getQuestion(translated.value.questionId)!.text).toContain(
+      '如何在此仓库复用编码会话？'
+    );
+    db.updateGlobalSettings({ language: 'en' });
     expect(service.todos.getQuestion(questionId)).toMatchObject({
       kind: 'choice',
       multiple: false,
