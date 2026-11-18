@@ -163,6 +163,7 @@ export function ConnectionsSettings() {
             onClick={() => {
               setProvider(next);
               setError('');
+              setClientId('');
               setClientSecret('');
               setSetup({});
             }}
