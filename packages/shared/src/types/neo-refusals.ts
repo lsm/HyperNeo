@@ -10,6 +10,8 @@ const REPLY_LIMIT = `${NEO_REPLY_CHAR_LIMIT} characters and ${NEO_REPLY_LINE_LIM
 const WRITING_RULE = `Write at most ${NEO_REPLY_WORD_LIMIT} words:`;
 
 export const NEO_REFUSALS: Readonly<Record<string, string>> = {
+  not_failed: 'Only a failed message can be retried.',
+  already_retried: 'This message has already been retried.',
   reply_needs_details: `The reply text is over the server ceiling of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. ${WRITING_RULE} keep the title, the conclusion and any decision the human must make in text, and move supporting material to details.`,
   reply_summary_too_long: `The reply text is over the server ceiling of ${REPLY_LIMIT} counting every line including blank ones, the title counting as a line. ${WRITING_RULE} shorten text to the title, the conclusion and any decision, and keep supporting material in details.`,
   deliverable_with_details:

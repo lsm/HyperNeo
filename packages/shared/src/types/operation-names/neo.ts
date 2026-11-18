@@ -24,6 +24,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.home.init',
   'neo.home.read',
   'neo.home.save',
+  'neo.message.retry',
   'neo.message.send',
   'neo.open',
   'neo.pack.read',

@@ -7,6 +7,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { frontSessionId } from './front-mode.ts';
+import { neoDerivedId } from './derived-id.ts';
+import { readRefusedNeoInput } from '../../storage/repositories/neo-front-refusal-worker.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
@@ -15,6 +17,8 @@ export type Fact = {
   processing: string | null;
   answered: boolean;
   messageDbId: string | null;
+  reason?: string;
+  supersededBy?: string;
 };
 export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
@@ -51,10 +55,19 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
       AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1)
       ORDER BY CAST(ref.key AS INTEGER)`)
     .all(JSON.stringify(refs)) as Omit<Fact, 'answered'>[];
-  return rows.map((row, i) => ({
-    ...row,
-    answered: answered.has(JSON.stringify([items[i].conversationId, items[i].requestId])),
-  }));
+  return rows.map((row, i) => {
+    const item = items[i];
+    const retryId = neoDerivedId(`neo-retry:${item.conversationId}:${item.requestId}`);
+    const refusal =
+      row.sendStatus === 'failed'
+        ? readRefusedNeoInput(db, item.conversationId, item.requestId, retryId)
+        : {};
+    return {
+      ...row,
+      answered: answered.has(JSON.stringify([item.conversationId, item.requestId])),
+      ...refusal,
+    };
+  });
 }
 
 function describeMessageStatus(item: Ask, fact: Fact): NeoConversationMessageStatus {
@@ -83,7 +96,15 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
       ...item,
       askOrigin: { ...item.askOrigin, messageDbId: facts[index].messageDbId },
       messageStatus,
-      ...(messageStatus === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
+      ...(messageStatus === 'failed'
+        ? {
+            delivery: {
+              state: 'failed' as const,
+              ...(facts[index].reason ? { reason: facts[index].reason } : {}),
+              ...(facts[index].supersededBy ? { supersededBy: facts[index].supersededBy } : {}),
+            },
+          }
+        : {}),
     };
   });
 }

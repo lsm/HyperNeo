@@ -495,6 +495,22 @@ export class NeoService {
           : undefined,
       { subscriberName: 'session-spoken-replies' }
     );
+    const offRefusal = events.subscribe(
+      'sdk.message',
+      ({ sessionId, message }) => {
+        const result = message as SDKMessage;
+        if (
+          result.type === 'result' &&
+          result.subtype === 'success' &&
+          result.is_error &&
+          result.api_error_status === 400 &&
+          sessionId &&
+          this.repo.getBindingBySession(sessionId)?.kind === 'neo'
+        )
+          this.notifyChanged();
+      },
+      { subscriberName: 'neo-refused-input' }
+    );
     const offUpdated = events.subscribe(
       'session.updated',
       async ({ sessionId, processingState, session }) => {
@@ -548,6 +564,7 @@ export class NeoService {
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offSpeech();
+      offRefusal();
       offHumanReset();
       offQueryFailure();
       offUpdated();

@@ -10,6 +10,7 @@ import { NeoFrontInputRepository } from '../../../../src/storage/repositories/ne
 import { createMailboxEntry } from '../../../../src/lib/mailbox/entry.ts';
 import { runMigration504 } from '../../../../src/storage/schema/m504-neo-front-input-owner-backfill.ts';
 import { runMigration503 } from '../../../../src/storage/schema/m503-neo-front-input-catch-up.ts';
+import { runMigration526 } from '../../../../src/storage/schema/m526-neo-front-failure-reason.ts';
 
 let db: Database;
 let inputs: NeoFrontInputRepository;
@@ -239,4 +240,22 @@ test('a failed Neo delivery is reopened when the input is reserved', async () =>
   expect(inputs.get('conversation', 'failed')?.owner).toBe('neo');
   expect(db.getSDKMessageRepo().getUserSendStatus(sessionId, uuid)).toBe('enqueued');
   expect(db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [uuid])).toHaveLength(1);
+});
+
+test('failure reason migration preserves existing Front inputs and is repeatable', () => {
+  const sql = new Sqlite(':memory:');
+  try {
+    sql.exec(`CREATE TABLE neo_front_inputs (
+      conversation_id TEXT NOT NULL, message_id TEXT NOT NULL,
+      eligible INTEGER NOT NULL, owner TEXT, PRIMARY KEY (conversation_id, message_id)
+    )`);
+    sql.exec("INSERT INTO neo_front_inputs VALUES ('c', 'm', 1, 'neo')");
+    runMigration526(sql);
+    runMigration526(sql);
+    expect(
+      sql.prepare('SELECT owner, failure_reason AS reason FROM neo_front_inputs').get()
+    ).toEqual({ owner: 'neo', reason: null });
+  } finally {
+    sql.close();
+  }
 });
