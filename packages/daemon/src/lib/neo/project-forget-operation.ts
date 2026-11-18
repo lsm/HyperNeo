@@ -11,7 +11,10 @@ type Refusal = 'project_missing' | 'project_in_use' | 'project_protected' | 'roo
 type ForgetRepositories = (repos: readonly string[]) => void;
 type Forgotten = { ok: true; repos: string[] } | { ok: false; reason: Refusal };
 
-const Input = z.object({ projectId: z.string().min(1).max(100) });
+const Input = z.object({
+  projectId: z.string().min(1).max(100),
+  removeHistory: z.boolean().default(false),
+});
 
 const Result = z.union([
   z.object({ ok: z.literal(true), repos: z.array(z.string()) }),
@@ -27,7 +30,7 @@ const Result = z.union([
 ]);
 
 export const runNeoProjectForget = (superpipe({})('neo.project.forget') as PipelineAPI)
-  .input(['projectId', 'caller', 'repo', 'forgetRepositories'])
+  .input(['projectId', 'caller', 'repo', 'forgetRepositories', 'removeHistory'])
   .pipe(
     (caller: OperationCaller, repo: ForgetRepo) =>
       requireNeoTreeAuthor(
@@ -35,6 +38,14 @@ export const runNeoProjectForget = (superpipe({})('neo.project.forget') as Pipel
         caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null
       ),
     ['caller', 'repo'],
+    'result:outcome'
+  )
+  .pipe(
+    (removeHistory: boolean, caller: OperationCaller) =>
+      !removeHistory || (caller.source === 'rpc' && caller.principal === 'local')
+        ? { value: true }
+        : { reason: { ok: false as const, reason: 'root_or_human_only' as const } },
+    ['removeHistory', 'caller'],
     'result:outcome'
   )
   .pipe(
@@ -55,14 +66,19 @@ export const runNeoProjectForget = (superpipe({})('neo.project.forget') as Pipel
       projectId: string,
       repo: ForgetRepo,
       repos: string[],
-      forgetRepositories: ForgetRepositories
+      forgetRepositories: ForgetRepositories,
+      removeHistory: boolean
     ) => {
-      const forgotten = repo.forgetProject(projectId, () => forgetRepositories(repos));
+      const forgotten = repo.forgetProject(
+        projectId,
+        () => forgetRepositories(repos),
+        removeHistory
+      );
       return 'reason' in forgotten
         ? { reason: { ok: false as const, reason: forgotten.reason } }
         : { value: forgotten };
     },
-    ['projectId', 'repo', 'repos', 'forgetRepositories'],
+    ['projectId', 'repo', 'repos', 'forgetRepositories', 'removeHistory'],
     'result:outcome'
   )
   .pipe((repos: string[]) => ({ ok: true as const, repos }), 'repos', 'outcome')
@@ -70,7 +86,8 @@ export const runNeoProjectForget = (superpipe({})('neo.project.forget') as Pipel
   projectId: string,
   caller: OperationCaller,
   repo: ForgetRepo,
-  forgetRepositories: ForgetRepositories
+  forgetRepositories: ForgetRepositories,
+  removeHistory: boolean
 ) => Forgotten;
 
 export function createNeoProjectForgetOperation(
@@ -84,7 +101,7 @@ export function createNeoProjectForgetOperation(
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     execute: async (input, caller) => {
-      const result = await repo.forgetProjectCommand(input.projectId, caller);
+      const result = await repo.forgetProjectCommand(input.projectId, caller, input.removeHistory);
       if (result.ok) await afterForget(result.repos);
       return result;
     },

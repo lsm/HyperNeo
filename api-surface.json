@@ -33410,6 +33410,10 @@
             "maxLength": 100,
             "minLength": 1,
             "type": "string"
+          },
+          "removeHistory": {
+            "default": false,
+            "type": "boolean"
           }
         },
         "required": [
@@ -33774,11 +33778,20 @@
                   },
                   "type": "array"
                 },
+                "hasSessions": {
+                  "type": "boolean"
+                },
                 "id": {
                   "type": "string"
                 },
+                "isProtected": {
+                  "type": "boolean"
+                },
                 "name": {
                   "type": "string"
+                },
+                "unknownWork": {
+                  "type": "boolean"
                 },
                 "updatedAt": {
                   "type": "number"
@@ -33788,7 +33801,10 @@
                 "id",
                 "name",
                 "folders",
-                "updatedAt"
+                "updatedAt",
+                "hasSessions",
+                "unknownWork",
+                "isProtected"
               ],
               "type": "object"
             },

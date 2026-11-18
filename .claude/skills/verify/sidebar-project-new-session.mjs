@@ -117,7 +117,7 @@ try {
     await remove.hover();
     await page.waitForTimeout(300);
     result.removeHoverBackground = await background(remove);
-    result.removeIsTrash = await remove.locator('path[d="M3 6h18"]').count();
+    result.removeIsX = await remove.locator('path[d="M6 18L18 6M6 6l12 12"]').count();
     await page.screenshot({ path: `${run}/evidence/sidebar-${scheme}-hover-remove.png` });
     await page.mouse.move(900, 700);
     await page.getByTestId('project-group-header').filter({ hasText: 'beta' }).focus();
@@ -283,7 +283,7 @@ try {
     assert.equal(result.plusSize, result.removeSize);
     assert.notEqual(result.plusHoverBackground, result.plusRestBackground);
     assert.equal(result.removeHoverBackground, result.plusHoverBackground);
-    assert.equal(result.removeIsTrash, 1);
+    assert.equal(result.removeIsX, 1);
     assert.deepEqual(result.pageErrors, []);
     await context.close();
   }
