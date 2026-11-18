@@ -133,13 +133,18 @@ handed. The record holds:
 
 These are columns on `work_started_sessions`, so existing reads keep working. Its current
 `role = 'worker'` marks the kind of start and is renamed `kind`, to keep it apart from a
-todo role. Rows written before this PR have no `started_by` and are never reused or
-reclaimed on the record's say-so.
+todo role.
+
+A **trusted record** is either a row this PR's code wrote (`started_by` set), or a row
+written before this PR with `kind = 'worker'`, which is what the daemon already trusts
+today when it reclaims (the archive gate). Older rows without `kind = 'worker'` are never
+trusted.
 
 Release, archive and reclaim check the record: the daemon closes or archives a session
-only when its record exists, and writes the reason and time into the record's end
+only when it has a trusted record, and writes the reason and time into the record's end
 fields (`neo/todo-release.ts`, `neo/session-archive-operation.ts`). Reuse picks only
-sessions whose record exists and has no end.
+sessions with a trusted record and no end. A pre-upgrade worker row has no ask, todo or
+model fields; reuse reads its model from `work.status` as today.
 
 **PR 4: roles in core.**
 
@@ -199,6 +204,8 @@ Acceptance, one integration case per row:
 | a free session the daemon did not start | never reused, by any role |
 | a new start | its record names who started it, for which ask, todo and role, the machine and folder, and the confirmed harness, provider, model and effort |
 | a session with no start record | never released, archived or reclaimed by the daemon |
+| a free worker started before the upgrade (`kind = 'worker'`, no `started_by`) | may be reused and reclaimed, as today |
+| a row from before the upgrade without `kind = 'worker'` | never reused or reclaimed |
 | a non-coding todo started with role `check` | never the session that did it |
 | no `sessionReuse` saved, first reusable start in a project | one card asks; the work goes on as `long_lived` meanwhile |
 | that card | titled with the question, one line per option with its description, a "use the default for now" option, in the human's language, no tables |
