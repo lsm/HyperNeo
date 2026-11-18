@@ -37,6 +37,9 @@ if os.path.exists(marker):
  os.unlink(marker)
  sys.exit(23)
 def emit(value): print(json.dumps(value),flush=True)
+def crash_login():
+ while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'crash-login')): time.sleep(0.01)
+ os._exit(23)
 def finish_login():
  while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'finish-login')): time.sleep(0.01)
  emit({'method':'account/login/completed','params':{'loginId':'wrong-login','success':True,'error':None}})
@@ -48,7 +51,7 @@ for line in sys.stdin:
  method=request.get('method')
  if 'id' not in request or not method: continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
- elif method=='account/read': result={'account':None if ${mode === 'login-device' ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
+ elif method=='account/read': result={'account':None if ${['login-device', 'login-crash'].includes(mode) ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
  elif method=='account/login/start': result={'type':'chatgptDeviceCode','loginId':'synthetic-login','verificationUrl':'https://example.com/device','userCode':'SYNTHETIC'}
  elif method in ['thread/start','thread/resume']:
   name=os.path.basename(os.getcwd())
@@ -66,7 +69,11 @@ for line in sys.stdin:
   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'admission-release')): time.sleep(0.01)
  if method=='turn/start' and 'Synthetic crash during admission' in json.dumps(request): sys.exit(23)
  emit({'id':request['id'],'result':result})
- if method=='account/login/start': threading.Thread(target=finish_login,daemon=True).start()
+ if method=='account/login/start':
+  if ${mode === 'login-crash' ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'crashed')):
+   open(os.path.join(os.environ['CODEX_HOME'],'crashed'),'w').close()
+   threading.Thread(target=crash_login,daemon=True).start()
+  else: threading.Thread(target=finish_login,daemon=True).start()
  if method=='turn/start':
   if 'Synthetic native crash' in json.dumps(request): sys.exit(23)
   if 'Synthetic gated admission' in json.dumps(request):
@@ -87,7 +94,7 @@ for line in sys.stdin:
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 process.env.CODEX_HOME = join(run, 'codex-home');
-process.env.CODEX_CLI_PATH = peer;
+process.env.CODEX_CLI_PATH = mode === 'login-device' ? join(run, 'missing-codex') : peer;
 assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for this platform');
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
@@ -225,6 +232,18 @@ try {
       assert(cards[0] && cards[0].type === 'auth_status' && !cards[0].isAuthenticating);
     }
     Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, loginCompleted: true, pass: true });
+  } else if (mode === 'login-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in before crash' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in before crash');
+    writeFileSync(join(run, 'codex-home/crash-login'), 'synthetic');
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating && row.error), 'device sign-in failure after crash');
+    const { sessionId: secondId } = await makeSession('workspace-b');
+    await hub.request('message.send', { sessionId: secondId, content: 'Synthetic sign in after crash' });
+    await waitFor(() => calls().filter((call) => call.request.method === 'account/login/start').length === 2, 'new login after crash');
+    await waitFor(() => app!.db.getSDKMessages(secondId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'new device sign-in card');
+    writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
+    await waitFor(() => calls().some((call) => call.request.method === 'thread/start'), 'thread opens after retry');
+    Object.assign(evidence, { crashReported: true, retryOpened: true, pass: true });
   } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
