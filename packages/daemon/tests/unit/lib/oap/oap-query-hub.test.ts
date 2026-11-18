@@ -1,11 +1,16 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import * as queryModule from '../../../../src/lib/oap/oap-query';
+import { type OapHubClient, OapHubRequestError } from '../../../../src/lib/oap/oap-hub-client';
 import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import * as queryModule from '../../../../src/lib/oap/oap-query';
 
 const createOapQueryHub = (
-  queryModule as unknown as { createOapQueryHub(client: OapHubClient): OapQueryHub }
+  queryModule as unknown as {
+    createOapQueryHub(
+      client: OapHubClient,
+      model?: { adapter: string; id: () => string | undefined }
+    ): OapQueryHub;
+  }
 ).createOapQueryHub;
 type Listener = Parameters<OapHubClient['subscribe']>[1];
 
@@ -642,4 +647,43 @@ describe('OAP query hub transport', () => {
     await expect(hub.submit('synthetic-session', input as SDKUserMessage)).rejects.toThrow(/text/i);
     expect(host.operations).toEqual([]);
   });
+
+  for (const [level, sent] of [
+    ['native', 'gpt-5.5'],
+    ['unavailable', undefined],
+  ] as const) {
+    test(`submit carries model_id only when the harness advertises model selection (${level})`, async () => {
+      const host = fixture();
+      const submitted: Record<string, unknown>[] = [];
+      const capabilities: unknown[] = [];
+      const request = host.request.getMockImplementation()!;
+      host.request.mockImplementation(async (op, parameters) => {
+        if (op === 'capabilities') {
+          capabilities.push(parameters);
+          return {
+            type: 'capabilities.response',
+            capability_revision: 'v1',
+            payload: { features: { 'run.model_selection': { level } } },
+          };
+        }
+        if (op === 'submit')
+          submitted.push((parameters.request as { payload: Record<string, unknown> }).payload);
+        return request(op, parameters);
+      });
+      const hub = createOapQueryHub(host.client, {
+        adapter: 'anthropic-codex',
+        id: () => 'gpt-5.5',
+      });
+      const { runId } = await hub.submit('synthetic-session', prompt);
+      for await (const event of hub.events(
+        'synthetic-session',
+        runId,
+        new AbortController().signal
+      ))
+        if (event.type === 'run.completed') break;
+      await hub.submit('synthetic-session', { ...prompt, uuid: 'second' });
+      expect(capabilities).toEqual([{ adapter: 'anthropic-codex' }]);
+      expect(submitted.map((payload) => payload.model_id)).toEqual([sent, sent]);
+    });
+  }
 });
