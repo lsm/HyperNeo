@@ -74,6 +74,27 @@ describe('ErrorBanner', () => {
     expect(screen.getByText('无法下载 Claude Code：npm 软件源没有返回软件包信息。')).toBeTruthy();
   });
 
+  it('says a timed-out retry is still downloading', async () => {
+    vi.mocked(retryClaudeDownload).mockRejectedValue(
+      new Error('Request timeout: operation.invoke (180000ms)')
+    );
+    render(<ErrorBanner downloadFailure error="Download failed." onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(
+      await screen.findByText('Claude Code is still downloading. Try again shortly.')
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it('reports an unrelated retry error as a failure', async () => {
+    vi.mocked(retryClaudeDownload).mockRejectedValue(new Error('Not connected to transport'));
+    render(<ErrorBanner downloadFailure error="Download failed." onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(
+      await screen.findByText("Can't retry the Claude Code download. Try again shortly.")
+    ).toBeTruthy();
+  });
+
   it('does not start another download while retry is pending', async () => {
     vi.mocked(retryClaudeDownload).mockReturnValue(new Promise(() => {}));
     render(<ErrorBanner downloadFailure error="Download failed." onDismiss={vi.fn()} />);
