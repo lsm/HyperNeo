@@ -35,6 +35,7 @@ function harness(
     effort?: string;
     unavailable?: boolean;
     statusThrows?: boolean;
+    waitResult?: 'none' | 'instruction';
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
@@ -152,7 +153,7 @@ function harness(
               on: () => false,
               wait: async (_todoId: string, ref: WorkRef) => {
                 waiting.push(ref.id);
-                return 'instruction' as const;
+                return config.waitResult ?? 'instruction';
               },
             },
           }
@@ -213,6 +214,17 @@ describe('work.start session reuse preference', () => {
     expect((await run.start(neo, false, { todoId: 'next' })).ok).toBe(false);
     expect(run.waiting).toEqual(['own']);
     expect(run.started).toEqual([]);
+  });
+
+  test('a todo that cannot be queued starts a fresh session', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+      waitResult: 'none',
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.waiting).toEqual(['own']);
   });
 
   test('a failing busy-worker status check falls back to a fresh start', async () => {

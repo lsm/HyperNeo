@@ -120,6 +120,11 @@ try {
   assert.equal((waiting as { value: { reason?: string } }).value.reason, 'worker_busy');
   assert.equal(store.getTodo('todo-wait')?.state, 'todo');
   assert.equal(todos.get('todo-wait')?.verb, 'send');
+  store.addTodo('todo-bound', 'synthetic-ask', { title: 'Bound', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 6);
+  todos.bind('todo-bound', { adapter: 'hyperneo', id: first.id }, Date.now());
+  store.updateTodo(store.getTodo('todo-bound')!, { state: 'doing', startedAt: 6 }, 6);
+  const bound = await start('bound', neo, 'todo-bound');
+  assert.equal(bound.reused, false);
   writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb } }, null, 2));
 } finally {
   await app.cleanup();

@@ -36,3 +36,5 @@ End state, from `evidence/work-start-reuse.json`:
 `evidence/session-reuse-dispatch.json` additionally records a fresh session under
 `per_todo` and a doing todo returning to the queue when its ask's workers are busy
 under `per_ask`.
+When an already-bound todo cannot be queued on a busy worker, it starts a
+fresh session instead of reporting a wait that was never recorded.
