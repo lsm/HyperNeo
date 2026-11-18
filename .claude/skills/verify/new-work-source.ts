@@ -8,6 +8,7 @@ import { invokeOperation } from '../../../packages/daemon/src/lib/operations/inv
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { SessionGoalRepository } from '../../../packages/daemon/src/storage/repositories/session-goal-repository.ts';
+import { renderRemoteAddress } from '../../../packages/daemon/src/lib/mailbox/address.ts';
 
 const run = resolve(process.argv[2]);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -50,6 +51,22 @@ try {
   db.prepare("INSERT INTO neo_session_messages (conversation_id,message_id,from_session,to_session,text,created_at) VALUES ('synthetic','message',?,?, 'Question', '2026-11-07T00:00:00Z')").run(target, sender);
   evidence.reply = await mcp('work.send', notice);
   assert.equal((evidence.reply as { ok: boolean }).ok, true, JSON.stringify(evidence.reply));
+  for (const adapter of ['hyperneo', 'claude-code', 'claude-desktop', 'codex-desktop', 'copilot']) {
+    const ref = { adapter, id: `synthetic-${adapter}-worker`, daemon: 'synthetic-remote' };
+    const sourceId = adapter === 'hyperneo' ? ref.id : `${adapter}:${ref.id}`;
+    const source = renderRemoteAddress({ kind: 'remote-session', daemonId: ref.daemon, sessionId: sourceId });
+    db.prepare("INSERT INTO neo_session_messages (conversation_id,message_id,from_session,to_session,text,created_at) VALUES ('synthetic',?,?,?, 'Question', '2026-11-07T00:00:00Z')").run(`remote-${adapter}`, source, sender);
+    const result = await mcp('work.send', { ref, message: 'Reply', notice: true });
+    evidence[`remote-${adapter}`] = result;
+    assert.notEqual(result.reason, 'todo_required', JSON.stringify(result));
+    assert.equal(result.reason, 'unreachable', JSON.stringify(result));
+  }
+  const other = await mcp('work.send', { ref: { adapter: 'claude-code', id: 'synthetic-other', daemon: 'synthetic-remote' }, message: 'Reply', notice: true });
+  evidence.remoteUnsolicited = other;
+  assert.equal(other.reason, 'todo_required', JSON.stringify(other));
+  const wrongAdapter = await mcp('work.send', { ref: { adapter: 'claude-code', id: 'synthetic-hyperneo-worker', daemon: 'synthetic-remote' }, message: 'Reply', notice: true });
+  evidence.remoteWrongAdapter = wrongAdapter;
+  assert.equal(wrongAdapter.reason, 'todo_required', JSON.stringify(wrongAdapter));
   const initialRefusal = await mcp('neo.ask.open', { title: 'Invalid proposal', request: 'Synthetic test', todos: [draft] });
   evidence.initialRefusal = initialRefusal;
   assert.equal(initialRefusal.ok, false);
