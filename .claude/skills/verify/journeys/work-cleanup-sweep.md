@@ -19,6 +19,8 @@ permanent release fence and recorded release receipt. The unmarked, unsaved, act
 stay. Human Codex and Claude folders are excluded from the receipt. The attention
 entry records a cleanup digest, and a second sweep is safe.
 It then runs the registered cleanup job once and observes one pending next-day run.
+The RPC and daily job both enter the cleanup pipeline. A direct operation call
+also checks that an unauthorized caller cannot release the worktree.
 Fresh worker and todo evidence files keep their exact contents through both RPC
 calls and the daily job, even though the finished worktree is removed immediately.
 
