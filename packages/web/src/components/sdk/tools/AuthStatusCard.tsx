@@ -78,7 +78,7 @@ export function AuthStatusCard({
         <div class="text-accent text-xs whitespace-pre-wrap mt-2">
           {output
             .join('\n')
-            .split(/(https?:\/\/[^\s]+)/g)
+            .split(/(https?:\/\/[^\s]*[^\s.,):])/g)
             .map((part) =>
               /^https?:\/\//.test(part) ? (
                 <a href={part} target="_blank" rel="noopener noreferrer" class="underline">
