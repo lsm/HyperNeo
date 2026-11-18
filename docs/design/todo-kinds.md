@@ -18,8 +18,10 @@ A design or plan is finished only when the work it describes is filed and done. 
 ## The design
 
 **One kind, `plan`.** A todo is a plan when Neo marks it so (the existing
-`producesFollowUp`, called `plan` in the tool text, same column), or, in coding, when its
-PR changes `docs/design/**`. A plan cannot be marked done, and its ask cannot settle
+`producesFollowUp`, called `plan` in the tool text, same column), or when a pack says so
+through a new optional hook `NeoTodoPack.plan?(todo): Promise<boolean>` (`pack-contract.ts`),
+read by the fact step; core never names a pack. The coding pack answers true when the
+todo's PR changes `docs/design/**`. A plan cannot be marked done, and its ask cannot settle
 `done`, until it:
 
 1. **has steps:** at least one live todo that depends on it (`after`). A removed step is
@@ -46,20 +48,22 @@ follow-up and needs no new sign-off. Only rule 1 still applies, through the last
 guard below, so a done plan's ask can always settle.
 
 **Check.** It is written by the daemon, never by Neo, into one new column
-`neo_todos.checked_json`. In every pack, coding included, the checker is a worker Neo
-started with `work.start` and the plan's `todoId` (recorded in `work_delivery_inputs`),
-given the plan and its steps. It reports with `message.send` to Neo carrying
-`check: { verdict, stepIds }`. The daemon records a pass only from a session that got a
-delivery for this plan and is not its doer, with the checker's confirmed model and
-whether another model was usable: `chooseLine` (`pack-selection.ts`) over the configured
-lines without the doer's model.
+`neo_todos.plan_check_json`. In every pack, coding included, Neo starts the checker with
+`work.start`, the plan's `todoId` and `checkPlan: true`. For such a start the daemon writes
+the brief itself from the recorded plan: its instruction, done-when, artifacts and
+evidence (the design itself), and the current steps with their titles and instructions;
+Neo's message is added only as notes. The checker reports with `message.send` to Neo
+carrying `check: { verdict, stepIds }`. The daemon records a pass only from a session that
+got a `checkPlan` delivery for this plan whose step list matches `stepIds`, and that is not
+its doer, with the checker's confirmed model and whether another model was usable:
+`chooseLine` (`pack-selection.ts`) over the configured lines without the doer's model.
 
 The coding pack's review stage, reviewer policy (`codingReviewerPolicy` and its four
 callers), review-bot routing and merge checks are not touched: a design PR is reviewed and
 merged exactly as today, and the plan check is a separate core check on the plan todo.
 This is why the plan check works the same in a repository whose reviews go to a bot.
 
-**Old todos.** The migration adds `checked_json TEXT` with no default and fills only that
+**Old todos.** The migration adds `plan_check_json TEXT` with no default and fills only that
 new column with `{"legacy":true}` on existing rows in one `UPDATE`; no other data
 changes. New rows get NULL without any insert change. A legacy todo keeps the old rule: one live dependent if it was marked
 `producesFollowUp`, nothing otherwise. Legacy wins: the coding design-PR mark does not
@@ -77,7 +81,7 @@ their call sites:
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge, `todo-runner.ts`) | leaves the plan open with the unmet item as its reason and wakes Neo |
 | `neo.ask.settle` (`ask-record-operations.ts`) | settling `done`; `dropped` stays allowed |
 | the settle sweep (`service.ts`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: not settled `done`, Neo is woken |
-| `planNeoTodoRemove`, and an `after` change in `planNeoTodoEdit` | removing a plan's last live step unless its `replacedBy` is another live step of the plan, or taking the plan out of its last live step's `after` |
+| every removal in `todo-removal.ts` (`planNeoTodoRemoval`, including `dependents: 'remove'`, and `planNeoRemovedPrerequisiteAnswer`, the human's "Remove these"), and an `after` change in `planNeoTodoEdit` | any change that leaves a plan with no live step, unless a removed step's `replacedBy` is another live step of the plan |
 
 Steps wait without new code: they depend on the plan, so they become ready when it is
 done (`neoTodoReady` in `todo-dependencies.ts`).
@@ -92,10 +96,11 @@ covers them and the web shows the refusal.
 
 Two PRs from `dev`, failing tests first; the second is a few lines.
 
-1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, `signoff` cards,
-   the `check` report and its recording, the column, tool text.
-2. **Coding.** A todo whose PR changes `docs/design/**` is a plan, read from the PR facts
-   the pack already has. Nothing else in the pack changes.
+1. **Core.** `neoPlanRefusal` and its fact step, the call sites above, the `todos.plan`
+   hook, `signoff` cards, `checkPlan` starts with the daemon-written brief, the `check`
+   report and its recording, the column, tool text.
+2. **Coding.** `todos.plan` returns true when the todo's PR changes `docs/design/**`,
+   read from the PR facts the pack already has. Nothing else in the pack changes.
 
 ## Acceptance
 
@@ -108,7 +113,8 @@ lines resolve to a single model.
 | steps filed, no check, sign-off asked | refused: check missing |
 | checked and signed, then a step removed | refused until checked and signed again |
 | re-signed after the step change | the card names the new steps; the plan can be done |
-| check from the plan's own session, or from a session with no delivery for it | not recorded |
+| check from the plan's own session, from a session with no `checkPlan` delivery, or with steps other than those it was given | not recorded |
+| a `checkPlan` start | the brief carries the plan's instruction, artifacts and steps whatever Neo's message says |
 | check on the doer's model while another model is usable | not accepted |
 | check on the doer's model, one usable model | accepted |
 | a reply, or a card without `signoff`, on a plan | does not sign it |
@@ -119,6 +125,7 @@ lines resolve to a single model.
 | a design PR in a repository whose reviews go to a bot, `crossModelReview` off | the PR is reviewed and merged as today; the plan stays open until a checker worker on another model reports a pass and the human signs |
 | the same, one usable model | a checker on another session of that model counts |
 | the last live step removed with `replacedBy` pointing at a todo that is not a step of the plan | refused |
+| the last live step removed by a cascading removal or a "Remove these" answer | refused |
 | a todo that existed before the upgrade, including an open design PR todo | reads legacy; old rule only |
 | a sign-off card whose plan's check already passes | stays open until answered |
 | a step added after the plan is done | no new check or sign-off; the ask settles |
