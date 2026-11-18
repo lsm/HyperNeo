@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -69,6 +69,7 @@ function setup() {
     createdAt: 1,
   });
   const archived: unknown[] = [];
+  const notices: string[] = [];
   let archive: (caller: OperationCaller) => unknown = () => ({
     ok: true,
     value: { archived: true },
@@ -109,7 +110,9 @@ function setup() {
     sessions,
     invoke,
     packs: () => [],
-    tell: async () => {},
+    tell: async (_ask, _todo, note) => {
+      notices.push(note);
+    },
     attend: async () => {},
     changed: () => {},
   });
@@ -139,13 +142,15 @@ function setup() {
       Date.now()
     );
   };
-  const refresh = () => runner.refresh(() => {});
+  const refresh = (warn: (message: string, error: unknown) => void = () => {}) =>
+    runner.refresh(warn);
   return {
     db,
     add,
     finishTodo,
     refresh,
     archived,
+    notices,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
     },
@@ -488,6 +493,64 @@ describe('neo todo runner refresh on Linux', () => {
 });
 
 describe('neo todo runner refresh keeps workers with unsaved work', () => {
+  test('records an unowned worker with a dirty folder on the first refresh', async () => {
+    const h = setup();
+    try {
+      await h.finishTodo(h.add(started));
+      h.db
+        .prepare('DELETE FROM work_started_sessions WHERE adapter = ? AND id = ?')
+        .run(worker.adapter, worker.id);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      const fact = h.db
+        .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
+        .get() as { value_json: string };
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('logs an unchanged pending reason only once', async () => {
+    const h = setup();
+    const warnings: unknown[] = [];
+    try {
+      await h.finishTodo(h.add(started));
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      const warn = (message: string, error: unknown) => {
+        if (message.includes('worker archive pending')) warnings.push(error);
+      };
+      await h.refresh(warn);
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('wakes Neo once after a worker remains pending for 24 hours', async () => {
+    const h = setup();
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      await h.refresh();
+      clock.mockReturnValue(now + 24 * 60 * 60 * 1000);
+      await h.refresh();
+      await h.refresh();
+      expect(h.notices).toHaveLength(1);
+      expect(h.notices[0]).toContain(todo.id);
+      expect(h.notices[0]).toContain(worker.id);
+      expect(h.notices[0]).toContain('uncommitted changes');
+    } finally {
+      clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('keeps a worker with uncommitted changes until they are pushed', async () => {
     const h = setup();
     try {

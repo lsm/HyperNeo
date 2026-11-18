@@ -31,7 +31,7 @@ try {
   git('add', 'a.txt');
   git('commit', '-q', '--no-gpg-sign', '-m', 'a');
   writeFileSync(join(unsaved, 'draft.txt'), 'draft');
-  for (const [key, id] of Object.entries(workers)) await app.db.createSession({ id, title: 'Release proof', workspacePath: key === 'unsaved' ? unsaved : run,
+  for (const [key, id] of Object.entries(workers)) await app.db.createSession({ id, title: 'Release proof', workspacePath: key === 'unsaved' || key === 'existing' ? unsaved : run,
     createdAt: now, lastActiveAt: now, status: 'active', config: { model: 'claude-sonnet-4-5-20250929', maxTokens: 8192, temperature: 1 },
     metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const todos = new NeoAskTodoRepository(raw);
