@@ -28,6 +28,10 @@ const CURL_PATIENCE = [
 
 export const PACKAGE_DOWNLOAD_WAIT_MS = 45_000;
 
+export class PackageDownloadError extends Error {
+  override name = 'PackageDownloadError';
+}
+
 type CurlFailure = { code?: number | string; stderr: string };
 
 type TarEntry = { path: string; mode: number; data: Buffer };
@@ -146,7 +150,15 @@ export async function downloadVerifiedTarball(
         ? describeWriteFailure(err)
         : describeCurlFailure(err as CurlFailure, registryHost());
     logWarn(`[npm-package-download] ${packageName}@${version}: ${reason}`);
-    throw new Error(reason, { cause: err });
+    const message =
+      err instanceof SyntaxError
+        ? 'The npm registry did not return package metadata.'
+        : !(err instanceof Error) &&
+            typeof (err as CurlFailure).code === 'number' &&
+            NETWORK_CURL_CODES.has((err as CurlFailure).code as number)
+          ? 'Cannot reach the npm registry.'
+          : reason;
+    throw new PackageDownloadError(message, { cause: err });
   }
 }
 

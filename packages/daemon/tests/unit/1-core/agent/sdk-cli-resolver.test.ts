@@ -722,9 +722,7 @@ describe('warmupSDKCliBinary', () => {
 
     const startup = warmupSDKCliBinary();
 
-    await expect(awaitSDKCliPath()).rejects.toThrow(
-      'Claude Code binary unavailable: Could not download'
-    );
+    await expect(awaitSDKCliPath()).rejects.toThrow("Can't download Claude Code:");
     expect((await startup).status).toBe('failed');
   });
 

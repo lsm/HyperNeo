@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BIN=${1:?compiled binary required}
+RUN=${2:?fresh absolute run directory required}
+PORT=${3:-9427}
+MOCK=${4:-9428}
+MODE=${5:-connection}
+[[ "$RUN" = /* && ! -e "$RUN" && "$PORT" != 8399 && "$MOCK" != 8399 && "$PORT" != "$MOCK" ]]
+for port in "$PORT" "$MOCK"; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $port is busy" >&2; exit 1; fi
+done
+mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
+cat > "$RUN/bin/curl" <<'CURL'
+#!/bin/sh
+echo call >> "$HYPERNEO_DATA_DIR/curl.log"
+if [ "$DOWNLOAD_FIXTURE" = html ]; then printf '<html>blocked</html>'; exit 0; fi
+echo 'curl: connection failed' >&2
+exit 7
+CURL
+chmod +x "$RUN/bin/curl"
+clean=(env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test)
+"${clean[@]}" "$(command -v bun)" .claude/skills/verify/neo-model-settings-mock.ts "$MOCK" > "$RUN/mock.log" 2>&1 &
+MOCK_PID=$!
+"${clean[@]}" DOWNLOAD_FIXTURE="$MODE" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
+PID=$!
+trap 'kill "$PID" "$MOCK_PID" 2>/dev/null || true; wait "$PID" "$MOCK_PID" 2>/dev/null || true' EXIT
+rpc() { VERIFY_PORT=$PORT HYPERNEO_DATA_DIR="$RUN/data" bun .claude/skills/verify/rpc.ts "$@"; }
+for _ in $(seq 1 120); do
+  kill -0 "$PID"
+  /usr/bin/curl -fs -o /dev/null "http://127.0.0.1:$PORT/" && break
+  sleep 0.25
+done
+rpc rpc:providers.create '{"params":{"providerId":"anthropic","displayName":"Anthropic (mock)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}' > "$RUN/evidence/provider.json"
+SESSION=$(rpc rpc:session.create "{\"workspacePath\":\"$RUN/home\",\"worktreeMode\":\"direct\"}" | bun -e 'console.log(JSON.parse(await Bun.stdin.text()).reply.sessionId)')
+rpc rpc:message.send "{\"sessionId\":\"$SESSION\",\"content\":\"hello\"}" 4 > "$RUN/evidence/send.json"
+rpc rpc:state.session "{\"sessionId\":\"$SESSION\"}" > "$RUN/evidence/state.json"
+rpc rpc:session.get "{\"sessionId\":\"$SESSION\"}" > "$RUN/evidence/session.json"
+rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/messages.json"
+bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; const e=r.error; const episode=r.sessionInfo.metadata.queryFailureEpisode; if(e?.details?.metadata?.kind!=="package_download_failure" || e.details.category!=="session" || !e.message.startsWith("Can\x27t download Claude Code:") || /JSON|ETIMEDOUT|ECONNREFUSED/.test(e.message) || episode?.failures!==0 || r.agentState.status!=="idle") { console.error(JSON.stringify({error:e,episode,status:r.agentState.status})); process.exit(1); } console.log("session_cause=package_download_failure governor_failures=0 status=idle");' "$RUN/evidence/state.json"
+before=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
+rpc daemon.retryClaudeDownload '{}' > "$RUN/evidence/retry.json"
+after=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
+rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/messages-after.json"
+bun -e 'const a=JSON.parse(await Bun.file(process.argv[1]).text()).reply.sdkMessages; const b=JSON.parse(await Bun.file(process.argv[2]).text()).reply.sdkMessages; if(JSON.stringify(a)!==JSON.stringify(b)) process.exit(1); console.log(`messages_before=${a.length} messages_after=${b.length}`)' "$RUN/evidence/messages.json" "$RUN/evidence/messages-after.json"
+cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
+printf 'download_attempts_before=%s after=%s\n' "$before" "$after"
+[[ "$after" -eq $((before + 1)) ]]
+bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; console.log(JSON.stringify(r)); if (r.accepted !== false || !r.reason?.includes("Can\x27t download Claude Code")) process.exit(1)' "$RUN/evidence/retry.json"
+printf 'retry_calls=1 exit=0\n'
