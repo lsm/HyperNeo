@@ -35,8 +35,9 @@ design; (3) is the human's approval of the step list, which no existing record h
 
 **Sign-off card.** `neo.question.ask` gains `signoff: true`: valid only on a plan, as a
 one-option choice whose `todos` are exactly the plan's live steps; only choosing that
-option signs. It meets the existing link rule in `planNeoQuestion` (a todo card needs
-`retireWhen` or a todo `check`): it retires when answered or when the steps change. For
+option signs. It is exempt from the existing link rule in `planNeoQuestion` (a todo card
+needs `retireWhen` or a todo `check`) and from the check sweep that retires such cards
+(`question-retirement.ts`): it retires only when answered or when the steps change. For
 a design PR this card is the sign-off; the PR still merges the way the repository's
 `humanSignoff` says (`packs/coding/human-signoff.ts`), and no merge gate is added.
 
@@ -67,7 +68,8 @@ model usable" as today, so merges of non-plan PRs are unchanged.
 **Old todos.** The migration adds `checked_json TEXT` with no default and fills only that
 new column with `{"legacy":true}` on existing rows in one `UPDATE`; no other data
 changes. New rows get NULL without any insert change. A legacy todo keeps the old rule: one live dependent if it was marked
-`producesFollowUp`, nothing otherwise.
+`producesFollowUp`, nothing otherwise. Legacy wins: the coding design-PR mark does not
+make a legacy todo a plan.
 
 **One pure function decides.** `neoPlanRefusal(facts)` in `todo-follow-up.ts` takes the
 plan, its live steps, its check and its answered cards and returns the first unmet
@@ -125,7 +127,8 @@ lines resolve to a single model.
 | an abandoned plan's ask settled `dropped` | allowed |
 | a repository with `crossModelReview` off, a design PR | a review stage runs and its pass writes `checked_json` with a reviewer model other than the author's |
 | the same, one usable model | the review runs on another session of that model and counts |
-| a todo that existed before the upgrade | reads legacy; old rule only |
+| a todo that existed before the upgrade, including an open design PR todo | reads legacy; old rule only |
+| a sign-off card whose plan's check already passes | stays open until answered |
 | a step added after the plan is done | no new check or sign-off; the ask settles |
 | a non-plan PR in a `crossModelReview` repository | merge gate unchanged |
 | a todo that is not a plan | unchanged |
