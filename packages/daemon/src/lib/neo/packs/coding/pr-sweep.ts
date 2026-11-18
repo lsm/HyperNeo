@@ -109,6 +109,11 @@ export const codingFailingReviewKey = (
       .digest('hex')}`
   );
 
+export const codingFailingReviewReceiptKey = (key: string, owner: WorkRef) =>
+  codingDeliveryKey(
+    `${key}:owner:${JSON.stringify([owner.adapter, owner.id, owner.daemon ?? null])}`
+  );
+
 export const codingFailingText = (
   row: Pick<CodingSweepRow, 'repo' | 'number' | 'title' | 'head'>
 ) =>
@@ -216,12 +221,13 @@ export async function sweepCodingPrs(
       now - row.readAt <= CODING_PR_FRESH_MS
     ) {
       const key = codingFailingReviewKey(row);
+      const receipt = codingFailingReviewReceiptKey(key, row.owner);
       const told =
-        !(await repo.reviewSentLater(key)) &&
+        !(await repo.reviewSentLater(receipt)) &&
         (await deps
           .tell(row.owner, key, codingFailingText(row), codingPrUrl(deps.host, row), row.findings)
           .catch(() => false));
-      if (told) await repo.markReviewLater(key);
+      if (told) await repo.markReviewLater(receipt);
     }
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;

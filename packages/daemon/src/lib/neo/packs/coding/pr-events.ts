@@ -16,6 +16,7 @@ import {
   CODING_MANUAL_MERGE_NEXT_STEP,
   codingDeliveryKey,
   codingFailingReviewKey,
+  codingFailingReviewReceiptKey,
   codingFailingText,
   CodingPrSweepRepository,
   codingReviewKey,
@@ -197,13 +198,14 @@ export async function deliverCodingPrEvents(
       }
       if (!owner) continue;
       const review = row.state === 'failing' && !!event?.findings?.length;
+      const receipt = event && review ? codingFailingReviewReceiptKey(event.key, owner) : null;
       const told = event
-        ? (review && (await repo.reviewSent(event.key))) ||
+        ? (receipt !== null && (await repo.reviewSent(receipt))) ||
           (await deps
             .tell(owner, event.key, event.text, codingPrUrl(deps.host, row), event.findings)
             .catch(() => false))
         : true;
-      if (told && event && review) await repo.markReview(event.key);
+      if (told && receipt !== null) await repo.markReview(receipt);
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(

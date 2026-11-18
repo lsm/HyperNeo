@@ -15,6 +15,7 @@ does not verify live GitHub collection or a live worker receiving the reminder.
 Draft, conflicting and failing PRs retain those states while threads remain open.
 For failing CI, the event and reminder carry the thread link; a review arriving
 after the CI event produces one additional delivery even on repeated sweeps.
+If ownership changes, the replacement author receives the same findings once.
 The helper also checks that a failed thread refresh preserves a successful ledger
 poll, low quota prevents refresh, and unowned cross-model review reaches Neo.
 When a closed PR reopens during a failed thread refresh, the ledger reports its
