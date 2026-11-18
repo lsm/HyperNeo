@@ -27,10 +27,32 @@ export function publishedSum(sums: string, asset: string): string {
   return sum;
 }
 
-async function download(fetcher: typeof fetch, url: string): Promise<Uint8Array> {
-  const response = await fetcher(url, { redirect: 'follow' });
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+const SUMS_LIMIT = 64 * 1024;
+const ARCHIVE_LIMIT = 256 * 1024 * 1024;
+
+async function download(fetcher: typeof fetch, url: string, limit: number): Promise<Uint8Array> {
+  const response = await fetcher(url, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error(`OXAP download failed: ${response.status} ${url}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const tooLarge = new Error(`OXAP download is larger than ${limit} bytes: ${url}`);
+  if (Number(response.headers.get('content-length') ?? 0) > limit) throw tooLarge;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of response.body ?? []) {
+    size += chunk.byteLength;
+    if (size > limit) throw tooLarge;
+    chunks.push(chunk);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export async function installOxapHub(
@@ -45,10 +67,10 @@ export async function installOxapHub(
   }
   const asset = `${name}.tar.gz`;
   const expected = publishedSum(
-    new TextDecoder().decode(await download(fetcher, `${RELEASE}/SHA256SUMS.txt`)),
+    new TextDecoder().decode(await download(fetcher, `${RELEASE}/SHA256SUMS.txt`, SUMS_LIMIT)),
     asset
   );
-  const archive = await download(fetcher, `${RELEASE}/${asset}`);
+  const archive = await download(fetcher, `${RELEASE}/${asset}`, ARCHIVE_LIMIT);
   if (sha256(archive) !== expected)
     throw new Error(`${asset} does not match the release's SHA256SUMS.txt`);
   const target = join(directory, name);

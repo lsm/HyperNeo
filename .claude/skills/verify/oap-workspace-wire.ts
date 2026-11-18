@@ -7,6 +7,7 @@ import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider, serveLoca
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
 import { releaseName } from '../../../packages/daemon/src/lib/oap/oxap-install.ts';
+import { readHubOptions } from '../../../packages/daemon/src/lib/oap/oxap-settings.ts';
 import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
 import { decideReopenFailure } from '../../../packages/daemon/src/lib/oap/oap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
@@ -82,7 +83,7 @@ assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for 
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
 const config = getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace-a') });
-const liveHub = (current: NonNullable<typeof app>) => current.oapEngine.getHub(async () => { throw new Error('the proof expects a running hub'); });
+const liveHub = (current: NonNullable<typeof app>) => current.oapEngine.getHub(() => readHubOptions(current.oxapSettings));
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;

@@ -14,6 +14,7 @@ export interface OapEngineOptions {
 }
 
 type Slot = {
+  key: string;
   failed: boolean;
   client?: OapHubClient;
   binary?: Extract<PreparedOapBinary, { ok: true }>;
@@ -129,12 +130,16 @@ export class OapEngine {
 
   async getHub(read: () => Promise<OapEngineOptions>): Promise<OapHubClient> {
     if (this.closed) throw new Error('OAP engine is closed');
+    const options = await read();
+    if (this.closed) throw new Error('OAP engine is closed');
+    const key = JSON.stringify(options);
     const previous = this.slot;
-    if (previous && !previous.failed) return previous.start;
+    if (previous && !previous.failed && previous.key === key) return previous.start;
+    if (previous) previous.failed = true;
 
-    const slot: Slot = { failed: false, start: Promise.resolve(undefined as never) };
+    const slot: Slot = { key, failed: false, start: Promise.resolve(undefined as never) };
     this.slot = slot;
-    slot.start = this.start(slot, read, previous);
+    slot.start = this.start(slot, options, previous);
     return slot.start;
   }
 
@@ -152,13 +157,13 @@ export class OapEngine {
 
   private async start(
     slot: Slot,
-    read: () => Promise<OapEngineOptions>,
+    options: OapEngineOptions,
     previous?: Slot
   ): Promise<OapHubClient> {
     try {
       await this.closeSlot(previous);
       if (this.closed) throw new Error('OAP engine is closed');
-      const { launch, binary } = await prepareHub(await read());
+      const { launch, binary } = await prepareHub(options);
       slot.binary = binary;
       if (this.closed) throw new Error('OAP engine is closed');
       const client = new OapHubClient({

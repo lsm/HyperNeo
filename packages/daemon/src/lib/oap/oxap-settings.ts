@@ -3,6 +3,7 @@ import { isOxapHarness, OXAP_HARNESSES, oxapHarness } from '@hyperneo/shared/typ
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
+import { withProviderLock } from '../rpc-handlers/provider-mutation-lock.ts';
 import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
 import { buildHubConfig, harnessOf, missingSetting } from './oap-hub-config.ts';
 import type { OxapHubBinary } from './oxap-install.ts';
@@ -107,18 +108,18 @@ function checkHub(plan: Plan, keys: Record<string, string | undefined>) {
 }
 
 async function writeSave(deps: OxapSettingsDeps, binary: OxapHubBinary | undefined, plan: Plan) {
-  if (binary) deps.writeHub(binary);
   await deps.writeProvider(plan.id, plan.configJson);
+  if (binary) deps.writeHub(binary);
   return true;
 }
 
 const saveSettings = (superpipe({})('oxap.settings.save') as PipelineAPI)
   .input(['input', 'deps'])
-  .pipe(readBinary, ['input', 'deps'], 'binary')
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
   .pipe(planSave, ['input', 'records'], 'result:plan')
   .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
   .pipe(checkHub, ['plan', 'keys'], 'result:plan')
+  .pipe(readBinary, ['input', 'deps'], 'binary')
   .pipe(writeSave, ['deps', 'binary', 'plan'], 'saved')
   .pipe((deps: OxapSettingsDeps, _saved: true) => deps.engine.restart(), ['deps', 'saved'], 'done')
   .pipe(() => ({ accepted: true as const }), undefined, 'plan')
@@ -140,7 +141,7 @@ export function createOxapSettingsOperations(deps: OxapSettingsDeps): OperationD
       ]),
       policy: { safetyClass: 'human_only', caller: 'local_user' },
       execute: async (input) => {
-        const result = await saveSettings(input, deps);
+        const result = await withProviderLock(() => saveSettings(input, deps));
         return typeof result === 'string' ? { accepted: false as const, reason: result } : result;
       },
     }),

@@ -368,6 +368,7 @@ export interface CreateDaemonAppOptions {
 
 export interface DaemonAppContext {
   oapEngine: OapEngine;
+  oxapSettings: OxapSettingsDeps;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   handleSetup: (req: Request) => Promise<Response>;
@@ -1861,6 +1862,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     return {
       oapEngine,
+      oxapSettings,
       server,
       handlePair,
       handleSetup,
