@@ -410,7 +410,17 @@ describe('neo.message.send replyTo', () => {
       await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
       expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);
     }
-    for (const [index, words] of ['4', '第五个', '1、3'].entries()) {
+    for (const [index, words] of [
+      '4',
+      '第五个',
+      '1、3',
+      '7',
+      '0',
+      '七',
+      'seventh',
+      '第十个',
+      '100',
+    ].entries()) {
       choice(`bad${index}`, false);
       const id = crypto.randomUUID();
       await send(id, words, { kind: 'question', id: `bad${index}` });

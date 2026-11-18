@@ -74,7 +74,7 @@ db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at
   VALUES ('${neo}','Synthetic Neo','/tmp','2026-10-21T00:00:00Z','2026-10-21T00:00:00Z','active','{"queryMode":"manual"}','{}')`);
 new NeoRepository(db).reserveBinding({ sessionId: neo, kind: 'neo', projectId: null });
 const asks = new NeoAskTodoRepository(db);
-for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-detailed', 'synthetic-ask-bad', 'synthetic-ask-raw'])
+for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-detailed', 'synthetic-ask-bad', 'synthetic-ask-raw', 'synthetic-ask-invalid'])
   asks.openAsk({
     id,
     projectId: null,
@@ -105,6 +105,7 @@ const detailed = await ask('synthetic-ask-detailed', {
   recommended: 'Hotel Gracery',
 });
 const raw = await ask('synthetic-ask-raw', { text: 'Which hotel?', options: hotels });
+const invalid = await ask('synthetic-ask-invalid', { text: 'Which hotel?', options: hotels, multiple: true });
 const snapshot = (await rpc('neo.snapshot', {})).todoAsks;
 for (const entry of snapshot)
   for (const question of entry.questions ?? []) {
@@ -132,6 +133,11 @@ const reply = async (questionId: string, content: string) => {
   assert.equal(sent.ok, true);
   return requestId;
 };
+for (const words of ['7', '0', '七', 'seventh', '1 和 7', '第十个', '100']) {
+  await reply(invalid, words);
+  assert.equal(asks.getQuestion(invalid)?.state, 'open', `${words} must not close the card`);
+}
+assert.throws(() => db.prepare('UPDATE neo_questions SET option_details_json=? WHERE id=?').run('{', detailed), 'invalid details JSON must be refused');
 const requestId = await reply(single, '第二个吧');
 await reply(many, '选1、3');
 await reply(detailed, '选二');
