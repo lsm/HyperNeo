@@ -168,8 +168,9 @@ describe('neo.session.track', () => {
       expect(retried).toMatchObject({ kind: 'completed', value: { ok: true } });
       expect(service.todos.listOpenAsks()).toHaveLength(1);
       const [ask] = service.todos.listOpenAsks();
+      expect(ask.originMessageId).not.toContain(':relay-pending');
       expect(service.todos.listQuestions(ask.id)).toMatchObject([
-        { state: 'open', text: 'Continue?', sourceSession: ref },
+        { state: 'open', text: 'Continue?', sourceSession: ref, cause: 'relay-session-proposal' },
       ]);
       source.mockRestore();
     }

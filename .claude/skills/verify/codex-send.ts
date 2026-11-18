@@ -123,6 +123,8 @@ if (action === 'prepare') {
       createWorkVerbOperations({
         adapters: () => [createCodexDesktopAdapter(deps)],
         isOpenTodo: (id, sessionId) => id === 'verify-codex-send-todo' && sessionId === 'verify-codex-send',
+        acceptedTodo: (id) => id === 'verify-codex-send-todo',
+        noticeReply: () => false,
         daemonName: 'verify',
         remote: {
           list: () => [],

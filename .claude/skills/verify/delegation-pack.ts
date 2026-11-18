@@ -1,3 +1,4 @@
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -134,14 +135,17 @@ try {
     request: 'Prove shared worker preferences',
     todos: [],
   });
-  const start = (title: string, instruction = 'Report the synthetic task result.') =>
+  const question = new NeoAskTodoRepository(app.db.getDatabase()).listQuestions(ask.ask.id)[0];
+  assert(question);
+  assert.equal((await human('neo.question.answer', { questionId: question.id, answer: 'yes' })).ok, true);
+  const start = (title: string, instruction = 'Report the synthetic task result.', askId = ask.ask.id) =>
     mcp('neo.todo.add', { after: [],
-      askId: ask.ask.id,
+      askId,
       title,
       check: {
         pack: 'coding',
         kind: 'pr_merged',
-        params: { urls: ['https://github.com/example/project/pull/1'] },
+        params: { urls: [`https://github.com/example/${askId === ask.ask.id ? 'project' : 'other'}/pull/1`] },
       },
       instruction,
       target: {
@@ -174,7 +178,11 @@ try {
   });
   observed.push({ agentWriteRefusal: denied });
   assert.equal(denied.isError, true);
-  const second = await start('After preference change');
+  const secondAsk = await mcp('neo.ask.open', { title: 'Delegation follow-up', request: 'Check updated preferences' });
+  const secondQuestion = new NeoAskTodoRepository(raw).listQuestions(secondAsk.ask.id)[0];
+  assert(secondQuestion);
+  assert.equal((await human('neo.question.answer', { questionId: secondQuestion.id, answer: 'yes' })).ok, true);
+  const second = await start('After preference change', undefined, secondAsk.ask.id);
   assert.equal(second.todo.state, 'doing');
   assert.equal(deliveries.length, 2);
   assert.match(String(deliveries[1].message), /"payment":\{"value":"fillStop","configured":true\}/);

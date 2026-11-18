@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -45,6 +46,7 @@ try {
         for (const id of [sender, ref.id]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic worker', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id);
         new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
         const check = { pack: 'core', kind: 'evidence', params: { path: '/synthetic/pending' } };
+        seedHistoricalAsk(store, sender, { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again' });
         const opened = await invoke('neo.ask.open', { title: 'Synthetic in-progress work', request: 'Track already running work without sending it again', todos: [{ after: [], title: 'Running task', check, target: { verb: 'bind', ref } }] });
         const todo = opened.todos[0];
         assert.equal(todo.state, 'doing'); assert.equal(todo.worker.id, ref.id); assert.equal(todo.worker.adapter, ref.adapter);

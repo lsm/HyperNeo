@@ -37,7 +37,7 @@ A session's request to Neo (`recordNeoRequestTodo`) still records its ask and it
 **3. Todos and sessions need an accepted ask.**
 
 - An ask is accepted unless it has a proposal card that is not yet answered "Do it", or a relayed session question not yet answered, or unless it is a session-request ask.
-- Asks from human messages, Track and the daemon's own home-conflict cards are accepted. Existing asks stay accepted too, except two kinds that today's code already writes: session-request asks, and asks whose relayed session question is still unanswered. No data changes.
+- Asks from human messages, Track and the daemon's own home-conflict cards are accepted. Existing asks stay accepted too, except session-request asks. The relayed-session-question gate applies only to cards created after this change; older cards do not block work.
 - `neo.todo.add` refuses a todo on an ask that is not accepted.
 - `work.start` from an agent (Neo, a worker or another agent role) needs a todo on an accepted ask. Today's `todo_required` warning becomes a refusal.
 - `work.send` and `work.queue` from an agent to a worker follow the same rule: they name a todo on an accepted ask. `notice: true` without a todo is kept only for replying to a session that sent Neo a message.

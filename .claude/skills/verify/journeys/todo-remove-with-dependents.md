@@ -21,3 +21,6 @@ and C after A, then D after B:
 
 Evidence is `observed.json` and `proof.log`. This proves the operations and the
 stored rows, not how Neo words its next turn.
+
+The helper records a synthetic human approval before adding fixture todos.
+Use new-work-source.md to verify approval through the human RPC.

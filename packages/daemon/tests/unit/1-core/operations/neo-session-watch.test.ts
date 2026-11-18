@@ -155,7 +155,7 @@ describe('neoSessionQuestionNote', () => {
       question: { id: 't', at: 1, text: 'Ship it?', actions: ['Yes', 'Not now'] },
     });
     expect(note).toBe(
-      'Session "Rows" (claude-desktop:abc) ended its turn with a question: Ship it? Options: Yes; Not now. It has no todo. If the plan, saved rules or your authority settle it, answer with work.send and notice:true. If not, relay it with neo.question.ask {kind:relay,session:"claude-desktop::abc",text,options}.'
+      'Session "Rows" (claude-desktop:abc) ended its turn with a question: Ship it? Options: Yes; Not now. It has no todo. Relay it to the human with neo.question.ask {kind:relay,session:"claude-desktop::abc",text,options}.'
     );
   });
 });

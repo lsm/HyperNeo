@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
@@ -172,6 +173,7 @@ try {
     };
     appendFileSync(transcript, JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), effort: 'medium', message: { model: 'claude-opus-5-5', content: [] } }) + '\n');
     const check = { pack: 'core', kind: 'evidence', params: { path: join(run, 'report.md') } };
+    seedHistoricalAsk(store, caller, { title: 'Production bind', request: 'Track coding work' });
     const opened = await invokeTodo('neo.ask.open', { title: 'Production bind', request: 'Track coding work', todos: [{ after: [], title: 'Bound worker', check, target: { verb: 'bind', ref } }] });
     const boundId = opened.todos[0].id;
     assert.equal(sessions.readCard(boundId)?.model, 'claude-opus-5-5', 'production bind of an ask-open todo must refresh observed identity');

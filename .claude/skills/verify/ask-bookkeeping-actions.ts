@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -68,6 +69,7 @@ for (const phase of ['initial', 'reopen']) {
     assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
     assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
     if (phase === 'initial') {
+      seedHistoricalAsk(store, 'neo', { title: 'One cross-repo request', request: 'Keep both repositories together' });
       const mixed = await call('neo.ask.open', {
         title: 'One cross-repo request', request: 'Keep both repositories together',
         todos: ['first', 'second'].map((repo) => ({ after: [],

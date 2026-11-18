@@ -18,6 +18,7 @@ import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/n
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
 
 const turn = (_messageId: string, _human = true): OperationCaller => ({
   source: 'mcp',
@@ -27,7 +28,7 @@ const turn = (_messageId: string, _human = true): OperationCaller => ({
 
 type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
 
-function setup() {
+function setup(language?: 'en' | 'zh-Hans') {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -71,12 +72,56 @@ function setup() {
       () => createTodoCheckPacks(db),
       (id) => goals.get(id),
       undefined,
-      { gateway: gatewayFor(db), changed: () => {} }
+      { gateway: gatewayFor(db), changed: () => {}, language: () => language }
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { db, store, goals, sessions, call, started, stopped, refuse, stopFails, onStop, ops };
+  const legacyCall = async (name: string, input: unknown, caller: OperationCaller) => {
+    const draft = input as {
+      title?: string;
+      request?: string;
+      projectId?: string | null;
+      goalId?: string | null;
+      todos?: unknown[];
+    };
+    if (
+      name === 'neo.ask.open' &&
+      draft.todos?.length &&
+      draft.title &&
+      draft.request &&
+      caller.sessionId &&
+      (!draft.goalId || goals.get(draft.goalId)) &&
+      (!draft.projectId || draft.projectId === 'project-1') &&
+      !store.findAsk(caller.sessionId, null, draft.title, draft.goalId ?? null)
+    ) {
+      store.openAsk({
+        id: crypto.randomUUID(),
+        projectId: draft.projectId ?? null,
+        goalId: draft.goalId ?? null,
+        sessionId: caller.sessionId,
+        originMessageId: null,
+        title: draft.title,
+        request: draft.request,
+        createdAt: 1,
+      });
+    }
+    return call(name, input, caller);
+  };
+  return {
+    db,
+    store,
+    goals,
+    sessions,
+    call,
+    legacyCall,
+    started,
+    stopped,
+    refuse,
+    stopFails,
+    onStop,
+    ops,
+  };
 }
 
 const opening = {
@@ -96,8 +141,126 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('rejects oversized proposal cards before creating an ask', async () => {
+    const { call, store } = setup();
+    const result = await call(
+      'neo.ask.open',
+      { title: 'Long', request: 'x'.repeat(401) },
+      turn('long')
+    );
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('card_too_long') });
+    expect(store.listOpenAsks()).toEqual([]);
+  });
+
+  test('proposal cards follow the human language and hide internal identifiers', async () => {
+    const { call, store } = setup('zh-Hans');
+    expect(
+      await call(
+        'neo.ask.open',
+        { title: 'Language', request: 'Please improve login' },
+        turn('language')
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_language') });
+    expect(
+      await call(
+        'neo.ask.open',
+        { title: 'Identifier', request: '处理任务 abc12345' },
+        turn('identifier')
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_internal_id') });
+    expect(store.listOpenAsks()).toEqual([]);
+    expect(
+      (await call('neo.ask.open', { title: 'Chinese', request: '改善登录体验' }, turn('chinese')))
+        .ok
+    ).toBe(true);
+  });
+
+  test('a chat reply leaves the approval card open for its buttons', async () => {
+    const { call, store } = setup();
+    const opened = await call(
+      'neo.ask.open',
+      { title: 'Chat proposal', request: 'Improve the workflow' },
+      turn('open')
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    const question = store.listQuestions(opened.ask.id)[0];
+    const replyTo = { kind: 'question' as const, id: question.id };
+    recordNeoReplyAnswer(
+      { ok: true, requestId: 'input', messageId: 'input', created: true },
+      readNeoReply(replyTo, store),
+      { sessionId: 'neo-a', requestId: 'input', content: 'yes', replyTo },
+      store,
+      'neo-a'
+    );
+    expect(store.getQuestion(question.id)).toMatchObject({ state: 'open' });
+  });
+
+  test('a chat reply leaves a relayed session decision open for its buttons', () => {
+    const { store } = setup();
+    const ask = store.openAsk({
+      id: 'relay-ask',
+      sessionId: 'neo-a',
+      projectId: null,
+      originMessageId: null,
+      title: 'Relay',
+      request: 'Relay',
+      createdAt: 1,
+    });
+    const question = store.askQuestion(
+      'relay-card',
+      ask.id,
+      {
+        text: 'Choose?',
+        kind: 'choice',
+        options: ['Yes', 'No'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        cause: 'relay-session-proposal',
+      },
+      2
+    );
+    const replyTo = { kind: 'question' as const, id: question.id };
+    recordNeoReplyAnswer(
+      { ok: true, requestId: 'input', messageId: 'input', created: true },
+      readNeoReply(replyTo, store),
+      { sessionId: 'neo-a', requestId: 'input', content: 'A', replyTo },
+      store,
+      'neo-a'
+    );
+    expect(store.getQuestion(question.id)).toMatchObject({ state: 'open' });
+  });
+  test('a proposal opens a human decision card and refuses todos until approved', async () => {
+    const { call, store } = setup();
+    const result = await call(
+      'neo.ask.open',
+      { title: 'Improve login', request: 'Improve login because users get stuck' },
+      turn('proposal')
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(store.listQuestions(result.ask.id)).toMatchObject([
+      { state: 'open', kind: 'yesno', yesLabel: 'Do it', noLabel: "Don't" },
+    ]);
+    const retry = await call('neo.ask.open', opening, turn('retry'));
+    expect(retry.ok).toBe(false);
+  });
+
+  test('a settled proposal retry records that no new todo was added', async () => {
+    const { call, store } = setup();
+    const input = { title: 'Settled proposal', request: 'Review the finished work' };
+    const opened = await call('neo.ask.open', input, turn('proposal'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const question = store.listQuestions(opened.ask.id)[0];
+    store.answerQuestion(question, 'yes', 'button', 2);
+    store.openAsk({ ...opened.ask, id: 'settled-proposal-child', parentId: opened.ask.id });
+    store.settleAsk(store.getAsk(opened.ask.id)!, 'done', 'Finished', 3);
+    const retry = await call('neo.ask.open', { ...input, todos: opening.todos }, turn('retry'));
+    expect(retry).toMatchObject({ ok: true, records: [expect.stringContaining('ask_settled:')] });
+    expect(store.listTodos(opened.ask.id)).toEqual([]);
+  });
   test('ask retries read each repository scope once and refresh facts on the next operation', async () => {
-    const { db, call, store } = setup();
+    const { db, legacyCall: call, store } = setup();
     const base = { title: 'Repository query budget', request: 'Reuse recorded work' };
     const draft = {
       after: [],
@@ -139,7 +302,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   });
 
   test('ask retries keep duplicate matching stable while new sibling repositories are added', async () => {
-    const { call, store } = setup();
+    const { legacyCall: call, store } = setup();
     const base = { title: 'Synthetic repository work', request: 'Keep the recorded work' };
     const opened = await call(
       'neo.ask.open',
@@ -204,7 +367,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     ).not.toContain('neo.ask.outcome');
   });
   const openPlan = async (h: ReturnType<typeof setup>, title: string) => {
-    const opened = await h.call(
+    const opened = await h.legacyCall(
       'neo.ask.open',
       {
         title,
@@ -247,7 +410,11 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const h = setup();
     const opened = await openPlan(h, 'Cache plan');
     const settle = (status: 'done' | 'dropped') =>
-      h.call('neo.ask.settle', { askId: opened.ask.id, status, outcome: 'Settled' }, turn('m2'));
+      h.legacyCall(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status, outcome: 'Settled' },
+        turn('m2')
+      );
     const refused = await settle('done');
     expect(refused.ok).toBe(false);
     expect(!refused.ok && refused.reason).toContain('follow_up_missing');
@@ -265,7 +432,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
       if (current.state !== 'removed')
         h.store.updateTodo(current, { state: 'removed', reason: 'Not needed' }, 5);
     };
-    const settled = await h.call(
+    const settled = await h.legacyCall(
       'neo.ask.settle',
       { askId: opened.ask.id, status: 'done', outcome: 'Planned' },
       turn('m2')
@@ -277,7 +444,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
 
   test('records a settled discussion decision and links while execution stays open', async () => {
     const h = setup();
-    const opened = await h.call(
+    const opened = await h.legacyCall(
       'neo.ask.open',
       {
         title: 'Choose positioning',
@@ -310,7 +477,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const outcome =
       'Decision: prioritize beginner gardeners.\nDocument: [Positioning](https://example.test/positioning.md)\nPR: https://github.com/example/project/pull/8';
     expect(
-      await h.call('neo.ask.outcome', { askId: opened.ask.id, outcome }, turn('m2'))
+      await h.legacyCall('neo.ask.outcome', { askId: opened.ask.id, outcome }, turn('m2'))
     ).toMatchObject({
       ok: true,
       ask: { outcome, status: 'open', settledAt: null, focusedSession: { id: 'discussion' } },
@@ -319,7 +486,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(h.stopped).toEqual([]);
     expect(h.started).toEqual([]);
     expect(
-      await h.call(
+      await h.legacyCall(
         'neo.ask.open',
         {
           title: 'Choose positioning',
@@ -338,7 +505,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     ).toMatchObject({ ok: true, ask: { id: opened.ask.id, outcome } });
     expect(h.store.listTodos(opened.ask.id)).toHaveLength(2);
     expect(
-      await h.call(
+      await h.legacyCall(
         'neo.ask.settle',
         { askId: opened.ask.id, status: 'done', outcome: 'Done' },
         turn('m3')
@@ -349,14 +516,14 @@ describe('neo.ask.open and neo.ask.settle', () => {
 
   test('refuses recording by a worker, another Neo, or on an unfocused or settled ask', async () => {
     const h = setup();
-    const opened = await h.call(
+    const opened = await h.legacyCall(
       'neo.ask.open',
       { title: 'Discussion', request: 'Choose a direction' },
       turn('m1')
     );
     if (!opened.ok) throw new Error(opened.reason);
     const input = { askId: opened.ask.id, outcome: 'Claimed approval' };
-    expect(await h.call('neo.ask.outcome', input, turn('m2'))).toMatchObject({ ok: false });
+    expect(await h.legacyCall('neo.ask.outcome', input, turn('m2'))).toMatchObject({ ok: false });
     h.store.focusAsk(
       opened.ask.id,
       {
@@ -374,15 +541,15 @@ describe('neo.ask.open and neo.ask.settle', () => {
       { source: 'mcp', role: 'neo', sessionId: 'neo-other' },
       { source: 'rpc', principal: 'local' },
     ] as OperationCaller[])
-      expect(await h.call('neo.ask.outcome', input, caller)).toMatchObject({ ok: false });
+      expect(await h.legacyCall('neo.ask.outcome', input, caller)).toMatchObject({ ok: false });
     expect(h.store.getAsk(opened.ask.id)?.outcome).toBeNull();
     h.store.settleAsk(h.store.getAsk(opened.ask.id)!, 'done', 'Finished', 3);
-    expect(await h.call('neo.ask.outcome', input, turn('m3'))).toMatchObject({ ok: false });
+    expect(await h.legacyCall('neo.ask.outcome', input, turn('m3'))).toMatchObject({ ok: false });
     expect(h.store.getAsk(opened.ask.id)?.outcome).toBe('Finished');
   });
 
   test('an ask links any existing goal; retries and repo splits retain that goal', async () => {
-    const { store, goals, call, started } = setup();
+    const { store, goals, legacyCall: call, started } = setup();
     const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 1);
     const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 1);
     expect(await call('neo.ask.open', { ...opening, goalId: 'missing' }, turn('m1'))).toMatchObject(
@@ -414,8 +581,8 @@ describe('neo.ask.open and neo.ask.settle', () => {
       expect.arrayContaining([result.ask.id, child.id])
     );
   });
-  test('opens an ask with its todos once per turn and starts the ones with work', async () => {
-    const { call, started } = setup();
+  test('a legacy ask keeps its todos on retry and starts the ones with work', async () => {
+    const { legacyCall: call, started } = setup();
     const first = await call('neo.ask.open', opening, turn('m1'));
     if (!first.ok) throw new Error(first.reason);
     expect(first.ask).toMatchObject({
@@ -436,7 +603,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   });
 
   test('a queue with no free slot leaves the todos queued and the ask open', async () => {
-    const { call, refuse, started, store } = setup();
+    const { legacyCall: call, refuse, started, store } = setup();
     refuse.value = true;
     const opened = await call('neo.ask.open', opening, turn('m3'));
     if (!opened.ok) throw new Error(opened.reason);
@@ -445,15 +612,15 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(started).toEqual([]);
   });
 
-  test('a todo added in a turn the human did not start still starts', async () => {
-    const { call, started } = setup();
+  test('a todo on a legacy accepted ask still starts', async () => {
+    const { legacyCall: call, started } = setup();
     const opened = await call('neo.ask.open', opening, turn('m2', false));
     if (!opened.ok) throw new Error(opened.reason);
     expect(started).toEqual([opened.todos[0].id]);
   });
 
   test('a start that lands while settle stops other sessions is stopped after the ask settles', async () => {
-    const { call, sessions, stopped, onStop } = setup();
+    const { legacyCall: call, sessions, stopped, onStop } = setup();
     const opened = await call('neo.ask.open', opening, turn('m6'));
     if (!opened.ok) throw new Error(opened.reason);
     const [first, second] = opened.todos;
@@ -472,7 +639,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   test.each(['done', 'dropped'] as const)(
     'a %s settle whose stop fails leaves the ask open and says so',
     async (status) => {
-      const { call, store, stopFails } = setup();
+      const { legacyCall: call, store, stopFails } = setup();
       const opened = await call('neo.ask.open', opening, turn('m5'));
       if (!opened.ok) throw new Error(opened.reason);
       if (status === 'done')
@@ -496,7 +663,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   test.each(['rpc', 'mcp'] as const)(
     '%s cannot mark an ask done with unfinished coding todos',
     async (source) => {
-      const { call, store, stopped } = setup();
+      const { legacyCall: call, store, stopped } = setup();
       const opened = await call('neo.ask.open', opening, turn('early-done'));
       if (!opened.ok) throw new Error(opened.reason);
       const before = store.listTodos(opened.ask.id);
@@ -521,7 +688,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
   );
 
   test('settling stops running sessions, retires open questions and ends the ask', async () => {
-    const { call, store, stopped } = setup();
+    const { legacyCall: call, store, stopped } = setup();
     const opened = await call('neo.ask.open', opening, turn('m3'));
     if (!opened.ok) throw new Error(opened.reason);
     store.askQuestion(

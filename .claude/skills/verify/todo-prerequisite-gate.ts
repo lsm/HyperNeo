@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -51,6 +52,7 @@ try {
     for (const id of [sender, ref.id]) db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic worker', '/tmp', '2026-10-24T00:00:00Z', '2026-10-24T00:00:00Z', 'active', '{}', '{}')").run(id);
     new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
     const bound = { verb: 'bind', ref };
+    seedHistoricalAsk(store, sender, { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y' });
     const opened = await invoke('neo.ask.open', { title: 'Synthetic prerequisites', request: 'Finish A before J and X before Y', todos: [{ title: 'A', check, after: [], target: bound }, { title: 'J', check, after: [0] }, { title: 'X', check, after: [], target: bound }] });
     assert.equal(opened.ok, true, JSON.stringify(opened));
     const [a, j, x] = opened.todos.map((todo: { id: string }) => todo.id);

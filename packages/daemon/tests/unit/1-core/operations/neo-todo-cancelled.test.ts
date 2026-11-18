@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
+import { requireAcceptedAsk } from '../../../../src/lib/neo/proposal.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -97,6 +99,8 @@ function setup() {
     ),
   ];
   const invoke = async (name: string, input: unknown) => {
+    if (name === 'neo.ask.open')
+      historicalAsk(store, 'synthetic-neo', (input as { title: string }).title);
     const op = operations.find((candidate) => candidate.name === name)!;
     return (await op.execute(op.inputSchema.parse(input), caller)) as {
       ok: boolean;
@@ -587,6 +591,70 @@ describe('cancelled prerequisites', () => {
 });
 
 describe('unfinished prerequisites of a started step', () => {
+  test('continue cannot answer a pending relayed-session card', async () => {
+    const { db, store, sessions, invoke, step, runner, sent, work } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Relayed decision',
+        request: 'Ask the human',
+        todos: [{ ...step('Work'), ...work }],
+      });
+      await runner.advance();
+      const todo = store.getTodo(opened.todos[0].id)!;
+      expect(sessions.readRef(todo.id)).not.toBeNull();
+      const card = store.askQuestion(
+        'relay-question',
+        todo.askId,
+        {
+          text: 'Choose?',
+          kind: 'choice',
+          options: ['First', 'Second'],
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          todoId: todo.id,
+          cause: 'relay-session-proposal',
+        },
+        Date.now()
+      );
+      store.updateTodo(
+        todo,
+        { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Waiting for the human' },
+        Date.now()
+      );
+      const before = sent.length;
+      const result = await invoke('neo.todo.continue', { todoId: todo.id, message: 'First' });
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('human_decision_required:'),
+      });
+      expect(sent).toHaveLength(before);
+      expect(store.getQuestion(card.id)?.state).toBe('open');
+      expect(
+        requireAcceptedAsk(
+          store.getAsk(todo.askId)!,
+          null,
+          store.listQuestions(todo.askId),
+          store.listTodos(todo.askId)
+        )
+      ).toHaveProperty('reason');
+      sessions.completeFollowUp(
+        todo.id,
+        { ref: { adapter: 'hyperneo', id: 'w' } },
+        null,
+        Date.now()
+      );
+      expect(store.getQuestion(card.id)?.state).toBe('open');
+      expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+      store.answerQuestion(store.getQuestion(card.id)!, ['First'], 'button', Date.now());
+      expect(
+        (await invoke('neo.todo.continue', { todoId: todo.id, message: 'Follow up' })).ok
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   const started = async ({ invoke, runner, store, step, work }: ReturnType<typeof setup>) => {
     const opened = await invoke('neo.ask.open', {
       title: 'Reopened prerequisite',

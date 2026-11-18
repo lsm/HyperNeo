@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -25,6 +26,7 @@ function setup() {
   createTables(db);
   createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db);
+  historicalAsk(store, 'synthetic-neo', 'Plan');
   const sessions = new NeoTodoSessionRepository(db);
   const packs = createTodoCheckPacks(db);
   const runner = createNeoTodoRunner({
@@ -151,7 +153,7 @@ describe('todo dependencies', () => {
         todos: [step('A'), step('B', [2]), step('C')],
       });
       expect(opened).toMatchObject({ ok: false, reason: expect.stringContaining('dependency') });
-      expect(store.listOpenAsks()).toEqual([]);
+      expect(store.listTodos(store.listOpenAsks()[0].id)).toEqual([]);
     } finally {
       db.close();
     }

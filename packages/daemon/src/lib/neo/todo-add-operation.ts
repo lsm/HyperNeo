@@ -1,3 +1,4 @@
+import { proposalQuestionId, requireAcceptedAsk } from './proposal.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { z } from 'zod';
@@ -99,6 +100,31 @@ export function wireNeoTodoAdd(
       'result:outcome'
     )
     .pipe((ask: NeoAsk) => ask, 'outcome', 'ask')
+    .pipe(
+      async (ask: NeoAsk) => {
+        const facts = await store.read('askFacts', { askId: ask.id });
+        return { ask, facts };
+      },
+      'outcome',
+      'facts'
+    )
+    .pipe(
+      ({
+        ask,
+        facts,
+      }: {
+        ask: NeoAsk;
+        facts: Awaited<ReturnType<NeoAskTodoRepository['askFacts']>>;
+      }) =>
+        requireAcceptedAsk(
+          ask,
+          facts.questions.find((question) => question.id === proposalQuestionId(ask.id)) ?? null,
+          facts.questions,
+          facts.todos
+        ),
+      'facts',
+      'result:outcome'
+    )
     .pipe(
       async (_ask: NeoAsk, input: AddInput) => {
         const { resolveNeoTodoDraft } = await import('./todo-operations.ts');

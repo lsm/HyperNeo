@@ -2,12 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { packWorkerStartFixture } from '../../helpers/pack-worker-start.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 
 function setup(options?: Parameters<typeof packWorkerStartFixture>[1]) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
-  return { db, ...packWorkerStartFixture(db, options) };
+  const world = packWorkerStartFixture(db, options);
+  historicalAsk(world.store, 'fixture-neo', 'Synthetic matter');
+  return { db, ...world };
 }
 
 describe('core todo starts respect pack worker exclusions', () => {
