@@ -6,6 +6,7 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
+import { frontSessionId } from './front-mode.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
@@ -34,10 +35,14 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
   const refs = items.map((item) => ({
     sessionId: item.askOrigin.sessionId,
     messageId: item.askOrigin.messageId,
+    frontSessionId: frontSessionId(item.conversationId),
   }));
   const rows = db
-    .prepare(`SELECT CASE WHEN m.seq IS NULL THEN NULL
-      ELSE COALESCE(m.send_status, 'consumed') END AS sendStatus, m.id AS messageDbId,
+    .prepare(`SELECT CASE WHEN m.seq IS NULL THEN (SELECT send_status FROM sdk_messages
+      INDEXED BY idx_sdk_messages_session_uuid
+      WHERE session_id = json_extract(ref.value, '$.frontSessionId') AND message_type = 'user'
+      AND sdk_uuid = json_extract(ref.value, '$.messageId') AND send_status = 'failed'
+      ORDER BY timestamp ASC LIMIT 1) ELSE COALESCE(m.send_status, 'consumed') END AS sendStatus, m.id AS messageDbId,
       s.processing_state AS processing FROM json_each(?) ref
       LEFT JOIN sessions s ON s.id = json_extract(ref.value, '$.sessionId')
       LEFT JOIN sdk_messages m ON m.seq = (SELECT seq FROM sdk_messages
