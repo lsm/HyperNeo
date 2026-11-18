@@ -768,6 +768,7 @@ export async function reuseIdleWorker(
             }).ok))
       ) {
         const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
+        if (queued === 'none') return null;
         return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
       }
     }
