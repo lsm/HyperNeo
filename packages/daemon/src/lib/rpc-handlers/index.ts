@@ -144,7 +144,10 @@ export interface RPCHandlerDependencies {
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
   mcpImportService: McpImportService;
+  oxapSettings?: OxapSettingsDeps;
 }
+
+import type { OxapSettingsDeps } from '../oap/oxap-settings.ts';
 
 const log = new Logger('rpc-handlers');
 
@@ -458,8 +461,10 @@ export async function setupRPCHandlers<SpaceServices = never>(
     })
   );
   const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
+  const startupTasks: Promise<void>[] = [];
   const boundFamilyContext: FamilyOperationContext = {
     ...familyContext,
+    startupTasks,
     workCleanupAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
@@ -468,6 +473,9 @@ export async function setupRPCHandlers<SpaceServices = never>(
       neoService.workAdapters = read;
     },
     goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
+    defaultNeoSession: () => neoService.defaultSessionId(),
+    neoChanged: () => neoService.notifyChanged(),
+    ensureNeo: () => neoService.openDefault(),
     executionPreparations: () => neoService.packs(),
   };
   const familyOperations = [
@@ -486,6 +494,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
+  await Promise.all(startupTasks);
   sessionScheduler.recover();
   let progressRefresh: Promise<void> | undefined;
   const progressRequested = new Set<string | undefined>();
@@ -571,6 +580,8 @@ export async function setupRPCHandlers<SpaceServices = never>(
       },
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       log: (line) => neoService.logReorganize(line),
+      topics: () => neoService.todos.pickedTopics(),
+      wake: (key, text) => neoService.wakeNeo(key, text),
     })
   );
   scheduleNeoNightlyReorganize(deps.jobQueue, Date.now() + NEO_REORGANIZE_IDLE_MS, null);

@@ -178,7 +178,7 @@ function readAskImageRefs(
   };
 }
 
-const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
+const read = (superpipe({})('neo.conversation.asks.read') as PipelineAPI)
   .input(['request', 'caller', 'repo', 'ledger', 'presentStatus', 'database'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(
@@ -275,7 +275,7 @@ export function readNeoConversationImage(
     : { ok: false, reason: 'image_not_found' };
 }
 
-const readImage = (superpipe({})('neo-conversation-image-read') as PipelineAPI)
+const readImage = (superpipe({})('neo.conversation.image.read') as PipelineAPI)
   .input(['input', 'caller', 'repo', 'ledger'])
   .pipe(
     (caller: OperationCaller, repo: NeoRepository) =>

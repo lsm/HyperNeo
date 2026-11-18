@@ -3,6 +3,7 @@ import type {
   MessageDeliveryMode,
   MessageImage,
   ModelInfo,
+  SessionConfig,
   SessionFeatures,
   SessionType,
   ThinkingLevel,
@@ -20,6 +21,7 @@ export interface ChatComposerProps {
   readonly: boolean;
   sessionStatus?: string;
   sessionType?: SessionType;
+  harness?: SessionConfig['harness'];
   thinkingLevel?: ThinkingLevel;
   isProcessing: boolean;
   currentAction?: string;
@@ -68,6 +70,7 @@ export function ChatComposer({
   readonly,
   sessionStatus,
   sessionType,
+  harness,
   thinkingLevel,
   isProcessing,
   currentAction,
@@ -135,6 +138,7 @@ export function ChatComposer({
           modelSwitching={modelSwitching}
           modelLoading={modelLoading}
           onModelSwitch={onModelSwitch}
+          harness={harness}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}

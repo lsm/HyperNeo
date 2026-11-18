@@ -28,6 +28,13 @@ import { archiveSDKSessions, deleteSDKSessions } from '../sdk-session-file-manag
 import type { WorktreeManager } from '../worktree-manager.ts';
 import type { WorkArchived } from '../drivers/types.ts';
 import { admitCreateSessionConfig } from './create-session-config.ts';
+import {
+  codexSessionRefusal,
+  effectiveOxapConfig,
+  engineForProvider,
+  thinkingRefusal,
+} from '../agent/session-engine.ts';
+import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
 import {
   commitSessionInputDraft,
@@ -153,6 +160,25 @@ export class SessionLifecycle {
       params.config?.provider,
       globalSettings
     );
+    const provider = (params.config?.provider ?? resolvedProvider) as Provider;
+    const sandbox = params.config?.sandbox
+      ? { ...globalSettings.sandbox, ...params.config.sandbox }
+      : globalSettings.sandbox;
+    const harness = engineForProvider(provider, () =>
+      this.db.providers.getProviderByProviderId(provider)
+    );
+    if (isOxapHarness(harness)) {
+      const refusal =
+        codexSessionRefusal(
+          effectiveOxapConfig(
+            { ...carriedConfig, sandbox, coordinatorMode: params.config?.coordinatorMode },
+            globalSettings
+          ),
+          false,
+          false
+        ) ?? thinkingRefusal(harness, params.config?.thinkingLevel);
+      if (refusal) throw new Error(refusal);
+    }
 
     const providedTitle = params.title?.trim();
     const shouldSkipAutoTitle = Boolean(providedTitle);
@@ -217,10 +243,9 @@ export class SessionLifecycle {
         autoScroll: params.config?.autoScroll ?? globalSettings.autoScroll,
         thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
         coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
-        provider: (params.config?.provider ?? resolvedProvider) as Provider,
-        sandbox: params.config?.sandbox
-          ? { ...globalSettings.sandbox, ...params.config.sandbox }
-          : globalSettings.sandbox,
+        provider,
+        sandbox,
+        ...(isOxapHarness(harness) ? { harness } : {}),
         settingSources: params.config?.settingSources ?? globalSettings.settingSources,
         ...(params.toolProfile ? { toolProfile: params.toolProfile } : {}),
       },

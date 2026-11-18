@@ -1,4 +1,5 @@
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { CreateStandaloneTaskInput } from '../../storage/tasks/create-task.ts';
 import {
@@ -57,12 +58,20 @@ export function createCreateTaskOperation<Input = CreateStandaloneTaskInput>(
   createTask: CreateTaskFn<Input>,
   options: CreateTaskOperationOptions<Input> = {}
 ) {
+  const create = (superpipe({})('task.create') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(
+      (input: Input, caller: OperationCaller) => createTask(input, caller.sessionId, caller),
+      ['input', 'caller'],
+      'result'
+    )
+    .endAsync('result') as (input: Input, caller: OperationCaller) => Promise<CreateTaskOutput>;
   return defineOperation({
     name: 'task.create',
     description: options.description ?? STANDALONE_CREATE_TASK_DESCRIPTION,
     inputSchema:
       options.inputSchema ?? (StandaloneCreateTaskInputSchema as unknown as z.ZodType<Input>),
     resultSchema: CreateTaskResultSchema,
-    execute: async (input, caller) => createTask(input, caller.sessionId, caller),
+    execute: (input, caller) => create(input, caller),
   });
 }

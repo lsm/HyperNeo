@@ -5,7 +5,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/schedule-operation-delet
   .claude/skills/verify/schedule-operation-delete-writer.ts verify
 ```
 
-Use real operation.invoke schedule.delete requests through a fresh synthetic daemon.
+Use authenticated operation.invoke schedule.delete requests through a fresh synthetic daemon.
 Future at/cron schedules and their pending jobs must disappear together. Missing, repeated
 and foreign-Space requests return schedule_not_found and preserve other records.
 Concurrent deletions have exactly one successful winner and leave no schedule or pending

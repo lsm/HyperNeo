@@ -22,6 +22,7 @@ describe('Writer-backed todo operation activation', () => {
   let gateway: DbGateway;
   let order: string[];
   let stopFailure: string | null;
+  let duringStop: (() => void) | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
   let advance: () => Promise<unknown>;
@@ -34,6 +35,7 @@ describe('Writer-backed todo operation activation', () => {
     gateway = new DbGateway(':memory:', db);
     order = [];
     stopFailure = null;
+    duringStop = null;
     checkDone = true;
     workerRemotes = undefined;
     gateway.onChanges = () => {
@@ -69,6 +71,7 @@ describe('Writer-backed todo operation activation', () => {
       );
     const stop = async () => {
       order.push('stop');
+      duringStop?.();
       return stopFailure;
     };
     const start = async (id: string) => {
@@ -248,6 +251,33 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual(['commit', 'announce']);
   });
 
+  test('a card opened during stop refuses done and reports the session may have stopped', async () => {
+    duringStop = () => {
+      store.askQuestion(
+        'late',
+        'ask',
+        {
+          kind: 'reply',
+          text: 'Answer first',
+          todoId: 'first',
+          options: null,
+          multiple: false,
+          yesLabel: null,
+          noLabel: null,
+        },
+        2
+      );
+    };
+    expect(await call('neo.todo.done', { todoId: 'first' })).toEqual({
+      ok: false,
+      reason:
+        'card_unanswered: card late is still waiting for the human. Its session may have stopped; the todo is unchanged.',
+    });
+    expect(store.getTodo('first')?.state).toBe('todo');
+    expect(store.getQuestion('late')?.state).toBe('open');
+    expect(order).toEqual(['stop']);
+  });
+
   test('done stops first, commits, then lets the queue start the successor', async () => {
     const result = await call('neo.todo.done', { todoId: 'first', reason: 'Finished' });
     expect(result).toMatchObject({ ok: true, todo: { state: 'done' } });
@@ -266,7 +296,7 @@ describe('Writer-backed todo operation activation', () => {
     expect(store.getTodo('peer')?.state).toBe('doing');
   });
 
-  test('done is not refused by an open card or a block on the human; its own card retires and a shared card stays open', async () => {
+  test('done refuses an unanswered linked card and succeeds after its answer', async () => {
     checkDone = false;
     const card = {
       kind: 'reply' as const,
@@ -286,13 +316,22 @@ describe('Writer-backed todo operation activation', () => {
       3
     );
     expect(store.getTodo('first')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+    expect(await call('neo.todo.done', { todoId: 'first', reason: 'No longer needed' })).toEqual({
+      ok: false,
+      reason: 'card_unanswered: card own is still waiting for the human.',
+    });
+    expect(store.getTodo('first')).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+    expect(store.getQuestion('own')?.state).toBe('open');
+    expect(store.getQuestion('shared')?.state).toBe('open');
+    expect(order).toEqual([]);
+    store.answerQuestion(store.getQuestion('own')!, ['Continue'], 'button', 4);
     expect(
       await call('neo.todo.done', { todoId: 'first', reason: 'No longer needed' })
     ).toMatchObject({
       ok: true,
       todo: { state: 'done', evidence: 'No longer needed', blockedBy: null },
     });
-    expect(store.getQuestion('own')?.state).toBe('retired');
+    expect(store.getQuestion('own')?.state).toBe('answered');
     expect(store.getQuestion('shared')?.state).toBe('open');
     expect(order.slice(0, 2)).toEqual(['stop', 'commit']);
   });

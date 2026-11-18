@@ -18,7 +18,7 @@ import type {
 import type { Database } from '../../../../src/storage/database.ts';
 import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine.ts';
 import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
-import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
+import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
 
 function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -207,8 +207,7 @@ describe('AgentSession.clearConversationContext', () => {
         binaryPath: '/synthetic/oapx',
         identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
         stateDirectory: '/synthetic/state',
-        codexExecutable: '/synthetic/codex',
-        codexHome: '/synthetic/home',
+        hub: { adapters: {}, environment: {} },
       };
       type Runtime = NonNullable<
         import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
@@ -224,7 +223,7 @@ describe('AgentSession.clearConversationContext', () => {
       const agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'oxap-codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex', provider: 'anthropic-codex' },
         } as Partial<Session>,
         makeEventBus(),
         proxy
@@ -250,6 +249,7 @@ describe('AgentSession.clearConversationContext', () => {
       );
       expect(error).toBeInstanceOf(ClearConversationUnsupportedError);
       expect((error as Error).message).toMatch(/could not clear/i);
+      if (failure === 'open') expect(client.request).toHaveBeenCalled();
       expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(

@@ -58,7 +58,7 @@ const DESCRIPTION =
   'List append-only history events for a goal to understand why its rolling state changed; returns newest-first events. Returns { accepted: true, total, events } or { accepted: false, reason }.';
 
 export function createListGoalEventsOperation(deps: ListGoalEventsDependencies) {
-  const listGoalEvents = (superpipe({ deps })('goal-events-list') as PipelineAPI)
+  const listGoalEvents = (superpipe({ deps })('goal.event.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitGoalEventListing, ['input', 'caller', 'deps'], 'result:outcome')
     .pipe(readGoalEvents, ['outcome', 'input', 'deps'], 'outcome')

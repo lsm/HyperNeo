@@ -57,9 +57,10 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
       async (schedule: SessionSchedule): Promise<Gate<SessionSchedule>> => {
         const status = await deps.status(schedule.target);
         if (status === 'not_found' || status === 'not_open') return finish(schedule, 'target_gone');
-        if (status === 'running' || status === 'queued' || status === 'stopped')
+        const alwaysFire = scheduler.source(schedule.sourceKind)?.alwaysFire;
+        if (status === 'stopped' || (!alwaysFire && (status === 'running' || status === 'queued')))
           return finish(schedule, 'skipped_busy');
-        if (status === 'needs_you') return finish(schedule, 'skipped_needs_you');
+        if (status === 'needs_you' && !alwaysFire) return finish(schedule, 'skipped_needs_you');
         return { value: schedule };
       },
       'run',
@@ -92,11 +93,11 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         const facts = await scheduler.facts(schedule);
         if (!facts) return finish(schedule, 'source_gone');
         const nudge = facts.digest === schedule.factsDigest;
-        if (nudge && limit === null) {
+        if (nudge && limit === null && !source.alwaysFire) {
           const quiet = { ...schedule, dueCount: schedule.dueCount + 1 };
           return finish(quiet, 'skipped_unchanged');
         }
-        const text = source.message(schedule.sourceId, { summary: facts.summary, nudge });
+        const text = await source.message(schedule.sourceId, { summary: facts.summary, nudge });
         if (text === null) return finish(schedule, 'source_gone');
         return {
           value: {

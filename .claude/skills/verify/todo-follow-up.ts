@@ -92,6 +92,26 @@ try {
   };
   finished('plan-ask', 'plan-step', true);
   finished('plain-ask', 'plain-step', false);
+  const removedFollowUp = service.todos.addTodo(
+    'removed-follow-up',
+    'plan-ask',
+    {
+      title: 'Removed work', doneWhen: 'Done', check: null, instruction: null, named: null,
+      dependsOn: ['plan-step'],
+    },
+    at
+  );
+  service.todos.updateTodo(removedFollowUp, { state: 'removed', reason: 'Obsolete' }, at);
+  const unrelated = service.todos.addTodo(
+    'unrelated-step',
+    'plan-ask',
+    {
+      title: 'Unrelated work', doneWhen: 'Done', check: null, instruction: null, named: null,
+      dependsOn: [],
+    },
+    at
+  );
+  service.todos.updateTodo(unrelated, { state: 'done' }, at);
   const wakeUuid = (askId: string) =>
     neoFinishedAskUuids({
       id: askId,
@@ -167,7 +187,10 @@ try {
   service.todos.addTodo(
     'build-step',
     'plan-ask',
-    { title: 'Build it', doneWhen: 'Merged', check: null, instruction: null, named: null },
+    {
+      title: 'Build it', doneWhen: 'Merged', check: null, instruction: null, named: null,
+      dependsOn: ['plan-step'],
+    },
     at
   );
   service.todos.updateTodo(service.todos.getTodo('build-step')!, { state: 'done' }, at);

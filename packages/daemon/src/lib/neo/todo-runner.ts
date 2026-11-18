@@ -38,6 +38,7 @@ import {
   readDriverIdentity,
   readDriverInputs,
   readDriverFollowUp,
+  readDriverFolder,
   isWaitingOnPrompt,
   readDriverLastInputAt,
   readDriverLive,
@@ -75,6 +76,7 @@ type Startable = {
   ask: NeoAsk;
   target: Extract<NeoDriverTarget, { verb: 'start' | 'send' }>;
   moved?: string;
+  replaced?: WorkRef;
 };
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
@@ -438,7 +440,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return { ok: true as const, todo: blocked };
   };
 
-  const dispatch = async ({ todo, ask, target, moved }: Startable) => {
+  const dispatch = async ({ todo, ask, target, moved, replaced }: Startable) => {
     const status = target.verb === 'send' ? await refreshIdentity(todo.id, target.ref, ask) : null;
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const exclusions =
@@ -470,11 +472,22 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           ? await names?.(target.adapter, target.place)
           : undefined
       );
-      if (target.verb === 'start' && prepare?.workerStartBrief)
-        call.input.message = prepare.workerStartBrief(
+      if (target.verb === 'start' && prepare?.workerStartBrief) {
+        const oldStatus =
+          replaced && !replaced.daemon
+            ? await deps.invoke(caller(ask), 'work.status', { ref: replaced }).catch(() => null)
+            : null;
+        const folder = oldStatus ? readDriverFolder(oldStatus) : undefined;
+        call.input.message = await prepare.workerStartBrief(
           String(call.input.message),
-          target.preparationParameters
+          replaced
+            ? {
+                ...target.preparationParameters,
+                replacedWorker: { ...replaced, ...(folder ? { folder } : {}) },
+              }
+            : target.preparationParameters
         );
+      }
       if (target.verb === 'start' && prepare?.prepareExecution && workerSandboxOn(target.sandbox))
         call.input.preparation = {
           pack: prepare.id,
@@ -716,7 +729,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const claimAndDispatch = (superpipe({})('neo.todo.start') as PipelineAPI)
-    .input(['todoId'])
+    .input(['todoId', 'replaced'])
     .pipe(async (todoId: string) => (await trackerHolds())[todoId] ?? null, 'todoId', 'hold')
     .pipe(chooseTarget, ['todoId', 'hold'], 'chosen')
     .pipe(
@@ -736,7 +749,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       async (
         receipt: ReturnType<InstanceType<typeof neoTodoRunnerWrites.Repository>['claim']>,
         chosen: { value: NeoTodoTarget | null; note?: string },
-        todoId: string
+        todoId: string,
+        replaced?: WorkRef
       ): Promise<Gate<Startable>> => {
         if (receipt.changed) deps.changed();
         const refused = !receipt.ok && chosen.value?.verb === 'start' && store.getTodo(todoId);
@@ -757,16 +771,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
                       ? chosen.value
                       : receipt.target,
                   ...(chosen.note ? { moved: chosen.note } : {}),
+                  ...(replaced ? { replaced } : {}),
                 },
               }
             : { reason: { ok: true, todo: receipt.todo, records: receipt.records ?? [] } };
       },
-      ['receipt', 'chosen', 'todoId'],
+      ['receipt', 'chosen', 'todoId', 'replaced'],
       'result:outcome'
     )
     .pipe(dispatch, 'outcome', 'outcome')
     .endAsync('outcome') as (
-    todoId: string
+    todoId: string,
+    replaced?: WorkRef
   ) => Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
   const queue = createWorkQueue<NudgeClaim>(
@@ -796,11 +812,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const fill = () => queue.fill();
   const advance = () => fill().catch(() => undefined);
 
-  const start = async (todoId: string) => {
+  const start = async (todoId: string, replaced?: WorkRef) => {
     const tracked = starting.has(todoId);
     starting.add(todoId);
     try {
-      return await claimAndDispatch(todoId);
+      return await claimAndDispatch(todoId, replaced);
     } finally {
       if (!tracked) starting.delete(todoId);
     }

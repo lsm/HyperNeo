@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
@@ -19,6 +20,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { synthetic: true, usedRealOap: false };
 try {
+  answerCodexProbeLocally();
   app = await createDaemonApp({
     config: {
       ...getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace') }),
@@ -43,23 +45,51 @@ try {
   hub.registerTransport(transport);
   await transport.initialize();
   await hub.request('providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic provider', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
-  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  await hub.request('providers.create', oxapCodexProvider);
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Codex', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const stored = app.db.getSession(sessionId);
   assert.equal(stored?.config.harness, 'oxap-codex');
   const update = await hub.request('session.update', { sessionId, config: { harness: 'sdk' } }).then(() => 'accepted', (error: Error) => error.message);
   assert.match(update, /harness/i);
   const guardUpdate = await hub.request('session.update', { sessionId, config: { workerOperations: true } }).then(() => 'accepted', (error: Error) => error.message);
   assert.match(guardUpdate, /Codex.*not supported/i);
+  const refusedBy = (method: string, params: Record<string, unknown>) => hub.request<Record<string, unknown>>(method, params).then((value) => value, (error: Error) => error.message);
+  const clientHarness = await refusedBy('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic client harness', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  assert.match(String(clientHarness), /does not accept config field\(s\): harness/);
+  const { sessionId: sdkSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic Claude Code', config: { model: 'haiku', provider: 'anthropic' } });
+  assert.equal(app.db.getSession(sdkSession)?.config.harness, undefined);
+  const before = JSON.stringify(app.db.getSession(sessionId)?.config);
+  const doors = {
+    sdkToOxap: await refusedBy('session.update', { sessionId: sdkSession, config: { provider: 'anthropic-codex', model: OXAP_CODEX_MODEL } }),
+    oxapToSdk: await refusedBy('session.update', { sessionId, config: { provider: 'anthropic', model: 'haiku' } }),
+    planMode: await refusedBy('session.update', { sessionId, config: { permissionMode: 'plan' } }),
+    thinkingUpdate: await refusedBy('session.update', { sessionId, config: { thinkingLevel: 'think16k' } }),
+    thinkingSet: await refusedBy('session.thinking.set', { sessionId, level: 'think16k' }),
+    sandboxSwitch: await refusedBy('session.sandbox.switch', { sessionId, sandboxEnabled: true }),
+    coordinatorSwitch: await refusedBy('session.coordinator.switch', { sessionId, coordinatorMode: true }),
+  };
+  assert.match(String(doors.sdkToOxap), /Claude Code chat cannot move to an OXAP Codex provider/);
+  assert.match(String(doors.oxapToSdk), /OXAP Codex chat cannot change its provider/);
+  assert.match(String(doors.planMode), /on-request approval in the workspace; this restriction is not supported/);
+  assert.match(String(doors.thinkingUpdate), /OXAP Codex does not take a thinking level/);
+  assert.match(String(doors.thinkingSet), /OXAP Codex does not take a thinking level/);
+  assert.match(JSON.stringify(doors.sandboxSwitch), /this restriction is not supported/);
+  assert.match(JSON.stringify(doors.coordinatorSwitch), /this restriction is not supported/);
+  assert.equal(JSON.stringify(app.db.getSession(sessionId)?.config), before);
+  assert.equal(app.db.getSession(sdkSession)?.config.provider, 'anthropic');
+  evidence.refusedDoors = doors;
+  evidence.storedConfigUnchanged = true;
+  evidence.clientHarnessRefused = clientHarness;
   await hub.request('message.send', { sessionId, content: 'Synthetic request' }).catch(() => {});
   const deadline = Date.now() + 10_000;
-  while (!errors.some((message) => /OAP configuration is incomplete/i.test(message))) {
+  while (!errors.some((message) => /OXAP hub is not installed/.test(message))) {
     assert(Date.now() < deadline, `missing visible workspace refusal: ${JSON.stringify(errors)}`);
     await new Promise((done) => setTimeout(done, 50));
   }
   assert.equal(gateCalls, 0);
   assert.deepEqual(app.sessionManager.getTrackedAgentRootPidsSplit().live, []);
   assert.equal(app.db.getSession(sessionId)?.config.harness, 'oxap-codex');
-  const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  const { sessionId: syntheticSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP query', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(syntheticSession);
   assert(agent);
   const submissions: string[] = [];
@@ -146,7 +176,7 @@ try {
   assert.equal(errors.length, errorsBeforeTurns);
   agent.messageQueue.clear();
   await agent.lifecycleManager.stop({ timeoutMs: 100, catchQueryErrors: true });
-  const { sessionId: orderSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP order', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  const { sessionId: orderSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP order', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const orderAgent = app.sessionManager.getSession(orderSession);
   assert(orderAgent);
   let orderTurn = 0;
@@ -188,7 +218,7 @@ try {
   }
   evidence.chronologicalToolRows = true;
   evidence.abruptStreamPartialSaved = true;
-  const { sessionId: interruptSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP interrupt', config: { model: 'haiku', provider: 'anthropic', harness: 'oxap-codex' } });
+  const { sessionId: interruptSession } = await hub.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic OAP interrupt', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const interruptAgent = app.sessionManager.getSession(interruptSession);
   assert(interruptAgent);
   let entered!: () => void;
@@ -261,7 +291,7 @@ try {
   evidence.persistedHarness = 'oxap-codex';
   evidence.updateRefused = true;
   evidence.workerOperationsRefused = true;
-  evidence.visibleRefusal = errors.find((message) => /OAP configuration is incomplete/i.test(message));
+  evidence.visibleRefusal = errors.find((message) => /OXAP hub is not installed/.test(message));
   evidence.sdkStartupGateCalls = gateCalls;
   evidence.trackedAgentProcesses = 0;
   evidence.syntheticTurnsFinished = submissions.length;

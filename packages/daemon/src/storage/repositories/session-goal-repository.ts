@@ -9,8 +9,16 @@ import type {
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SessionSchedule } from './session-schedule-repository.ts';
+import { gatewayFor } from '../db-gateway/db-gateway.ts';
+import { sessionGoalReviewReads } from './session-goal-review-read-worker.ts';
 
-type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'> & {
+  reviewCadence?: SessionSchedule['cadence'];
+  noEffectReviewLimit?: number;
+  noEffectReviewCount?: number;
+  escalationReviewId?: string;
+  escalationQuestionId?: string;
+};
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -69,6 +77,10 @@ export class SessionGoalRepository {
         )
         .all(ownerSessionId, includeClosed ? 1 : 0) as Row[]
     ).map(toGoal);
+  }
+
+  async listScheduled(): Promise<SessionGoal[]> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'scheduled');
   }
 
   create(
@@ -211,6 +223,17 @@ export class SessionGoalRepository {
       .run(JSON.stringify(config), id);
   }
 
+  recentReviewEffects(
+    id: string,
+    after: string | undefined,
+    limit: number
+  ): { id: string; effect: string }[] {
+    return this.listJournal(id, null, limit, after ?? null).map(({ id, effect }) => ({
+      id,
+      effect,
+    }));
+  }
+
   recordFacts(id: string, lines: readonly string[]): void {
     this.db
       .prepare('UPDATE neo_goals SET facts_lines = ? WHERE id = ?')
@@ -224,15 +247,39 @@ export class SessionGoalRepository {
     return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
   }
 
-  listJournal(goalId: string, before: string | null, limit: number): GoalJournalEntry[] {
+  async metricSnapshot(goalId: string, runId?: string) {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'metric', goalId, runId);
+  }
+
+  listJournal(
+    goalId: string,
+    before: string | null,
+    limit: number,
+    reviewsAfter?: string | null
+  ): GoalJournalEntry[] {
     return (
       this.db
         .prepare(
-          `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
+          reviewsAfter !== undefined
+            ? `${JOURNAL_SELECT} WHERE goal_id = ?
+           AND run_id LIKE 'goal-review:%' AND rowid > COALESCE(
+             (SELECT rowid FROM goal_journal WHERE goal_id = ? AND id = ?), 0)
+           ORDER BY rowid DESC LIMIT ?`
+            : `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
              (SELECT created_at, rowid FROM goal_journal WHERE id = ?))
            ORDER BY created_at DESC, rowid DESC LIMIT ?`
         )
-        .all(goalId, before, before, limit) as JournalRow[]
+        .all(
+          goalId,
+          ...(reviewsAfter !== undefined ? [goalId, reviewsAfter] : [before, before]),
+          limit
+        ) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
+  }
+
+  async journalSinceReview(
+    goalId: string
+  ): Promise<{ entries: GoalJournalEntry[]; earlier: number; cursor: string }> {
+    return gatewayFor(this.db).call(sessionGoalReviewReads, 'journal', goalId);
   }
 }

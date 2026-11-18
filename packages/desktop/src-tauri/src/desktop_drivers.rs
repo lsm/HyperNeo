@@ -352,6 +352,10 @@ impl Drivers {
             return Ok(json!({"dialogs": dialogs, "texts": texts}));
         }
         #[cfg(test)]
+        if request.action == "fixture-dialog-buttons" {
+            return Ok(json!({"buttons": grants::dialog_buttons()}));
+        }
+        #[cfg(test)]
         if request.action == "fixture-slots" {
             let slots = self.workers.lock().await;
             return Ok(

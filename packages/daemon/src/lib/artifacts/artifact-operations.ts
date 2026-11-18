@@ -200,7 +200,7 @@ const LIST_DESCRIPTION =
   'List the artifacts recorded on the calling agent workflow run, optionally narrowed by nodeId or shape. The workflow run is resolved from the calling node-agent session, never from input. Returns { accepted: false, reason } on admission denial: node_caller_denied when the caller is not a workflow worker and not_a_node_agent when no node execution backs the session.';
 
 export function createArtifactSaveOperation(deps: ArtifactOperationDependencies) {
-  const run = (superpipe({ deps })('save-artifact') as PipelineAPI)
+  const run = (superpipe({ deps })('workflow.run.artifact.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitArtifactCaller, 'caller', 'result:outcome')
     .pipe(resolveArtifactContext, ['outcome', 'deps'], 'result:outcome')
@@ -220,7 +220,7 @@ export function createArtifactSaveOperation(deps: ArtifactOperationDependencies)
 }
 
 export function createArtifactListOperation(deps: ArtifactOperationDependencies) {
-  const run = (superpipe({ deps })('list-artifacts') as PipelineAPI)
+  const run = (superpipe({ deps })('workflow.run.artifact.list') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitArtifactCaller, 'caller', 'result:outcome')
     .pipe(resolveArtifactContext, ['outcome', 'deps'], 'result:outcome')

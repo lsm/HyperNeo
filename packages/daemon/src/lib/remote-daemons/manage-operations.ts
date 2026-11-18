@@ -98,7 +98,7 @@ export async function probeRemoteDaemon(
   }
 }
 
-const runListDaemons = (superpipe({})('list-remote-daemons') as PipelineAPI)
+const runListDaemons = (superpipe({})('daemon.list') as PipelineAPI)
   .input(['input', 'caller', 'registry'])
   .pipe(requireRpcDaemonCaller, ['input', 'caller'], 'result:outcome')
   .pipe(listRemoteDaemons, ['outcome', 'registry'], 'outcome')
@@ -108,7 +108,7 @@ const runListDaemons = (superpipe({})('list-remote-daemons') as PipelineAPI)
   registry: RemoteDaemonRegistry
 ) => Promise<ListResult>;
 
-const runDetachDaemon = (superpipe({})('detach-remote-daemon') as PipelineAPI)
+const runDetachDaemon = (superpipe({})('daemon.detach') as PipelineAPI)
   .input(['input', 'caller', 'registry'])
   .pipe(requireRpcDaemonCaller, ['input', 'caller'], 'result:outcome')
   .pipe(detachRemoteDaemon, ['outcome', 'registry'], 'outcome')
@@ -118,7 +118,7 @@ const runDetachDaemon = (superpipe({})('detach-remote-daemon') as PipelineAPI)
   registry: RemoteDaemonRegistry
 ) => Promise<DetachResult>;
 
-const runProbeDaemon = (superpipe({})('probe-remote-daemon') as PipelineAPI)
+const runProbeDaemon = (superpipe({})('daemon.probe') as PipelineAPI)
   .input(['input', 'caller', 'registry'])
   .pipe(requireRpcDaemonCaller, ['input', 'caller'], 'result:outcome')
   .pipe(probeRemoteDaemon, ['outcome', 'registry'], 'outcome')

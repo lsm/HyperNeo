@@ -748,6 +748,11 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     }));
   }
 
+  fenceWorkerRelease(ref: WorkRef, now: number): 'fenced' | 'live' | 'not_started_by_us' {
+    if (readStartedWork(this.db, null, undefined, ref).length === 0) return 'not_started_by_us';
+    return this.fenceRelease(ref, now) ? 'fenced' : 'live';
+  }
+
   fenceRelease(ref: WorkRef, now: number): boolean {
     if (this.doingTodoOn(ref, null, LIVE_TODO_STATES)) return false;
     if (this.liveTodo(this.startedFacts(ref)?.claimedBy ?? null)) return false;
@@ -838,6 +843,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'markWorkerUnusable',
     'queueOn',
     'fenceRelease',
+    'fenceWorkerRelease',
     'claimWorker',
     'unclaimWorker',
     'recordReleased',

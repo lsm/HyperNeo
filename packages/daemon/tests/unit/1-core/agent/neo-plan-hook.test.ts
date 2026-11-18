@@ -20,7 +20,8 @@ test('SDK start hooks rehydrate all plans and prompt hooks send only changes', a
   expect(await invoke('SessionStart')).toMatchObject({
     hookSpecificOutput: {
       hookEventName: 'SessionStart',
-      additionalContext: 'Open plans\nAsk a [open] topic=OAP Original questions=0',
+      additionalContext:
+        'Open plans\nTopics used in the last 30 days (asks open or settled): none\nAsk a [open] topic=OAP Original questions=0',
     },
   });
   expect(await invoke('UserPromptSubmit')).toEqual({});
@@ -33,7 +34,8 @@ test('SDK start hooks rehydrate all plans and prompt hooks send only changes', a
   });
   expect(await invoke('SessionStart', 'resume')).toMatchObject({
     hookSpecificOutput: {
-      additionalContext: 'Open plans\nAsk a [open] topic=OAP Changed questions=0',
+      additionalContext:
+        'Open plans\nTopics used in the last 30 days (asks open or settled): none\nAsk a [open] topic=OAP Changed questions=0',
     },
   });
 });

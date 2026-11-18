@@ -33,9 +33,12 @@ async function until<T>(read: () => T | null | undefined, message: string, timeo
 const transcript = (sessionId: string) => db.query('SELECT sdk_uuid, sdk_message AS content FROM sdk_messages WHERE session_id = ? ORDER BY rowid').all(sessionId) as { sdk_uuid: string; content: string }[];
 
 const root = (await rpc('neo.open', {})).sessionId;
+const otherParent = (await rpc('rpc:session.create', { workspacePath: run, title: 'Independent parent' })).sessionId;
+const other = await rpc('goal.session.create', { ownerSessionId: otherParent, title: 'Other goal', doneTest: 'Done', ownSession: true, reviewCadence: { kind: 'every', everyMs: 60000 } });
+assert(other.accepted, 'Could not create another goal session');
 const created = await rpc('goal.session.create', {
   ownerSessionId: root, title: 'Market the adapter guide', doneTest: 'Ten readers a week',
-  cadence: { kind: 'every', everyMs: 60000 }, ownSession: true,
+  cadence: { kind: 'every', everyMs: 60000 }, reviewCadence: { kind: 'every', everyMs: 90000 }, ownSession: true,
 });
 evidence.created = created;
 assert(created.accepted, JSON.stringify(created));
@@ -45,7 +48,9 @@ const session = db.query('SELECT id, title, status, parent_id AS parent_session_
 evidence.session = session;
 assert(owner !== root && session?.parent_session_id === root && session.title === 'Goal: Market the adapter guide', 'Goal did not start its own session under Neo');
 const schedule = () => db.query("SELECT * FROM session_schedules WHERE source_kind = 'goal' AND source_id = ?").get(goalId) as Record<string, string> | null;
+const reviewSchedule = () => db.query("SELECT * FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(goalId) as Record<string, string> | null;
 assert(JSON.parse(schedule()!.target).id === owner, 'Schedule does not target the goal session');
+assert(JSON.parse(reviewSchedule()!.target).id === owner, 'Review schedule does not target the goal session');
 const isWake = (row: { sdk_uuid: string }) => row.sdk_uuid?.startsWith('schedule:');
 const returns = () => transcript(root).filter((row) => row.content.includes('分身 returned'));
 const journaled = (runId: string) => until(() => db.query('SELECT * FROM goal_journal WHERE goal_id = ? AND run_id = ?').get(goalId, runId) as Record<string, string> | null, `Goal session did not journal ${runId}`);
@@ -55,23 +60,29 @@ assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`))
 const work = await until(() => transcript(owner).find(isWake), 'No work wake reached the goal session');
 evidence.workWake = work;
 assert(work.content.includes('This session owns the goal below.') && work.content.includes(`runId ${work.sdk_uuid}`) && !work.content.includes('neo.home.read') && !work.content.includes('Read the journal pages and rewrite'), 'First wake was not a plain goal-session work wake');
+assert(work.content.includes('using the delivery method named in the wake'), 'Goal cycle does not defer review routing to the wake');
 const workEntry = await journaled(work.sdk_uuid);
 evidence.workEntry = workEntry;
 assert(workEntry.session_id === owner, 'Work journal entry is not from the goal session');
-await finished('Journaled the work run.');
 evidence.returnsAfterWork = returns().length;
 assert(returns().length === 0, 'An ordinary work run reported to Neo');
+await finished('Journaled the work run.');
+const dueReview = db.query("SELECT last_outcome FROM session_schedules WHERE source_kind = 'goal_review' AND source_id = ?").get(goalId) as { last_outcome: string } | null;
+assert(dueReview?.last_outcome === 'fired', 'Review did not fire while the work turn was running');
 
-for (let index = 0; index < 9; index++)
-  await rpc('goal.journal.append', { ownerSessionId: owner, goalId, runId: `seed-${index}`, done: `Seed ${index}`, effect: 'None yet', worked: 'Unknown' });
-const wake = await until(() => transcript(owner).find((row) => isWake(row) && row.content.includes('Read the journal pages and rewrite')), 'No review wake reached the goal session');
+const wake = await until(() => transcript(owner).find((row) => isWake(row) && row.content.includes('Journal entries since the previous review')), 'No review wake reached the goal session', 180000);
 evidence.reviewWake = wake;
-const runId = wake.sdk_uuid;
-assert(wake.content.includes(`runId ${runId}`) && !wake.content.includes('neo.home.read'), 'Review wake did not carry the goal-session cycle');
+const runId = /runId (goal-review:[^, ]+)/.exec(wake.content)?.[1];
+assert(runId, 'Review wake lacks its journal run id');
+assert(wake.content.includes(`runId ${runId}`) && wake.content.includes('Posted the guide in two forums'), 'Review wake did not carry the prior journal entry');
 evidence.schedule = schedule();
 const entry = await journaled(runId);
 evidence.entry = entry;
-assert(entry.session_id === owner && entry.effect === 'Three readers arrived', 'Review journal entry is not from the goal session');
+assert(entry.session_id === owner && entry.effect === 'yes', 'Review journal entry is not from the goal session');
+const journal = await rpc('goal.journal.list', { ownerSessionId: owner, goalId });
+assert(journal.entries.some((item: { runId: string; done: string; effect: string }) => item.runId === runId && item.done.includes('Review:') && item.effect === 'yes'), 'Review result is not readable from the journal');
+const listed = await rpc('schedule.session.list', { target: { adapter: 'hyperneo', id: owner } });
+assert(listed.schedules.filter((item: { sourceId: string }) => item.sourceId === goalId).length === 2, 'Both schedules are not readable');
 const note = await until(() => db.query('SELECT works_note FROM neo_goals WHERE id = ? AND works_note IS NOT NULL').get(goalId) as { works_note: string } | null, 'Goal session did not rewrite its what-works note');
 evidence.note = note;
 const review = await until(() => transcript(root).find((row) => row.content.includes(`Review of goal ${goalId}`)), 'Neo did not receive the review summary');
@@ -81,9 +92,14 @@ evidence.returnsAfterReview = returns().length;
 assert(review.content.includes(owner) && returns().length === 1, 'Neo did not receive exactly the review summary');
 assert(!transcript(root).some((row) => row.content.includes(`goalId ${goalId}`)), 'A wake reached root Neo');
 
+const otherReview = await until(() => transcript(root).find((row) => row.content.includes(`Review of goal ${other.goal.id}`)), 'Neo did not receive the other goal session review');
+evidence.otherReview = otherReview;
+const otherJournal = await rpc('goal.journal.list', { ownerSessionId: other.goal.ownerSessionId, goalId: other.goal.id });
+assert(otherJournal.entries.some((item: { runId: string | null; effect: string }) => item.runId?.startsWith('goal-review:') && item.effect === 'yes'), 'Other goal session review was not journaled');
+
 const closed = await rpc('goal.session.update', { ownerSessionId: owner, goalId, status: 'completed' });
 evidence.closed = closed;
-assert(closed.goal?.status === 'completed' && !schedule(), 'Closing the goal kept its wake');
+assert(closed.goal?.status === 'completed' && !schedule() && !reviewSchedule(), 'Closing the goal kept a wake');
 const released = db.query('SELECT id, status FROM sessions WHERE id = ?').get(owner) as Record<string, string> | null;
 evidence.released = released;
 assert(released?.status === 'active', 'Closing the goal removed its session');

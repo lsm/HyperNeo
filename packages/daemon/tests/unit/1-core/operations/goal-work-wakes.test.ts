@@ -89,6 +89,343 @@ describe('goal work wakes', () => {
     expect(messages[1]).toContain('Nothing moved; check what can advance.');
   });
 
+  test('a goal has an independently configured review schedule that follows its lifecycle', async () => {
+    const goal = await create({ reviewCadence: { kind: 'every', everyMs: 120_000 } });
+    const review = () => scheduler.repo.getBySource('goal_review', goal.id);
+    expect(review()).toMatchObject({
+      cadence: { kind: 'every', everyMs: 120_000 },
+      status: 'active',
+    });
+    await call('goal.session.update', { goalId: goal.id, status: 'paused' });
+    expect(review()?.status).toBe('paused');
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(review()?.status).toBe('active');
+    await call('goal.session.update', { goalId: goal.id, status: 'completed' });
+    expect(review()).toBeNull();
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(review()).toMatchObject({
+      cadence: { kind: 'every', everyMs: 120_000 },
+      status: 'active',
+    });
+    await call('goal.session.update', {
+      goalId: goal.id,
+      reviewCadence: { kind: 'every', everyMs: 180_000 },
+    });
+    expect(review()?.cadence).toEqual({ kind: 'every', everyMs: 180_000 });
+  });
+
+  test('consecutive reviews without effect pause the goal and open one human question', async () => {
+    const goal = await create();
+    const asks = new NeoAskTodoRepository(db);
+    const review = async (run: number, effect: 'yes' | 'no') =>
+      call('goal.journal.append', {
+        goalId: goal.id,
+        runId: `goal-review:synthetic:${run}`,
+        done: 'Reviewed the outcome',
+        effect,
+        worked: 'Keep exploring',
+      });
+    await review(1, 'no');
+    await review(2, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(0);
+    await review(3, 'yes');
+    await review(4, 'no');
+    await review(5, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    await review(6, 'no');
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+    expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('paused');
+    const goalAsks = asks.listGoalAsks(goal.id);
+    expect(goalAsks).toHaveLength(1);
+    expect(asks.listQuestions(goalAsks[0]!.id)).toEqual([
+      expect.objectContaining({ state: 'open', text: expect.stringContaining('effect') }),
+    ]);
+    expect(await call('goal.session.update', { goalId: goal.id, status: 'active' })).toMatchObject({
+      accepted: false,
+      reason: expect.stringContaining('review_question_open'),
+    });
+    const question = asks.listQuestions(goalAsks[0]!.id)[0]!;
+    asks.answerQuestion(question, 'Try a new audience', 'button', now);
+    expect(
+      await call('goal.session.update', {
+        goalId: goal.id,
+        status: 'active',
+        nextSteps: ['Try a new audience'],
+      })
+    ).toMatchObject({ accepted: true });
+    expect(await fire(goal.id)).toEqual({ outcome: 'fired' });
+    expect(messages.at(-1)).toContain('Try a new audience');
+    await review(7, 'no');
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    expect(asks.listGoalAsks(goal.id)).toHaveLength(1);
+  });
+
+  test('the no-effect review threshold is configurable on the goal', async () => {
+    const goal = await create({ noEffectReviewLimit: 2 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(2);
+    await call('goal.session.update', { goalId: goal.id, noEffectReviewLimit: 1 });
+    expect((await call('goal.session.get', { goalId: goal.id })).goal.noEffectReviewLimit).toBe(1);
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: 'goal-review:synthetic:1',
+      done: 'Reviewed',
+      effect: 'no',
+      worked: 'Explore',
+    });
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('paused');
+  });
+
+  test('a failed human question rolls back the review and keeps the schedules active', async () => {
+    const goal = await create({ noEffectReviewLimit: 1 });
+    const open = spyOn(NeoAskTodoRepository.prototype, 'openAsk').mockImplementationOnce(() => {
+      throw new Error('question storage unavailable');
+    });
+    try {
+      await expect(
+        call('goal.journal.append', {
+          goalId: goal.id,
+          runId: 'goal-review:synthetic:1',
+          done: 'Reviewed',
+          effect: 'no',
+          worked: 'Explore',
+        })
+      ).rejects.toThrow('question storage unavailable');
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toEqual([]);
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+      expect(scheduler.repo.getBySource('goal_review', goal.id)?.status).toBe('active');
+      expect(new NeoAskTodoRepository(db).listGoalAsks(goal.id)).toEqual([]);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  test.each(['retired', 'settled', 'replaced'] as const)(
+    'an escalation question that is %s does not strand the goal',
+    async (state) => {
+      const goal = await create({ noEffectReviewLimit: 1 });
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId: 'goal-review:synthetic:1',
+        done: 'Reviewed',
+        effect: 'no',
+        worked: 'Explore',
+      });
+      const asks = new NeoAskTodoRepository(db);
+      const ask = asks.listGoalAsks(goal.id)[0]!;
+      const original = asks.listQuestions(ask.id)[0]!;
+      if (state === 'settled') asks.settleAsk(ask, 'done', 'Closed', now);
+      else if (state === 'retired') asks.retireQuestion(original, 'No longer current', null, now);
+      else
+        asks.replaceQuestion(
+          original,
+          'replacement',
+          {
+            text: 'What should change?',
+            kind: 'reply',
+            options: null,
+            multiple: false,
+            noLabel: null,
+            yesLabel: null,
+          },
+          now
+        );
+      expect(
+        await call('goal.session.update', { goalId: goal.id, status: 'active' })
+      ).toMatchObject({ accepted: false, reason: expect.stringContaining('review_question_open') });
+      const open = asks
+        .listGoalAsks(goal.id)
+        .flatMap((item) => asks.listQuestions(item.id))
+        .filter((question) => question.state === 'open');
+      expect(open).toHaveLength(1);
+      asks.answerQuestion(open[0]!, 'Try a new audience', 'button', now);
+      expect(
+        await call('goal.session.update', {
+          goalId: goal.id,
+          status: 'active',
+          nextSteps: ['Try a new audience'],
+        })
+      ).toMatchObject({ accepted: true });
+      expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    }
+  );
+
+  test('review wakes carry new journal entries and note on every due time', async () => {
+    const goal = await create();
+    const review = () => scheduler.repo.getBySource('goal_review', goal.id)!;
+    expect(review().cadence).toEqual({ kind: 'every', everyMs: 86_400_000 });
+    await call('goal.session.update', { goalId: goal.id, worksNote: 'Existing note' });
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'First work',
+      effect: 'Readers',
+      worked: 'Examples',
+    });
+    const fireReview = async () => {
+      const row = review();
+      now = row.nextRunAt!;
+      return createSessionScheduleFire({
+        scheduler,
+        status: async () => 'done',
+        deliver: async (_row, _id, text) => {
+          messages.push(text);
+        },
+      })(jobs.getJob(row.pendingJobId!)!);
+    };
+    expect(await fireReview()).toEqual({ outcome: 'fired' });
+    expect(messages[0]).toContain('First work');
+    expect(messages[0]).toContain('Existing note');
+    const runId = messages[0].match(/runId (goal-review:[^, ]+)/)![1];
+    expect(
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: 'Review summary',
+        effect: 'unclear',
+        worked: 'Examples',
+      })
+    ).toMatchObject({ accepted: false, reason: expect.stringContaining('review_effect_required') });
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId,
+      done: 'Review summary',
+      effect: 'yes',
+      worked: 'Examples',
+    });
+    await call('goal.session.update', { goalId: goal.id, worksNote: 'Updated note' });
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'Second work',
+      effect: 'None',
+      worked: 'Try again',
+    });
+    expect(await fireReview()).toEqual({ outcome: 'fired' });
+    expect(messages[1]).toContain('Second work');
+    expect(messages[1]).not.toContain('First work');
+    expect(messages[1]).toContain('Updated note');
+    expect((await call('goal.journal.list', { goalId: goal.id })).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId, done: 'Review summary', effect: 'yes' }),
+      ])
+    );
+  });
+
+  test('a review wake bounds journal entries and points to earlier pages', async () => {
+    const goal = await create();
+    for (let i = 0; i < 25; i++)
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        done: `entry-${String(i).padStart(2, '0')}-unique`,
+        effect: 'None',
+        worked: 'Read',
+      });
+    const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+    now = row.nextRunAt!;
+    await createSessionScheduleFire({
+      scheduler,
+      status: async () => 'done',
+      deliver: async (_row, _id, text) => {
+        messages.push(text);
+      },
+    })(jobs.getJob(row.pendingJobId!)!);
+    expect(messages[0]).not.toContain('entry-00-unique');
+    expect(messages[0]).toContain('entry-05-unique');
+    expect(messages[0]).toContain('entry-24-unique');
+    expect(messages[0]).toContain('5 earlier');
+    expect(messages[0]).toContain('goal.journal.list');
+  });
+
+  test('an empty review wake does not suggest paging with an empty cursor', async () => {
+    const goal = await create();
+    const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+    now = row.nextRunAt!;
+    await createSessionScheduleFire({
+      scheduler,
+      status: async () => 'done',
+      deliver: async (_row, _id, text) => {
+        messages.push(text);
+      },
+    })(jobs.getJob(row.pendingJobId!)!);
+    expect(messages[0]).toContain('Journal entries since the previous review');
+    expect(messages[0]).not.toContain('goal.journal.list');
+    expect(messages[0]).not.toContain('before: ""');
+  });
+
+  test('entries added while a review is in flight appear in the next review', async () => {
+    const goal = await create();
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'Before snapshot',
+      effect: 'None',
+      worked: 'Read',
+    });
+    const fireReview = async () => {
+      const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+      now = row.nextRunAt!;
+      await createSessionScheduleFire({
+        scheduler,
+        status: async () => 'running',
+        deliver: async (_row, _id, text) => {
+          messages.push(text);
+        },
+      })(jobs.getJob(row.pendingJobId!)!);
+    };
+    await fireReview();
+    const runId = messages[0].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      done: 'During review',
+      effect: 'Changed',
+      worked: 'Read',
+    });
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId,
+      done: 'Review result',
+      effect: 'yes',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[1]).toContain('During review');
+    expect(messages[1]).not.toContain('Before snapshot');
+    const secondRun = messages[1].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: secondRun,
+      done: 'Second review',
+      effect: 'yes',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[2]).not.toContain('During review');
+    const emptyRun = messages[2].match(/runId (goal-review:[^, ]+)/)![1];
+    await call('goal.journal.append', {
+      goalId: goal.id,
+      runId: emptyRun,
+      done: 'Empty review',
+      effect: 'no',
+      worked: 'Read',
+    });
+    await fireReview();
+    expect(messages[3]).not.toContain('During review');
+  });
+
+  test('a due review is delivered to the mailbox while the owner is busy', async () => {
+    const goal = await create();
+    const row = scheduler.repo.getBySource('goal_review', goal.id)!;
+    now = row.nextRunAt!;
+    const fire = createSessionScheduleFire({
+      scheduler,
+      status: async () => 'running',
+      deliver: async (_schedule, _messageId, text) => {
+        messages.push(text);
+      },
+    });
+    expect(await fire(jobs.getJob(row.pendingJobId!)!)).toEqual({ outcome: 'fired' });
+    expect(messages[0]).toContain('Journal entries since the previous review');
+  });
+
   test('the 25th due time in a day is skipped for the budget and the owner is told once', async () => {
     const goal = await create();
     expect(goal.dailyRunLimit).toBe(24);

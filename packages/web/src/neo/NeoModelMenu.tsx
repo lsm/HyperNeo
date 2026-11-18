@@ -18,6 +18,7 @@ export function NeoModelMenu({
   models,
   current,
   level,
+  showThinking = true,
   busy,
   loading,
   working,
@@ -32,6 +33,7 @@ export function NeoModelMenu({
   models: ModelInfo[];
   current?: ModelInfo;
   level: ThinkingLevel;
+  showThinking?: boolean;
   busy: boolean;
   loading: boolean;
   working: boolean;
@@ -163,18 +165,20 @@ export function NeoModelMenu({
           </button>
         )}
       </div>
-      <div class="shrink-0 border-t border-line bg-surface/40 p-3">
-        <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs font-medium text-fg-muted">Thinking</span>
-          <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
+      {showThinking && (
+        <div class="shrink-0 border-t border-line bg-surface/40 p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-xs font-medium text-fg-muted">Thinking</span>
+            <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
+          </div>
+          <ThinkingSlider
+            level={level}
+            options={THINKING_OPTIONS}
+            busy={busy}
+            onThinking={onThinking}
+          />
         </div>
-        <ThinkingSlider
-          level={level}
-          options={THINKING_OPTIONS}
-          busy={busy}
-          onThinking={onThinking}
-        />
-      </div>
+      )}
     </div>
   );
 }

@@ -67,7 +67,7 @@ export function createDriverHealthRuntime(
   });
   if (process.env.NODE_ENV !== 'test')
     jobQueue.enqueue({ queue, payload: { scope: 'local', startup: true }, runAt: Date.now() });
-  const execute = (superpipe({})('driver-health-command') as PipelineAPI)
+  const execute = (superpipe({})('work.health') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
       (

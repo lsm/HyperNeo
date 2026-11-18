@@ -71,7 +71,7 @@ export function createCodingPrFileOperation(
       : { reason: refused('source_changed') };
   }
   type Plan = Extract<Awaited<ReturnType<typeof plan>>, { value: unknown }>['value'];
-  const capture = (superpipe({})('neo-coding-pr-file') as PipelineAPI)
+  const capture = (superpipe({})('neo.coding.pr.file') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(plan, ['input', 'caller'], 'result:outcome')
     .pipe(

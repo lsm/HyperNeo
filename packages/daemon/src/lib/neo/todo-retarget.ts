@@ -15,7 +15,7 @@ export function createNeoTodoRetarget(
   write: RunDbOp,
   store: NeoAskTodoRepository,
   stop: (todoId: string, ref: WorkRef) => Promise<string | null>,
-  start: (todoId: string) => Promise<unknown>,
+  start: (todoId: string, replaced: WorkRef) => Promise<unknown>,
   tell: (todoId: string, text: string, at: number) => Promise<unknown>,
   changed: () => void
 ) {
@@ -53,7 +53,7 @@ export function createNeoTodoRetarget(
       async (move: NeoTodoMove, reopened: boolean) => {
         if (reopened) {
           changed();
-          await start(move.todoId);
+          await start(move.todoId, move.fromRef);
         }
         return { ok: true, todo: store.getTodo(move.todoId) ?? undefined };
       },

@@ -375,6 +375,49 @@ describe('SDKRuntimeConfig', () => {
     });
   });
 
+  describe('on an OXAP chat', () => {
+    beforeEach(() => {
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        harness: 'oxap-codex',
+      };
+    });
+
+    for (const live of [true, false]) {
+      it(`refuses a plan permission mode before it saves (${live ? 'live' : 'cold'})`, async () => {
+        firstMessageReceived = live;
+        const before = structuredClone(mockSession.config);
+        const result = await new SDKRuntimeConfig(createContext()).setPermissionMode('plan');
+        expect(result).toEqual({
+          success: false,
+          error: expect.stringContaining('this restriction is not supported'),
+        });
+        expect(updateSessionSpy).not.toHaveBeenCalled();
+        expect(setPermissionModeSpy).not.toHaveBeenCalled();
+        expect(mockSession.config).toEqual(before);
+      });
+
+      it(`refuses max thinking tokens before it saves (${live ? 'live' : 'cold'})`, async () => {
+        firstMessageReceived = live;
+        const before = structuredClone(mockSession.config);
+        const result = await new SDKRuntimeConfig(createContext()).setMaxThinkingTokens(2048);
+        expect(result).toEqual({
+          success: false,
+          error: expect.stringContaining('this restriction is not supported'),
+        });
+        expect(updateSessionSpy).not.toHaveBeenCalled();
+        expect(setMaxThinkingTokensSpy).not.toHaveBeenCalled();
+        expect(mockSession.config).toEqual(before);
+      });
+    }
+
+    it('still accepts the default permission mode', async () => {
+      const result = await new SDKRuntimeConfig(createContext()).setPermissionMode('default');
+      expect(result).toEqual({ success: true });
+    });
+  });
+
   describe('getMcpServerStatus', () => {
     it('should return empty array when query not active', async () => {
       config = createConfig({ queryObject: null });

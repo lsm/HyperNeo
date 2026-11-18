@@ -48,26 +48,34 @@ function envelope(
   };
 }
 
-function submitParameters(sessionId: string, id: string, content: string) {
+function submitParameters(sessionId: string, id: string, content: string, modelId?: string) {
   return {
     session_id: sessionId,
     request: envelope(id, 'session.message.submit.request', sessionId, {
       session_id: sessionId,
       delivery: 'auto',
       messages: [{ role: 'user', content }],
+      ...(modelId ? { model_id: modelId } : {}),
     }),
   };
 }
 
 const prepareSubmit = (superpipe({})('oap.query.submit') as PipelineAPI)
-  .input(['sessionId', 'id', 'message'])
+  .input(['sessionId', 'id', 'message', 'modelId'])
   .pipe(textContent, 'message', 'content')
-  .pipe(submitParameters, ['sessionId', 'id', 'content'], 'request')
+  .pipe(submitParameters, ['sessionId', 'id', 'content', 'modelId'], 'request')
   .end('request') as (
   sessionId: string,
   id: string,
-  message: SDKUserMessage
+  message: SDKUserMessage,
+  modelId?: string
 ) => ReturnType<typeof submitParameters>;
+
+function selectsModel(response: unknown): boolean {
+  const level = (response as { payload?: { features?: Record<string, { level?: unknown }> } })
+    ?.payload?.features?.['run.model_selection']?.level;
+  return level === 'native' || level === 'emulated';
+}
 
 function readEvent(frame: ListenerInput): Event | Error | undefined {
   if (frame instanceof Error) return frame;
@@ -144,8 +152,12 @@ const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
   .pipe(decideResubmit, ['status', 'sessionId'], 'allowed')
   .end('allowed') as typeof decideResubmit;
 
-export function createOapQueryHub(client: OapHubClient): OapQueryHub {
+export function createOapQueryHub(
+  client: OapHubClient,
+  model?: { adapter: string; id: () => string | undefined }
+): OapQueryHub {
   const uncertainSessions = new Set<string>();
+  let selects: boolean | undefined;
   let active: Stream | undefined;
   let starting: { owner: symbol } | undefined;
   return {
@@ -174,7 +186,14 @@ export function createOapQueryHub(client: OapHubClient): OapQueryHub {
           }
           uncertainSessions.delete(sessionId);
         }
-        const parameters = prepareSubmit(sessionId, generateUUID(), message);
+        if (model && selects === undefined)
+          selects = selectsModel(await client.request('capabilities', { adapter: model.adapter }));
+        const parameters = prepareSubmit(
+          sessionId,
+          generateUUID(),
+          message,
+          selects ? model?.id() : undefined
+        );
         const emitter = new EventEmitter();
         const events = on(emitter, 'event') as AsyncIterableIterator<[Event | Error]>;
         const subscription = await client.subscribe(sessionId, (frame) => {

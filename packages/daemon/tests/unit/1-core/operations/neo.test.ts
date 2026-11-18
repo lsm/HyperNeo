@@ -451,6 +451,7 @@ describe('Neo MVP', () => {
       'neo.ask.outcome',
       'neo.ask.topic',
       'neo.ask.settle',
+      'neo.topic.merge',
       'neo.question.ask',
       'neo.question.retire',
       'neo.question.get',
