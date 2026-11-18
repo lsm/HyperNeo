@@ -193,8 +193,10 @@ Neo's explicit `send` to a named session is unchanged.
 `neo/todo-release.ts` and `neo/session-archive-operation.ts`: `work_started_sessions` is
 read and written only in `work-started-sessions.ts`, so the start record's columns and the
 `role` → `kind` rename stay in that file and its 6 importers. `work-operations.ts` has 29
-importers and defines every `work.*` operation; PR 4 adds one optional `role` input to
-`work.start` and changes no other operation. `session-target.ts` has one importer, the
+importers and defines `work.start`, `work.send`, `work.queue`, `work.status`, `work.stop`,
+`work.turns`, `work.rename`, `work.withdraw` and `work.adapters` (`work.find`, `work.read`
+and `work.health` live in other files); PR 4 adds one optional `role` input to `work.start`
+and changes no other operation. `session-target.ts` has one importer, the
 coding pack, so PR 2's deletions do not reach core.
 
 Acceptance, one integration case per row:
