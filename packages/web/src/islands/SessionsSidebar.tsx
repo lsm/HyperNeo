@@ -1,6 +1,6 @@
 import { CloseGlyph } from '../components/icons/common-glyphs.tsx';
 import { GOAL_CHILD_MESSAGE } from '../hooks/useSessionActions.ts';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   CloneChildrenChoice,
   CloneSummary,
@@ -166,7 +166,8 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
   } | null>(null);
   const [removeProjectPath, setRemoveProjectPath] = useState<string | null>(null);
   const [removeProjectBusy, setRemoveProjectBusy] = useState(false);
-  const [systemWork, setSystemWork] = useState<Record<string, string>>({});
+  const [systemWork, setSystemWork] = useState<Record<string, { key: string; reason: string }>>({});
+  const systemWorkRef = useRef<Record<string, { key: string; reason: string }>>({});
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addProjectPath, setAddProjectPath] = useState('');
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
@@ -183,30 +184,48 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       .catch(() => {});
   }, [historyVersion, sessions.value]);
 
+  const workKey = (project: SystemProject) =>
+    JSON.stringify([
+      project.id,
+      [...project.folders].sort(),
+      project.hasSessions,
+      project.unknownWork,
+    ]);
+  const workSignature = JSON.stringify(systemProjects.map(workKey).sort());
   useEffect(() => {
     let current = true;
-    setSystemWork({});
     for (const project of systemProjects) {
+      const key = workKey(project);
+      if (project.hasSessions || project.unknownWork) {
+        if (systemWorkRef.current[project.id]) {
+          delete systemWorkRef.current[project.id];
+          setSystemWork((previous) => {
+            const next = { ...previous };
+            delete next[project.id];
+            return next;
+          });
+        }
+        continue;
+      }
+      if (systemWorkRef.current[project.id]?.key === key) continue;
       findProjectWork(project.folders)
         .then((busy) => {
-          if (current)
-            setSystemWork((previous) => ({
-              ...previous,
-              [project.id]: busy ? 'Project has chats or workers' : '',
-            }));
+          if (!current) return;
+          const entry = { key, reason: busy ? 'Project has chats or workers' : '' };
+          systemWorkRef.current[project.id] = entry;
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
         })
         .catch(() => {
-          if (current)
-            setSystemWork((previous) => ({
-              ...previous,
-              [project.id]: 'Could not check project work',
-            }));
+          if (!current) return;
+          const entry = { key, reason: 'Could not check project work' };
+          systemWorkRef.current[project.id] = entry;
+          setSystemWork((previous) => ({ ...previous, [project.id]: entry }));
         });
     }
     return () => {
       current = false;
     };
-  }, [systemProjects]);
+  }, [workSignature]);
 
   const sessionsList = sessions.value.filter(isUserSession);
   const { projects, ungrouped, childrenByParent } = buildView(
@@ -509,12 +528,19 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                   alwaysShowRemove={project.system}
                   removeDisabledReason={
                     project.system
-                      ? project.sessions.length > 0 ||
-                        systemProjects.find((item) => `neo:${item.id}` === project.path)
-                          ?.hasSessions
-                        ? 'Project has chats'
-                        : (systemWork[project.path.slice(4)] ?? 'Checking project work') ||
-                          undefined
+                      ? (() => {
+                          const item = systemProjects.find(
+                            (entry) => `neo:${entry.id}` === project.path
+                          );
+                          if (!item) return 'Checking project work';
+                          if (project.sessions.length > 0 || item.hasSessions)
+                            return 'Project has chats, including archived chats';
+                          if (item.unknownWork) return 'Cannot check all work for this project';
+                          const checked = systemWork[item.id];
+                          return checked?.key === workKey(item)
+                            ? checked.reason || undefined
+                            : 'Checking project work';
+                        })()
                       : undefined
                   }
                   onRemove={() =>

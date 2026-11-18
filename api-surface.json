@@ -33523,6 +33523,9 @@
                 "name": {
                   "type": "string"
                 },
+                "unknownWork": {
+                  "type": "boolean"
+                },
                 "updatedAt": {
                   "type": "number"
                 }
@@ -33532,7 +33535,8 @@
                 "name",
                 "folders",
                 "updatedAt",
-                "hasSessions"
+                "hasSessions",
+                "unknownWork"
               ],
               "type": "object"
             },

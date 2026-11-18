@@ -361,6 +361,7 @@ export interface SystemProject {
   folders: string[];
   updatedAt: number;
   hasSessions: boolean;
+  unknownWork: boolean;
 }
 
 export async function listSystemProjects(): Promise<SystemProject[]> {
@@ -372,7 +373,6 @@ export async function listSystemProjects(): Promise<SystemProject[]> {
 }
 
 export async function findProjectWork(folders: string[]): Promise<boolean> {
-  if (folders.length === 0) throw new Error('No folder is available to check for work');
   const hub = getHubOrThrow();
   for (const folder of folders) {
     const result = await hub.request<{
@@ -394,7 +394,15 @@ export async function forgetSystemProject(projectId: string): Promise<void> {
     'operation.invoke',
     { name: 'neo.project.forget', input: { projectId, removeHistory: true } }
   );
-  if (!result.ok) throw new Error(result.reason ?? 'Failed to forget project');
+  if (!result.ok) {
+    const messages: Record<string, string> = {
+      project_in_use: 'Project has chats, workers, or other linked work.',
+      project_missing: 'This project no longer exists.',
+      project_protected: 'This project cannot be forgotten.',
+      root_or_human_only: 'Only the local user can forget this project.',
+    };
+    throw new Error(messages[result.reason ?? ''] ?? 'Failed to forget project');
+  }
 }
 
 export async function addFolderToProject(projectPath: string, path: string): Promise<void> {

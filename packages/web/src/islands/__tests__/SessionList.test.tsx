@@ -328,6 +328,32 @@ describe('SessionsSidebar', () => {
     await waitFor(() => expect(mockForgetSystemProject).toHaveBeenCalledWith('idle'));
   });
 
+  it('checks work again after a project stops reporting chats', async () => {
+    let hasSessions = false;
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    hasSessions = true;
+    mockSessionsSignal.value = [createMockSession('one', 'Other', '/code/other')];
+    await waitFor(() =>
+      expect(remove.getAttribute('title')).toBe('Project has chats, including archived chats')
+    );
+    hasSessions = false;
+    mockSessionsSignal.value = [createMockSession('two', 'Other', '/code/other')];
+    await waitFor(() => expect(mockFindProjectWork).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+  });
+
   it('refuses when a project has work that cannot be checked', async () => {
     mockListSystemProjects.mockResolvedValue([
       {

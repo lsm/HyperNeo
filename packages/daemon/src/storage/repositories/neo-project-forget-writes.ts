@@ -30,8 +30,23 @@ export const neoProjectForgetWrites = defineRepositoryOp(
 
 class ProjectSessionPathsReader {
   constructor(private readonly db: Database) {}
-  list() {
-    return new SessionRepository(this.db).listSessions({ workspacePaths: true });
+  list(machine: string) {
+    const repo = new NeoRepository(this.db);
+    const projects = repo.listProjects();
+    const folders = repo.projectMerges.localFolders(machine);
+    return {
+      rows: new SessionRepository(this.db).listSessions({ workspacePaths: true }),
+      unknown: projects
+        .filter((project) =>
+          repo.projectWorkIsUnknown(
+            project.id,
+            machine,
+            folders.some((folder) => folder.projectId === project.id),
+            projects
+          )
+        )
+        .map((project) => project.id),
+    };
   }
 }
 

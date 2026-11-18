@@ -38,15 +38,20 @@ export class NeoRepository {
       .all() as NeoProject[];
   }
 
-  async sessionWorkspacePathsAsync(): Promise<Set<string>> {
-    const rows = await gatewayFor(this.db).call(projectSessionPathsReads, 'list');
-    return new Set(
-      rows.flatMap((row) =>
-        [row.workspace, row.main, row.execution].filter(
-          (path): path is string => typeof path === 'string'
+  async projectWorkFactsAsync(
+    machine: string
+  ): Promise<{ paths: Set<string>; unknown: Set<string> }> {
+    const result = await gatewayFor(this.db).call(projectSessionPathsReads, 'list', machine);
+    return {
+      paths: new Set(
+        result.rows.flatMap((row) =>
+          [row.workspace, row.main, row.execution].filter(
+            (path): path is string => typeof path === 'string'
+          )
         )
-      )
-    );
+      ),
+      unknown: new Set(result.unknown),
+    };
   }
 
   sessionWorkspacePaths(): Set<string> {
@@ -56,6 +61,23 @@ export class NeoRepository {
         [row.workspace, row.main, row.execution].filter(
           (path): path is string => typeof path === 'string'
         )
+      )
+    );
+  }
+
+  projectWorkIsUnknown(
+    projectId: string,
+    machine: string,
+    hasLocalFolder: boolean,
+    projects?: NeoProject[]
+  ): boolean {
+    const aliases = this.workspaceAliases(projectId, projects);
+    return (
+      (!hasLocalFolder && aliases.length > 0) ||
+      aliases.some(
+        (alias) =>
+          (alias.startsWith('folder:') && !alias.startsWith(`folder:${machine}\0`)) ||
+          (alias.startsWith('work:') && !alias.startsWith(`work:${machine}\0`))
       )
     );
   }
@@ -129,8 +151,16 @@ export class NeoRepository {
     const result = this.db.transaction(() => {
       if (!this.db.prepare('SELECT 1 FROM neo_concerns WHERE id = ?').get(projectId))
         return { reason: 'project_missing' as const };
-      if (removeHistory && this.projectHasSessions(projectId, hostname()))
-        return { reason: 'project_in_use' as const };
+      if (removeHistory) {
+        const hasLocalFolder = this.projectMerges
+          .localFolders(hostname())
+          .some((entry) => entry.projectId === projectId);
+        if (
+          this.projectHasSessions(projectId, hostname()) ||
+          this.projectWorkIsUnknown(projectId, hostname(), hasLocalFolder)
+        )
+          return { reason: 'project_in_use' as const };
+      }
       const used = this.db
         .prepare(`SELECT 1 WHERE EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?1)
           OR EXISTS (SELECT 1 FROM neo_asks WHERE project_id = ?1 AND status = 'open')

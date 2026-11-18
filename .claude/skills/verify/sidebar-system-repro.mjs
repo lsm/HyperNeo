@@ -33,6 +33,12 @@ try {
   assert(await archived.isDisabled());
   assert.equal(await archived.getAttribute('title'), 'Project has chats, including archived chats');
   console.log('Archived chats remain protected with an explicit reason');
+  const linked = page.getByRole('button', {name: 'Remove project linked-ask'});
+  await linked.click({timeout:15000});
+  await page.getByRole('button', {name: 'Forget project'}).click();
+  await page.getByText('Project has chats, workers, or other linked work.').waitFor({timeout:15000});
+  assert.equal(await linked.count(), 1);
+  console.log('Linked work refusal was explained');
   const remote = page.getByRole('button', {name: 'Remove project remote-work'});
   await remote.waitFor({state: 'attached'});
   assert(await remote.isDisabled());
