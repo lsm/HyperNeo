@@ -100,7 +100,7 @@ export function createCardHandoffRead(
       data: chunk.toString('base64'),
     };
   }
-  const execute = (superpipe({})('card-handoff-read') as PipelineAPI)
+  const read = (superpipe({})('file.handoff.read') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe((input: Input) => readCardHandoffReferences(database(), input.source), 'input', 'refs')
     .pipe(prepare, ['input', 'caller', 'refs'], 'result:read')
@@ -139,6 +139,6 @@ export function createCardHandoffRead(
       }),
     ]),
     policy: { safetyClass: 'read', caller: 'local_user' },
-    execute,
+    execute: read,
   });
 }
