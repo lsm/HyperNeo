@@ -450,3 +450,5 @@ host policy allowing those namespaces; this journey changes no local host policy
 The cleanup OS boundary stays enabled during these tests.
 
 For opt-in speech separate from publications, follow [spoken replies](journeys/spoken-replies.md).
+
+For pipeline route reporting, follow [system map routes](journeys/system-map-routes.md).

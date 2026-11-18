@@ -305,3 +305,10 @@ test('routes prints an exported pipeline and rejects a missing runner', () => {
   expect(missing.exitCode).not.toBe(0);
   expect(missing.stderr.toString()).toContain('not describable:');
 });
+
+test('routes list reports coverage and a real exported runner', () => {
+  const list = Bun.spawnSync(['bun', 'scripts/system-map.ts', 'routes', 'list']);
+  expect(list.exitCode).toBe(0);
+  expect(list.stdout.toString()).toContain('neoFileQuestionText  neo-file-question-text');
+  expect(list.stdout.toString()).toMatch(/\d+ describable, \d+ not describable/);
+});

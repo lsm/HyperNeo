@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, normalize } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 
 type Kind = 'op' | 'rpc' | 'event' | 'table';
 type Role = 'defines' | 'uses' | 'handles' | 'calls' | 'emits' | 'listens' | 'reads' | 'writes';
@@ -322,15 +324,105 @@ function loadRepository(root: string): SystemMap {
   return buildSystemMap(sources, packages);
 }
 
+interface PipelineDescription {
+  name: string;
+  inputs: unknown;
+  steps: { name: string; input?: unknown; output?: unknown }[];
+  output?: unknown;
+}
+
+async function describeRunner(path: string, name: string): Promise<PipelineDescription> {
+  const module = await import(pathToFileURL(resolve(path)).href);
+  const runner = module[name];
+  const pipeline = runner?.pipeline;
+  if (typeof runner !== 'function' || !pipeline || !Array.isArray(pipeline.steps)) {
+    throw new Error(`export ${name} is not a built pipeline runner`);
+  }
+  return pipeline;
+}
+
+function formatRoute(pipeline: PipelineDescription): string {
+  const lines = [`${pipeline.name}  inputs: ${JSON.stringify(pipeline.inputs)}`];
+  for (const step of pipeline.steps) {
+    lines.push(
+      `  ${step.name}  inputs: ${JSON.stringify(step.input ?? null)}  outputs: ${JSON.stringify(step.output ?? null)}`
+    );
+  }
+  lines.push(`  output: ${JSON.stringify(pipeline.output ?? null)}`);
+  return lines.join('\n');
+}
+
+async function listRoutes(root: string): Promise<void> {
+  let describable = 0;
+  let unavailable = 0;
+  for (const path of git(root, 'ls-files', '--', 'packages').filter(isSource)) {
+    if (!existsSync(join(root, path))) continue;
+    const source = readFileSync(join(root, path), 'utf8');
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+    const exports: string[] = [];
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'superpipe'
+      ) {
+        let parent: ts.Node | undefined = node.parent;
+        while (parent && !ts.isVariableDeclaration(parent) && !ts.isStatement(parent))
+          parent = parent.parent;
+        const declaration = parent && ts.isVariableDeclaration(parent) ? parent : undefined;
+        const statement = declaration?.parent.parent;
+        if (
+          declaration &&
+          ts.isIdentifier(declaration.name) &&
+          statement &&
+          ts.isVariableStatement(statement) &&
+          statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+        ) {
+          exports.push(declaration.name.text);
+        } else {
+          unavailable++;
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(file);
+    for (const name of exports) {
+      try {
+        const description = await describeRunner(join(root, path), name);
+        console.log(`${path} ${name}  ${description.name}`);
+        describable++;
+      } catch {
+        unavailable++;
+      }
+    }
+  }
+  console.log(`${describable} describable, ${unavailable} not describable (source scan)`);
+}
+
 const USAGE = `Usage:
+  bun run system-map routes <module> <export>  describe an exported runner
+  bun run system-map routes list               list discoverable runners
   bun run system-map where <name>            who defines, calls, reads or writes an operation,
                                              RPC method, event or table
   bun run system-map impact <file>...        what the planned files are linked to outside the plan
   bun run system-map impact --diff [base]    the same for files changed since base (origin/dev)`;
 
-function main(args: readonly string[]): number {
+async function main(args: readonly string[]): Promise<number> {
   const root = process.cwd();
   const [command, ...rest] = args;
+  if (command === 'routes' && rest.length === 1 && rest[0] === 'list') {
+    await listRoutes(root);
+    return 0;
+  }
+  if (command === 'routes' && rest.length === 2) {
+    try {
+      console.log(formatRoute(await describeRunner(rest[0], rest[1])));
+      return 0;
+    } catch (error) {
+      console.error(`not describable: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+  }
   if (command === 'where' && rest.length === 1) {
     const links = where(loadRepository(root), rest[0]);
     console.log(links.length ? formatWhere(links) : `No links found for ${rest[0]}`);
@@ -348,4 +440,4 @@ function main(args: readonly string[]): number {
   return 2;
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));
