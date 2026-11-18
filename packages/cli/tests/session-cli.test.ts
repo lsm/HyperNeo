@@ -153,18 +153,13 @@ describe('hyperneo send, question and build', () => {
   });
 });
 
-test('relay requires place, time and a words separator', () => {
+test('relay is not a session command', () => {
   expect(
     planSessionCommand(
       ['relay', 'q', '--where', 'here', '--when', 'Monday', '--', '  exact words  '],
       's'
     )
-  ).toEqual({
-    value: {
-      name: 'neo.question.answer',
-      input: { questionId: 'q', where: 'here', when: 'Monday', answer: '  exact words  ' },
-    },
-  });
+  ).toHaveProperty('reason');
   for (const args of [
     ['relay', 'q', '--', 'yes'],
     ['relay', 'q', '--where', 'here', '--when', 'Monday', 'yes'],

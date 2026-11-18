@@ -16,7 +16,6 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   listProviderAuthStatus: () => auth(),
   updateGlobalSettings: vi.fn(),
 }));
-vi.mock('../NeoRelaySendersSettings.tsx', () => ({ NeoRelaySendersSettings: () => null }));
 import { NeoModelSettings } from '../NeoModelSettings.tsx';
 import { connectionState, globalSettings } from '../../../lib/state.ts';
 

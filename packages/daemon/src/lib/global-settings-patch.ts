@@ -9,21 +9,19 @@ export function keepNeoOwnedSettings(
   if (!updates.neo) return updates;
   const {
     front: _front,
-    relaySenders: _relaySenders,
     standingRules: _rules,
     standingRuleSources: _sources,
     preferences: _preferences,
     mutedSessions: _muted,
     ...neo
   } = updates.neo;
-  const { front, relaySenders, standingRules, standingRuleSources, preferences, mutedSessions } =
+  const { front, standingRules, standingRuleSources, preferences, mutedSessions } =
     current.neo ?? {};
   return {
     ...updates,
     neo: {
       ...neo,
       ...(front ? { front } : {}),
-      ...(relaySenders ? { relaySenders } : {}),
       ...(standingRules ? { standingRules } : {}),
       ...(standingRuleSources ? { standingRuleSources } : {}),
       ...(preferences ? { preferences } : {}),
