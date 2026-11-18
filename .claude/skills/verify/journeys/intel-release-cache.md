@@ -1,4 +1,4 @@
-# Intel release cache
+# Desktop release caches
 
 Read shared SKILL.md first. Run heavy builds only on CI.
 
@@ -10,3 +10,7 @@ target's cache from dev. Check that each build and artifact upload succeeds, and
 that both macOS jobs sign and notarize successfully. Report both run URLs, each
 cache restore line and each job duration alongside the cold baseline. A cache
 hit alone does not prove the release build succeeds.
+
+The four target caches share the repository cache quota with other workflows.
+Eviction can cause cold builds; check cache sizes and restore logs when a target
+misses. Warming is best effort and does not guarantee a hit on a later release.
