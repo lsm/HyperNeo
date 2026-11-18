@@ -3,7 +3,6 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { CODING_SESSION_STRATEGY_PREFERENCE } from '../../../../src/lib/neo/packs/coding/session-strategy.ts';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
-import { listPackPreferences } from '../../../../src/lib/neo/preference-operations.ts';
 import { createPackPreferenceQuestions } from '../../../../src/lib/neo/preference-questions.ts';
 import {
   CodingTodoPrRepository,
@@ -128,41 +127,15 @@ function setup() {
     () => 'en',
     async () => {}
   );
-  const asks: unknown[] = [];
-  const failing = { ask: false, before: null as null | (() => void) };
   const decide = (
     item: NeoTodo,
     target: Parameters<typeof decideCodingSessionTarget>[2],
     lines?: CodingLines
-  ) =>
-    decideCodingSessionTarget(
-      db,
-      item,
-      target,
-      status,
-      async (input) => {
-        failing.before?.();
-        if (failing.ask) {
-          asks.push('failed');
-          return {
-            kind: 'failed' as const,
-            code: 'execution_failed' as const,
-            message: 'synthetic',
-          };
-        }
-        const value = await askSetting!.execute(
-          { askId: item.askId, ...input },
-          { source: 'internal', sessionId: 'neo', role: 'neo' }
-        );
-        asks.push(value);
-        return { kind: 'completed' as const, value };
-      },
-      lines
-    );
+  ) => decideCodingSessionTarget(db, item, target, status, lines);
   const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
   const agentAsk = (input: Record<string, unknown>) =>
     askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
-  return { db, todos, todo, worked, live, models, decide, questions, asks, agentAsk, failing };
+  return { db, todos, todo, worked, live, models, decide, questions, agentAsk };
 }
 
 describe('coding session target decision', () => {
@@ -473,131 +446,13 @@ describe('coding session target decision', () => {
     expect(questions('feature')).toEqual([]);
   });
 
-  test('the first dispatch in a repo asks its session strategy once and stays long-lived until a human answers', async () => {
-    const { db, todos, todo, worked, decide, questions, asks } = setup();
+  test('the first dispatch uses the saved strategy without asking for it', async () => {
+    const { todo, worked, decide, questions } = setup();
     worked(todo('other'), 'idle', 'dev', 'done');
     expect(await decide(todo(), start('dev'))).toEqual({
       value: { verb: 'send', ref: ref('idle') },
     });
-    const [question] = questions('feature');
-    expect(question).toMatchObject({
-      kind: 'choice',
-      state: 'open',
-      todos: [],
-      options: [
-        'Long-lived work-type sessions',
-        'One session per task',
-        'One session per PR',
-        'Keep current settings',
-      ],
-    });
-    expect(await decide(todo(), start('dev'))).toMatchObject({ reason: expect.any(String) });
-    expect(await decide(todo('other'), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('idle') },
-    });
-    expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
-    expect(asks).toEqual([{ ok: true, questionId: question!.id }]);
-    expect(listPackPreferences(db, 'coding')).toEqual([]);
-    todos.answerQuestion(question!, 'One session per task', 'button', 2);
-    expect(listPackPreferences(db, 'coding')).toMatchObject([
-      { scope: { kind: 'repo', key: repo }, key: 'sessionStrategy', value: 'per_task' },
-    ]);
-    expect(await decide(todo('other'), start('dev'))).toEqual({ value: start('dev') });
-    expect([...questions('feature'), ...questions('other')]).toHaveLength(1);
-    expect(asks).toHaveLength(1);
-  });
-
-  for (const answered of [false, true])
-    test(`an unrelated ${answered ? 'answered' : 'open'} proposal under the strategy request id does not stand in for the strategy question`, async () => {
-      const { db, todos, todo, decide, questions, asks, agentAsk } = setup();
-      const borrowed = (await agentAsk({
-        askId: 'other',
-        requestId: `coding.sessionStrategy:${repo}:1`,
-        values: [
-          {
-            pack: 'coding',
-            scope: { kind: 'repo', key: repo },
-            key: 'mergePolicy',
-            value: 'ci_only',
-          },
-        ],
-        hold: false,
-      })) as { questionId: string };
-      if (answered) {
-        const [card] = questions('other');
-        todos.answerQuestion(card!, card!.options![0]!, 'button', 2);
-        expect(listPackPreferences(db, 'coding').map((row) => row.key)).toEqual(['mergePolicy']);
-      }
-      await decide(todo(), start('dev'));
-      const [asked] = questions('feature');
-      expect(asked).toMatchObject({ state: 'open', kind: 'choice', todos: [] });
-      expect(asked!.id).not.toBe(borrowed.questionId);
-      expect(asks).toEqual([{ ok: true, questionId: asked!.id }]);
-    });
-
-  test('a strategy question that cannot be opened is retried at once, keeps work going and is asked by a later dispatch', async () => {
-    const { todo, worked, decide, questions, asks, failing } = setup();
-    worked(todo('other'), 'idle', 'dev', 'done');
-    failing.ask = true;
-    expect(await decide(todo(), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('idle') },
-    });
-    expect(asks).toEqual(['failed', 'failed']);
     expect(questions('feature')).toEqual([]);
-    failing.ask = false;
-    await decide(todo('other'), start('dev'));
-    const [asked] = questions('other');
-    expect(asked).toMatchObject({ state: 'open', kind: 'choice', todos: [] });
-    expect(asks).toEqual(['failed', 'failed', { ok: true, questionId: asked!.id }]);
-  });
-
-  test('a strategy saved while the question is being asked is not asked again and decides routing', async () => {
-    const { db, todo, worked, decide, questions, asks, failing } = setup();
-    failing.ask = true;
-    failing.before = () =>
-      db
-        .prepare(
-          `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-           VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
-        )
-        .run(repo);
-    worked(todo('other'), 'idle', 'dev', 'done');
-    expect(await decide(todo(), start('dev'))).toEqual({ value: start('dev') });
-    expect(asks).toEqual(['failed']);
-    expect(questions('feature')).toEqual([]);
-  });
-
-  test('two first dispatches at the same time open one strategy question and both stay long-lived', async () => {
-    const { todo, worked, decide, questions, asks } = setup();
-    worked(todo('other'), 'idle', 'dev', 'done');
-    const decisions = await Promise.all([
-      decide(todo(), start('dev')),
-      decide(todo('other'), start('dev')),
-    ]);
-    expect(decisions).toEqual([
-      { value: { verb: 'send', ref: ref('idle') } },
-      { value: { verb: 'send', ref: ref('idle') } },
-    ]);
-    const open = [...questions('feature'), ...questions('other')];
-    expect(open).toHaveLength(1);
-    expect(asks).toEqual([{ ok: true, questionId: open[0]!.id }]);
-  });
-
-  test('a strategy question retired unanswered is asked again, and a kept answer is not', async () => {
-    const { todos, todo, decide, questions, asks } = setup();
-    await decide(todo(), start('dev'));
-    const [first] = questions('feature');
-    todos.retireQuestion(first!, 'ask_settled', null, 2);
-    await decide(todo('other'), start('dev'));
-    const [again] = questions('other');
-    expect(again).toMatchObject({ state: 'open', todos: [] });
-    expect(again!.id).not.toBe(first!.id);
-    todos.answerQuestion(again!, 'Keep current settings', 'button', 3);
-    await decide(todo('other'), start('dev'));
-    expect(asks).toEqual([
-      { ok: true, questionId: first!.id },
-      { ok: true, questionId: again!.id },
-    ]);
   });
 
   test('unfinished work on a feature session does not hide an unreadable status', async () => {

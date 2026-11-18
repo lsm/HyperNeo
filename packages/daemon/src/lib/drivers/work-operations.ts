@@ -87,6 +87,11 @@ export interface WorkVerbDeps {
     todoId?: string,
     sessionId?: string
   ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
+  reusePolicy?: (
+    adapter: string,
+    todoId: string | undefined,
+    caller: OperationCaller
+  ) => Promise<{ mode: 'long_lived' | 'per_ask' | 'per_todo'; sameAsk: string[] }>;
   markUnusable?: (ref: WorkRef) => void;
   claimWorker?: (ref: WorkRef, todoId?: string) => Promise<boolean>;
   unclaimWorker?: (todoId: string, ref: WorkRef) => Promise<void>;
@@ -652,6 +657,7 @@ export async function startWork(
   );
 }
 
+/** @public */
 export async function reuseIdleWorker(
   route: Route<'start'>,
   input: StartInput,
@@ -671,8 +677,10 @@ export async function reuseIdleWorker(
     input.createFolder
   )
     return null;
+  const policy = await deps.reusePolicy?.(adapter.id, input.todoId, caller);
+  if (policy?.mode === 'per_todo') return null;
   const free = deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
-  if (!free?.size) return null;
+  if (!free?.size && !(policy?.mode === 'per_ask' && policy.sameAsk.length)) return null;
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
@@ -683,10 +691,13 @@ export async function reuseIdleWorker(
     .flatMap((group) => group.work)
     .map((work) => ({
       work,
-      free: free.has(work.ref.id),
-      sameAskAt: 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
-      settledAt: 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
+      free:
+        !!free?.has(work.ref.id) &&
+        (policy?.mode !== 'per_ask' || policy.sameAsk.includes(work.ref.id)),
+      sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
+      settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
     }));
+  const sameAskCandidates = [...candidates];
   const request = {
     adapter: adapter.id,
     folder,
@@ -769,6 +780,39 @@ export async function reuseIdleWorker(
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
+  }
+  if (policy?.mode === 'per_ask' && input.todoId && deps.todoWorker) {
+    const busy = sameAskCandidates.find(
+      ({ work, free }) =>
+        policy.sameAsk.includes(work.ref.id) &&
+        work.ref.adapter === adapter.id &&
+        !work.ref.daemon &&
+        work.place.folder === folder &&
+        !input.excludeRefs?.some(
+          (ref) =>
+            ref.adapter === work.ref.adapter &&
+            ref.id === work.ref.id &&
+            ref.daemon === work.ref.daemon
+        ) &&
+        (isBusyWork(work.status) || (!free && work.status === 'done'))
+    );
+    if (busy) {
+      const status = await adapter.status?.(busy.work.ref).catch(() => null);
+      if (
+        status?.ok &&
+        (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
+        (!requested ||
+          ((requested.provider === undefined || requested.provider === status.value.provider) &&
+            workStartConfiguration.confirm(requested, {
+              ...(status.value.model ? { model: status.value.model } : {}),
+              ...(status.value.effort ? { effort: status.value.effort } : {}),
+            }).ok))
+      ) {
+        const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
+        if (queued === 'none') return null;
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
+    }
   }
   return null;
 }

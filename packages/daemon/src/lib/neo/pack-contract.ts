@@ -85,7 +85,9 @@ export type NeoWorkerTargetDecision = { value: NeoTodoTarget; note?: string } | 
 
 export interface NeoPackPreferenceDeclaration {
   label: NeoPackPreferenceLabel;
+  question?: NeoPackPreferenceLabel;
   valueLabels: Record<string, NeoPackPreferenceLabel>;
+  valueDescriptions?: Record<string, NeoPackPreferenceLabel>;
   scope: 'global' | 'repo' | 'project';
   type:
     | { kind: 'enum'; values: readonly string[] }

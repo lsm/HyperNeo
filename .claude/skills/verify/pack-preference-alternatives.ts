@@ -16,7 +16,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
 const strategy = (value: string) => ({ pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'sessionStrategy', value });
 const alternatives = [[strategy('long_lived')], [strategy('per_task')], [strategy('per_pr')]];
-const options = ['Long-lived work-type sessions', 'One session per task', 'One session per PR', 'Keep current settings'];
+const options = ['Long-lived work-type sessions', 'One session per task', 'One session per PR', 'Use the default for now'];
 const savedOf = (rows: { key: string }[]) => rows.filter((row) => row.key === 'sessionStrategy');
 let questionId = '';
 for (const phase of ['initial', 'restart']) {
