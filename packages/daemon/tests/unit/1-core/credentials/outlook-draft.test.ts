@@ -17,6 +17,7 @@ let mcp: ReturnType<typeof createOperationMcpHandler>;
 let sent: Sent[];
 let mode: string;
 let caller: { sessionId?: string; role?: 'neo' | 'universal_read' };
+let vault: ConnectionVault;
 const microsoft = {
   id: 'outlook-one',
   provider: 'microsoft' as const,
@@ -40,7 +41,7 @@ beforeEach(async () => {
   mode = 'normal';
   caller = { sessionId: 'synthetic-worker', role: 'neo' };
   const store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
-  const vault = new ConnectionVault(
+  vault = new ConnectionVault(
     store,
     await db.gateway.call(artifactIdentityWrites, 'ensure', 'synthetic-instance')
   );
@@ -168,4 +169,24 @@ test('a Google connection or a caller without a session sends nothing', async ()
   caller = { sessionId: '', role: 'universal_read' };
   expect((await draft()).reason).toBe('session_required');
   expect(sent).toEqual([]);
+});
+
+test('a draft id cannot reach another Graph path', async () => {
+  await draft({ draftId: 'draft-one/send' });
+  expect(sent.map((request) => request.path)).toEqual([
+    '/v1.0/me/messages/draft-one%2Fsend',
+    '/v1.0/me/messages/draft-one%2Fsend',
+  ]);
+  noSends();
+});
+
+test('a grant stored with fully qualified Graph scopes can write drafts', async () => {
+  await vault.replace(microsoft, {
+    accessToken: 'synthetic-access-token',
+    refreshToken: 'synthetic-refresh-token',
+    expiresAt: Date.now() + 3600000,
+    scopes: ['openid', 'https://graph.microsoft.com/Mail.ReadWrite'],
+    client: { clientId: 'synthetic-client' },
+  });
+  expect(await draft()).toEqual({ ok: true, draftId: 'draft-new' });
 });
