@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { vi } from 'vitest';
 import { createTestDb } from '../../../helpers/database.ts';
 import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
@@ -75,9 +76,8 @@ beforeEach(async () => {
       const filter = url.searchParams.get('$filter');
       if (filter) {
         expect(filter).toBe("conversationId eq 'conversation-one'");
-        return Response.json({
-          value: ['m1', 'm2', 'm3'].map(message),
-        });
+        const ids = mode === 'wide' ? Array.from({ length: 10 }, (_, i) => `w${i}`) : ['m1', 'm2', 'm3'];
+        return Response.json({ value: ids.map(message) });
       }
       const next = url.searchParams.get('$skiptoken');
       return Response.json({
@@ -87,7 +87,8 @@ beforeEach(async () => {
     }
     const id = url.pathname.split('/').at(-1)!;
     expect(new Headers(init?.headers).get('prefer')).toBe('outlook.body-content-type="text"');
-    const content = id === 'm2' ? 'b'.repeat(80 * 1024) : `Body of ${id}`;
+    const content =
+      mode === 'wide' ? '你'.repeat(5000) : id === 'm2' ? 'b'.repeat(80 * 1024) : `Body of ${id}`;
     return Response.json({ id, body: { contentType: 'text', content } });
   });
   mcp = createOperationMcpHandler(
@@ -212,4 +213,30 @@ test('a requested body over the cap returns that preview marked truncated and th
   expect(two.body).toBeUndefined();
   expect(two.truncated).toBe(true);
   expect(two.preview.length).toBeGreaterThan(0);
+});
+
+test('a hand-made cursor cannot change the Graph path the token is sent to', async () => {
+  const before = fetchImpl.mock.calls.length;
+  for (const query of ['/../../users/other/messages?$top=1', '/../../../beta/me/events', '#x']) {
+    const cursor = Buffer.from(
+      JSON.stringify({
+        connectionId: microsoft.id,
+        operation: 'outlook.search',
+        key: createHash('sha256').update('fixture').digest('hex'),
+        query,
+      })
+    ).toString('base64url');
+    expect(await search({ cursor })).toEqual({ ok: false, reason: 'invalid_cursor' });
+  }
+  expect(fetchImpl.mock.calls.length).toBe(before);
+});
+
+test('long multibyte bodies drop bodies to fit instead of failing the page', async () => {
+  mode = 'wide';
+  const thread = await read({ limit: 10, body: true });
+  expect(thread.ok).toBe(true);
+  expect(thread.items).toHaveLength(10);
+  expect(thread.truncated).toBe(true);
+  expect(thread.items[0].body.length).toBeGreaterThan(0);
+  expect(Buffer.byteLength(JSON.stringify(thread))).toBeLessThanOrEqual(65536);
 });
