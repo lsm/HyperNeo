@@ -42,6 +42,7 @@ export interface ClaudeCodeAdapterDeps {
   ) => Promise<Result<WorkDelivery>>;
   desktopRecords?: () => Promise<readonly ClaudeDesktopRecord[]>;
   desktopSend?: WorkAdapter['send'];
+  desktopStatus?: WorkAdapter['status'];
   listProcesses?: ProcessLister;
   liveSessions?: () => Promise<readonly ClaudeLiveSession[]>;
   liveSessionsListed?: () => Promise<readonly ClaudeLiveSession[]>;
@@ -201,7 +202,7 @@ const runClaudeCodeFind = (superpipe({})('claude-code-find-work') as PipelineAPI
   scan: () => Promise<ClaudeFolder[]>
 ) => Promise<PlaceGroup[]>;
 
-function selectClaudeSendTarget(
+export function resolveClaudeRef(
   ref: WorkRef,
   records: readonly ClaudeDesktopRecord[]
 ): { value: WorkRef } | { reason: Rejected } {
@@ -277,7 +278,7 @@ function sendClaudeTarget(
 const sendClaudeCodeMessage = (superpipe({})('send-claude-code-message') as PipelineAPI)
   .input(['ref', 'message', 'context', 'deps'])
   .pipe((deps: ClaudeCodeAdapterDeps) => deps.desktopRecords?.() ?? [], 'deps', 'records')
-  .pipe(selectClaudeSendTarget, ['ref', 'records'], 'result:outcome')
+  .pipe(resolveClaudeRef, ['ref', 'records'], 'result:outcome')
   .pipe(sendClaudeTarget, ['outcome', 'message', 'context', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
@@ -316,14 +317,22 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
     : liveSessions;
   const statusReader = liveSessions ?? liveSessionsListed;
   const status: WorkAdapter['status'] = statusReader
-    ? (ref, since, receipt) =>
-        readClaudeCliStatus(ref, since, receipt, {
+    ? async (ref, since, receipt) => {
+        const target = resolveClaudeRef(ref, (await deps.desktopRecords?.()) ?? []);
+        if ('reason' in target) return target.reason;
+        if (target.value.adapter === 'claude-desktop')
+          return (
+            deps.desktopStatus?.(target.value, since, receipt) ??
+            reject('unsupported', 'The registered Claude Desktop status path is unavailable.')
+          );
+        return readClaudeCliStatus(ref, since, receipt, {
           machine: deps.machine,
           projectsDir: projectsDir ?? '',
           liveSessions: statusReader,
           folder: async (id) =>
             (await scan()).find((record) => record.sessionId === id)?.folder ?? null,
-        })
+        });
+      }
     : undefined;
   const turns: WorkAdapter['turns'] = projectsDir
     ? async (ref, cursor, limit) => {

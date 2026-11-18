@@ -100,7 +100,11 @@ export function createWorkerInputDelivery(
       : null;
     if (live && isWaitingOnPrompt(live))
       return { action: 'fail', detail: 'needs_you: its session is waiting on the human.' };
-    if (facts.status && !facts.status.ok && ['not_found', 'not_open'].includes(facts.status.reason))
+    if (
+      facts.status &&
+      !facts.status.ok &&
+      ['not_found', 'not_open', 'unsupported'].includes(facts.status.reason)
+    )
       return { action: 'fail', detail: facts.status.detail };
     if (!live || isBusyWork(live.status))
       return {
