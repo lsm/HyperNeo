@@ -39,7 +39,18 @@ exit 1
 SCRIPT
   chmod +x "$RUN/bin/pnpm"
 fi
-if [[ "$MODE" == pnpm-failure ]]; then
+if [[ "$MODE" == mirror-failure ]]; then
+  rm "$RUN/bin/npm"
+  cat > "$RUN/bin/pnpm" <<'SCRIPT'
+#!/bin/sh
+printf 'https://mirror.example.test\n'
+SCRIPT
+  cat > "$RUN/bin/curl" <<'SCRIPT'
+#!/bin/sh
+exit 7
+SCRIPT
+  chmod +x "$RUN/bin/pnpm"
+elif [[ "$MODE" == pnpm-failure ]]; then
   rm "$RUN/bin/npm"
   INTEGRITY=$(openssl dgst -sha512 -binary "$RUN/fixture.tgz" | openssl base64 -A)
   cat > "$RUN/bin/pnpm" <<SCRIPT
@@ -76,6 +87,9 @@ if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
   ! grep -q 'private-token-example' "$RUN/daemon.log"
   [[ "$count" -eq 4 && ! -e "$RUN/pnpm-called" && ! -e "$RUN/curl-called" ]]
   echo 'PASS: npm failure was reported without fallback or stderr'
+elif [[ "$MODE" == mirror-failure ]]; then
+  grep -q 'ECONNREFUSED mirror.example.test:443' "$RUN/daemon.log"
+  echo 'PASS: mirror outage reported the mirror host'
 elif [[ "$MODE" == pnpm-failure ]]; then
   grep -q '\[SDK\] Claude Code binary ready:' "$RUN/daemon.log"
   [[ -e "$RUN/pnpm-called" && -e "$RUN/curl-called" ]]

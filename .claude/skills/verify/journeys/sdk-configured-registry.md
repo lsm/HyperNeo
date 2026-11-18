@@ -14,3 +14,6 @@ report its exit code and network classification without logging stderr or invoki
 
 Pass `pnpm-failure` as the fifth argument to serve the local tarball after a
 fake pnpm fails. The daemon must report the SDK ready through fake curl.
+
+Pass `mirror-failure` as the fifth argument to make fake curl fail against a
+pnpm mirror. The daemon must report the mirror host in the failure.

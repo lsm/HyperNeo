@@ -28,7 +28,7 @@ const CURL_PATIENCE = [
 
 export const PACKAGE_DOWNLOAD_WAIT_MS = 45_000;
 
-type CurlFailure = { code?: number | string; stderr: string };
+type CurlFailure = { code?: number | string; stderr: string; host?: string };
 
 type TarEntry = { path: string; mode: number; data: Buffer };
 
@@ -76,13 +76,17 @@ export function mustRestartDownload(failure: CurlFailure): boolean {
 
 function curl(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
+    let host: string | undefined;
+    try {
+      host = new URL(args[args.length - 1]).hostname;
+    } catch {}
     execFile(
       'curl',
       ['-sS', ...CURL_PATIENCE, ...args],
       { encoding: 'utf-8' },
       (err, stdout, stderr) =>
         err
-          ? reject({ code: (err as { code?: number | string }).code, stderr } as CurlFailure)
+          ? reject({ code: (err as { code?: number | string }).code, stderr, host } as CurlFailure)
           : resolve(String(stdout))
     );
   });
@@ -215,7 +219,7 @@ export async function downloadVerifiedTarball(
     const reason =
       err instanceof Error
         ? describeWriteFailure(err)
-        : describeCurlFailure(err as CurlFailure, registryHost());
+        : describeCurlFailure(err as CurlFailure, (err as CurlFailure).host ?? registryHost());
     logWarn(`[npm-package-download] ${packageName}@${version}: ${reason}`);
     throw new Error(reason, { cause: err });
   }
