@@ -3,6 +3,7 @@ import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { readGoogleTokenJson as readBoundedJson } from './google-token-exchange.ts';
 import { startLoopbackLogin, type LoginOutcome } from './loopback-login.ts';
+import { grantedScopes } from './status.ts';
 
 const authority = 'https://login.microsoftonline.com';
 const SCOPES = 'openid profile email offline_access Mail.ReadWrite Calendars.Read';
@@ -100,7 +101,7 @@ async function validateIdentity(
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       expiresAt: Date.now() + token.expires_in * 1000,
-      scopes: token.scope.split(/\s+/).filter(Boolean),
+      scopes: grantedScopes(token.scope),
     },
   };
 }

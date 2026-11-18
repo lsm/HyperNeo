@@ -15,6 +15,17 @@ export const connectionStatus = z.object({
 
 export type ConnectionStatus = z.infer<typeof connectionStatus>;
 
+const graphScopes = ['openid', 'profile', 'email', 'offline_access', 'Mail.ReadWrite', 'Calendars.Read'];
+
+export const grantedScopes = (scope: string) =>
+  scope
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((name) => {
+      const short = name.replace(/^https:\/\/graph\.microsoft\.com\//i, '').toLowerCase();
+      return graphScopes.find((known) => known.toLowerCase() === short) ?? name;
+    });
+
 export const googleConnections = (rows: ConnectionStatus[]) =>
   rows.filter((row) => row.provider === 'google');
 
