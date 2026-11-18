@@ -96,6 +96,7 @@ describe('oxap.settings.save', () => {
       })
     ).toEqual({ accepted: false, reason: 'anthropic-codex needs an absolute executable path' });
     expect(h.records.map((record) => record.configJson)).toEqual(Array(3).fill('{"models":["m"]}'));
+    expect(h.install).not.toHaveBeenCalled();
     expect(h.restart).not.toHaveBeenCalled();
   });
 
@@ -124,6 +125,7 @@ describe('oxap.settings.save', () => {
         'synthetic-memory and synthetic-memory-2 both set SYNTHETIC_API_KEY to different keys',
     });
     expect(h.records[2].configJson).toBe('{"models":["m"]}');
+    expect(h.install).toHaveBeenCalledOnce();
     expect(h.restart).toHaveBeenCalledOnce();
   });
 
@@ -148,6 +150,7 @@ describe('oxap.settings.save', () => {
       })
     ).rejects.toThrow('synthetic write failure');
     expect(h.records[0].configJson).toBe('{"models":["m"]}');
+    expect(h.deps.settings().oxapHub).toBeUndefined();
     expect(h.restart).not.toHaveBeenCalled();
   });
 
@@ -187,6 +190,15 @@ describe('oxap.settings.save', () => {
     await h.run({ providerId: 'synthetic-memory', harness: 'oxap-synthetic' });
     h.records[0].configJson = '{"harness":"oxap-codex"}';
     expect(Object.keys((await readHubOptions(h.deps)).hub.adapters)).toEqual(['synthetic-memory']);
+  });
+
+  it('runs saves one at a time so a later save sees the earlier one', async () => {
+    const h = host({ keys: { 'synthetic-memory': 'sk-a', 'synthetic-memory-2': 'sk-b' } });
+    const results = await Promise.all([
+      h.run({ providerId: 'synthetic-memory', harness: 'oxap-synthetic' }),
+      h.run({ providerId: 'synthetic-memory-2', harness: 'oxap-synthetic' }),
+    ]);
+    expect(results.map((result) => result.accepted)).toEqual([true, false]);
   });
 
   it('refuses to start a hub before one is installed', async () => {

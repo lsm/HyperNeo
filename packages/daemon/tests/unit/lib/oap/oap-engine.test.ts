@@ -169,16 +169,26 @@ describe('OapEngine', () => {
     expect(engine.isCurrentHub(second)).toBe(false);
   });
 
-  test('keeps the running hub without reading settings again until restart', async () => {
-    const { engine, read } = await fixture();
+  test('reuses the running hub for unchanged settings and restarts it when they change', async () => {
+    const { engine, options, calls, root, read } = await fixture();
     const first = await engine.getHub(read());
-    let reads = 0;
-    const second = await engine.getHub(async () => {
-      reads += 1;
-      throw new Error('settings must not be read for a running hub');
+    await first.request('ping');
+    expect(await engine.getHub(read())).toBe(first);
+    const changed = {
+      ...options,
+      hub: {
+        adapters: { 'second-codex': { type: 'codex', executable: join(root, 'codex-2') } },
+        environment: { HOME: join(root, 'home') },
+      },
+    };
+    const second = await engine.getHub(read(changed));
+    expect(second).not.toBe(first);
+    expect(engine.isCurrentHub(first)).toBe(false);
+    await second.request('ping');
+    expect(JSON.parse(await readFile(join(root, 'state', 'oap-serve.json'), 'utf8'))).toEqual({
+      adapters: changed.hub.adapters,
     });
-    expect(second).toBe(first);
-    expect(reads).toBe(0);
+    expect(await readFile(calls, 'utf8')).toBe('start\nping\nstart\nping\n');
   });
 
   test('restart stops the running hub and the next start writes the newly saved settings', async () => {

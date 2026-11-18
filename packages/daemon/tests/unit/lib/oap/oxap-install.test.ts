@@ -54,6 +54,11 @@ describe('publishedSum', () => {
     expect(publishedSum(sums, `${name}.tar.gz`)).toBe('b'.repeat(64));
     expect(() => publishedSum(sums, 'other.tar.gz')).toThrow('no entry');
   });
+
+  it('reads a SHA256SUMS.txt with CRLF line endings', () => {
+    const sums = `${'a'.repeat(64)}  other.tar.gz\r\n${'b'.repeat(64)}  ${name}.tar.gz\r\n`;
+    expect(publishedSum(sums, `${name}.tar.gz`)).toBe('b'.repeat(64));
+  });
 });
 
 describe('installOxapHub', () => {
@@ -76,6 +81,32 @@ describe('installOxapHub', () => {
     await expect(installOxapHub(target, undefined, host.fetcher, name)).rejects.toThrow(
       "does not match the release's SHA256SUMS.txt"
     );
+    expect(existsSync(join(target, name, 'oxap'))).toBe(false);
+  });
+
+  it('bounds every download with a timeout signal', async () => {
+    const host = release();
+    const signals: unknown[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return host.fetcher(url);
+    }) as unknown as typeof fetch;
+    await installOxapHub(join(host.root, 'install'), undefined, fetcher, name);
+    expect(signals).toHaveLength(2);
+    for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('refuses a download larger than its limit, by header or by body, and installs nothing', async () => {
+    const host = release();
+    const target = join(host.root, 'install');
+    const declared = (async () =>
+      new Response('x', {
+        headers: { 'content-length': String(1024 * 1024) },
+      })) as unknown as typeof fetch;
+    await expect(installOxapHub(target, undefined, declared, name)).rejects.toThrow('larger than');
+    const streamed = (async () =>
+      new Response(new Uint8Array(65 * 1024))) as unknown as typeof fetch;
+    await expect(installOxapHub(target, undefined, streamed, name)).rejects.toThrow('larger than');
     expect(existsSync(join(target, name, 'oxap'))).toBe(false);
   });
 
