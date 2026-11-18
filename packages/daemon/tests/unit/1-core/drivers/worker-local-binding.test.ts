@@ -72,6 +72,11 @@ test('Codex named profile enables network access for local servers', () => {
   expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
 });
 
+test('checking a markerless folder does not create worker settings', async () => {
+  expect(await readClaudeWorkerSandbox(root)).toBeNull();
+  expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
 test('resuming markerless worker settings removes the legacy evidence hint', async () => {
   mkdirSync(join(root, '.claude'));
   writeFileSync(
