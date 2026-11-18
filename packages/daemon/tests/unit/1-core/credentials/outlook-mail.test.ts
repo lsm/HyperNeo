@@ -45,7 +45,7 @@ const message = (id: string) => ({
 beforeEach(async () => {
   db = await createTestDb();
   mode = 'normal';
-  nextLink = `${graph}/v1.0/me/messages?$search=%22fixture%22&$top=2&$skiptoken=page-two`;
+  nextLink = `${graph}/v1.0/me/messages?$search=%22fixture%22&$top=2&$select=id,conversationId&$skiptoken=page-two`;
   caller = { sessionId: 'synthetic-worker', role: 'neo' };
   const store = new DatabaseCredentialStore(db.getDatabase(), 'synthetic-key');
   const vault = new ConnectionVault(

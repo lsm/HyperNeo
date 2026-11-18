@@ -6,6 +6,7 @@ type Token = ReturnType<typeof createGoogleTokenAccess>['token'];
 type Grant = Extract<Awaited<ReturnType<Token>>, { ok: true }>;
 export type GoogleReply = { ok: true; data: unknown } | { ok: false; reason: string };
 type Write = { method: 'POST' | 'PUT'; body: string };
+type Payload = Partial<Write> & { headers?: Record<string, string> };
 type Reply = { response: Response; token: string };
 const denied = (reason: string) => ({ ok: false as const, reason });
 function admit(grant: Awaited<ReturnType<Token>>, scope: string) {
@@ -52,13 +53,15 @@ export function createGoogleHttp(deps: {
     grant: Grant,
     url: string,
     signal: AbortSignal,
-    payload?: Write
+    payload?: Payload
   ): Promise<Reply> => ({
     response: await (deps.fetchImpl ?? fetch)(url, {
-      ...payload,
+      method: payload?.method,
+      body: payload?.body,
       headers: {
         Authorization: `Bearer ${grant.accessToken}`,
-        ...(payload ? { 'Content-Type': 'application/json' } : {}),
+        ...(payload?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...payload?.headers,
       },
       redirect: 'error',
       signal,
@@ -77,7 +80,7 @@ export function createGoogleHttp(deps: {
         scope: string,
         url: string,
         signal: AbortSignal,
-        payload?: Write
+        payload?: Payload
       ) => {
         if (reply.response.status !== 401) return { value: reply };
         await reply.response.body?.cancel();
@@ -93,13 +96,13 @@ export function createGoogleHttp(deps: {
     url: string,
     scope: string,
     signal: AbortSignal,
-    payload?: Write
+    payload?: Payload
   ) => Promise<GoogleReply>;
   const perform = async (
     id: string,
     url: string,
     scope: string,
-    payload?: Write
+    payload?: Payload
   ): Promise<GoogleReply> => {
     const controller = new AbortController();
     const requests = active.get(id) ?? new Set<AbortController>();
@@ -117,7 +120,8 @@ export function createGoogleHttp(deps: {
     }
   };
   return {
-    get: (id: string, url: string, scope: string) => perform(id, url, scope),
+    get: (id: string, url: string, scope: string, headers?: Record<string, string>) =>
+      perform(id, url, scope, headers && { headers }),
     write: (id: string, url: string, scope: string, method: Write['method'], body: string) =>
       perform(id, url, scope, { method, body }),
     cancel(id: string) {
