@@ -1,4 +1,4 @@
-# Coding session strategy question
+# Coding session strategy migration
 
 Use the shared isolated daemon setup in `../SKILL.md`.
 
@@ -6,22 +6,11 @@ Use the shared isolated daemon setup in `../SKILL.md`.
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/coding-strategy-question.ts
 ```
 
-The helper boots an isolated daemon with the coding pack, creates a Neo session
-and an idle `backend` session over RPC, and records one finished synthetic
-coding todo that worked there. No `sessionStrategy` is saved for the repo.
+The helper seeds a host-prefixed repository's saved `per_pr` coding preference
+and its owning project, then restarts the isolated daemon. The public preference
+operation must show `per_todo` on the project and retain `per_pr` on the coding
+repository. A coding worker-target decision keeps the old strategy and does not
+ask another coding strategy question. Evidence is `strategy-question.json`.
 
-- The todo runner starts a ready slice: it is sent to the idle backend session
-  (long-lived reuse), and one choice card opens with Long-lived, Per task, Per
-  PR and Keep, naming the repo. The card holds no todo, so the slice runs.
-  Nothing is saved.
-- The coding pack's `workerTarget` hook decides work from another ask in the
-  repo: still long-lived (`backend-2`, since the backend session is busy). It
-  reuses the open repo question without calling `pack.preferences.ask`, so no
-  refusal is hidden and no second card opens.
-- The human picks One session per task over RPC. `per_task` is saved for the
-  repo with human provenance.
-- The next decision keeps its own `backend` start instead of `backend-2`, and
-  no new question opens. One strategy proposal exists in total.
-
-Replies and decisions are kept in `evidence/strategy-question.json`. No live
-database, provider, credentials, model or GUI is used.
+No live database, provider, credentials, model or GUI is used. The separate
+`session-reuse-card.md` journey verifies the new card in the browser.

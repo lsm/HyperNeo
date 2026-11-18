@@ -16,7 +16,9 @@ export function runMigration525(db: Database): void {
       SELECT w.project_id, p.value_json, p.set_by, p.set_at,
         ROW_NUMBER() OVER (PARTITION BY w.project_id ORDER BY p.set_at DESC, p.scope_key) AS rank
       FROM neo_pack_preferences p JOIN neo_project_workspaces w ON
-        lower(p.scope_key) = lower(CASE WHEN w.alias LIKE 'repository:github.com/%'
+        lower(CASE WHEN p.scope_key LIKE 'github.com/%'
+          THEN substr(p.scope_key, length('github.com/') + 1)
+          ELSE p.scope_key END) = lower(CASE WHEN w.alias LIKE 'repository:github.com/%'
           THEN substr(w.alias, length('repository:github.com/') + 1)
           ELSE substr(w.alias, 6, instr(w.alias || char(0), char(0)) - 6) END)
       WHERE p.pack = 'coding' AND p.key = 'sessionStrategy' AND p.scope_kind = 'repo'
