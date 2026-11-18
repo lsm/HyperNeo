@@ -9,6 +9,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
 import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-facts.ts';
+import { readCodingReviewThreads } from './connector-review-thread-reader.ts';
 
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -133,12 +134,22 @@ export class CodingPrSweepRepository {
         owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
         findings:
           row.state === 'changes_requested'
-            ? codingCrossModelFindings(
-                row.head,
-                new CodingStageFactsRepository(this.db).read(
-                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
-                )
-              )
+            ? [
+                ...codingCrossModelFindings(
+                  row.head,
+                  new CodingStageFactsRepository(this.db).read(
+                    `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+                  )
+                ),
+                ...(() => {
+                  const threads = readCodingReviewThreads(
+                    this.db,
+                    `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
+                    Date.now()
+                  );
+                  return threads?.headOid === row.head ? threads.unresolvedThreadUrls : [];
+                })(),
+              ]
             : [],
       }));
   }
