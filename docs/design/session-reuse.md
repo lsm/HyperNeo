@@ -90,7 +90,11 @@ which free worker another todo may reuse (rule 2 below):
   workers that worked on the ask, with their `work.status`). When no free one qualifies
   and one is busy, the decision is "wait": the start is queued on that worker through
   the existing todo queue (`todoWorker.wait`, the path `requireFreeWorker` already takes
-  for a busy send) instead of returning null and starting new. "Worked on this ask" reads `neo_todo_sessions` until
+  for a busy send) instead of returning null and starting new. `work.start` runs after
+  the runner has claimed the todo (`doing`, `startedAt` set), and `queueOn`
+  (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) refuses a
+  todo that is not `todo`, so this PR extends `queueOn` and `todoWorker.wait` to a todo
+  that is already `doing` and has no worker yet. PR 4's rule 1 uses the same extension. "Worked on this ask" reads `neo_todo_sessions` until
   PR 4, then `neo_todo_roles`.
 - Saved coding `sessionStrategy` values are copied once: a repository value to each project
   that owns the repository (the most recently set wins when one project owns several), a
@@ -136,9 +140,11 @@ These are columns on `work_started_sessions`, so existing reads keep working. It
 todo role.
 
 A **trusted record** is either a row this PR's code wrote (`started_by` set), or a row
-written before this PR with `kind = 'worker'`, which is what the daemon already trusts
-today when it reclaims (the archive gate). Older rows without `kind = 'worker'` are never
-trusted.
+written before this PR with `kind = 'worker'`. That is the row the daemon already
+requires before an automatic or Neo archive and before a release
+(`neo/session-archive-operation.ts` through `readStartedWork`, and `neo/todo-release.ts`,
+which keeps such a session as `not_started_by_us`; both since #10965). Older rows without
+`kind = 'worker'` are never trusted.
 
 Release, archive and reclaim check the record: the daemon closes or archives a session
 only when it has a trusted record, and writes the reason and time into the record's end
@@ -159,7 +165,7 @@ model fields; reuse reads its model from `work.status` as today.
   todo's role sessions, the free sessions with a live start record, the pack's role
   rules), decide with one pure function, then send, wait or start new. The decision:
   1. this todo already has a session for this role and it is usable → send there; if
-     busy, wait for it (`todoWorker.wait`, extended to a todo that is already doing);
+     busy, wait for it (`todoWorker.wait`, as extended in PR 1);
   2. otherwise the `sessionReuse` rule from PR 1, skipping any session that plays
      another role on this todo unless the pack's rules allow sharing;
   3. otherwise start new.
