@@ -13,10 +13,11 @@ mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
 cat > "$RUN/bin/curl" <<'CURL'
 #!/bin/sh
 printf 'curl\n' >> "$HYPERNEO_DATA_DIR/download.log"
+if [ "$DOWNLOAD_FIXTURE" = curl-network ]; then exit 7; fi
 printf '<html>blocked</html>'
 CURL
 chmod +x "$RUN/bin/curl"
-if [[ "$MODE" != html ]]; then
+if [[ "$MODE" != html && "$MODE" != curl-network ]]; then
   cat > "$RUN/bin/npm" <<'NPM'
 #!/bin/sh
 printf 'npm\n' >> "$HYPERNEO_DATA_DIR/download.log"
@@ -63,7 +64,7 @@ after=$(wc -l < "$RUN/data/download.log" | tr -d ' ')
 rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/messages-after.json"
 bun -e 'const a=JSON.parse(await Bun.file(process.argv[1]).text()).reply.sdkMessages; const b=JSON.parse(await Bun.file(process.argv[2]).text()).reply.sdkMessages; if(JSON.stringify(a)!==JSON.stringify(b)) process.exit(1); console.log(`messages_before=${a.length} messages_after=${b.length}`)' "$RUN/evidence/messages.json" "$RUN/evidence/messages-after.json"
 cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
-if [[ "$MODE" = html ]]; then
+if [[ "$MODE" = html || "$MODE" = curl-network ]]; then
   [[ $(/usr/bin/grep -vc '^curl$' "$RUN/data/download.log" || true) -eq 0 ]]
 else
   [[ $(/usr/bin/grep -vc '^npm$' "$RUN/data/download.log" || true) -eq 0 ]]

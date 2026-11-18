@@ -310,7 +310,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.sending': '正在发送',
   'chat.notSent': '未发送',
   'chat.notSentReason': '未发送：{reason}',
-  'download.registryUnreachable': '无法下载 Claude Code：无法连接 npm 软件源。',
+  'download.registryUnreachable': '无法下载 Claude Code：无法连接 npm 软件源 {host}。',
   'download.registryMetadata': '无法下载 Claude Code：npm 软件源没有返回软件包信息。',
   'download.npmFailure': '无法下载 Claude Code：请检查 npm 软件源和登录信息。',
   'download.stillDownloading': 'Claude Code 仍在下载，请稍后重试。',

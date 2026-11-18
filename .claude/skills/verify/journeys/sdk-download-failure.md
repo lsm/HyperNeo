@@ -28,3 +28,7 @@ pointing to Playwright. The browser pairs with the isolated daemon, captures
 light and dark screenshots with the workspace path masked, and checks the Retry
 button. In after mode it clicks Retry and checks that it starts one download.
 Run the slow fixture separately to check the 45-second download message.
+
+For a localized curl network failure, use `curl-network` as the fixture mode,
+`VERIFY_WEB=after`, and `VERIFY_LOCALE=zh-Hans`. The browser must show the
+registry host in the Chinese cause and Retry must invoke only the download.
