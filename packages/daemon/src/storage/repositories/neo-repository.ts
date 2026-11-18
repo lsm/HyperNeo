@@ -8,6 +8,7 @@ import type { NeoProjectCleanup } from '../../lib/neo/project-cleanup.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { reserveNeoHomeProjects } from './neo-home-reservation.ts';
 import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
@@ -33,6 +34,31 @@ export class NeoRepository {
       .prepare(`SELECT ${concernColumns} FROM neo_concerns
         WHERE id NOT IN (SELECT source_id FROM neo_project_merges) ORDER BY updated_at DESC, id`)
       .all() as NeoProject[];
+  }
+
+  sessionWorkspacePaths(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT workspace_path AS workspace, main_repo_path AS main,
+      CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.executionProjectPath') END AS execution
+      FROM sessions`)
+      .all() as { workspace: string | null; main: string | null; execution: string | null }[];
+    return new Set(
+      rows.flatMap((row) =>
+        [row.workspace, row.main, row.execution].filter(
+          (path): path is string => typeof path === 'string'
+        )
+      )
+    );
+  }
+
+  projectHasSessions(projectId: string, machine: string): boolean {
+    const folders = this.projectMerges
+      .localFolders(machine)
+      .filter((entry) => entry.projectId === projectId);
+    const find =
+      this.db.prepare(`SELECT 1 FROM sessions WHERE workspace_path = ?1 OR main_repo_path = ?1
+      OR (json_valid(metadata) AND json_extract(metadata, '$.executionProjectPath') = ?1) LIMIT 1`);
+    return folders.some(({ folder }) => !!find.get(folder));
   }
 
   projectCleanupFacts(): NeoProjectFacts[] {
@@ -76,12 +102,13 @@ export class NeoRepository {
     this.notify();
   }
 
-  async forgetProjectCommand(projectId: string, caller: OperationCaller) {
+  async forgetProjectCommand(projectId: string, caller: OperationCaller, removeHistory: boolean) {
     const result = await gatewayFor(this.db).call(
       neoProjectForgetWrites,
       'forget',
       projectId,
-      caller
+      caller,
+      removeHistory
     );
     if (result.ok) this.notify();
     return result;
@@ -89,11 +116,14 @@ export class NeoRepository {
 
   forgetProject(
     projectId: string,
-    afterForget: () => void = () => {}
+    afterForget: () => void = () => {},
+    removeHistory = false
   ): { forgotten: true } | { reason: 'project_missing' | 'project_in_use' } {
     const result = this.db.transaction(() => {
       if (!this.db.prepare('SELECT 1 FROM neo_concerns WHERE id = ?').get(projectId))
         return { reason: 'project_missing' as const };
+      if (removeHistory && this.projectHasSessions(projectId, hostname()))
+        return { reason: 'project_in_use' as const };
       const used = this.db
         .prepare(`SELECT 1 WHERE EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?1)
           OR EXISTS (SELECT 1 FROM neo_asks WHERE project_id = ?1 AND status = 'open')
@@ -101,6 +131,15 @@ export class NeoRepository {
           OR EXISTS (SELECT 1 FROM neo_project_merges WHERE source_id = ?1 OR target_id = ?1)`)
         .get(projectId);
       if (used) return { reason: 'project_in_use' as const };
+      if (removeHistory) {
+        const folders = this.projectMerges
+          .localFolders(hostname())
+          .filter((entry) => entry.projectId === projectId);
+        const remove = this.db.prepare(
+          'DELETE FROM workspace_history WHERE path = ? AND NOT EXISTS (SELECT 1 FROM workspace_project_folders WHERE path = ?)'
+        );
+        for (const { folder } of folders) remove.run(folder, folder);
+      }
       this.db.prepare('UPDATE neo_asks SET project_id = NULL WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);

@@ -8,10 +8,14 @@ import { NeoRepository } from './neo-repository.ts';
 class NeoProjectForgetCommands {
   constructor(private readonly db: Database) {}
 
-  forget(projectId: string, caller: OperationCaller) {
+  forget(projectId: string, caller: OperationCaller, removeHistory: boolean) {
     const repo = new NeoRepository(this.db);
-    return runNeoProjectForget(projectId, caller, repo, (repos) =>
-      unwatchCodingRepos(this.db, repos, repo.allRepositories())
+    return runNeoProjectForget(
+      projectId,
+      caller,
+      repo,
+      (repos) => unwatchCodingRepos(this.db, repos, repo.allRepositories()),
+      removeHistory
     );
   }
 }

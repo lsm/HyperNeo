@@ -17,6 +17,8 @@ interface SessionProjectGroupProps {
   onArchive: (sessionId: string) => void | Promise<void>;
   childrenOf?: (sessionId: string) => Session[];
   onRemove?: () => void;
+  removeDisabledReason?: string;
+  alwaysShowRemove?: boolean;
 }
 
 export function SessionProjectGroup({
@@ -31,6 +33,8 @@ export function SessionProjectGroup({
   onArchive,
   childrenOf,
   onRemove,
+  removeDisabledReason,
+  alwaysShowRemove,
 }: SessionProjectGroupProps) {
   const isEmpty = sessions.length === 0;
 
@@ -95,9 +99,14 @@ export function SessionProjectGroup({
             type="button"
             data-testid="project-remove"
             onClick={onRemove}
-            title="Remove project"
+            disabled={!!removeDisabledReason}
+            title={removeDisabledReason ?? 'Remove project'}
             aria-label={`Remove project ${name}`}
-            class={`${ROW_ICON_BUTTON} opacity-100 sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100`}
+            class={`${ROW_ICON_BUTTON} disabled:cursor-not-allowed disabled:opacity-50 ${
+              isEmpty || alwaysShowRemove
+                ? ''
+                : 'sm:opacity-0 sm:group-hover/project:opacity-100 group-focus-within/project:opacity-100 [@media(hover:none)]:opacity-100'
+            }`}
           >
             <QueueTrashIcon />
           </button>

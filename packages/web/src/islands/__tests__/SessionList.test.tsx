@@ -10,6 +10,8 @@ const {
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
   mockListSystemProjects,
+  mockFindProjectWork,
+  mockForgetSystemProject,
   mockAddWorkspaceToHistory,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
@@ -24,6 +26,8 @@ const {
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
   mockListSystemProjects: vi.fn(),
+  mockFindProjectWork: vi.fn(),
+  mockForgetSystemProject: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
@@ -52,6 +56,8 @@ vi.mock('../../lib/router.ts', () => ({
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
   listSystemProjects: mockListSystemProjects,
+  findProjectWork: mockFindProjectWork,
+  forgetSystemProject: mockForgetSystemProject,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
@@ -132,8 +138,10 @@ describe('SessionsSidebar', () => {
     mockSessionStatusesSignal.value = new Map();
     mockGetWorkspaceHistory.mockResolvedValue([]);
     mockListSystemProjects.mockResolvedValue([]);
+    mockFindProjectWork.mockResolvedValue(false);
+    mockForgetSystemProject.mockResolvedValue(undefined);
     mockAddWorkspaceToHistory.mockImplementation(async (path: string) => createHistory(path, 2));
-    mockRemoveWorkspaceFromHistory.mockResolvedValue({ success: true });
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(true);
     mockArchiveSession.mockResolvedValue({ success: true });
     mockHubRequest.mockResolvedValue({ path: '/workspace/new-project' });
     mockGetHubIfConnected.mockReturnValue({ request: mockHubRequest });
@@ -194,7 +202,7 @@ describe('SessionsSidebar', () => {
     const remaining = { ...project, folders: ['/docs'] };
     mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/docs'), project: remaining }]);
     mockRemoveWorkspaceFromHistory
-      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'));
     fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
@@ -208,6 +216,14 @@ describe('SessionsSidebar', () => {
       expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
     );
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
+  it('reports a refused history removal', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(false);
+    render(<SessionsSidebar />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove project code' }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
   });
 
   it('archives every open chat after confirmation and then removes the project', async () => {
@@ -279,7 +295,10 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText('Review')).toBeTruthy();
     expect(screen.queryByText('neo-read')).toBeNull();
     expect(screen.getAllByText('No chats')).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /^Remove project/ })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Remove project Neo Read' }).hasAttribute('disabled')
+    ).toBe(true);
+    expect(screen.getByRole('button', { name: 'Remove project Idle' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
   });

@@ -4,7 +4,7 @@ import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
-type ListRepo = Pick<NeoRepository, 'listProjects' | 'projectMerges'>;
+type ListRepo = Pick<NeoRepository, 'listProjects' | 'projectMerges' | 'sessionWorkspacePaths'>;
 type LocalFolder = { projectId: string; folder: string };
 
 const ListedProject = z.object({
@@ -12,13 +12,15 @@ const ListedProject = z.object({
   name: z.string(),
   folders: z.array(z.string()),
   updatedAt: z.number(),
+  hasSessions: z.boolean(),
 });
 const Result = z.object({ projects: z.array(ListedProject) });
 type Listed = z.infer<typeof Result>;
 
 export function listNeoProjects(
   projects: readonly NeoProject[],
-  folders: readonly LocalFolder[]
+  folders: readonly LocalFolder[],
+  busy: ReadonlySet<string> = new Set()
 ): Listed {
   return {
     projects: projects.map((project) => ({
@@ -26,6 +28,7 @@ export function listNeoProjects(
       name: project.title,
       folders: folders.filter((entry) => entry.projectId === project.id).map((e) => e.folder),
       updatedAt: project.updatedAt,
+      hasSessions: busy.has(project.id),
     })),
   };
 }
@@ -38,7 +41,17 @@ const runNeoProjectList = (superpipe({})('neo.projects.list') as PipelineAPI)
     ['repo', 'machine'],
     'folders'
   )
-  .pipe(listNeoProjects, ['projects', 'folders'], 'listed')
+  .pipe(
+    (repo: ListRepo, folders: readonly LocalFolder[]) => {
+      const paths = repo.sessionWorkspacePaths();
+      return new Set(
+        folders.filter((entry) => paths.has(entry.folder)).map((entry) => entry.projectId)
+      );
+    },
+    ['repo', 'folders'],
+    'busy'
+  )
+  .pipe(listNeoProjects, ['projects', 'folders', 'busy'], 'listed')
   .end('listed') as (repo: ListRepo, machine: string) => Listed;
 
 export function createNeoProjectListOperation(repo: ListRepo, machine: () => string) {

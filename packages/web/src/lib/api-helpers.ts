@@ -360,6 +360,7 @@ export interface SystemProject {
   name: string;
   folders: string[];
   updatedAt: number;
+  hasSessions: boolean;
 }
 
 export async function listSystemProjects(): Promise<SystemProject[]> {
@@ -368,6 +369,32 @@ export async function listSystemProjects(): Promise<SystemProject[]> {
     { name: 'neo.projects.list', input: {} }
   );
   return projects;
+}
+
+export async function findProjectWork(folders: string[]): Promise<boolean> {
+  if (folders.length === 0) throw new Error('No folder is available to check for work');
+  const hub = getHubOrThrow();
+  for (const folder of folders) {
+    const result = await hub.request<{
+      places: { work: unknown[] }[];
+      unreachable: unknown[];
+      more?: boolean;
+    }>('operation.invoke', {
+      name: 'work.find',
+      input: { folder, includeClosed: true, limit: 50 },
+    });
+    if (result.more || result.unreachable.length) throw new Error('Could not check all work');
+    if (result.places.some((place) => place.work.length > 0)) return true;
+  }
+  return false;
+}
+
+export async function forgetSystemProject(projectId: string): Promise<void> {
+  const result = await getHubOrThrow().request<{ ok: boolean; reason?: string }>(
+    'operation.invoke',
+    { name: 'neo.project.forget', input: { projectId, removeHistory: true } }
+  );
+  if (!result.ok) throw new Error(result.reason ?? 'Failed to forget project');
 }
 
 export async function addFolderToProject(projectPath: string, path: string): Promise<void> {
