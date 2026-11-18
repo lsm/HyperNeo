@@ -117,6 +117,26 @@ it('shows a pending Microsoft sign-in after the settings page reloads', async ()
   expect((await screen.findByRole('status')).textContent).toContain(
     'Finish signing in on Microsoft.'
   );
+  await waitFor(
+    () => expect(invocations('connections.microsoft.login').length).toBeGreaterThanOrEqual(3),
+    {
+      timeout: 1800,
+    }
+  );
+});
+
+it('shows a Microsoft failure after reload even if Google previously completed', async () => {
+  request.mockImplementation(async (_method, data: Invocation) => {
+    if (data.name === 'connections.list') return { connections: [] };
+    if (data.name === 'connections.microsoft.login')
+      return { state: 'failed', reason: 'account_mismatch' };
+    if (data.name === 'connections.google.login') return { state: 'complete' };
+    throw new Error(`Unexpected operation ${data.name}`);
+  });
+  render(<MainContent />);
+  expect((await screen.findByRole('alert')).textContent).toContain(
+    'Sign in with the same Microsoft account to reconnect.'
+  );
 });
 
 it('starts Microsoft with an empty client ID after switching from Google', async () => {

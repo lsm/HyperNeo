@@ -59,6 +59,7 @@ const update = (superpipe({})('connection-settings') as PipelineAPI)
     ) => {
       const selected =
         attempts.find(({ attempt }) => attempt.state === 'pending') ??
+        attempts.find(({ attempt }) => attempt.state === 'failed') ??
         attempts.find(({ attempt }) => attempt.state !== 'missing') ??
         attempts[0];
       return { accounts: rows.connections, ...selected, receipt };
