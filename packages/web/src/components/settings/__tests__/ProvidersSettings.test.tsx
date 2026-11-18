@@ -614,14 +614,18 @@ describe('ProvidersSettings', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
     await waitFor(() =>
-      expect(mockRequest).toHaveBeenCalledWith('operation.invoke', {
-        name: 'oxap.settings.save',
-        input: {
-          providerId: 'anthropic-codex',
-          harness: 'oxap-codex',
-          settings: { executable: '/synthetic/codex' },
+      expect(mockRequest).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'oxap.settings.save',
+          input: {
+            providerId: 'anthropic-codex',
+            harness: 'oxap-codex',
+            settings: { executable: '/synthetic/codex' },
+          },
         },
-      })
+        { timeout: 300_000 }
+      )
     );
     await waitFor(() =>
       expect((screen.getByLabelText('Hub binary') as HTMLInputElement).value).toBe(
