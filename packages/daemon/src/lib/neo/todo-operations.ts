@@ -1,4 +1,5 @@
 import { neoToolDescription } from '@hyperneo/prompts';
+import { hasPendingTodoDecision } from './proposal.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -718,6 +719,14 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo): Gate<NeoTodo> =>
+        hasPendingTodoDecision(todos.listQuestions(todo.askId), todo.id)
+          ? fail('human_decision_required: the human must answer this work decision.')
+          : { value: todo },
+      'outcome',
+      'result:outcome'
+    )
     .pipe(
       (todo: NeoTodo, input: z.infer<typeof Continue>): Gate<NeoTodo> =>
         input.message || neoTodoFailed(todo)

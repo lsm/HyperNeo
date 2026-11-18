@@ -127,6 +127,10 @@ try {
   assert.equal(store.getQuestion(followupCard.id)?.state, 'open');
   evidence.relayContinueAdd = await mcp('neo.todo.add', { ...draft, title: 'Blocked follow-up', askId: followup.askId });
   assert.equal((evidence.relayContinueAdd as { ok: boolean }).ok, false);
+  evidence.relayContinueAnswer = await human('neo.question.answer', { questionId: followupCard.id, answer: ['First'] });
+  assert.equal((evidence.relayContinueAnswer as { ok: boolean }).ok, true);
+  evidence.relayContinueAfter = await mcp('neo.todo.continue', { todoId: followup.id, message: 'Follow up' });
+  assert.equal((evidence.relayContinueAfter as { ok: boolean }).ok, true, JSON.stringify(evidence.relayContinueAfter));
   const sourceSession = { id: 'synthetic-worker', adapter: 'hyperneo', name: 'Worker', label: 'Synthetic worker', provider: 'HyperNeo', link: null };
   const seed = (id: string, cause?: string) => {
     store.openAsk({ id, sessionId: sender, projectId: null, originMessageId: `neo-track:synthetic:${id}`, title: id, request: 'Synthetic tracked request', createdAt: 1 });

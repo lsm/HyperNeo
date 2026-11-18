@@ -6,6 +6,12 @@ export const proposalQuestionId = (askId: string) => neoDerivedId(`neo-proposal:
 export const isHumanWorkDecision = (question: NeoQuestion) =>
   question.id === proposalQuestionId(question.askId) || question.cause === 'relay-session-proposal';
 
+export const hasPendingTodoDecision = (questions: readonly NeoQuestion[], todoId: string) =>
+  questions.some(
+    (question) =>
+      question.state === 'open' && question.todoId === todoId && isHumanWorkDecision(question)
+  );
+
 export function requireAcceptedAsk(
   ask: NeoAsk,
   proposal: NeoQuestion | null,

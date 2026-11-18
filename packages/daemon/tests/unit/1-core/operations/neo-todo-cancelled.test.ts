@@ -646,6 +646,10 @@ describe('unfinished prerequisites of a started step', () => {
       );
       expect(store.getQuestion(card.id)?.state).toBe('open');
       expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'needs-human' });
+      store.answerQuestion(store.getQuestion(card.id)!, ['First'], 'button', Date.now());
+      expect(
+        (await invoke('neo.todo.continue', { todoId: todo.id, message: 'Follow up' })).ok
+      ).toBe(true);
     } finally {
       db.close();
     }
