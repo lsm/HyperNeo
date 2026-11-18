@@ -15,7 +15,14 @@ export const connectionStatus = z.object({
 
 export type ConnectionStatus = z.infer<typeof connectionStatus>;
 
-const graphScopes = ['openid', 'profile', 'email', 'offline_access', 'Mail.ReadWrite', 'Calendars.Read'];
+const graphScopes = [
+  'openid',
+  'profile',
+  'email',
+  'offline_access',
+  'Mail.ReadWrite',
+  'Calendars.Read',
+];
 
 export const grantedScopes = (scope: string) =>
   scope

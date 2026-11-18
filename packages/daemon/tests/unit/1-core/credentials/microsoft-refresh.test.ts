@@ -160,11 +160,16 @@ test('fully qualified Graph scopes from a refresh are stored as the requested na
       refresh_token: `synthetic-refresh-${count}`,
       expires_in: 3600,
       token_type: 'Bearer',
-      scope: 'https://graph.microsoft.com/mail.readwrite https://graph.microsoft.com/Calendars.Read openid',
+      scope:
+        'https://graph.microsoft.com/mail.readwrite https://graph.microsoft.com/Calendars.Read openid',
     });
   expect(await lifecycle.token(connection.id)).toMatchObject({
     ok: true,
     scopes: ['Mail.ReadWrite', 'Calendars.Read', 'openid'],
   });
-  expect((await vault.read(connection))?.scopes).toEqual(['Mail.ReadWrite', 'Calendars.Read', 'openid']);
+  expect((await vault.read(connection))?.scopes).toEqual([
+    'Mail.ReadWrite',
+    'Calendars.Read',
+    'openid',
+  ]);
 });
