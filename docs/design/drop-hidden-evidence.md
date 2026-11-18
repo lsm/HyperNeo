@@ -63,16 +63,15 @@ Neo's prompt text changes to match:
 
 ## How it is built
 
-Evidence admission already runs at four places, each a step on the add, edit and open paths: `todo-operations.ts`, `todo-mutation-operation.ts`, `ask-record-operations.ts` and `storage/repositories/neo-todo-add-write.ts`. Today each calls `neoEvidenceRefusal`.
+The rules are code, not prompt text, and each lives where its subject lives. Both are pure functions: facts in, refusal or nothing out, with no database, clock or file system inside. Both run as steps in the existing superpipe pipelines (`neo.todo.add`, `neo.todo.edit`, `neo.ask.open`, `neo.todo.commit-add`).
 
-Rules 1 and 2 become one pure function in `core-todo-checks.ts`, and those four call sites use it instead. The function takes four facts:
+**Rule 1 is in the coding pack.** Repositories are the coding pack's concept, so core does not decide which checks a coding todo may use. The pack already refuses wrongly placed coding work through its `refuse` hook in `packs/coding/todo-prs.ts`, which core calls with the todo's place on every add and edit (`neoTodoPlaceRefusal`), whatever pack owns the check. Rule 1 is one more case there: an `evidence` check on a todo the pack places in a repository is refused. On edit the scope also carries the previous check, so an unchanged legacy check passes.
+
+**Rule 2 is in core.** `evidence` is a core check, so its path rule replaces `neoEvidenceRefusal` in `core-todo-checks.ts` at the same four call sites: `todo-operations.ts`, `todo-mutation-operation.ts`, `ask-record-operations.ts` and `storage/repositories/neo-todo-add-write.ts`. It no longer looks at repositories. It takes three facts:
 
 - the check;
-- whether the todo has a repository;
-- the previous check on edit, so an unchanged legacy check remains valid.
+- the previous check on edit, so an unchanged legacy check remains valid;
 - the daemon's data directory (`getDataDir()`), read by the caller and passed in.
-
-It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Tests (written first)
 
@@ -94,6 +93,6 @@ It returns a refusal or nothing, and it reads no database, clock or file system.
 
 ## Slices
 
-1. **Build**: the pure rule in `core-todo-checks.ts` with its unit tests, not yet called.
-2. **Wire**: swap `neoEvidenceRefusal` for the rule at its four call sites and stop calling `withAssignedEvidence` there. Update the prompt, error text and worker brief, including the legacy-check instruction. Retain legacy path lookup and redaction. Update `neo-todo-evidence-path.test.ts`, `human-report-locations.test.ts` and `neo-todo-add-write.test.ts` (its assigned-path case), and keep legacy projection coverage in `neo-ask-entries.test.ts`. Update `neo-prompt.test.ts` and `neo-todos.test.ts` for the prompt text. Update and run the `human-report-locations` and `core-todo-checks` verify journeys and their proofs (`.claude/skills/verify/`).
+1. **Build**: rule 2 in `core-todo-checks.ts` with its unit tests, not yet called.
+2. **Wire**: add rule 1 to the coding pack's `refuse` hook, swap `neoEvidenceRefusal` for rule 2 at its four call sites and stop calling `withAssignedEvidence` there. Update the prompt, error text and worker brief, including the legacy-check instruction. Retain legacy path lookup and redaction. Update `neo-todo-evidence-path.test.ts`, `human-report-locations.test.ts` and `neo-todo-add-write.test.ts` (its assigned-path case), and keep legacy projection coverage in `neo-ask-entries.test.ts`. Update `neo-prompt.test.ts` and `neo-todos.test.ts` for the prompt text. Update and run the `human-report-locations` and `core-todo-checks` verify journeys and their proofs (`.claude/skills/verify/`).
 3. **Delete**: remove unused assignment code and `HYPERNEO_EVIDENCE` environment plumbing. Retain the legacy path lookup and redaction. Update the affected assertions in `worker-local-binding.test.ts`, `worker-sandbox.test.ts`, `worker-sandbox-release.test.ts`, `codex-desktop-start.test.ts`, `query-options-builder.test.ts` and `safe-process-env.test.ts`. Update and run the `worker-sandbox` verify journey and `.claude/skills/verify/worker-sandbox.ts` proof without the removed variable; update the `.claude/skills/verify/work-cleanup-sweep.ts` proof where it assumes worker evidence locations, while retaining coverage of cleanup for existing evidence. Production changes in this slice are removal only.
