@@ -23,6 +23,7 @@ const run = resolve(process.argv.at(-1)!);
 const saturated = process.argv.includes('--saturated');
 let releaseRefresh: (() => void) | undefined;
 let refreshStarted = 0;
+const refreshJobIds: string[] = [];
 let lagTimer: ReturnType<typeof setInterval> | undefined;
 let maxLagMs = 0;
 let lagSamples = 0;
@@ -255,7 +256,7 @@ try {
   assert(convo.getSessionData().config.mcpServers?.exa);
   if (saturated) {
     for (let i = 0; i < 5; i++)
-      app.db.getJobQueueRepo().enqueue({ queue: 'neo.work.driver.refresh', payload: {} });
+      refreshJobIds.push(app.db.getJobQueueRepo().enqueue({ queue: 'neo.work.driver.refresh', payload: {} }).id);
     await waitFor(() => refreshStarted >= 1, 15_000);
     await new Promise((done) => setTimeout(done, 2_000));
     evidence.refreshJobsHeld = refreshStarted;
@@ -300,8 +301,13 @@ try {
     evidence.lagSamples = lagSamples;
     assert(lagSamples > 0 && maxLagMs < 1_000, 'event loop stalled for at least one second');
   }
+  NeoService.prototype.refreshDriverWork = originalRefresh;
   releaseRefresh?.();
   assert(deliveredWhileHeld, 'human input waited for refresh jobs to release');
+  if (saturated) {
+    await waitFor(() => refreshJobIds.filter((id) => app!.jobQueue.getJob(id)?.status === 'completed').length >= 2, 30_000);
+    evidence.realRefreshCompleted = true;
+  }
   if (!saturated) {
     await waitFor(
       () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'

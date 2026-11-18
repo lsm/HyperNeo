@@ -25,5 +25,6 @@ Run again with `--saturated` before the wrapper's run-directory argument. Five
 synthetic refresh jobs are queued; their work stays held until the front session
 consumes the human input. Require delivery within ten seconds with the refresh
 work still held and no event-loop stall of one second; retain the timing, lag
-samples and held count in the evidence. This case
+samples and held count in the evidence. Restore the real refresh handler, release
+the barrier and require a queued refresh to complete. This case
 does not check the model reply.
