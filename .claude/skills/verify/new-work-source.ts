@@ -55,6 +55,8 @@ try {
   assert.equal(initialRefusal.ok, false);
   const afterInvalid = await invokeOperation(registry(), 'neo.snapshot', {}, { source: 'rpc', principal: 'local' });
   assert.equal((afterInvalid as { value: { todoAsks: unknown[] } }).value.todoAsks.length, 0);
+  evidence.longProposal = await mcp('neo.ask.open', { title: 'Oversized proposal', request: 'x'.repeat(401) });
+  assert((evidence.longProposal as { reason: string }).reason.startsWith('card_too_long:'));
 
   const reply = await handler({ name: 'neo.ask.open', input: { title: 'Synthetic proposal', request: 'Improve the synthetic workflow because it is confusing' } });
   evidence.open = reply;
@@ -75,6 +77,11 @@ try {
   const before = await mcp('neo.todo.add', { ...draft, askId: opened.ask.id });
   evidence.before = before;
   assert.equal(before.ok, false);
+  const chat = await invokeOperation(registry(), 'neo.message.send', { sessionId: sender, requestId: crypto.randomUUID(), content: 'yes', replyTo: { kind: 'question', id: question.id } }, { source: 'rpc', principal: 'local' });
+  evidence.chat = chat;
+  assert.equal(chat.kind, 'completed');
+  assert.equal((chat as { value: { ok: boolean } }).value.ok, true);
+  assert.equal(new NeoAskTodoRepository(db).getQuestion(question.id)?.state, 'open');
   const answered = await human('neo.question.answer', { questionId: question.id, answer: 'yes' });
   evidence.answered = answered;
   assert.equal(answered.ok, true);
@@ -97,6 +104,10 @@ try {
   const relayed = seed('new-relay', 'relay-session-proposal');
   evidence.relayBefore = await mcp('neo.todo.add', { ...draft, title: 'Relayed step', askId: 'new-relay' });
   assert.equal((evidence.relayBefore as { ok: boolean }).ok, false);
+  const relayChat = await invokeOperation(registry(), 'neo.message.send', { sessionId: sender, requestId: crypto.randomUUID(), content: 'A', replyTo: { kind: 'question', id: relayed.id } }, { source: 'rpc', principal: 'local' });
+  evidence.relayChat = relayChat;
+  assert.equal((relayChat as { value: { ok: boolean } }).value.ok, true);
+  assert.equal(store.getQuestion(relayed.id)?.state, 'open');
   evidence.relayAnswer = await human('neo.question.answer', { questionId: relayed.id, answer: ['First'] });
   assert.equal((evidence.relayAnswer as { ok: boolean }).ok, true);
   evidence.relayAfter = await mcp('neo.todo.add', { ...draft, title: 'Relayed step', askId: 'new-relay' });

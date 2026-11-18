@@ -28,7 +28,7 @@ const turn = (_messageId: string, _human = true): OperationCaller => ({
 
 type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
 
-function setup() {
+function setup(language?: 'en' | 'zh-Hans') {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -72,7 +72,7 @@ function setup() {
       () => createTodoCheckPacks(db),
       (id) => goals.get(id),
       undefined,
-      { gateway: gatewayFor(db), changed: () => {} }
+      { gateway: gatewayFor(db), changed: () => {}, language: () => language }
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
@@ -152,6 +152,29 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(store.listOpenAsks()).toEqual([]);
   });
 
+  test('proposal cards follow the human language and hide internal identifiers', async () => {
+    const { call, store } = setup('zh-Hans');
+    expect(
+      await call(
+        'neo.ask.open',
+        { title: 'Language', request: 'Please improve login' },
+        turn('language')
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_language') });
+    expect(
+      await call(
+        'neo.ask.open',
+        { title: 'Identifier', request: '处理任务 abc12345' },
+        turn('identifier')
+      )
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('card_internal_id') });
+    expect(store.listOpenAsks()).toEqual([]);
+    expect(
+      (await call('neo.ask.open', { title: 'Chinese', request: '改善登录体验' }, turn('chinese')))
+        .ok
+    ).toBe(true);
+  });
+
   test('a chat reply leaves the approval card open for its buttons', async () => {
     const { call, store } = setup();
     const opened = await call(
@@ -166,6 +189,42 @@ describe('neo.ask.open and neo.ask.settle', () => {
       { ok: true, requestId: 'input', messageId: 'input', created: true },
       readNeoReply(replyTo, store),
       { sessionId: 'neo-a', requestId: 'input', content: 'yes', replyTo },
+      store,
+      'neo-a'
+    );
+    expect(store.getQuestion(question.id)).toMatchObject({ state: 'open' });
+  });
+
+  test('a chat reply leaves a relayed session decision open for its buttons', () => {
+    const { store } = setup();
+    const ask = store.openAsk({
+      id: 'relay-ask',
+      sessionId: 'neo-a',
+      projectId: null,
+      originMessageId: null,
+      title: 'Relay',
+      request: 'Relay',
+      createdAt: 1,
+    });
+    const question = store.askQuestion(
+      'relay-card',
+      ask.id,
+      {
+        text: 'Choose?',
+        kind: 'choice',
+        options: ['Yes', 'No'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        cause: 'relay-session-proposal',
+      },
+      2
+    );
+    const replyTo = { kind: 'question' as const, id: question.id };
+    recordNeoReplyAnswer(
+      { ok: true, requestId: 'input', messageId: 'input', created: true },
+      readNeoReply(replyTo, store),
+      { sessionId: 'neo-a', requestId: 'input', content: 'A', replyTo },
       store,
       'neo-a'
     );

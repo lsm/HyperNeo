@@ -1,5 +1,5 @@
 import { proposalQuestionId } from './proposal.ts';
-import { openHumanCard } from './human-card.ts';
+import { openHumanCard, requireHumanCard } from './human-card.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -36,6 +36,7 @@ import {
   neoAskTodosVersion,
 } from '../../storage/repositories/neo-ask-settlement.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -166,7 +167,7 @@ export function createNeoAskRecordOperations(
   packs: () => readonly NeoPack[] = () => [],
   readGoal: (id: string) => SessionGoal | null = () => null,
   project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos],
-  settlement: { gateway: DbGateway; changed(): void }
+  settlement: { gateway: DbGateway; changed(): void; language?(): LanguageSetting | undefined }
 ) {
   const present = async (result: AskReceipt | Rejection) =>
     result.ok ? { ...result, todos: await project(result.todos) } : result;
@@ -348,6 +349,13 @@ export function createNeoAskRecordOperations(
               policies
             );
         if (taken) return { ok: false, reason: taken };
+        if (!current) {
+          const card = requireHumanCard(
+            { text: input.request, kind: 'yesno' },
+            settlement.language?.()
+          );
+          if ('reason' in card) return card.reason;
+        }
         const ask =
           current ??
           store.inTransaction(() => {
