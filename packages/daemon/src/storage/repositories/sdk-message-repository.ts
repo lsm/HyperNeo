@@ -1032,7 +1032,7 @@ export class SDKMessageRepository {
             )
           ),
         ];
-        markRefusedNeoInput(this.db, sessionId, ids);
+        markRefusedNeoInput(this.db, sessionId, ids, message.result);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);

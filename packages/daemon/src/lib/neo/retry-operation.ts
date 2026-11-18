@@ -32,8 +32,9 @@ const retry = (superpipe({})('neo.message.retry') as PipelineAPI)
       return { value: { ask, session } };
     },
     ['input', 'caller', 'service'],
-    'result:target'
+    'result:result'
   )
+  .pipe((target) => target, 'result', 'target')
   .pipe(
     async (
       target: {
@@ -50,6 +51,7 @@ const retry = (superpipe({})('neo.message.retry') as PipelineAPI)
           sessionId: session.id,
           requestId,
           content: ask.content,
+          replyTo: ask.replyTo,
           retryOf: ask.requestId,
           ...(ask.previewContext
             ? {

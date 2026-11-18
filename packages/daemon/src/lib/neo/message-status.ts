@@ -60,14 +60,7 @@ export function readMessageFacts(db: Database, items: readonly NeoMessageStatusR
     const retryId = neoDerivedId(`neo-retry:${item.conversationId}:${item.requestId}`);
     const refusal =
       row.sendStatus === 'failed'
-        ? readRefusedNeoInput(
-            db,
-            item.conversationId,
-            item.askOrigin.sessionId,
-            item.requestId,
-            row.messageDbId,
-            retryId
-          )
+        ? readRefusedNeoInput(db, item.conversationId, item.requestId, retryId)
         : {};
     return {
       ...row,
