@@ -179,32 +179,39 @@ export async function releaseNeoTodoWorkers(
   wake?: (row: FinishedWorker, reason: string) => Promise<void>
 ): Promise<void> {
   for (const row of await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS)) {
-    const outcome = await releaseWorker(row, invoke, sessions).catch(
-      (error: unknown): Pending => ({
-        code: 'error',
-        pending: error instanceof Error ? error.message : String(error),
-      })
-    );
-    if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
-      await sessions.write('recordReleased', row.todoId, outcome);
-    } else if ('pending' in outcome) {
-      const pending = {
-        code: outcome.code,
-        reason: outcome.pending,
-        since: row.pending?.since ?? now,
-        notified: row.pending?.notified ?? false,
-      };
-      if (row.pending?.code !== pending.code)
-        warn(`Finished todo ${row.todoId} worker archive pending`, pending.reason);
-      await sessions.write('recordReleasePending', row.todoId, pending);
-      if (wake && !pending.notified && now - pending.since >= 24 * 60 * 60 * 1000) {
-        try {
-          await wake(row, pending.reason);
-          await sessions.write('recordReleasePending', row.todoId, { ...pending, notified: true });
-        } catch (error) {
-          warn(`Finished todo ${row.todoId} worker notification pending`, error);
+    try {
+      const outcome = await releaseWorker(row, invoke, sessions).catch(
+        (error: unknown): Pending => ({
+          code: 'error',
+          pending: error instanceof Error ? error.message : String(error),
+        })
+      );
+      if ('kept' in outcome && outcome.kept !== 'bound_to_live_todo') {
+        await sessions.write('recordReleased', row.todoId, outcome);
+      } else if ('pending' in outcome) {
+        const pending = {
+          code: outcome.code,
+          reason: outcome.pending,
+          since: row.pending?.since ?? now,
+          notified: row.pending?.notified ?? false,
+        };
+        if (row.pending?.code !== pending.code)
+          warn(`Finished todo ${row.todoId} worker archive pending`, pending.reason);
+        await sessions.write('recordReleasePending', row.todoId, pending);
+        if (wake && !pending.notified && now - pending.since >= 24 * 60 * 60 * 1000) {
+          try {
+            await wake(row, pending.reason);
+            await sessions.write('recordReleasePending', row.todoId, {
+              ...pending,
+              notified: true,
+            });
+          } catch (error) {
+            warn(`Finished todo ${row.todoId} worker notification pending`, error);
+          }
         }
       }
+    } catch (error) {
+      warn(`Finished todo ${row.todoId} worker release failed`, error);
     }
   }
 }

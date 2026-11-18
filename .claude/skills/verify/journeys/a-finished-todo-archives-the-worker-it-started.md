@@ -40,4 +40,5 @@ with the todo, worker and reason. It also checks that a daemon-started worker
 stays active without a release fact while a follow-up is live, and is archived
 after the follow-up finishes. Retain `todo-release-pending.json` and `proof.log`.
 The helper changes the unpushed commit count between sweeps; the log must have
-one warning for that pending reason.
+one warning for that pending reason. It also injects a synthetic database write
+failure and checks that the next worker is settled in the same refresh.

@@ -656,6 +656,27 @@ describe('releaseNeoTodoWorkers', () => {
     }
   });
 
+  test('continues with other workers when recording one pending reason fails', async () => {
+    const h = setup();
+    try {
+      const first = h.add(started);
+      const second = h.add(started);
+      await h.finishTodo(first);
+      await h.finishTodo(second);
+      writeFileSync(join(h.folder(), 'draft.txt'), 'draft');
+      h.db.run(`CREATE TRIGGER fail_one_pending BEFORE INSERT ON pack_facts
+        WHEN NEW.todo_id = '${first.id}' AND NEW.key = 'release_pending'
+        BEGIN SELECT RAISE(FAIL, 'synthetic write failure'); END`);
+      await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
+      const rows = h.db
+        .prepare("SELECT todo_id FROM pack_facts WHERE pack = 'core' AND key = 'release_pending'")
+        .all();
+      expect(rows).toEqual([{ todo_id: second.id }]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('keeps a worker another todo queues onto while the folder is checked', async () => {
     const h = setup();
     try {
