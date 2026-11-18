@@ -37,6 +37,7 @@ const fetchImpl = (async (url, init) => {
     url: String(url),
     form: Object.fromEntries(new URLSearchParams(init?.body as URLSearchParams)),
   });
+  if (String(url) !== tokenUrl) return new Response('unexpected host', { status: 503 });
   return respond(requests.length);
 }) as typeof fetch;
 const make = () =>
