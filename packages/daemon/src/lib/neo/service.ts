@@ -738,19 +738,26 @@ export class NeoService {
     );
   }
 
-  storeWorkerQuestion(ref: WorkRef, report: unknown, stored?: (question: NeoQuestion) => void) {
+  storeWorkerQuestion(
+    ref: WorkRef,
+    report: unknown,
+    stored?: (question: NeoQuestion) => void,
+    cause?: string
+  ) {
     return createNeoWorkerQuestionWriter(
       this.todos,
       this.todoSessions,
       () => this.db.getGlobalSettings().language,
       (source) => this.readQuestionSource(source),
-      stored
+      stored,
+      cause
     )(ref, report);
   }
 
   async relayWorkerQuestion(
     input: { todoId: string; title: string; options: string[] },
-    sessionId: string | undefined
+    sessionId: string | undefined,
+    cause?: string
   ) {
     const todo = this.todos.getTodo(input.todoId);
     const staged = this.todoSessions.readNudge(input.todoId)?.workerQuestion;
@@ -764,7 +771,12 @@ export class NeoService {
     const card = requireHumanCard({ text: input.title, kind: 'choice' }, setting);
     if ('reason' in card) return card.reason;
     const language = expectedReportLanguage(setting);
-    const result = await this.storeWorkerQuestion(ref, { ...staged, ...input, language });
+    const result = await this.storeWorkerQuestion(
+      ref,
+      { ...staged, ...input, language },
+      undefined,
+      cause
+    );
     const current = this.todoSessions.readNudge(input.todoId);
     if (result.ok && current && JSON.stringify(current.workerQuestion) === JSON.stringify(staged))
       this.todoSessions.recordNudge(input.todoId, { ...current, workerQuestion: undefined });
@@ -805,6 +817,7 @@ export class NeoService {
           askId: crypto.randomUUID(),
           todoId: crypto.randomUUID(),
           notice,
+          relayedQuestion: true,
           now,
         });
         return tracked.ok ? { value: tracked } : { reason: tracked };
@@ -830,7 +843,8 @@ export class NeoService {
           this.notifyChanged();
           relayed = await this.relayWorkerQuestion(
             { todoId: tracked.todo.id, title: input.title, options: input.options },
-            tracked.root
+            tracked.root,
+            'relay-session-proposal'
           );
           return relayed;
         } finally {

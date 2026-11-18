@@ -378,7 +378,7 @@ describe('QueryOptionsBuilder', () => {
     it('gives workers location hints without enabling a sandbox or changing temp', async () => {
       const options = await builder.build();
       expect(options.env?.HYPERNEO_WORKTREES).toBe(join(handoffDataDir, 'worktrees'));
-      expect(options.env?.HYPERNEO_EVIDENCE).toContain(join(handoffDataDir, 'work/evidence'));
+      expect(options.env?.HYPERNEO_EVIDENCE).toBeUndefined();
       expect(options.env?.HYPERNEO_BUILDS).toContain(join(handoffDataDir, 'work/builds'));
       expect(options.sandbox?.enabled).not.toBe(true);
       expect(JSON.stringify(options.systemPrompt)).toContain('HYPERNEO_WORKTREES');

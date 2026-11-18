@@ -1,3 +1,5 @@
+import { acceptProposalFixture } from './accepted-ask-fixtures.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -44,6 +46,7 @@ try {
     const chain = async (name: string) => {
       const ask = await invoke(`${name}: open the ask`, 'neo.ask.open', { title: `Synthetic ${name}`, request: `Synthetic request for ${name}` });
       assert.equal(ask.ok, true, JSON.stringify(ask));
+      acceptProposalFixture(new NeoAskTodoRepository(db), ask.ask.id);
       const add = async (title: string, after: string[]) => {
         const added = await invoke(`${name}: add ${title}`, 'neo.todo.add', { askId: ask.ask.id, title, check, after });
         assert.equal(added.ok, true, JSON.stringify(added));

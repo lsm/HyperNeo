@@ -83,6 +83,7 @@ function setup(idle: string[] = []) {
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
       unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
+      acceptedTodo: (todoId) => !!store.getTodo(todoId),
       isOpenTodo: (todoId) =>
         ['todo', 'doing', 'blocked'].includes(store.getTodo(todoId)?.state ?? ''),
     })

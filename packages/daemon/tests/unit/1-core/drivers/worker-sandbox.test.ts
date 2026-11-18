@@ -66,7 +66,7 @@ test('worker output locations are derived from the data root', async () => {
   const data = fixture('darwin', false);
   const env = workerSandboxPaths(root) as Record<string, string>;
   expect(env.HYPERNEO_WORKTREES).toBe(join(data, 'worktrees'));
-  expect(env.HYPERNEO_EVIDENCE.startsWith(join(data, 'work', 'evidence'))).toBe(true);
+  expect(env.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(env.HYPERNEO_BUILDS.startsWith(join(data, 'work', 'builds'))).toBe(true);
   expect(env.TMPDIR.startsWith(join(data, 'work', 'scratch'))).toBe(true);
   expect(env.TMP).toBe(env.TMPDIR);
@@ -75,7 +75,7 @@ test('worker output locations are derived from the data root', async () => {
   expect(env.XDG_CACHE_HOME.startsWith(env.TMPDIR)).toBe(true);
   const sibling = workerSandboxPaths(`${root}-sibling`) as Record<string, string>;
   expect(sibling.TMPDIR).not.toBe(env.TMPDIR);
-  expect(sibling.HYPERNEO_EVIDENCE).not.toBe(env.HYPERNEO_EVIDENCE);
+  expect(sibling.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(sibling.HYPERNEO_BUILDS).not.toBe(env.HYPERNEO_BUILDS);
   expect(sibling.HYPERNEO_WORKTREES).toBe(env.HYPERNEO_WORKTREES);
 });
@@ -85,7 +85,6 @@ test('runtime preparation creates every work location on demand', async () => {
   const env = (await prepareWorkerSandbox(root)) as Record<string, string>;
   for (const path of [
     env.HYPERNEO_WORKTREES,
-    env.HYPERNEO_EVIDENCE,
     env.HYPERNEO_BUILDS,
     env.TMPDIR,
     env.XDG_CACHE_HOME,

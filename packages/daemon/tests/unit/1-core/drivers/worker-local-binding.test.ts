@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   installClaudeNativeWrites,
+  prepareClaudeWorkEnvironment,
   readClaudeWorkerSandbox,
 } from '../../../../src/lib/drivers/claude-native-writes.ts';
 import {
@@ -71,11 +73,61 @@ test('Codex named profile enables network access for local servers', () => {
   expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
 });
 
+test('checking a markerless folder does not create worker settings', async () => {
+  expect(await readClaudeWorkerSandbox(root)).toBeNull();
+  expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
+test('resuming with unwritable legacy settings reports the failed cleanup', async () => {
+  const folder = join(root, '.claude');
+  mkdirSync(folder);
+  const path = join(folder, 'settings.local.json');
+  writeFileSync(path, JSON.stringify({ env: { HYPERNEO_EVIDENCE: '/synthetic/old' } }));
+  chmodSync(folder, 0o500);
+  try {
+    await expect(readClaudeWorkerSandbox(root)).rejects.toThrow();
+    expect(settings().env.HYPERNEO_EVIDENCE).toBe('/synthetic/old');
+  } finally {
+    chmodSync(folder, 0o700);
+  }
+});
+
+test('resuming markerless worker settings removes the legacy evidence hint', async () => {
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.claude/settings.local.json'),
+    JSON.stringify({
+      env: { HYPERNEO_EVIDENCE: '/synthetic/old-evidence', CUSTOM_WORKER_VALUE: 'retain' },
+      customSetting: true,
+    })
+  );
+  expect(await readClaudeWorkerSandbox(root)).toBeNull();
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
+  expect(settings().env.CUSTOM_WORKER_VALUE).toBe('retain');
+  expect(settings().customSetting).toBe(true);
+});
+
+test('unsandboxed worker refresh clears a legacy evidence hint while preserving settings', async () => {
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.claude/settings.local.json'),
+    JSON.stringify({
+      env: { HYPERNEO_EVIDENCE: '/synthetic/old-evidence', CUSTOM_WORKER_VALUE: 'retain' },
+      customSetting: true,
+    })
+  );
+  const write = await prepareClaudeWorkEnvironment(root);
+  await write();
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
+  expect(settings().env.CUSTOM_WORKER_VALUE).toBe('retain');
+  expect(settings().customSetting).toBe(true);
+});
+
 test('installed Claude worker settings export the data-root work locations', async () => {
   await installClaudeNativeWrites(root, [join(root, 'source')]);
   const env = settings().env as Record<string, string>;
   expect(env.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
-  expect(env.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(env.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(env.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(env.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
 });
@@ -87,10 +139,10 @@ test('the Codex worker sandbox keeps the shared worktrees root read-only', () =>
     policy.config.permissions as Record<string, { filesystem: Record<string, string> }>
   )['hyperneo-worker'].filesystem;
   expect(set.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
-  expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(set.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
-  for (const path of [set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
+  for (const path of [set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
     expect(profile[path]).toBe('write');
   }
   expect(profile[set.HYPERNEO_WORKTREES]).not.toBe('write');
@@ -167,7 +219,6 @@ test('disabled persisted sandbox does not prepare or recreate its runtime', asyn
   const current = workerSandboxPaths(root);
   expect(resumed?.env).toEqual({
     HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
-    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
     HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
   });
   expect(settings().env).toEqual(resumed?.env);
@@ -206,9 +257,9 @@ test('disabled sparse settings normalize SDK fields and remove obsolete runtime 
   expect(result?.env).toEqual({
     CUSTOM_WORKER_VALUE: 'retain',
     HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
-    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
     HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
   });
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
   expect(result?.permissions.disableBypassPermissionsMode).toBe('disable');
   expect(result?.sandbox.filesystem.allowWrite).toContain(root);
   expect(settings()).toEqual(result);

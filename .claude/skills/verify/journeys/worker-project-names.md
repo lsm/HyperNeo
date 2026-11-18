@@ -7,8 +7,8 @@ bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/worker
 ```
 
 The helper owns a random-port daemon with a synthetic HOME and database. Through
-its real MCP operation handler, it overlaps two approved todo starts in one folder.
-The first driver start waits while the second enters dispatch. A fake
+its real MCP operation handler, it submits two approved todo starts in one folder.
+The first driver start waits while the second is submitted. A fake
 HyperNeo adapter records both start requests and publishes the first title only when its start completes.
 The titles must be HyperNeo project 1 and HyperNeo project 2. Task titles stay on
 the todos. The operation description must advertise target.name and omit the
@@ -35,3 +35,6 @@ The same isolated daemon then routes two todo starts through the real Space
 adapter with synthetic task creation. Its stored names must be HyperNeo space 1
 and HyperNeo space 2 despite the decorated inventory titles. worker-names.json
 records all four started todos and both name lists.
+
+The helper records a synthetic human approval before adding fixture todos.
+Use new-work-source.md to verify approval through the human RPC.

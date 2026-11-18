@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -61,6 +62,7 @@ try {
   assert.match(rejected.reason, /^target_not_found:/);
   assert.equal(todos.listTodos('synthetic-ask').length, count);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
+  seedHistoricalAsk(todos, sender, { title: 'Refused target batch', request: 'Resolve every target before recording' });
   const beforeBatch = todos.listAsks(null, 100);
   const batch = await handler({ name: 'neo.ask.open', input: {
     title: 'Refused target batch', request: 'Resolve every target before recording',
@@ -92,6 +94,7 @@ try {
   assert.deepEqual(sessions.get(addedSpace.todo.id)?.ref, { adapter: 'space', id: taskId });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   const reopenInput = { title: 'Idempotent worker ask', request: 'Keep tracking it', todos: [{ after: [], title: 'Unfinished gate', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } } }, { after: [0], title: 'Recorded worker', check: { pack: 'core', kind: 'evidence', params: { path: join(run, 'missing-proof') } }, instruction: 'Work', target: { verb: 'send', ref: { adapter: 'hyperneo', id: worker } } }] };
+  seedHistoricalAsk(todos, sender, reopenInput);
   const opened = JSON.parse((await handler({ name: 'neo.ask.open', input: reopenInput })).content[0].text);
   assert.equal(opened.ok, true);
   db.prepare('DELETE FROM sessions WHERE id=?').run(worker);

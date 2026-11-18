@@ -22,3 +22,6 @@ Every started todo must have its expected binding, doing state and one recorded
 delivery input. The helper closes its daemon in finally; the wrapper retains
 evidence and removes the temporary HOME/data. Native client behavior is covered
 by existing adapter journeys, independently of this selection proof.
+
+The helper records a synthetic human approval before adding fixture todos.
+Use new-work-source.md to verify approval through the human RPC.

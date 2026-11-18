@@ -70,6 +70,8 @@ function fixture(adapterId = 'codex-desktop', overrides: Partial<WorkAdapter> = 
     remote: { list: () => [], invoke: async () => ({}) },
     daemonName: 'synthetic',
     isOpenTodo: () => true,
+    acceptedTodo: () => true,
+    noticeReply: () => true,
   };
   const delivery = createWorkerInputDelivery(db, deps, async (id, detail) => {
     if (reportUnavailable) throw new Error('Synthetic report receiver is unavailable');

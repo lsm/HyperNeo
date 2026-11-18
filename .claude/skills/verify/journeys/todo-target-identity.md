@@ -39,3 +39,6 @@ limits; the Codex reader carries that filter through its existing DB worker.
 Those fixtures replace work lookup; they do not prove external Codex discovery.
 A listener startup failure leaves this real-daemon journey unverified. Retain
 its log and exit status; the wrapper saves evidence and deletes synthetic data.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

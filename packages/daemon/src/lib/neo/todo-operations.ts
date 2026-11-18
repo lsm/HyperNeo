@@ -1,4 +1,5 @@
 import { neoToolDescription } from '@hyperneo/prompts';
+import { hasPendingTodoDecision } from './proposal.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -129,7 +130,7 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({
   askId: Text.optional().describe(
-    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. For a request from another session, pass the ask on its `<session-message>` tag.'
+    'For a human request, pass input. When a plain human message (not a reply) continues an open ask you own, also pass that askId: the daemon records the message on that ask, and later calls with that input alone reach it. Without askId it opens a new ask. A session-request ask is for the reply only; open a separate proposal to do work.'
   ),
   input: Text.optional().describe(
     'The id on the `<human-message>` tag of the human message this todo serves. The daemon picks its ask: the question or Neo message it replied to, else the ask opened for it, else its recorded follow-up binding, else a new one.'
@@ -718,6 +719,14 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const proceed = owned(superpipe({})('neo.todo.continue') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo): Gate<NeoTodo> =>
+        hasPendingTodoDecision(todos.listQuestions(todo.askId), todo.id)
+          ? fail('human_decision_required: the human must answer this work decision.')
+          : { value: todo },
+      'outcome',
+      'result:outcome'
+    )
     .pipe(
       (todo: NeoTodo, input: z.infer<typeof Continue>): Gate<NeoTodo> =>
         input.message || neoTodoFailed(todo)
