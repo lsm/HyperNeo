@@ -156,17 +156,21 @@ async function list(
   stored: string | null,
   first: [string, string][]
 ) {
-  const reply = await api.http.get(
-    input.connectionId,
-    `${origin}${collection}${query([
-      ...(stored
-        ? [...new URLSearchParams(stored)].filter(([name]) => !['$top', '$select'].includes(name))
-        : first),
-      ['$select', select],
-      ['$top', String(input.limit)],
-    ])}`,
-    scope
-  );
+  const get = (fields: string) =>
+    api.http.get(
+      input.connectionId,
+      `${origin}${collection}${query([
+        ...(stored
+          ? [...new URLSearchParams(stored)].filter(([name]) => !['$top', '$select'].includes(name))
+          : first),
+        ['$select', fields],
+        ['$top', String(input.limit)],
+      ])}`,
+      scope
+    );
+  const full = await get(select);
+  const partial = !full.ok && full.reason === 'invalid_response';
+  const reply = partial ? await get(select.replace(',toRecipients', '')) : full;
   if (!reply.ok) return { reason: reply };
   const page = z
     .object({
@@ -177,7 +181,15 @@ async function list(
   const next = writeCursor(page['@odata.nextLink'], input, operation, key);
   return 'reason' in next
     ? next
-    : { value: { items: page.value.map(project), nextCursor: next.value } };
+    : {
+        value: {
+          items: page.value.map((message) => ({
+            ...project(message),
+            ...(partial ? { truncated: true } : {}),
+          })),
+          nextCursor: next.value,
+        },
+      };
 }
 
 async function withBody(api: Service, input: Paging, item: Item) {
