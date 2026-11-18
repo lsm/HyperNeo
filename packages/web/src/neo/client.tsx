@@ -1,3 +1,4 @@
+import '../lib/desktop-titlebar.ts';
 import '../styles.css';
 import '../lib/theme.ts';
 import { render } from 'preact';
