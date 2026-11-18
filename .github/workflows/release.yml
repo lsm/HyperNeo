@@ -392,7 +392,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri*
             ~/.cargo/registry
             ~/.cargo/git
             packages/desktop/src-tauri/target
