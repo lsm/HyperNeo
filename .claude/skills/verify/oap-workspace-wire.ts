@@ -43,6 +43,8 @@ for line in sys.stdin:
  method=request.get('method')
  if 'id' not in request or not method: continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
+ elif method=='account/read': result={'account':None,'requiresOpenaiAuth':True}
+ elif method=='account/login/start': result={'type':'chatgptDeviceCode','loginId':'synthetic-login','verificationUrl':'https://example.com/device','userCode':'SYNTHETIC'}
  elif method in ['thread/start','thread/resume']:
   name=os.path.basename(os.getcwd())
   countfile=os.path.join(os.environ['CODEX_HOME'],'thread-count-'+name)
@@ -79,6 +81,7 @@ for line in sys.stdin:
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 process.env.CODEX_HOME = join(run, 'codex-home');
+if (mode === 'login-device') process.env.CODEX_CLI_PATH = peer;
 assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for this platform');
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
@@ -189,7 +192,17 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'settings-restart') {
+  if (mode === 'login-device') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in card');
+    const messages = app.db.getSDKMessages(firstId, 1000).messages;
+    const card = messages.find((row) => row.type === 'auth_status' && row.isAuthenticating);
+    assert(card && card.type === 'auth_status');
+    assert.deepEqual(card.output, ['Open https://example.com/device', 'Enter code SYNTHETIC']);
+    assert.equal(calls().filter((call) => call.request.method === 'account/login/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
+    Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, pass: true });
+  } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
       await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === count && !first.queryPromise, content);
