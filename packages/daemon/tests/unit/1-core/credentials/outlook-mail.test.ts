@@ -82,7 +82,9 @@ beforeEach(async () => {
       }
       const next = url.searchParams.get('$skiptoken');
       return Response.json({
-        value: [message(next ? 'page-two' : 'page-one')],
+        value: next
+          ? Array.from({ length: Number(url.searchParams.get('$top')) }, (_, i) => message(`page-two-${i}`))
+          : [message('page-one')],
         ...(next ? {} : { '@odata.nextLink': nextLink }),
       });
     }
@@ -147,7 +149,7 @@ test('outlook.search returns bounded, redacted headers and pages through an opaq
   expect(listing.searchParams.get('$search')).toBe('"fixture"');
   expect(listing.searchParams.get('$top')).toBe('2');
   const second = await search({ cursor: first.nextCursor });
-  expect(second.items[0].id).toBe('page-two');
+  expect(second.items[0].id).toBe('page-two-0');
   expect(second.nextCursor).toBeUndefined();
   const paged = new URL(String(fetchImpl.mock.calls[1][0]));
   expect(`${paged.origin}${paged.pathname}`).toBe(`${graph}/v1.0/me/messages`);
@@ -246,4 +248,12 @@ test('long multibyte bodies drop bodies to fit instead of failing the page', asy
   expect(thread.truncated).toBe(true);
   expect(thread.items[0].body.length).toBeGreaterThan(0);
   expect(Buffer.byteLength(JSON.stringify(thread))).toBeLessThanOrEqual(65536);
+});
+
+test('a cursor page may ask for fewer items than the first page', async () => {
+  const first = await search({ limit: 2 });
+  const next = await search({ cursor: first.nextCursor, limit: 1 });
+  expect(next.ok).toBe(true);
+  expect(next.items).toHaveLength(1);
+  expect(new URL(String(fetchImpl.mock.calls.at(-1)![0])).searchParams.get('$top')).toBe('1');
 });
