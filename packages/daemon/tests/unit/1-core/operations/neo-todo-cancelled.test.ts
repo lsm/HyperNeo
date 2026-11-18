@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
@@ -97,6 +98,8 @@ function setup() {
     ),
   ];
   const invoke = async (name: string, input: unknown) => {
+    if (name === 'neo.ask.open')
+      historicalAsk(store, 'synthetic-neo', (input as { title: string }).title);
     const op = operations.find((candidate) => candidate.name === name)!;
     return (await op.execute(op.inputSchema.parse(input), caller)) as {
       ok: boolean;

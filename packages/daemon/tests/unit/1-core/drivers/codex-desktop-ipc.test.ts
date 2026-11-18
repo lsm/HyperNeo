@@ -459,6 +459,7 @@ describe('withCodexDesktopIpc', () => {
           adapters: () => [driver],
           daemonName: 'test',
           reportUncertain,
+          noticeReply: () => true,
           remote: { list: () => [], invoke: async () => ({}) },
         })
       );

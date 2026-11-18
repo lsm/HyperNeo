@@ -1,4 +1,5 @@
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
 import { describe, expect, test } from 'bun:test';
@@ -191,6 +192,7 @@ describe('neo.ask.open repo', () => {
     runMigrations(db, () => {});
     createTables(db);
     const store = new NeoAskTodoRepository(db);
+    historicalAsk(store, 'neo', 'Fix login');
     const open = createNeoAskRecordOperations(
       store,
       new NeoTodoSessionRepository(db),
@@ -257,7 +259,7 @@ describe('repository steps on one card', () => {
           role: 'neo',
         });
     };
-    const open = op(
+    const openOperation = op(
       createNeoAskRecordOperations(
         store,
         sessions,
@@ -276,6 +278,10 @@ describe('repository steps on one card', () => {
       ),
       'neo.ask.open'
     );
+    const open = <T extends { title: string }>(input: T) => {
+      historicalAsk(store, 'neo', input.title);
+      return openOperation(input);
+    };
     const add = op(
       createNeoTodoOperations(
         store,

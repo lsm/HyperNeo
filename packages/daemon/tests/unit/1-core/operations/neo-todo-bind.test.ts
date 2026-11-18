@@ -1,4 +1,5 @@
 import { existingTodoTarget } from '../../helpers/todo-check-packs.ts';
+import { historicalAsk } from '../../helpers/accepted-ask.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { createTodoCheckPacks, pendingTodoCheck } from '../../helpers/todo-check-packs.ts';
@@ -22,6 +23,8 @@ function setup() {
   createCodingPackTables(db);
   const store = new NeoAskTodoRepository(db),
     sessions = new NeoTodoSessionRepository(db);
+  historicalAsk(store, 'synthetic-neo', 'Observed worker');
+  historicalAsk(store, 'synthetic-neo', 'Synthetic work');
   const packs = createTodoCheckPacks(db);
   const calls: string[] = [];
   const runner = createNeoTodoRunner({
