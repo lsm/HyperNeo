@@ -84,6 +84,20 @@ const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
 const isEvidence = (check: NeoTodoCheck | null | undefined): check is NeoTodoCheck =>
   check?.pack === 'core' && check.kind === 'evidence';
 
+/** @public */
+export function neoEvidencePathRefusal(
+  check: NeoTodoCheck | null | undefined,
+  previous: NeoTodoCheck | null | undefined,
+  dataDir: string
+): string | null {
+  const path = isEvidence(check) ? check.params.path : null;
+  if (typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous)) return null;
+  const inside = relative(dataDir.toLowerCase(), path.toLowerCase());
+  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)
+    ? null
+    : `evidence_in_data_dir: ${path} is inside the daemon data directory. Use a persistent location visible to the human.`;
+}
+
 export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
   check: T,
   file: string
