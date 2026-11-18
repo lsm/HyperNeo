@@ -73,8 +73,9 @@ voice up by answering Neo:
 
 - **Provider: a card.** Neo asks once, when voice first matters, through
   `pack.preferences.ask`: **OpenAI**, **Deepgram** or **My own server**. A choice fills all
-  three parts with that preset (addresses, models, default voice); "My own server" is
-  followed by a reply card for the base URL. Changing it later is the same card again.
+  three parts with that preset (addresses, models, default voice); "My own server" uses
+  OpenAI-shaped recorded and speech addresses plus a Deepgram-shaped live address on one
+  base URL, and is followed by a reply card for that base URL. Changing it later is the same card again.
 - **Keys: the existing key field, never a card.** A key is a secret and must not pass
   through chat, a card answer or Neo's context. It is entered in the web voice settings'
   password field, the same place every other provider key is entered today, extended to
@@ -86,6 +87,11 @@ voice up by answering Neo:
   error instead of falling back to batch) and `voice.testSpeech` (synthesizes one short
   sentence and returns whether audio came back). After a provider choice or a key save,
   Neo runs the three and says which part works.
+
+- **One part or one voice: on request.** When the human asks to change only one part, its
+  model or its voice ("use voice X"), Neo asks a card naming that part's choices (the
+  adapter's voice list, or a typed name by reply). The existing web voice settings form keeps
+  its fields for the same edits; no new page is built.
 
 **Upgrade.** Existing settings map without loss: the batch endpoint and model become the
 recorded part (`openai`), the live endpoint becomes the live part (`deepgram`, or its saved
