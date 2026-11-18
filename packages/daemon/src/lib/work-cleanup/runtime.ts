@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { lstat, readdir, realpath, rm, statfs } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   workCleanupReads,
   workCleanupWrites,
@@ -17,16 +18,22 @@ import { isNeoConversationSession } from '../neo/publication-read-operation.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { invokeOperation } from '../operations/invoke.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { FamilyOperationContext } from '../rpc-handlers/family-operations/context.ts';
 import { WORK_CLEANUP_QUEUE } from './disk-guard.ts';
 import { planWorkRelease, type WorkFolderFacts, type WorkOwner } from './plan.ts';
-import { insideFolder, listWorkCleanupFolders, sweepWorkCleanup } from './sweep.ts';
+import {
+  insideFolder,
+  listWorkCleanupFolders,
+  sweepWorkCleanup,
+  type WorkCleanupDependencies,
+} from './sweep.ts';
 import { releaseWorkCleanup } from './release.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const caller = { source: 'internal', role: 'neo', principal: NEO_TODO_RELEASE_PRINCIPAL } as const;
 const canonical = (path: string) => (existsSync(path) ? realpathSync(path) : path);
+const readDisk = (data: string) => statfs(data);
 const presence = (path: string) =>
   lstat(path).then(
     () => 'present' as const,
@@ -88,7 +95,10 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     }
     return rows;
   };
-  const execute = async () => {
+  const prepareSweep = (
+    data: string,
+    before: Awaited<ReturnType<typeof readDisk>>
+  ): WorkCleanupDependencies => {
     const errors = new Set<string>();
     const list = (root: string) => children(root, errors);
     const refs = new Map<string, WorkRef>();
@@ -96,8 +106,6 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     const statuses = new Map<string, ReturnType<typeof invoke>>();
     let initial: Awaited<ReturnType<typeof resolveOwners>> = [];
     const read = new Set<string>();
-    const data = getDataDir();
-    const before = await statfs(data);
     const evidenceRoot = join(data, 'work', 'evidence');
     const worktrees = new Map<string, string[]>();
     const insideEvidence = async (folder: string) => {
@@ -204,7 +212,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       if ('keep' in planWorkRelease(facts, Date.now()) || !existsSync(folder)) return facts;
       return { ...facts, inUse: await folderInUse(folder).catch(() => 'unreadable' as const) };
     };
-    const digest = await sweepWorkCleanup({
+    return {
       list: async () => {
         const owned = await resolveOwners(await readOwners(), statuses);
         initial = owned;
@@ -339,9 +347,32 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
             await db.gateway.call(workCleanupWrites, 'markGone', `told:${folder}`, now);
         }
       },
-    });
-    return digest;
+    };
   };
+  const sweep = (superpipe({})('work.cleanup.sweep') as PipelineAPI)
+    .input('user')
+    .pipe(
+      (user: OperationCaller | undefined) => {
+        if (!user) return { value: true };
+        const binding = user.sessionId
+          ? new NeoRepository(db.getDatabase()).getBindingBySession(user.sessionId)
+          : null;
+        return isLocalUser(user) || isNeoConversationSession(user, binding)
+          ? { value: true }
+          : { reason: { accepted: false as const, reason: 'human_or_neo_only' as const } };
+      },
+      'user',
+      'result:outcome'
+    )
+    .pipe(getDataDir, undefined, 'data')
+    .pipe(readDisk, 'data', 'before')
+    .pipe(prepareSweep, ['data', 'before'], 'dependencies')
+    .pipe(sweepWorkCleanup, 'dependencies', 'outcome')
+    .endAsync('outcome') as (
+    user?: OperationCaller
+  ) => Promise<
+    Awaited<ReturnType<typeof sweepWorkCleanup>> | { accepted: false; reason: 'human_or_neo_only' }
+  >;
   const queue = WORK_CLEANUP_QUEUE;
   const schedule = () =>
     jobQueue.enqueueUniquePending({
@@ -353,7 +384,7 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
     });
   jobProcessor.register(queue, async () => {
     try {
-      return await execute();
+      return await sweep();
     } finally {
       schedule();
     }
@@ -371,13 +402,6 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
       z.object({ accepted: z.literal(false), reason: z.literal('human_or_neo_only') }),
     ]),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async (_input, user) => {
-      const binding = user.sessionId
-        ? new NeoRepository(db.getDatabase()).getBindingBySession(user.sessionId)
-        : null;
-      if (!isLocalUser(user) && !isNeoConversationSession(user, binding))
-        return { accepted: false, reason: 'human_or_neo_only' };
-      return execute();
-    },
+    execute: async (_input, user) => sweep(user),
   });
 }

@@ -335,6 +335,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `quote-summary-check.mjs` (journey 18),
+  `neo-front-execution.ts` (Front handoff admission fixture),
   `seed-schedule-interrupt.ts` (journey 22), `external-reply-check.ts` (journey 23), and `feed-scope.sh` (work-feed-scope). Artifact preview helpers
   (including `preview-media-web.mjs seed`) delegate DB fixture creation to
   `preview-register.ts seed`, only in the fresh synthetic run.

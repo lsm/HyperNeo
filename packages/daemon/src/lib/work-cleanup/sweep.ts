@@ -3,7 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { planWorkRelease, type WorkFolderFacts } from './plan.ts';
 
 type Digest = { removed: { directory: string; reason: string }[]; kept: Record<string, string[]> };
-type Dependencies = {
+export type WorkCleanupDependencies = {
   list(): Promise<string[]>;
   read(folder: string): Promise<WorkFolderFacts>;
   release(folder: string): Promise<true | { keep: string }>;
@@ -27,11 +27,11 @@ export function listWorkCleanupFolders(
   );
 }
 
-export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as PipelineAPI)
+export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep.folders') as PipelineAPI)
   .input('deps')
-  .pipe((deps: Dependencies) => deps.list(), 'deps', 'folders')
+  .pipe((deps: WorkCleanupDependencies) => deps.list(), 'deps', 'folders')
   .pipe(
-    async (folders: string[], deps: Dependencies) => {
+    async (folders: string[], deps: WorkCleanupDependencies) => {
       const digest: Digest = { removed: [], kept: {} };
       const plan = async (folder: string) => {
         try {
@@ -64,11 +64,11 @@ export const sweepWorkCleanup = (superpipe({})('work.cleanup.sweep') as Pipeline
     'digest'
   )
   .pipe(
-    async (digest: Digest, deps: Dependencies) => {
+    async (digest: Digest, deps: WorkCleanupDependencies) => {
       await deps.tell(digest);
       return digest;
     },
     ['digest', 'deps'],
     'digest'
   )
-  .endAsync('digest') as (deps: Dependencies) => Promise<Digest>;
+  .endAsync('digest') as (deps: WorkCleanupDependencies) => Promise<Digest>;
