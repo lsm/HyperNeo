@@ -219,6 +219,11 @@ try {
     writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating), 'device sign-in completion');
     await waitFor(() => calls().filter((call) => call.request.method === 'thread/start').length === 2, 'both threads open after sign-in');
+    for (const sessionId of [firstId, secondId]) {
+      const cards = app.db.getSDKMessages(sessionId, 1000).messages.filter((row) => row.type === 'auth_status');
+      assert.equal(cards.length, 1);
+      assert(cards[0] && cards[0].type === 'auth_status' && !cards[0].isAuthenticating);
+    }
     Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, loginCompleted: true, pass: true });
   } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
