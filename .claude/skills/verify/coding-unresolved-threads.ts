@@ -70,7 +70,8 @@ try {
     author: { login: 'someone', __typename: 'User' },
     commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
   });
-  const told: { ref: unknown; key: string; text: string; findings?: readonly string[] }[] = [];
+  const told: { ref: unknown; key: string; text: string }[] = [];
+  const delivered = new Set<string>();
   const woken: string[] = [];
   const ledger = new CodingPrLedgerRepository(db);
   const pack = createCodingPack({
@@ -92,8 +93,9 @@ try {
       },
     }),
     prSweepDeps: {
-      tell: async (ref, key, text, _pr, findings) => {
-        told.push({ ref, key, text, findings });
+      tell: async (ref, key, text) => {
+        if (!delivered.has(key)) told.push({ ref, key, text });
+        delivered.add(key);
         return true;
       },
       wake: async (_key, text) => {
@@ -142,12 +144,12 @@ try {
   told.length = 0;
   assert.equal((await sweep('failing CI with an unresolved thread', 3)).state, 'failing');
   assert(
-    told.some((item) => item.text.includes('failing CI') && item.findings?.includes(`${url}#discussion_r1`))
+    told.some((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r1`))
   );
   told.length = 0;
   await sweep('failing CI reminder with an unresolved thread', 24);
   assert(
-    told.some((item) => item.text.includes('failing CI') && item.findings?.includes(`${url}#discussion_r1`))
+    told.some((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r1`))
   );
   ci = 'SUCCESS';
   botReview = 'APPROVED';
@@ -222,7 +224,26 @@ try {
   const reopened = ledger.list()[0];
   assert.equal(reopened.state, 'waiting_cross_review');
   assert.equal(reopened.closedAt, null);
-  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened }, null, 2));
+  db.prepare("UPDATE neo_pack_preferences SET value_json = 'false' WHERE key = 'crossModelReview'").run();
+  db.prepare("INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES ('author-todo', '{}', ?)").run(JSON.stringify(author));
+  head = 'e'.repeat(40);
+  ci = 'FAILURE';
+  botReview = 'APPROVED';
+  told.length = 0;
+  await sweep('CI fails before review', 74);
+  assert(told.some((item) => item.text.includes('failing CI')));
+  told.length = 0;
+  botReview = 'CHANGES_REQUESTED';
+  assert.equal(ledger.pollFacts.record(
+    { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+    { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r3`] }, etag: null, next: null },
+    t0 + 75 * MIN, 3
+  ), true);
+  await sweep('review arrives after CI', 75);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
+  await sweep('unchanged review', 76);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
+  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened, lateReview: told }, null, 2));
 } finally {
   db.close();
 }
