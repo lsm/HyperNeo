@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run, phase] = process.argv.slice(2);
 assert(port && run && ['before', 'after'].includes(phase));
@@ -16,7 +17,7 @@ try {
       const page = await context.newPage();
       await page.goto(`http://127.0.0.1:${port}/neo`);
       if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-      const card = page.locator('[data-ask="collapse-card"]:visible');
+      const card = await revealAsk(page, 'collapse-card');
       await card.waitFor();
       await page.evaluate(async () => {
         await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));

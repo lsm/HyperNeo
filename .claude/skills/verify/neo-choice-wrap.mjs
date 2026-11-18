@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, directory] = process.argv.slice(2);
 assert(port && directory, 'usage: neo-choice-wrap.mjs <port> <run-dir>');
@@ -49,7 +50,7 @@ try {
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = page.locator(`[data-ask="${ask}"]:visible`);
+    const card = await revealAsk(page, ask);
     await card.waitFor();
     for (const id of Object.values(ids)) await card.locator(`[id="neo-ref-question-${id}"]`).waitFor();
     await card.screenshot({ path: `${run}/evidence/neo-choice-wrap-${width}-${scheme}.png` });
