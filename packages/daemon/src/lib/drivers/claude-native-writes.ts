@@ -233,9 +233,11 @@ export async function prepareClaudeWorkEnvironment(directory: string) {
     await queueSettingsWrite(path, async () => {
       const { folder, existing } = await readClaudeWorkSettings(directory);
       await mkdir(folder, { recursive: true });
+      const env: Record<string, unknown> = { ...existing.env, ...workerWorkEnvironment(directory) };
+      delete env.HYPERNEO_EVIDENCE;
       await writeAtomic(path, {
         ...existing,
-        env: { ...existing.env, ...workerWorkEnvironment(directory) },
+        env,
       });
     });
   };
