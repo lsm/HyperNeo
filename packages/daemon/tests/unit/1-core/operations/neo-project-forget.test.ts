@@ -135,6 +135,22 @@ describe('neo.project.forget', () => {
     expect(repo.getProject(atlas)).not.toBeNull();
   });
 
+  test('sidebar forget refuses a project with work on another machine', async () => {
+    alias('folder:remote-machine\0/code/project', atlas);
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_in_use' },
+    });
+    expect(repo.getProject(atlas)).not.toBeNull();
+  });
+
   test('an open ask blocks forget; a settled ask moves to the root', async () => {
     const ask = (id: string, status: string) =>
       db

@@ -21,6 +21,15 @@ try {
   await page.getByTestId('project-group-header').filter({ hasText: 'neo-read' }).hover();
   await page.waitForFunction(() => !document.querySelector('[aria-label="Remove project neo-read"]')?.disabled, null, {timeout: 15000});
   await page.screenshot({ path: `${run}/evidence/sidebar-system-hover.png` });
+  const remote = page.getByRole('button', {name: 'Remove project remote-work'});
+  await remote.waitFor({state: 'attached'});
+  assert(await remote.isDisabled());
+  assert.equal(await remote.getAttribute('title'), 'Cannot check all work for this project');
+  const folderless = page.getByRole('button', {name: 'Remove project folderless'});
+  await folderless.click({timeout: 15000});
+  await page.getByRole('button', {name: 'Forget project'}).click();
+  await folderless.waitFor({state:'detached', timeout:15000});
+  console.log('Forgot a folderless project; remote work remains protected');
   const hidden = page.getByRole('button', {name: 'Remove project hidden-worker'});
   await hidden.waitFor({state: 'attached'});
   await page.waitForTimeout(1500);

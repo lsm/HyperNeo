@@ -23,6 +23,9 @@ c=sqlite3.connect(sys.argv[1])
 for project_id,title,path in [('synth','neo-read',sys.argv[2]),('busy','occupied',sys.argv[3]),('fail','refused',sys.argv[4]),('hidden','hidden-worker',sys.argv[5])]:
     c.execute("INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?, '', '',1,1,1)", (project_id,title))
     c.execute('INSERT INTO neo_project_workspaces(alias,project_id) VALUES (?,?)', ('folder:'+socket.gethostname()+'\0'+os.path.realpath(path), project_id))
+for project_id,title in [('empty','folderless'), ('remote','remote-work')]:
+    c.execute("INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES (?,?, '', '',1,1,1)", (project_id,title))
+c.execute('INSERT INTO neo_project_workspaces(alias,project_id) VALUES (?,?)', ('folder:elsewhere\0/synthetic/remote', 'remote'))
 c.execute("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata,type) VALUES ('hidden-worker','Synthetic worker',?, '2026-01-01', '2026-01-01', 'active', '{}', '{}', 'space_task_agent')", (os.path.realpath(sys.argv[5]),))
 c.execute("CREATE TRIGGER refuse_forget BEFORE DELETE ON neo_concerns WHEN OLD.id = 'fail' BEGIN SELECT RAISE(ABORT, 'synthetic refusal'); END")
 c.commit(); c.close()

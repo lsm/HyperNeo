@@ -303,6 +303,48 @@ describe('SessionsSidebar', () => {
     expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
   });
 
+  it('keeps the empty-project control available across unrelated session updates', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: [],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    mockSessionsSignal.value = [createMockSession('chat', 'Other', '/code/other')];
+    await screen.findByText('Other');
+    await waitFor(() => expect(mockListSystemProjects.mock.calls.length).toBeGreaterThan(1));
+    expect(remove.hasAttribute('disabled')).toBe(false);
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    fireEvent.click(remove);
+    fireEvent.click(screen.getByRole('button', { name: 'Forget project' }));
+    await waitFor(() => expect(mockForgetSystemProject).toHaveBeenCalledWith('idle'));
+  });
+
+  it('refuses when a project has work that cannot be checked', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'remote',
+        name: 'Remote',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Remote' });
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('Cannot check all work for this project');
+  });
+
   it('adds no empty duplicate when a sidebar project already owns the folders', async () => {
     const project = { id: 'p1', name: 'Product', folders: ['/code'] };
     mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/code'), project }]);
