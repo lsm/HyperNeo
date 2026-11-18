@@ -67,8 +67,8 @@ requirement or null. A fact step reads those; the function is the only rule. It 
 | `planNeoQuestion` (a `signoff` card) | a card that does not name exactly the plan's live steps, or a plan with no steps or no current check |
 | `planNeoTodoDone` and the `done` input of `planNeoTodoEdit` | a plan missing any of the three |
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge in `todo-runner.ts`) | it does not mark such a plan done; the plan stays open with the unmet requirement as its reason, and Neo is woken |
-| the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | an ask with a plan missing any of the three |
-| the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: such an ask is not settled, and Neo is woken |
+| the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | settling `done` an ask with a plan missing any of the three; settling `dropped` stays allowed, as today |
+| the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: such an ask is not settled `done`, and Neo is woken |
 | `planNeoTodoRemove` | removing a plan's last live step without `replacedBy` |
 
 Steps wait without new code: they depend on the plan, so they start when it is done
@@ -81,7 +81,11 @@ Steps wait without new code: they depend on the plan, so they start when it is d
 - The review brief (`packs/coding/assign-operation.ts`) lists the plan's steps and asks the
   reviewer to compare them with the design's change plan; a missing, extra or misordered
   step is a finding. A passing `neo.coding.result` on a plan writes `checked_json` with those
-  step ids.
+  step ids, the reviewer's confirmed model and the same `chooseLine` availability fact, so
+  `neoPlanRefusal` judges coding checks by the same rule.
+- For a plan, the reviewer may run the author's model when no other model is usable: the
+  same availability fact is passed to `codingReviewerPolicy` and the review assignment
+  (`assign-operation.ts`), which today refuse a same-model reviewer outright.
 - A plan is always reviewed, even when the repository's `crossModelReview` is off, and
   the daemon does not merge a plan's PR until `neoPlanRefusal` passes: steps, check and
   sign-off come before the merge (`packs/coding/daemon-merge-gates.ts`).
@@ -117,3 +121,5 @@ Acceptance, one integration case per row:
 | a design PR todo already done before the upgrade, its ask still open | marked legacy; the old rule applies |
 | all of a plan's steps done | the plan still has its steps; the ask settles |
 | a `check` reported by a session that got no delivery for the plan | not recorded |
+| an abandoned plan's ask settled `dropped` | allowed |
+| a design PR where the author's model is the only usable one | reviewed by another session on that model, checked, merged after sign-off |
