@@ -172,6 +172,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.priority.low': '低',
   'todo.controlFailed': '这个改动没成功。',
   'question.open': '打开',
+  'question.recommended': '推荐',
   'question.openSession': '打开会话',
   'question.openSessionTitle': '打开会话：{name}',
   'question.document': '查看完整版本',

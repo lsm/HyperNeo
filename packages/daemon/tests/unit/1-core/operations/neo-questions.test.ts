@@ -598,6 +598,34 @@ describe('neo.question operations', () => {
     expect(told).toEqual(['The human answered "Which layout?": 2 (Switch to cards).']);
   });
 
+  test('choice options carry their own detail and a recommended tag', async () => {
+    const { call, asked, store } = setup();
+    const card = await asked({
+      kind: 'choice',
+      text: 'Which hotel?',
+      options: ['Park Hyatt', 'Hotel Gracery'],
+      details: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+    });
+    expect(store.getQuestion(card.id)).toMatchObject({
+      optionDetails: { 'Hotel Gracery': '12 minutes from the station, 1,600 a night' },
+      recommended: 'Hotel Gracery',
+      answer: null,
+    });
+    for (const extra of [{ details: { Gracery: 'cheap' } }, { recommended: 'Option B' }])
+      expect(
+        await call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'choice',
+          text: 'Which hotel?',
+          options: ['Park Hyatt', 'Hotel Gracery'],
+          replaces: card.id,
+          ...extra,
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('option_unknown') });
+    expect(store.getQuestion(card.id)?.state).toBe('open');
+  });
+
   test('only the human answers', async () => {
     const { call, asked } = setup();
     const reply = await asked({ kind: 'reply', text: 'Which?' });

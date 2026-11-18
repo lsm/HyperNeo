@@ -70,6 +70,21 @@ const marks = {
 const choiceClass =
   'flex min-w-0 max-w-full items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-left text-xs font-semibold text-fg [overflow-wrap:anywhere] hover:border-accent/40 hover:text-accent focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50';
 
+function ChoiceOptionText({ question, option }: { question: NeoQuestionEntry; option: string }) {
+  const detail = question.optionDetails?.[option];
+  return (
+    <span class="min-w-0">
+      {neoQuestionOption(question, option)}
+      {question.recommended === option && (
+        <span class="ml-1.5 rounded border border-line px-1 py-px text-[11px] font-medium text-fg-muted">
+          {t('question.recommended')}
+        </span>
+      )}
+      {detail && <span class="block font-normal text-fg-muted">{detail}</span>}
+    </span>
+  );
+}
+
 export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
@@ -633,7 +648,7 @@ export function QuestionBox({
                 checked={picked.includes(option)}
                 onChange={(event) => toggle(option, (event.target as HTMLInputElement).checked)}
               />
-              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
+              <ChoiceOptionText question={question} option={option} />
             </label>
           ))}
         </div>
@@ -649,7 +664,7 @@ export function QuestionBox({
               disabled={disabled}
               onClick={() => onAnswer([option])}
             >
-              <span class="min-w-0">{neoQuestionOption(question, option)}</span>
+              <ChoiceOptionText question={question} option={option} />
             </button>
           ))}
         </div>

@@ -1017,6 +1017,33 @@ describe('NeoAskTodos', () => {
     expect(onAnswer).toHaveBeenLastCalledWith('many', ['iPad']);
   });
 
+  it('shows an option detail under it and tags the recommended option', () => {
+    const onAnswer = vi.fn();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('hotel', {
+              kind: 'choice',
+              options: ['Park Hyatt', 'Hotel Gracery'],
+              optionDetails: { 'Hotel Gracery': '离车站 12 分钟，每晚 ¥1,600' },
+              recommended: 'Hotel Gracery',
+            }),
+          ],
+        })}
+        onAnswer={onAnswer}
+      />
+    );
+    expect(
+      [...app.container.querySelectorAll('[data-choice-option]')].map(
+        (button) => button.textContent
+      )
+    ).toEqual(['Park Hyatt', 'Hotel Gracery推荐离车站 12 分钟，每晚 ¥1,600']);
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.click(app.getByRole('button', { name: /Hotel Gracery/ }));
+    expect(onAnswer).toHaveBeenCalledWith('hotel', ['Hotel Gracery']);
+  });
+
   it('draws no letter before an option that already carries one', () => {
     const options = ['A 先只改服务器', 'B 服务器和客户端一起改'];
     const app = render(

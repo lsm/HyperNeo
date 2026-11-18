@@ -151,6 +151,8 @@ export type NeoQuestionDraft = Pick<
   | 'retireWhen'
   | 'kind'
   | 'options'
+  | 'optionDetails'
+  | 'recommended'
   | 'multiple'
   | 'noLabel'
   | 'yesLabel'
@@ -167,7 +169,7 @@ export const NEO_ADVISORY_QUESTION = (question: string) =>
   `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
     AND json_extract(p.values_json, '$.hold') = 0)`;
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
@@ -176,6 +178,8 @@ type QuestionRow = Omit<
   NeoQuestion,
   | 'kind'
   | 'options'
+  | 'optionDetails'
+  | 'recommended'
   | 'multiple'
   | 'todos'
   | 'answer'
@@ -194,6 +198,8 @@ type QuestionRow = Omit<
   confirmJson: string | null;
   replyToJson: string | null;
   options: string | null;
+  optionDetailsJson: string | null;
+  recommended: string | null;
   multiple: number;
   todos: string;
   answer: string | null;
@@ -213,8 +219,14 @@ const toQuestion = ({
   actionsAppliedAt,
   heldAt,
   holdRequests: _holdRequests,
+  optionDetailsJson,
+  recommended,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(optionDetailsJson
+    ? { optionDetails: JSON.parse(optionDetailsJson) as Record<string, string> }
+    : {}),
+  ...(recommended ? { recommended } : {}),
   ...(cause ? { cause } : {}),
   ...(actionsAppliedAt ? { actionsAppliedAt } : {}),
   ...(heldAt && row.state === 'open' ? { heldAt } : {}),
@@ -1078,8 +1090,8 @@ export class NeoAskTodoRepository {
   askQuestion(id: string, askId: string, draft: NeoQuestionDraft, now: number): NeoQuestion {
     this.db
       .prepare(
-        `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_questions (id, ask_id, text, kind, options, option_details_json, recommended, multiple, no_label, yes_label,
+           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -1087,6 +1099,8 @@ export class NeoAskTodoRepository {
         draft.text,
         draft.kind,
         draft.options ? JSON.stringify(draft.options) : null,
+        draft.optionDetails ? JSON.stringify(draft.optionDetails) : null,
+        draft.recommended ?? null,
         draft.multiple ? 1 : 0,
         draft.noLabel,
         draft.yesLabel,

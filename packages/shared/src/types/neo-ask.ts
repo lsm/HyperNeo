@@ -116,6 +116,8 @@ export interface NeoQuestion {
   text: string;
   kind: NeoQuestionKind;
   options: string[] | null;
+  optionDetails?: Record<string, string>;
+  recommended?: string;
   multiple: boolean;
   noLabel: string | null;
   yesLabel: string | null;
@@ -130,7 +132,6 @@ export interface NeoQuestion {
   createdAt: number;
 }
 
-/** The numbers the card shows in front of choice options: 1, 2, 3… in order. */
 export function neoOptionLabels(options: readonly string[]): string[] {
   return options.map((_, index) => String(index + 1));
 }
@@ -169,7 +170,6 @@ function optionNumber(word: string): number | undefined {
   return plain >= 0 ? plain + 1 : undefined;
 }
 
-/** Reads a chat reply like "2", "选二", "第二个", "1 和 3" or "the second one" as the numbered options. */
 export function neoChoiceByNumber(
   words: string,
   question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple'> | null
