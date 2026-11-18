@@ -3,7 +3,10 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { downloadVerifiedTarball } from '../../../../src/lib/agent/npm-package-download.ts';
-import { isNetworkUnreachableError } from '../../../../src/lib/agent/network-outage-pause.ts';
+import {
+  isNetworkUnreachableError,
+  networkProbeHost,
+} from '../../../../src/lib/agent/network-outage-pause.ts';
 import { integrityOf, npmTarball } from '../../helpers/npm-tarball.ts';
 
 describe('configured package downloads', () => {
@@ -92,6 +95,19 @@ describe('configured package downloads', () => {
     await downloadVerifiedTarball('@example/pkg', '1.2.3', dest);
     expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
     expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://mirror.example.test/');
+  });
+
+  it('reports the pnpm mirror host when the registry cannot be reached', async () => {
+    script('pnpm', "printf 'https://mirror.example.test\\n'");
+    script('curl', 'exit 7');
+    try {
+      await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
+      throw new Error('expected failure');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain('ECONNREFUSED mirror.example.test:443');
+      expect(networkProbeHost(message)).toBe('mirror.example.test');
+    }
   });
 
   it('uses the default registry when pnpm fails', async () => {
