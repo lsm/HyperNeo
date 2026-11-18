@@ -327,7 +327,8 @@ try {
       (await invoke<{ ok: boolean }>('neo.message.send', {
         sessionId: root,
         requestId: handoffId,
-        content: 'Delegate this action to Neo.',
+        content: [{ type: 'text', text: 'Delegate this action to Neo.' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }],
+        thumbnails: [{ index: 1, mediaType: 'image/jpeg', data: 'dGh1bWI=', width: 64, height: 48 }],
       })).ok,
       true
     );
@@ -361,6 +362,11 @@ try {
     assert.equal(app.db.getSDKMessageRepo().getUserSendStatus(root, handoffId), 'failed');
     evidence.retryConsumed = true;
     const after = await read();
+    const photoPage = await invoke<{ items: Array<{ requestId: string; content: Array<{ type: string; thumbnail?: { mediaType: string; data: string } | null }> }> }>('neo.conversation.asks.read', { conversationId, imageRefs: true });
+    const photo = photoPage.items.find((item) => item.requestId === retry.requestId)?.content[1];
+    assert.equal(photo?.type, 'image_ref');
+    assert.deepEqual(photo?.thumbnail, { mediaType: 'image/jpeg', data: 'dGh1bWI=' });
+    evidence.retryThumbnailPreserved = true;
     assert.equal(after.items.find((item) => item.requestId === handoffId)?.delivery?.supersededBy, retry.requestId);
     const resent = after.items.find((item) => item.requestId === retry.requestId);
     assert.equal(resent?.retryOf, handoffId);

@@ -46,11 +46,29 @@ const retry = (superpipe({})('neo.message.retry') as PipelineAPI)
     ) => {
       const { ask, session } = target;
       const requestId = neoDerivedId(`neo-retry:${ask.conversationId}:${ask.requestId}`);
+      const thumbnails = service.asks
+        .images(ask.conversationId, [ask.requestId])
+        .flatMap((image) => {
+          const mediaType = z
+            .enum(['image/jpeg', 'image/png', 'image/webp'])
+            .safeParse(image.thumbnail?.mediaType);
+          if (!image.thumbnail || !mediaType.success) return [];
+          return [
+            {
+              index: image.index,
+              mediaType: mediaType.data,
+              data: image.thumbnail.data,
+              ...(image.width !== null ? { width: image.width } : {}),
+              ...(image.height !== null ? { height: image.height } : {}),
+            },
+          ];
+        });
       const receipt = await retryNeoIntake(
         {
           sessionId: session.id,
           requestId,
           content: ask.content,
+          thumbnails,
           replyTo: ask.replyTo,
           retryOf: ask.requestId,
           ...(ask.previewContext
