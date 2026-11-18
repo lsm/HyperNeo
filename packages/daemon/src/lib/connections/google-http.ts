@@ -1,6 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { readGoogleTokenJson as readBoundedJson } from './google-token-exchange.ts';
 import type { createGoogleTokenAccess } from './token-access.ts';
+import { grantedScopes } from './status.ts';
 
 type Token = ReturnType<typeof createGoogleTokenAccess>['token'];
 type Grant = Extract<Awaited<ReturnType<Token>>, { ok: true }>;
@@ -12,7 +13,7 @@ const denied = (reason: string) => ({ ok: false as const, reason });
 function admit(grant: Awaited<ReturnType<Token>>, scope: string) {
   return !grant.ok
     ? { reason: grant }
-    : grant.scopes.includes(scope)
+    : grantedScopes(grant.scopes.join(' ')).includes(scope)
       ? { value: grant }
       : { reason: denied('missing_scope') };
 }

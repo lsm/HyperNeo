@@ -160,8 +160,9 @@ async function list(
     input.connectionId,
     `${origin}${collection}${query([
       ...(stored
-        ? [...new URLSearchParams(stored)].filter(([name]) => name !== '$top')
-        : [...first, ['$select', select] as [string, string]]),
+        ? [...new URLSearchParams(stored)].filter(([name]) => !['$top', '$select'].includes(name))
+        : first),
+      ['$select', select],
       ['$top', String(input.limit)],
     ])}`,
     scope
