@@ -328,6 +328,48 @@ describe('SessionsSidebar', () => {
     await waitFor(() => expect(mockForgetSystemProject).toHaveBeenCalledWith('idle'));
   });
 
+  it('rechecks a failed work lookup after the project list refreshes', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+      {
+        id: 'ok',
+        name: 'Okay',
+        folders: ['/code/okay'],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    mockFindProjectWork.mockImplementation(async (folders: string[]) => {
+      if (
+        folders[0] === '/code/idle' &&
+        mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle').length === 1
+      )
+        throw new Error('offline');
+      return false;
+    });
+    render(<SessionsSidebar />);
+    const idle = await screen.findByRole('button', { name: 'Remove project Idle' });
+    const okay = await screen.findByRole('button', { name: 'Remove project Okay' });
+    await waitFor(() => expect(idle.getAttribute('title')).toBe('Could not check project work'));
+    await waitFor(() => expect(okay.hasAttribute('disabled')).toBe(false));
+    mockSessionsSignal.value = [createMockSession('other', 'Other', '/code/other')];
+    await waitFor(() => expect(idle.hasAttribute('disabled')).toBe(false));
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle')
+    ).toHaveLength(2);
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/okay')
+    ).toHaveLength(1);
+  });
+
   it('checks work again after a project stops reporting chats', async () => {
     let hasSessions = false;
     mockListSystemProjects.mockImplementation(async () => [
