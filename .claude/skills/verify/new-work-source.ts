@@ -8,6 +8,7 @@ import { invokeOperation } from '../../../packages/daemon/src/lib/operations/inv
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { SessionGoalRepository } from '../../../packages/daemon/src/storage/repositories/session-goal-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { renderRemoteAddress } from '../../../packages/daemon/src/lib/mailbox/address.ts';
 
 const run = resolve(process.argv[2]);
@@ -116,6 +117,16 @@ try {
   evidence.after = after;
   assert.equal(after.ok, true, JSON.stringify(after));
   const store = new NeoAskTodoRepository(db);
+  store.openAsk({ id: 'relay-followup-ask', sessionId: sender, projectId: null, originMessageId: 'neo-track:synthetic:followup', title: 'Relay follow-up', request: 'Answer the worker', createdAt: 1 });
+  const followup = store.addTodo('relay-followup-todo', 'relay-followup-ask', { title: 'Relay worker', doneWhen: 'Answered', instruction: 'Work', check: draft.check, named: null }, 1);
+  new NeoTodoSessionRepository(db).bind(followup.id, { adapter: 'hyperneo', id: target }, 2);
+  store.updateTodo(followup, { state: 'blocked', blockedBy: 'needs-human', blockedReason: 'Awaiting the human', startedAt: 2 }, 2);
+  const followupCard = store.askQuestion('relay-followup-card', followup.askId, { text: 'Choose an option?', kind: 'choice', options: ['First', 'Second'], multiple: false, noLabel: null, yesLabel: null, todoId: followup.id, cause: 'relay-session-proposal' }, 3);
+  evidence.relayContinue = await mcp('neo.todo.continue', { todoId: followup.id, message: 'First' });
+  assert.equal((evidence.relayContinue as { ok: boolean }).ok, false, JSON.stringify(evidence.relayContinue));
+  assert.equal(store.getQuestion(followupCard.id)?.state, 'open');
+  evidence.relayContinueAdd = await mcp('neo.todo.add', { ...draft, title: 'Blocked follow-up', askId: followup.askId });
+  assert.equal((evidence.relayContinueAdd as { ok: boolean }).ok, false);
   const sourceSession = { id: 'synthetic-worker', adapter: 'hyperneo', name: 'Worker', label: 'Synthetic worker', provider: 'HyperNeo', link: null };
   const seed = (id: string, cause?: string) => {
     store.openAsk({ id, sessionId: sender, projectId: null, originMessageId: `neo-track:synthetic:${id}`, title: id, request: 'Synthetic tracked request', createdAt: 1 });
