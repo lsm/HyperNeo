@@ -714,7 +714,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
               caller.sessionId
             )
           : null;
-      if (!facts) return { mode: 'long_lived' as const, sameAsk: [] };
+      if (!facts) return { mode: 'per_todo' as const, sameAsk: [] };
       if (!facts.saved) {
         const { prefix, ...question } = sessionReuseQuestion(facts);
         const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {

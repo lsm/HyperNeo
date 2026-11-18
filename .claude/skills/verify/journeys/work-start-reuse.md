@@ -41,3 +41,5 @@ fresh session instead of reporting a wait that was never recorded.
 The helper also forwards a start through the destination's real RPC door while
 an unrelated worker is idle. The forwarded start creates a fresh session. Remote
 `per_ask` waiting is not implemented by this route.
+Starts with no todo or a todo owned by another Neo also start fresh when the
+daemon cannot determine which matter's reuse setting applies.
