@@ -12,7 +12,8 @@ import { googleConnectionWrites } from '../../../../src/storage/repositories/goo
 const graph = 'https://graph.microsoft.com';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let mcp: ReturnType<typeof createOperationMcpHandler>;
-let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
+type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+let fetchImpl: ReturnType<typeof vi.fn<Fetch>>;
 let mode: string;
 let nextLink: string | undefined;
 let caller: { sessionId?: string; role?: 'neo' | 'universal_read' };
@@ -62,7 +63,7 @@ beforeEach(async () => {
       client: { clientId: 'synthetic-client' },
     });
   }
-  fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+  fetchImpl = vi.fn<Fetch>(async (input, init) => {
     const url = new URL(String(input));
     expect(url.origin).toBe(graph);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer synthetic-access-token');
@@ -93,8 +94,7 @@ beforeEach(async () => {
     createOperationRegistry(
       createMicrosoftConnectionOperations(() => db.getDatabase(), {
         createStore: () => store,
-        fetchImpl,
-        schedule: () => () => {},
+        fetchImpl: fetchImpl as unknown as typeof fetch,
       })
     ),
     () => caller
@@ -158,7 +158,11 @@ test('cursors for another query, connection or operation and forged cursors send
   for (const reply of [
     await search({ cursor: nextCursor, query: 'other' }),
     await search({ cursor: 'forged' }),
-    await invoke('outlook.search', { connectionId: google.id, query: 'fixture', cursor: nextCursor }),
+    await invoke('outlook.search', {
+      connectionId: google.id,
+      query: 'fixture',
+      cursor: nextCursor,
+    }),
     await read({ cursor: nextCursor }),
   ])
     expect(reply.ok).toBe(false);

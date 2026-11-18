@@ -96,7 +96,9 @@ function project(message: z.infer<typeof graphMessage>): Item {
     id: message.id,
     conversationId: message.conversationId,
     ...limited,
-    truncated: Object.keys(caps).some((key) => raw[key as keyof typeof caps] !== limited[key as keyof typeof caps]),
+    truncated: Object.keys(caps).some(
+      (key) => raw[key as keyof typeof caps] !== limited[key as keyof typeof caps]
+    ),
   };
 }
 
@@ -119,9 +121,15 @@ function readCursor(input: Paging, operation: Operation, key: string) {
 function writeCursor(link: string | undefined, input: Paging, operation: Operation, key: string) {
   if (!link) return { value: undefined };
   const url = URL.canParse(link) ? new URL(link) : null;
-  if (url?.origin !== origin || url.pathname !== collection) return { reason: denied('invalid_response') };
+  if (url?.origin !== origin || url.pathname !== collection)
+    return { reason: denied('invalid_response') };
   const cursor = Buffer.from(
-    JSON.stringify({ connectionId: input.connectionId, operation, key: digest(key), query: url.search })
+    JSON.stringify({
+      connectionId: input.connectionId,
+      operation,
+      key: digest(key),
+      query: url.search,
+    })
   ).toString('base64url');
   return cursor.length <= 2048 ? { value: cursor } : { reason: denied('response_limit') };
 }
@@ -141,7 +149,10 @@ async function list(
   );
   if (!reply.ok) return { reason: reply };
   const page = z
-    .object({ value: z.array(graphMessage).max(input.limit), '@odata.nextLink': z.string().optional() })
+    .object({
+      value: z.array(graphMessage).max(input.limit),
+      '@odata.nextLink': z.string().optional(),
+    })
     .parse(reply.data);
   const next = writeCursor(page['@odata.nextLink'], input, operation, key);
   return 'reason' in next
@@ -156,14 +167,20 @@ async function withBody(api: Service, input: Paging, item: Item) {
     scope,
     { Prefer: 'outlook.body-content-type="text"' }
   );
-  if (!reply.ok)
-    return reply.reason === 'invalid_response' ? { ...item, truncated: true } : reply;
-  const content = z.object({ body: z.object({ content: z.string() }) }).parse(reply.data).body
-    .content;
-  return { ...item, body: content.slice(0, 4096), truncated: item.truncated || content.length > 4096 };
+  if (!reply.ok) return reply.reason === 'invalid_response' ? { ...item, truncated: true } : reply;
+  const content = z.object({ body: z.object({ content: z.string() }) }).parse(reply.data)
+    .body.content;
+  return {
+    ...item,
+    body: content.slice(0, 4096),
+    truncated: item.truncated || content.length > 4096,
+  };
 }
 
-function finish(result: { items: Item[]; nextCursor?: string }, extra: Record<string, string> = {}) {
+function finish(
+  result: { items: Item[]; nextCursor?: string },
+  extra: Record<string, string> = {}
+) {
   const value = {
     ok: true as const,
     untrusted: true as const,
@@ -215,9 +232,16 @@ export function createOutlookMailOperations(db: () => Database, service: () => P
     .pipe(() => service(), 'stored', 'api')
     .pipe(
       (api: Service, input: z.infer<typeof searchInput>, stored: string | null) =>
-        list(api, input, 'outlook.search', input.query, stored, input.query
-          ? [['$search', `"${input.query.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`]]
-          : []),
+        list(
+          api,
+          input,
+          'outlook.search',
+          input.query,
+          stored,
+          input.query
+            ? [['$search', `"${input.query.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`]]
+            : []
+        ),
       ['api', 'input', 'stored'],
       'result:result'
     )
@@ -254,21 +278,15 @@ export function createOutlookMailOperations(db: () => Database, service: () => P
           ? await Promise.all(page.items.map((item) => withBody(api, input, item)))
           : page.items;
         const failed = items.find((item) => 'ok' in item);
-        return failed ?? finish({ ...page, items: items as Item[] }, { conversationId: input.conversationId });
+        return (
+          failed ??
+          finish({ ...page, items: items as Item[] }, { conversationId: input.conversationId })
+        );
       },
       ['result', 'input', 'api'],
       'result'
     )
     .endAsync('result');
-  const guarded =
-    <I,>(run: (input: I, caller: unknown) => Promise<unknown>) =>
-    async (input: I, caller: unknown) => {
-      try {
-        return await run(input, caller);
-      } catch {
-        return denied('invalid_response');
-      }
-    };
   return [
     defineOperation({
       name: 'microsoft.accounts',
@@ -291,7 +309,13 @@ export function createOutlookMailOperations(db: () => Database, service: () => P
       policy,
       inputSchema: searchInput,
       resultSchema: success(),
-      execute: guarded(search),
+      execute: async (input, caller) => {
+        try {
+          return await search(input, caller);
+        } catch {
+          return denied('invalid_response');
+        }
+      },
     }),
     defineOperation({
       name: 'outlook.read_thread',
@@ -300,7 +324,13 @@ export function createOutlookMailOperations(db: () => Database, service: () => P
       policy,
       inputSchema: threadInput,
       resultSchema: success({ conversationId }),
-      execute: guarded(read),
+      execute: async (input, caller) => {
+        try {
+          return await read(input, caller);
+        } catch {
+          return denied('invalid_response');
+        }
+      },
     }),
   ];
 }
