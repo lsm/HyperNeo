@@ -252,3 +252,59 @@ describe('public ask photo references', () => {
     expect(request).not.toHaveBeenCalled();
   });
 });
+
+describe('failed public asks', () => {
+  it('shows the failure reason and lets the human retry once', async () => {
+    const conversation = view([{ type: 'text', text: 'Please process this' }]);
+    const entries = conversation.entries.map((entry) =>
+      entry.kind === 'ask'
+        ? {
+            ...entry,
+            ask: {
+              ...entry.ask,
+              messageStatus: 'failed' as const,
+              delivery: { state: 'failed' as const, reason: 'Provider refused the request' },
+            },
+          }
+        : entry
+    );
+    const onRetryUndelivered = vi.fn().mockResolvedValue(true);
+    const result = render(
+      <NeoPublicConversation
+        conversation={{ ...conversation, entries }}
+        onRetryUndelivered={onRetryUndelivered}
+      />
+    );
+    expect(screen.getByText('Provider refused the request')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(onRetryUndelivered).toHaveBeenCalledTimes(1));
+    expect(onRetryUndelivered).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'photo-ask' })
+    );
+    result.rerender(
+      <NeoPublicConversation
+        conversation={{
+          ...conversation,
+          entries: entries.map((entry) =>
+            entry.kind === 'ask'
+              ? {
+                  ...entry,
+                  ask: {
+                    ...entry.ask,
+                    delivery: {
+                      state: 'failed' as const,
+                      reason: 'Provider refused the request',
+                      supersededBy: 'retry-id',
+                    },
+                  },
+                }
+              : entry
+          ),
+        }}
+        onRetryUndelivered={onRetryUndelivered}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByText('Retried')).toBeTruthy();
+  });
+});
