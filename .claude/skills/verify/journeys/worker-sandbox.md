@@ -104,8 +104,7 @@ The per-worker runtime now lives under the daemon data root instead of the
 system temp base: `work/scratch/<worker key>` is the removable runtime and is
 exported as `TMPDIR` (with `TMP`, `TEMP`, `CLAUDE_CODE_TMPDIR` and
 `XDG_CACHE_HOME` inside it), while `HYPERNEO_WORKTREES` (the shared
-`worktrees/` root), `HYPERNEO_EVIDENCE` (`work/evidence/<key>`) and
-`HYPERNEO_BUILDS` (`work/builds/<key>`) name the fixed output locations. The
+`worktrees/` root) and `HYPERNEO_BUILDS` (`work/builds/<key>`) name the fixed output locations. The
 key is derived from the worker clone root, so release and resume recompute the
 same paths, and every location is created on demand by runtime preparation.
 Keep the scratch key short: Claude's per-uid socket directory still must not
@@ -114,13 +113,13 @@ reintroduce the shared-temp fallback this journey rejects.
 
 `evidence/work-locations.json` records all three routes (Claude policy env,
 Codex `shell_environment_policy.set`, SDK settings env); each entry must sit
-under the run's `HYPERNEO_DATA_DIR` and exist on disk. The shared `worktrees/`
+under the run's `HYPERNEO_DATA_DIR` and exist on disk; none assigns hidden evidence. The shared `worktrees/`
 root is also the Neo read-checkout tree, so it is exported as a location hint
 only: neither the Claude policy's `allowWrite` nor Codex `writable_roots` may
 include it, and resume replaces runtime-managed env keys (`TMPDIR`,
 `XDG_CACHE_HOME`, the `HYPERNEO_*` locations) so pre-upgrade workers adopt the
 data-root layout. Location guidance is independent of the sandbox marker. Unsandboxed workers
-receive the three HYPERNEO location hints without replacing their TMPDIR/cache
+receive the two HYPERNEO location hints without replacing their TMPDIR/cache
 or enabling sandbox permissions. SDK, Claude Desktop/CLI, Codex and owned
 Copilot launch paths supply the hints and brief. SDK host-prompt coverage lives
 in query-options-builder.test.ts and session-kind-injected-text.test.ts. Task

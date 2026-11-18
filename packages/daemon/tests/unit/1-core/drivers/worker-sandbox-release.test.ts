@@ -35,12 +35,16 @@ test('release removes only one worker scratch root and keeps evidence locations'
   try {
     const a = (await prepareWorkerSandbox(first)) as Record<string, string>;
     const b = (await prepareWorkerSandbox(second)) as Record<string, string>;
+    const legacy = join(dataDir, 'work', 'evidence', 'legacy', 'result.md');
+    mkdirSync(join(dataDir, 'work', 'evidence', 'legacy'), { recursive: true });
+    writeFileSync(legacy, 'kept');
     writeFileSync(join(b.TMPDIR, 'sibling'), 'kept');
     await releaseWorkerSandbox(first);
     expect(existsSync(a.TMPDIR)).toBe(false);
     expect(existsSync(join(b.TMPDIR, 'sibling'))).toBe(true);
     expect(existsSync(join(dataDir, 'work', 'scratch'))).toBe(true);
-    expect(existsSync(a.HYPERNEO_EVIDENCE)).toBe(true);
+    expect(a.HYPERNEO_EVIDENCE).toBeUndefined();
+    expect(existsSync(legacy)).toBe(true);
     expect(existsSync(a.HYPERNEO_BUILDS)).toBe(true);
     await releaseWorkerSandbox(second);
   } finally {
