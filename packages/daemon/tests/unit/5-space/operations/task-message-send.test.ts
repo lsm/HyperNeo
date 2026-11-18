@@ -6,11 +6,24 @@ import type { ResolveTargetsResult } from '../../../../../messaging/src/contract
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import {
   createSendTaskMessageOperation,
-  sendTaskMessage,
   SENDER_IDENTITY_UNAVAILABLE_ERROR,
+  type TaskMessageSendDependencies,
+  type TaskMessageSendInput,
+  type TaskMessageSendResult,
 } from '../../../../src/lib/messaging/task-message-send.ts';
 
 const SPACE_ID = 'space-send-test';
+
+async function sendTaskMessage(
+  input: TaskMessageSendInput,
+  caller: OperationCaller,
+  deps: TaskMessageSendDependencies
+): Promise<TaskMessageSendResult> {
+  return (await createSendTaskMessageOperation(deps).execute(
+    input,
+    caller
+  )) as TaskMessageSendResult;
+}
 
 function task(overrides: Partial<SpaceTask> = {}): SpaceTask {
   return {

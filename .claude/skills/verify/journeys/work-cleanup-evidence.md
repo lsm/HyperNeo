@@ -18,7 +18,7 @@ bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
 The helper starts an isolated daemon, seeds done todos finished 8 and 2 days ago
 (one of the old ones cited by an open card), two archived sessions whose worktrees
 are gone (one with an 8-day-old gone row, one with none) and an archived session
-whose real worktree holds an uncommitted draft. It calls `work.cleanup.sweep` over
+with a worker-start marker and an uncommitted draft. It calls `work.cleanup.sweep` over
 the owner RPC three times.
 
 The first sweep removes only the old todo's evidence and the old worker's

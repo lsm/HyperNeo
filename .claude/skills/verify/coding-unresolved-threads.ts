@@ -138,10 +138,21 @@ try {
   assert.equal((await sweep('conflict with an unresolved thread', 2)).state, 'dirty');
   mergeable = 'MERGEABLE';
   ci = 'FAILURE';
+  botReview = 'CHANGES_REQUESTED';
+  told.length = 0;
   assert.equal((await sweep('failing CI with an unresolved thread', 3)).state, 'failing');
+  assert(
+    told.some((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r1`))
+  );
+  told.length = 0;
+  await sweep('failing CI reminder with an unresolved thread', 24);
+  assert(
+    told.some((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r1`))
+  );
   ci = 'SUCCESS';
-  assert.equal((await sweep('ready except for thread', 4)).state, 'changes_requested');
-  const reminder = await sweep('author reminder', 25);
+  botReview = 'APPROVED';
+  assert.equal((await sweep('ready except for thread', 25)).state, 'changes_requested');
+  const reminder = await sweep('author reminder', 46);
   assert(told.some((item) => item.text.includes(`${url}#discussion_r1`)));
   const decision = decideCodingDaemonMerge({
     ok: true, head, state: 'OPEN', draft: false, mergeable: 'MERGEABLE',
@@ -153,9 +164,9 @@ try {
   assert.equal(ledger.pollFacts.record(
     { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
     { value: { headOid: head, unresolvedThreadUrls: [] }, etag: null, next: null },
-    t0 + 26 * MIN, 1
+    t0 + 47 * MIN, 1
   ), true);
-  const resolved = await sweep('thread resolved', 26);
+  const resolved = await sweep('thread resolved', 47);
   assert.equal(resolved.state, 'approved_green');
   db.prepare("UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = ?").run(repo);
   head = 'b'.repeat(40);
@@ -165,24 +176,24 @@ try {
   });
   let refreshes = 0;
   const failedRefresh = async () => { refreshes++; return { ok: false }; };
-  await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 27 * MIN, failedRefresh);
+  await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 48 * MIN, failedRefresh);
   assert.equal(refreshes, 1);
-  assert.equal(ledger.list()[0].readAt, t0 + 27 * MIN);
+  assert.equal(ledger.list()[0].readAt, t0 + 48 * MIN);
   assert.equal(ledger.list()[0].state, 'changes_requested');
   assert.equal(ledger.health.read(repo)?.misses, 0);
-  await reconcileCodingPrLedger(ledger, [repo], read(499), t0 + 28 * MIN, failedRefresh);
+  await reconcileCodingPrLedger(ledger, [repo], read(499), t0 + 49 * MIN, failedRefresh);
   assert.equal(refreshes, 1);
-  assert.equal(ledger.list()[0].readAt, t0 + 28 * MIN);
+  assert.equal(ledger.list()[0].readAt, t0 + 49 * MIN);
   assert.equal(ledger.pollFacts.record(
     { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
     { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r2`] }, etag: null, next: null },
-    t0 + 29 * MIN, 2
+    t0 + 50 * MIN, 2
   ), true);
   db.prepare("INSERT INTO neo_pack_preferences VALUES ('coding', 'repo', ?, 'crossModelReview', 'true', 'human', 1)").run(repo);
   db.exec("DELETE FROM neo_todo_sessions; UPDATE pack_coding_pr_ledger SET owner = NULL");
-  const cross = await sweep('unowned PR needs cross-model review', 30);
+  const cross = await sweep('unowned PR needs cross-model review', 51);
   assert.equal(cross.state, 'waiting_cross_review');
-  const escalated = await sweep('cross-model review reminder', 50);
+  const escalated = await sweep('cross-model review reminder', 71);
   assert(escalated.woken.some((text) => text.includes('different model')));
   for (const [newHead, newDraft, newMergeable, newCi, expected] of [
     ['d', true, 'MERGEABLE', 'SUCCESS', 'draft'],
@@ -194,7 +205,7 @@ try {
     mergeable = newMergeable;
     ci = newCi;
     db.prepare("UPDATE pack_coding_pr_ledger SET state = 'changes_requested' WHERE repo = ?").run(repo);
-    await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 50 * MIN, failedRefresh);
+    await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 71 * MIN, failedRefresh);
     assert.equal(ledger.list()[0].state, expected);
   }
   draft = false;
@@ -202,16 +213,51 @@ try {
   ci = 'SUCCESS';
   const closed = async () => ({ data: { rateLimit: { remaining: 4000 }, repository: {
     nameWithOwner: repo, open: { pageInfo: { hasNextPage: false }, nodes: [] },
-    done: { nodes: [{ ...pr(), state: 'CLOSED', closedAt: new Date(t0 + 51 * MIN).toISOString() }] },
+    done: { nodes: [{ ...pr(), state: 'CLOSED', closedAt: new Date(t0 + 72 * MIN).toISOString() }] },
   } } });
-  await reconcileCodingPrLedger(ledger, [repo], closed, t0 + 51 * MIN);
+  await reconcileCodingPrLedger(ledger, [repo], closed, t0 + 72 * MIN);
   assert.equal(ledger.list()[0].state, 'closed');
   head = 'c'.repeat(40);
-  await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 52 * MIN, failedRefresh);
+  await reconcileCodingPrLedger(ledger, [repo], read(4000), t0 + 73 * MIN, failedRefresh);
   const reopened = ledger.list()[0];
   assert.equal(reopened.state, 'waiting_cross_review');
   assert.equal(reopened.closedAt, null);
-  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened }, null, 2));
+  db.prepare("UPDATE neo_pack_preferences SET value_json = 'false' WHERE key = 'crossModelReview'").run();
+  db.prepare("INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES ('author-todo', '{}', ?)").run(JSON.stringify(author));
+  head = 'e'.repeat(40);
+  ci = 'FAILURE';
+  botReview = 'APPROVED';
+  told.length = 0;
+  await sweep('CI fails before review', 74);
+  assert(told.some((item) => item.text.includes('failing CI')));
+  told.length = 0;
+  botReview = 'CHANGES_REQUESTED';
+  assert.equal(ledger.pollFacts.record(
+    { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+    { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r3`] }, etag: null, next: null },
+    t0 + 75 * MIN, 3
+  ), true);
+  await sweep('review arrives after CI', 75);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
+  await sweep('unchanged review', 76);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
+  assert.equal(ledger.pollFacts.record(
+    { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+    { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r3`, `${url}#discussion_r4`] }, etag: null, next: null },
+    t0 + 77 * MIN, 4
+  ), true);
+  await sweep('another finding arrives', 77);
+  await sweep('findings unchanged', 78);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
+  const replacement = { adapter: 'hyperneo', id: 'replacement-author' };
+  db.prepare("UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'author-todo'").run(JSON.stringify(replacement));
+  told.length = 0;
+  const reassigned = await sweep('owner reassigned while CI fails', 79);
+  assert.equal(reassigned.owner, 'hyperneo:replacement-author');
+  assert.equal(told.filter((item) => JSON.stringify(item.ref) === JSON.stringify(replacement) && item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
+  await sweep('unchanged reassignment', 80);
+  assert.equal(told.filter((item) => JSON.stringify(item.ref) === JSON.stringify(replacement) && item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
+  writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened, lateReview: told }, null, 2));
 } finally {
   db.close();
 }
