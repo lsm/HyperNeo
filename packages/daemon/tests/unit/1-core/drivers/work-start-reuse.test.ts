@@ -34,6 +34,7 @@ function harness(
     model?: string;
     effort?: string;
     unavailable?: boolean;
+    statusThrows?: boolean;
     provider?: string;
     requestedProvider?: string;
     unresolvedDefault?: boolean;
@@ -100,8 +101,9 @@ function harness(
         },
       };
     },
-    status: async (ref) =>
-      config?.unavailable
+    status: async (ref) => {
+      if (config?.statusThrows) throw new Error('Synthetic status failure');
+      return config?.unavailable
         ? { ok: false, reason: 'unreachable', detail: 'offline' }
         : {
             ok: true,
@@ -119,7 +121,8 @@ function harness(
               effort: config?.effort ?? 'medium',
               ...(config?.provider ? { provider: config.provider } : {}),
             },
-          },
+          };
+    },
     send: async (ref, message) => {
       messages.push(message);
       sent.push(ref.id);
@@ -210,6 +213,17 @@ describe('work.start session reuse preference', () => {
     expect((await run.start(neo, false, { todoId: 'next' })).ok).toBe(false);
     expect(run.waiting).toEqual(['own']);
     expect(run.started).toEqual([]);
+  });
+
+  test('a failing busy-worker status check falls back to a fresh start', async () => {
+    const run = harness([{ id: 'own', status: 'running' }], [], {
+      adapter: 'claude-desktop',
+      reuse: 'per_ask',
+      sameAsk: ['own'],
+      statusThrows: true,
+    });
+    expect((await run.start(neo, false, { todoId: 'next' })).value?.ref.id).toBe('fresh');
+    expect(run.waiting).toEqual([]);
   });
 });
 

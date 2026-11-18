@@ -267,6 +267,31 @@ describe('readFreeWorkers', () => {
 });
 
 describe('session reuse preference migration', () => {
+  test('a global coding preference does not become a global core preference', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1);
+      DELETE FROM migration_markers WHERE key = 'migration_525'`);
+    runMigrations(db, () => {});
+    expect(
+      db
+        .prepare(
+          "SELECT value_json FROM neo_pack_preferences WHERE pack = 'core' AND scope_kind = 'global' AND key = 'sessionReuse'"
+        )
+        .get()
+    ).toBeNull();
+    expect(
+      db
+        .prepare(
+          "SELECT value_json AS value FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'global' AND key = 'sessionStrategy'"
+        )
+        .get()
+    ).toEqual({ value: '"per_pr"' });
+    db.close();
+  });
+
   test.each([
     ['example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
     ['github.com/example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
