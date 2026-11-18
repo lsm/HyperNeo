@@ -65,7 +65,7 @@ Neo's prompt text changes to match:
 
 The rules are code, not prompt text, and each lives where its subject lives. Both are pure functions: facts in, refusal or nothing out, with no database, clock or file system inside. Both run as steps in the existing superpipe pipelines (`neo.todo.add`, `neo.todo.edit`, `neo.ask.open`, `neo.todo.commit-add`).
 
-**Rule 1 is in the coding pack.** Repositories are the coding pack's concept, so core does not decide which checks a coding todo may use. The pack already refuses wrongly placed coding work through its `refuse` hook in `packs/coding/todo-prs.ts`, which core calls with the todo's place (`neoTodoPlaceRefusal`), whatever pack owns the check. It already runs on add, on continue, and on every edit: the daemon routes `neo.todo.edit` through the writer pipeline in `todo-mutation-operation.ts`, whose planning step calls it (`neo-todo-mutation-planning.ts`). So no new call is needed. Rule 1 is one more case there: an `evidence` check on a todo the pack places in a repository is refused. On edit the scope also carries the previous check, so an unchanged legacy check passes.
+**Rule 1 is in the coding pack.** Repositories are the coding pack's concept, so core does not decide which checks a coding todo may use. The pack already refuses wrongly placed coding work through its `refuse` hook in `packs/coding/todo-prs.ts`, which core calls with the todo's place (`neoTodoPlaceRefusal`), whatever pack owns the check. It already runs on add, on continue, and on every edit: the daemon routes `neo.todo.edit` through the writer pipeline in `todo-mutation-operation.ts`, whose planning step calls it (`neo-todo-mutation-planning.ts`). So no new call is needed. Rule 1 is one more case there: an `evidence` check on a todo the pack places in a repository is refused. A check equal to the stored todo's check passes, on edit and on continue alike, so an unchanged legacy check keeps working. The scope's `todo` (today typed as only its id) also carries its `check` for this.
 
 **Rule 2 is in core.** `evidence` is a core check, so its path rule replaces `neoEvidenceRefusal` in `core-todo-checks.ts` at the same four call sites: `todo-operations.ts`, `todo-mutation-operation.ts`, `ask-record-operations.ts` and `storage/repositories/neo-todo-add-write.ts`. It no longer looks at repositories. It takes three facts:
 
@@ -76,7 +76,7 @@ The rules are code, not prompt text, and each lives where its subject lives. Bot
 ## Tests (written first)
 
 - A coding todo with an `evidence` check is refused. It is accepted today.
-- Editing a coding todo to an `evidence` check is refused, while an edit that keeps its unchanged legacy check succeeds.
+- Editing a coding todo to an `evidence` check is refused, while an edit or a continue on a todo with an unchanged legacy check succeeds.
 - A todo with no repository and no evidence path is refused. Today the daemon fills in the hidden path.
 - A todo with no repository and a path in a human-named persistent directory outside the default folder is accepted.
 - A todo with no repository and a path inside the human's folder is accepted.
