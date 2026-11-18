@@ -80,11 +80,13 @@ function planSave(input: Save, records: ProviderRecord[]) {
     )
   )
     return { reason: `${record.providerId} cannot run on ${input.harness}` };
-  const {
-    harness: _harness,
-    harnessSettings: _settings,
-    ...rest
-  } = JSON.parse(record.configJson ?? '{}') as Record<string, unknown>;
+  let stored: Record<string, unknown>;
+  try {
+    stored = JSON.parse(record.configJson ?? '{}') as Record<string, unknown>;
+  } catch {
+    return { reason: `${record.providerId} has an unreadable config` };
+  }
+  const { harness: _harness, harnessSettings: _settings, ...rest } = stored;
   const configJson = JSON.stringify(
     input.harness === 'sdk'
       ? rest
