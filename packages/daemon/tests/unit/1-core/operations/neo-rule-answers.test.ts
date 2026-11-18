@@ -314,7 +314,7 @@ describe('human-approved standing rules', () => {
       multiple: false,
     });
   });
-  test.each([APPLY, 'a'])('chat %s applies the proposal', async (content) => {
+  test.each([APPLY, '1'])('chat %s applies the proposal', async (content) => {
     const id = await propose();
     await invoke(
       'neo.message.send',
@@ -328,7 +328,7 @@ describe('human-approved standing rules', () => {
     );
     expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
   });
-  test.each(['button keep', 'B', 'yes', 'Change the wording'])(
+  test.each(['button keep', '2', 'yes', 'Change the wording'])(
     'human %s leaves rules unchanged',
     async (answer) => {
       const before = saved();
