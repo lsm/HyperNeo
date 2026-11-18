@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { downloadVerifiedTarball } from '../../../../src/lib/agent/npm-package-download.ts';
@@ -39,34 +39,21 @@ describe('configured package downloads', () => {
     );
   });
 
-  it('falls back to the pnpm registry when npm fails', async () => {
-    const archive = npmTarball([{ path: 'package/claude', body: 'binary' }]);
-    writeFileSync(join(run, 'fixture.tgz'), archive);
+  it('reports an npm failure without using fallback or exposing stderr', async () => {
     script('npm', "printf 'private-token-example' >&2; exit 7");
-    script('pnpm', "printf 'https://mirror.example.test\\n'");
-    script(
-      'curl',
-      `case "$*" in *-fL*) while [ "$1" != '-o' ]; do shift; done; /bin/cp '${run}/fixture.tgz' "$2";; *) printf '%s' "$*" > '${run}/url'; printf '%s' '{"dist":{"tarball":"https://mirror.example.test/pkg.tgz","integrity":"${integrityOf(archive)}"}}';; esac`
-    );
-    const dest = join(run, 'result.tgz');
-    await downloadVerifiedTarball('pkg', '1.0.0', dest);
-    expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
-    expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://mirror.example.test/');
-  });
-
-  it('retains npm failure as a cause when the fallback fails', async () => {
-    script('npm', "printf 'private-token-example' >&2; exit 7");
-    script('curl', 'exit 7');
+    script('pnpm', `printf 'called' > '${run}/pnpm-called'`);
+    script('curl', `printf 'called' > '${run}/curl-called'`);
     try {
       await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
       throw new Error('expected failure');
     } catch (error) {
-      const fallback = (error as Error).cause as Error;
-      const npmFailure = fallback.cause as Error & { stderr: string };
-      expect(npmFailure.message).toContain('exit 7');
-      expect(npmFailure.stderr).toBe('private-token-example');
-      expect(JSON.stringify(error)).not.toContain('private-token-example');
+      expect((error as Error).message).toBe(
+        'npm could not download the package (exit 7); check your npm registry and login'
+      );
+      expect(String(error)).not.toContain('private-token-example');
     }
+    expect(existsSync(join(run, 'pnpm-called'))).toBe(false);
+    expect(existsSync(join(run, 'curl-called'))).toBe(false);
   });
 
   it('uses the pnpm registry when npm is absent', async () => {
