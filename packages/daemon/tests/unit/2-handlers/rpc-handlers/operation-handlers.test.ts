@@ -84,6 +84,7 @@ describe('operation.invoke RPC registration', () => {
       'handoff.publish',
       'handoff.read',
       'message.send',
+      'daemon.retryClaudeDownload',
       'daemon.attach',
       'daemon.probe',
       'daemon.list',

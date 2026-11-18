@@ -6,6 +6,7 @@ import {
   type MessagingOperationDependencies,
 } from '../../../../src/lib/operations/catalog';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { LOCAL_RPC_PRINCIPAL } from '../../../../src/lib/operations/caller';
 import { defineOperation } from '../../../../src/lib/operations/registry';
 
 const tasks: MessagingOperationDependencies = { sessionStatus: () => 'active' };
@@ -44,7 +45,17 @@ describe('createDaemonOperationCatalog', () => {
     expect(names).toContain('family.example');
     expect(names.indexOf('family.example')).toBeLessThan(names.indexOf('operations.list'));
     expect(names.at(-1)).toBe('operations.describe');
-    expect(await invokeOperation(registry, 'operations.list', {}, { source: 'rpc' })).toEqual({
+    expect(
+      await invokeOperation(
+        registry,
+        'operations.list',
+        {},
+        {
+          source: 'rpc',
+          principal: LOCAL_RPC_PRINCIPAL,
+        }
+      )
+    ).toEqual({
       kind: 'completed',
       value: registry.entries.map(({ name, description }) => ({ name, description })),
     });
