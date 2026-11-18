@@ -144,10 +144,14 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
   return new Promise((resolve, reject) => {
     const fail = (err: { code?: number | string }, stderr = '') => {
       if (err.code === 'ENOENT' || command === 'pnpm') return resolve(null);
-      if (command === 'npm' && process.platform === 'win32' && typeof err.code === 'string')
+      if (command === 'npm' && process.platform === 'win32' && err.code === 'EINVAL')
         return resolve(null);
       const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
       if (command === 'npm') {
+        if (typeof err.code === 'string') {
+          const code = /^E[A-Z0-9_]{1,31}$/.test(err.code) ? ` (${err.code})` : '';
+          return reject(new Error(`npm could not start${code}`));
+        }
         const code =
           /^npm (?:ERR!|error) code (ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\s*$/m.exec(
             stderr
