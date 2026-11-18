@@ -7,7 +7,7 @@ bash .claude/skills/verify/proof-run.sh \
   /absolute/fresh/evidence-directory .claude/skills/verify/todo-open-human-question.ts
 ```
 
-The RPC completion request refuses with the question id and the public ask
+The operation descriptions explain the linked-card refusal and retention. The RPC completion request refuses with the question id and the public ask
 read retains the open card. Answering permits completion. A legacy done todo
 retains its card through pruning, while removing a todo retires its card.
 Evidence includes the RPC responses and observed question states.

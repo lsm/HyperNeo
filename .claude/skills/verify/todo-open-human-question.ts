@@ -29,6 +29,11 @@ try {
   await app.db.createSession({ id: sender, title: 'Synthetic question proof', workspacePath: run, createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const db = app.db.getDatabase();
   new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+  const doneDescription = await rpc('operations.describe', { name: 'neo.todo.done' });
+  const questionDescription = await rpc('operations.describe', { name: 'neo.question.ask' });
+  assert(JSON.stringify(doneDescription).includes('unanswered card linked to this todo refuses completion'));
+  assert(JSON.stringify(questionDescription).includes('Marking the todo done is refused while the linked card is open'));
+  evidence.push({ doneDescription, questionDescription });
   const store = service.todos;
   store.openAsk({ id: 'ask', projectId: null, sessionId: sender, originMessageId: null, title: 'Synthetic question', request: 'Keep the answer visible', createdAt: 1 });
   for (const id of ['live', 'legacy', 'removed']) store.addTodo(id, 'ask', { title: id, doneWhen: 'Complete', check: null, instruction: null, named: null }, 1);
