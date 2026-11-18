@@ -33,7 +33,7 @@ describe('configured package downloads', () => {
     );
     const dest = join(run, 'result.tgz');
     await downloadVerifiedTarball('@example/pkg', '1.2.3', dest);
-    expect(readFileSync(dest)).toEqual(archive);
+    expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
     expect(readFileSync(join(run, 'args'), 'utf8')).toContain(
       '@example/pkg@1.2.3\n--pack-destination\n'
     );
@@ -49,7 +49,7 @@ describe('configured package downloads', () => {
     );
     const dest = join(run, 'result.tgz');
     await downloadVerifiedTarball('@example/pkg', '1.2.3', dest);
-    expect(readFileSync(dest)).toEqual(archive);
+    expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
     expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://mirror.example.test/');
   });
 
