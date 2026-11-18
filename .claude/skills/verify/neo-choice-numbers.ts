@@ -133,7 +133,7 @@ const reply = async (questionId: string, content: string) => {
   assert.equal(sent.ok, true);
   return requestId;
 };
-for (const words of ['7', '0', '七', 'seventh', '1 和 7', '第十个', '100']) {
+for (const words of ['7', '0', '七', 'seventh', '1 和 7', '第十个', '十二', '100']) {
   await reply(invalid, words);
   assert.equal(asks.getQuestion(invalid)?.state, 'open', `${words} must not close the card`);
 }

@@ -146,9 +146,12 @@ export function neoLabelledOptions(options: readonly string[], picked: readonly 
 }
 
 const ZH_DIGITS = '一二三四五六';
+const ZH_NUMBER = '[零〇一二三四五六七八九十百千万两]+';
 const EN_ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
-const EN_WORDS = ['one', 'two', 'three', 'four', 'five', 'six'];
-const NUMBER = `(?:[1-6]|[${ZH_DIGITS}]|${EN_ORDINALS.join('|')})`;
+const EN_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const EN_EXTRA_ORDINAL =
+  '(?:seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth)';
+const NUMBER = `(?:\\d+(?:st|nd|rd|th)?|${ZH_NUMBER}|${EN_ORDINALS.join('|')}|${EN_EXTRA_ORDINAL})`;
 const ONE_PICK = `(?:第\\s*)?${NUMBER}(?:\\s*(?:号|个|项|条))?`;
 const JOIN = '\\s*(?:[,，、&和与跟]|and)\\s*|\\s+';
 const NUMBER_REPLY = new RegExp(
@@ -161,11 +164,11 @@ function optionNumber(word: string): number | undefined {
     .replace(/^第\s*/, '')
     .replace(/\s*(?:号|个|项|条)$/, '')
     .toLowerCase();
-  if (/^[1-6]$/.test(bare)) return Number(bare);
-  const zh = ZH_DIGITS.indexOf(bare);
+  if (/^\d+(?:st|nd|rd|th)?$/.test(bare)) return Number.parseInt(bare, 10);
+  const zh = bare.length === 1 ? ZH_DIGITS.indexOf(bare) : -1;
   if (zh >= 0) return zh + 1;
   const ordinal = EN_ORDINALS.indexOf(bare);
-  return ordinal >= 0 ? ordinal + 1 : undefined;
+  return ordinal >= 0 ? ordinal + 1 : 0;
 }
 
 export function neoChoiceByNumber(
