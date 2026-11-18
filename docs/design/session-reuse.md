@@ -53,9 +53,9 @@ keeps all three apart. A pack cannot loosen the third rule.
 Four PRs, in this order.
 
 **PR 1: the reuse setting, asked on a card.** A core preference `sessionReuse` decides
-which free worker another todo may reuse (rule 2 below):
+which free worker another todo may reuse (step B of PR 4's decision):
 
-| Value | Rule 2 | Label |
+| Value | Step B | Label |
 |---|---|---|
 | `long_lived` (default) | any free daemon worker in the same folder, one that worked on the same ask first (today's core rule) | Long-lived sessions |
 | `per_ask` | only a free worker that already worked on this todo's ask; if it is busy, wait for it | One session per matter |
@@ -96,7 +96,7 @@ which free worker another todo may reuse (rule 2 below):
   the runner has claimed the todo (`doing`, `startedAt` set), and `queueOn`
   (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) refuses a
   todo that is not `todo`, so this PR extends `queueOn` and `todoWorker.wait` to a todo
-  that is already `doing` and has no worker yet. PR 4's rule 1 uses the same extension. "Worked on this ask" reads `neo_todo_sessions` until
+  that is already `doing` and has no worker yet. PR 4's step A uses the same extension. "Worked on this ask" reads `neo_todo_sessions` until
   PR 4, then `neo_todo_roles`.
 - Saved coding `sessionStrategy` values are copied once: a repository value to each project
   that owns the repository (the most recently set wins when one project owns several), a
@@ -146,7 +146,12 @@ written before this PR with `kind = 'worker'`. That is the row the daemon alread
 requires before an automatic or Neo archive and before a release
 (`neo/session-archive-operation.ts` through `readStartedWork`, and `neo/todo-release.ts`,
 which keeps such a session as `not_started_by_us`; both since #10965). Older rows without
-`kind = 'worker'` are never trusted.
+`kind = 'worker'` are never trusted. Both gates pass the session's ref to `readStartedWork`,
+and with a ref its query requires `role = 'worker'` (`work-started-sessions.ts`), so this
+is today's rule. Rows without a role cannot be backfilled as workers: the same table also
+gets rows for sessions Neo claimed or released that the daemon never started
+(`recordStartedWork` from `claimWorker` and `fenceRelease` in
+`neo-todo-session-repository.ts`).
 
 Release, archive and reclaim check the record: the daemon closes or archives a session
 only when it has a trusted record, and writes the reason and time into the record's end
@@ -166,11 +171,11 @@ model fields; reuse reads its model from `work.status` as today.
 - One superpipe decides a start's session, inside `reuseIdleWorker`: read facts (the
   todo's role sessions, the free sessions with a live start record, the pack's role
   rules), decide with one pure function, then send, wait or start new. The decision:
-  1. this todo already has a session for this role and it is usable → send there; if
-     busy, wait for it (`todoWorker.wait`, as extended in PR 1);
-  2. otherwise the `sessionReuse` rule from PR 1, skipping any session that plays
-     another role on this todo unless the pack's rules allow sharing;
-  3. otherwise start new.
+  - **Step A.** This todo already has a session for this role and it is usable → send there; if
+    busy, wait for it (`todoWorker.wait`, as extended in PR 1);
+  - **Step B.** Otherwise the `sessionReuse` rule from PR 1, skipping any session that plays
+    another role on this todo unless the pack's rules allow sharing;
+  - **Step C.** Otherwise start new.
 - A prepared start (worker sandbox on) reuses only a session whose start record has the
   same `preparation_pack` and `sandbox`. The round's parameters (PR, head) go in the
   message, as the review brief already does.
