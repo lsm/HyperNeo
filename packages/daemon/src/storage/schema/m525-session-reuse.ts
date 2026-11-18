@@ -2,13 +2,6 @@ import type { Database } from '../sqlite-compat.ts';
 
 export function runMigration525(db: Database): void {
   db.exec(`INSERT OR IGNORE INTO neo_pack_preferences
-    (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-    SELECT 'core', 'global', '', 'sessionReuse',
-      CASE value_json WHEN '"long_lived"' THEN '"long_lived"' ELSE '"per_todo"' END,
-      set_by, set_at
-    FROM neo_pack_preferences WHERE pack = 'coding' AND key = 'sessionStrategy'
-      AND scope_kind = 'global' AND value_json IN ('"long_lived"', '"per_task"', '"per_pr"');
-    INSERT OR IGNORE INTO neo_pack_preferences
       (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
     SELECT 'core', 'project', project_id, 'sessionReuse',
       CASE value_json WHEN '"long_lived"' THEN '"long_lived"' ELSE '"per_todo"' END,

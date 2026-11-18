@@ -11,6 +11,8 @@ and its owning project, then restarts the isolated daemon. The public preference
 operation must show `per_todo` on the project and retain `per_pr` on the coding
 repository. A coding worker-target decision keeps the old strategy and does not
 ask another coding strategy question. Evidence is `strategy-question.json`.
+An existing global coding preference remains intact and does not become a
+global core preference.
 
 No live database, provider, credentials, model or GUI is used. The separate
 `session-reuse-card.md` journey verifies the new card in the browser.

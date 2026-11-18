@@ -756,7 +756,7 @@ export async function reuseIdleWorker(
         (isBusyWork(work.status) || (!free && work.status === 'done'))
     );
     if (busy) {
-      const status = await adapter.status?.(busy.work.ref);
+      const status = await adapter.status?.(busy.work.ref).catch(() => null);
       if (
         status?.ok &&
         (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&

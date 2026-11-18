@@ -28,6 +28,8 @@ try {
     VALUES ('repository:github.com/synthetic/sessions','synthetic-project');
     INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at)
     VALUES ('coding','repo','github.com/synthetic/sessions','sessionStrategy','"per_pr"','human',1);
+    INSERT INTO neo_pack_preferences (pack,scope_kind,scope_key,key,value_json,set_by,set_at)
+    VALUES ('coding','global','','sessionStrategy','"per_task"','human',1);
     DELETE FROM migration_markers WHERE key='migration_525'`);
 } finally { await first.cleanup(); }
 
@@ -51,8 +53,12 @@ try {
   });
   const core = await rpc('pack.preferences.get', { pack: 'core', scope: { kind: 'project', key: 'synthetic-project' }, key: 'sessionReuse' });
   const coding = await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: 'github.com/synthetic/sessions' }, key: 'sessionStrategy' });
+  const globalCore = await rpc('pack.preferences.get', { pack: 'core', scope: { kind: 'global', key: '' }, key: 'sessionReuse' });
+  const globalCoding = await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'sessionStrategy' });
   assert.equal(core.preference?.value, 'per_todo');
   assert.equal(coding.preference?.value, 'per_pr');
+  assert.equal(globalCore.preference, null);
+  assert.equal(globalCoding.preference?.value, 'per_task');
   const db = app.db.getDatabase();
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
@@ -68,6 +74,8 @@ try {
   assert.equal(asked, 0);
   evidence.core = core.preference;
   evidence.coding = coding.preference;
+  evidence.globalCore = globalCore.preference;
+  evidence.globalCoding = globalCoding.preference;
   evidence.decision = decision;
   evidence.codingQuestions = asked;
   console.log('PASS: the restarted daemon copies the host-prefixed coding value to its project, preserves the old value and does not ask the coding question.');
