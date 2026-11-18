@@ -4,14 +4,19 @@ const fake = vi.hoisted(() => ({
   listeners: [] as Array<(message: { method: string; params: unknown }) => void>,
   calls: [] as Array<{ method: string; params: Record<string, unknown> }>,
   account: null as object | null,
+  exits: [] as Array<() => void>,
+  commands: [] as unknown[],
 }));
 
 vi.mock('../../../../src/lib/drivers/codex-app-server.ts', () => ({
   startCodexBootstrapServer: async (
     _command: unknown,
-    listener: (typeof fake.listeners)[number]
+    listener: (typeof fake.listeners)[number],
+    onExit: () => void
   ) => {
     fake.listeners.push(listener);
+    fake.exits.push(onExit);
+    fake.commands.push(_command);
     return {
       call: async (method: string, params: Record<string, unknown>) => {
         fake.calls.push({ method, params });
@@ -57,6 +62,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   fake.calls.length = 0;
   fake.listeners.length = 0;
+  fake.exits.length = 0;
+  fake.commands.length = 0;
   fake.account = null;
 });
 afterEach(() => vi.useRealTimers());
@@ -64,8 +71,8 @@ afterEach(() => vi.useRealTimers());
 describe('checkCodexLogin', () => {
   it('checks every open and shares one device login until its matching completion', async () => {
     const f = fixture();
-    const one = checkCodexLogin('one', f.db, f.hub);
-    const two = checkCodexLogin('two', f.db, f.hub);
+    const one = checkCodexLogin('one', f.db, f.hub, '/synthetic/codex');
+    const two = checkCodexLogin('two', f.db, f.hub, '/synthetic/codex');
     await vi.advanceTimersByTimeAsync(0);
     expect(fake.calls.filter((call) => call.method === 'account/read')).toHaveLength(2);
     expect(fake.calls.filter((call) => call.method === 'account/login/start')).toEqual([
@@ -94,7 +101,7 @@ describe('checkCodexLogin', () => {
 
   it('shows the server error and refuses the open when login fails', async () => {
     const f = fixture();
-    const result = checkCodexLogin('one', f.db, f.hub).then(
+    const result = checkCodexLogin('one', f.db, f.hub, '/synthetic/codex').then(
       () => null,
       (error: Error) => error.message
     );
@@ -110,9 +117,29 @@ describe('checkCodexLogin', () => {
     expect(f.messages.at(-1)?.message.uuid).toBe(f.messages[0]?.message.uuid);
   });
 
+  it('reports a crashed app-server and permits a fresh login', async () => {
+    const f = fixture();
+    const result = checkCodexLogin('one', f.db, f.hub, '/synthetic/codex').then(
+      () => null,
+      (error: Error) => error.message
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    fake.exits[0]!();
+    expect(await result).toBe('Codex is not signed in. Sign in, then send again.');
+    expect(f.messages.at(-1)?.message.error).toBe('Codex app-server exited during sign-in');
+    const retry = checkCodexLogin('two', f.db, f.hub, '/synthetic/codex');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.calls.filter((call) => call.method === 'account/login/start')).toHaveLength(2);
+    fake.listeners[1]!({
+      method: 'account/login/completed',
+      params: { loginId: 'login-1', success: true },
+    });
+    await retry;
+  });
+
   it('cancels a pending login after fifteen minutes and reports failure', async () => {
     const f = fixture();
-    const result = checkCodexLogin('one', f.db, f.hub).then(
+    const result = checkCodexLogin('one', f.db, f.hub, '/synthetic/codex').then(
       () => null,
       (error: Error) => error.message
     );
@@ -130,7 +157,8 @@ describe('checkCodexLogin', () => {
   it('passes a signed-in account without starting a login', async () => {
     fake.account = { type: 'chatgpt' };
     const f = fixture();
-    await checkCodexLogin('one', f.db, f.hub);
+    await checkCodexLogin('one', f.db, f.hub, '/synthetic/codex');
+    expect(fake.commands).toEqual(['/synthetic/codex']);
     expect(fake.calls.map((call) => call.method)).toEqual(['account/read']);
     expect(f.messages).toEqual([]);
   });

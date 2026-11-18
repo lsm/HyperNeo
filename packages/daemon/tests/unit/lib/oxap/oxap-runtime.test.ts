@@ -54,7 +54,10 @@ const options: OxapEngineOptions = {
   hub: { adapters: {}, environment: {} },
 };
 const readOptions = async () => options;
-const codexRecord = { providerId: 'anthropic-codex', configJson: '{"harness":"oxap-codex"}' };
+const codexRecord = {
+  providerId: 'anthropic-codex',
+  configJson: '{"harness":"oxap-codex","harnessSettings":{"executable":"/synthetic/codex"}}',
+};
 
 function session(id: string, workspace: string): Session {
   return {

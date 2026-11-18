@@ -13,7 +13,8 @@ let pending: Login | undefined;
 
 function beginLogin(
   server: CodexAppServer,
-  subscribe: (receive: (completion: Completion) => void) => void
+  subscribe: (receive: (completion: Completion) => void) => void,
+  exited: Promise<void>
 ): Login {
   let show!: (code: Code) => void;
   let fail!: (error: unknown) => void;
@@ -32,11 +33,15 @@ function beginLogin(
       type: 'chatgptDeviceCode',
     })) as Code;
     show(started);
-    return await new Promise<Completion>((resolve) => {
+    return await new Promise<Completion>((resolve, reject) => {
       const timer = setTimeout(() => {
         void server.call('account/login/cancel', { loginId: started.loginId }).catch(() => {});
         resolve({ loginId: started.loginId, success: false, error: SIGN_IN_FAILURE });
       }, LOGIN_TIMEOUT_MS);
+      void exited.then(() => {
+        clearTimeout(timer);
+        reject(new Error('Codex app-server exited during sign-in'));
+      });
       receive = (completion) => {
         if (completion.loginId !== started.loginId) return;
         clearTimeout(timer);
@@ -93,13 +98,18 @@ async function status(
 export async function checkCodexLogin(
   sessionId: string,
   db: OxapReopenStore,
-  hub: OxapReopenEvents
+  hub: OxapReopenEvents,
+  executable: string
 ): Promise<void> {
   let receive: ((completion: Completion) => void) | undefined;
   const notify = (message: JsonRpcNotification) => {
     if (message.method === 'account/login/completed') receive?.(message.params as Completion);
   };
-  const server = await startCodexBootstrapServer(undefined, notify);
+  let reportExit!: () => void;
+  const exited = new Promise<void>((resolve) => {
+    reportExit = resolve;
+  });
+  const server = await startCodexBootstrapServer(executable, notify, reportExit);
   let owned: Login | undefined;
   let finished = false;
   try {
@@ -110,9 +120,13 @@ export async function checkCodexLogin(
     const login =
       pending ??
       (pending = owned =
-        beginLogin(server, (callback) => {
-          receive = callback;
-        }));
+        beginLogin(
+          server,
+          (callback) => {
+            receive = callback;
+          },
+          exited
+        ));
     const code = await login.code;
     const uuid = generateUUID() as AuthMessage['uuid'];
     await status(

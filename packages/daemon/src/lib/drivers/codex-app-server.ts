@@ -72,7 +72,8 @@ export async function startCodexBootstrapServer(
       ])
       .find(existsSync) ??
     'codex',
-  onNotification?: (notification: JsonRpcNotification) => void
+  onNotification?: (notification: JsonRpcNotification) => void,
+  onExit?: () => void
 ): Promise<CodexAppServer> {
   let endInput = () => {};
   let resolveExit = () => {};
@@ -88,7 +89,10 @@ export async function startCodexBootstrapServer(
     onProcessSpawn: (child) => {
       endInput = () => child.stdin?.end();
     },
-    onExit: () => resolveExit(),
+    onExit: () => {
+      resolveExit();
+      onExit?.();
+    },
   });
   const server: CodexAppServer = {
     call: async (method, params) => {

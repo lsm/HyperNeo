@@ -10,7 +10,7 @@ export const syntheticHubOptions: OxapEngineOptions = {
 
 export const codexRecord = {
   providerId: 'anthropic-codex',
-  configJson: '{"harness":"oxap-codex"}',
+  configJson: '{"harness":"oxap-codex","harnessSettings":{"executable":"/synthetic/codex"}}',
 } as never;
 
 export function bindCodexRuntime(
