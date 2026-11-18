@@ -74,9 +74,11 @@ which free worker another todo may reuse (rule 2 below):
   these settings?"), one near-identical table per option, a "Keep current settings" option
   even when nothing is set, and the declaration's own `ask` text unused. This PR changes
   that function for every pack, not only this setting:
-  - the title is the declaration's question (`ask`);
+  - the title is the declaration's question. `ask` is a plain English string today
+    (`neo/pack-contract.ts`), so a new `question` field holds it per language, shaped like
+    `label` (`{ en, 'zh-Hans' }`); `ask` stays as Neo's instruction;
   - each option is one line: its label and a one-sentence description, a new
-    `valueDescriptions` field next to `valueLabels`; no tables;
+    `valueDescriptions` field next to `valueLabels`, also per language; no tables;
   - when nothing is saved, the last option is "Use the default for now (<label>)", and the
     card says the work goes on with the default until it is answered; "Keep current
     settings" stays only when a value is saved;
