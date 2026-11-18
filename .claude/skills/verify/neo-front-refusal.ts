@@ -79,7 +79,7 @@ const fixture = createServer(async (request, response) => {
     evidence.neoToolsPresent = true;
   }
   const history = JSON.stringify(body.messages);
-  if (!front && history.includes(handoffId)) {
+  if (!front && history.includes(handoffId) && !evidence.retryAccepted) {
     requests.push('neo-provider-400');
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'synthetic refusal' } }));
@@ -345,7 +345,7 @@ try {
     assert.equal(replies().find((row) => row.replyTo?.includes(handoffId))?.workOn, true);
     await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(root, 'consumed', handoffId));
     await waitFor(() => app!.sessionManager.getCachedSession(root)?.getProcessingState().status === 'idle');
-    const read = async () => invoke<{ items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string; reason?: string } }> }>('neo.conversation.asks.read', { conversationId });
+    const read = async () => invoke<{ items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string; reason?: string; supersededBy?: string }; retryOf?: string }> }>('neo.conversation.asks.read', { conversationId });
     const ask = (await read()).items.find((item) => item.requestId === handoffId);
     evidence.requests = requests;
     evidence.ask = ask;
@@ -354,8 +354,16 @@ try {
     assert.equal(ask?.messageStatus, 'failed');
     assert.equal(ask?.delivery?.reason?.includes('synthetic refusal'), true);
     const before = requests.filter((item) => item === 'neo-provider-400').length;
-    assert.equal((await invoke<{ accepted: boolean }>('neo.message.retry', { conversationId, requestId: handoffId })).accepted, true);
-    await waitFor(() => requests.filter((item) => item === 'neo-provider-400').length > before);
+    const retry = await invoke<{ accepted: boolean; requestId?: string }>('neo.message.retry', { conversationId, requestId: handoffId });
+    assert.equal(retry.accepted, true);
+    assert(retry.requestId && retry.requestId !== handoffId);
+    evidence.retryAccepted = true;
+    const second = await invoke<{ accepted: boolean }>('neo.message.retry', { conversationId, requestId: handoffId });
+    assert.equal(second.accepted, false);
+    await waitFor(() => requests.filter((item) => item === 'neo-provider-400').length === before);
+    const after = await read();
+    assert.equal(after.items.find((item) => item.requestId === handoffId)?.delivery?.supersededBy, retry.requestId);
+    assert.equal(after.items.find((item) => item.requestId === retry.requestId)?.retryOf, handoffId);
     evidence.passed = true;
   } else {
     evidence.passed = true;
