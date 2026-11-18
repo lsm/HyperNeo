@@ -19,6 +19,8 @@ import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/re
 import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 
 const run = resolve(process.argv.at(-1)!);
+const saturated = process.argv.includes('--saturated');
+let releaseRefresh: (() => void) | undefined;
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 for (const name of ['workspace', 'bin', 'evidence', 'sdk'])
@@ -143,8 +145,8 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let hub: MessageHub | undefined;
 const evidence: Record<string, unknown> = {};
-async function waitFor(check: () => boolean) {
-  const deadline = Date.now() + 90_000;
+async function waitFor(check: () => boolean, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
   while (!check() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 100));
   assert(check(), 'condition did not complete');
 }
@@ -238,6 +240,20 @@ try {
     exa: { type: 'http', url: `http://127.0.0.1:${port}/exa-probe` },
   });
   assert(convo.getSessionData().config.mcpServers?.exa);
+  if (saturated) {
+    let started = 0;
+    const held = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    app.jobProcessor.register('neo.work.driver.refresh', async () => {
+      started++;
+      await held;
+      return {};
+    });
+    for (let i = 0; i < 5; i++)
+      app.db.getJobQueueRepo().enqueue({ queue: 'neo.work.driver.refresh', payload: {} });
+    await waitFor(() => started === 5, 15_000);
+    evidence.refreshJobsHeld = started;
+  }
+  const sentAt = Date.now();
   assert.equal(
     (
       await invoke<{ ok: boolean }>('neo.message.send', {
@@ -248,7 +264,25 @@ try {
     ).ok,
     true
   );
-  await waitFor(() => replies().length === 1);
+  let repliedWhileHeld = true;
+  try {
+    await waitFor(
+      () => saturated
+        ? !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId)
+        : replies().length === 1,
+      saturated ? 10_000 : 90_000
+    );
+  } catch (error) {
+    if (!saturated) throw error;
+    repliedWhileHeld = false;
+    releaseRefresh?.();
+    await waitFor(() => !!app!.db.getSDKMessageRepo().getMessageByStatusAndUuid(front, 'consumed', humanId));
+  }
+  evidence.firstDeliveryMs = Date.now() - sentAt;
+  evidence.deliveredWhileHeld = repliedWhileHeld;
+  releaseRefresh?.();
+  assert(repliedWhileHeld, 'human input waited for refresh jobs to release');
+  if (!saturated) {
   await waitFor(
     () => app!.sessionManager.getCachedSession(front)?.getProcessingState().status === 'idle'
   );
@@ -347,7 +381,11 @@ try {
   evidence.requests = requests;
   evidence.normalSession = true;
   evidence.modeSwitchPreservedSession = true;
+  } else {
+    evidence.passed = true;
+  }
 } finally {
+  releaseRefresh?.();
   await transport?.close();
   hub?.cleanup();
   await app?.cleanup();
