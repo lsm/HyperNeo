@@ -30,20 +30,25 @@ copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
 const peer = join(run, 'synthetic-codex');
 writeFileSync(peer, `#!/usr/bin/python3
-import json,os,sys,time
+import json,os,sys,time,threading
 log=os.path.join(os.environ['CODEX_HOME'],'calls.jsonl')
 marker=os.path.join(os.environ['CODEX_HOME'],'fail-first')
 if os.path.exists(marker):
  os.unlink(marker)
  sys.exit(23)
 def emit(value): print(json.dumps(value),flush=True)
+def finish_login():
+ while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'finish-login')): time.sleep(0.01)
+ emit({'method':'account/login/completed','params':{'loginId':'wrong-login','success':True,'error':None}})
+ open(os.path.join(os.environ['CODEX_HOME'],'signed-in'),'w').close()
+ emit({'method':'account/login/completed','params':{'loginId':'synthetic-login','success':True,'error':None}})
 for line in sys.stdin:
  request=json.loads(line)
  with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'request':request})+'\\n')
  method=request.get('method')
  if 'id' not in request or not method: continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
- elif method=='account/read': result={'account':None,'requiresOpenaiAuth':True}
+ elif method=='account/read': result={'account':None if ${mode === 'login-device' ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
  elif method=='account/login/start': result={'type':'chatgptDeviceCode','loginId':'synthetic-login','verificationUrl':'https://example.com/device','userCode':'SYNTHETIC'}
  elif method in ['thread/start','thread/resume']:
   name=os.path.basename(os.getcwd())
@@ -61,6 +66,7 @@ for line in sys.stdin:
   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'admission-release')): time.sleep(0.01)
  if method=='turn/start' and 'Synthetic crash during admission' in json.dumps(request): sys.exit(23)
  emit({'id':request['id'],'result':result})
+ if method=='account/login/start': threading.Thread(target=finish_login,daemon=True).start()
  if method=='turn/start':
   if 'Synthetic native crash' in json.dumps(request): sys.exit(23)
   if 'Synthetic gated admission' in json.dumps(request):
@@ -81,7 +87,7 @@ for line in sys.stdin:
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 process.env.CODEX_HOME = join(run, 'codex-home');
-if (mode === 'login-device') process.env.CODEX_CLI_PATH = peer;
+process.env.CODEX_CLI_PATH = peer;
 assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for this platform');
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
@@ -193,15 +199,27 @@ try {
   const first = app.sessionManager.getSession(firstId);
   assert(first);
   if (mode === 'login-device') {
-    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' });
+    const { sessionId: secondId } = await makeSession('workspace-b');
+    await Promise.all([
+      hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' }),
+      hub.request('message.send', { sessionId: secondId, content: 'Synthetic concurrent sign in' }),
+    ]);
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in card');
     const messages = app.db.getSDKMessages(firstId, 1000).messages;
     const card = messages.find((row) => row.type === 'auth_status' && row.isAuthenticating);
     assert(card && card.type === 'auth_status');
     assert.deepEqual(card.output, ['Open https://example.com/device', 'Enter code SYNTHETIC']);
+    await waitFor(() => app!.db.getSDKMessages(secondId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'second device sign-in card');
+    const secondCard = app.db.getSDKMessages(secondId, 1000).messages.find((row) => row.type === 'auth_status' && row.isAuthenticating);
+    assert(secondCard && secondCard.type === 'auth_status');
+    assert.deepEqual(secondCard.output, card.output);
+    assert.equal(calls().filter((call) => call.request.method === 'account/read').length, 2);
     assert.equal(calls().filter((call) => call.request.method === 'account/login/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
-    Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, pass: true });
+    writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating), 'device sign-in completion');
+    await waitFor(() => calls().filter((call) => call.request.method === 'thread/start').length === 2, 'both threads open after sign-in');
+    Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, loginCompleted: true, pass: true });
   } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });

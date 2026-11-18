@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import type { JsonRpcNotification } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { existsSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -70,7 +71,8 @@ export async function startCodexBootstrapServer(
         join(root, '/Applications/Codex.app/Contents/Resources/codex'),
       ])
       .find(existsSync) ??
-    'codex'
+    'codex',
+  onNotification?: (notification: JsonRpcNotification) => void
 ): Promise<CodexAppServer> {
   let endInput = () => {};
   let resolveExit = () => {};
@@ -82,6 +84,7 @@ export async function startCodexBootstrapServer(
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,
+    onNotification,
     onProcessSpawn: (child) => {
       endInput = () => child.stdin?.end();
     },

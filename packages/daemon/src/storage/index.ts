@@ -369,6 +369,13 @@ export class Database {
     return this.writeSDKMessage('saveSDKMessage', sessionId, message, origin, options);
   }
 
+  updateAuthStatusMessage(
+    sessionId: string,
+    message: Extract<SDKMessage, { type: 'auth_status' }>
+  ): Promise<boolean> {
+    return this.writeSDKMessage('updateAuthStatusMessage', sessionId, message);
+  }
+
   getSDKMessages(
     sessionId: string,
     limit?: number,

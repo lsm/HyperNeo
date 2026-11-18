@@ -953,6 +953,20 @@ export class SDKMessageRepository {
     }
   }
 
+  updateAuthStatusMessage(
+    sessionId: string,
+    message: Extract<SDKMessage, { type: 'auth_status' }>
+  ): boolean {
+    const predicate = "session_id = ? AND sdk_uuid = ? AND message_type = 'auth_status'";
+    const params = [sessionId, message.uuid];
+    const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = '' WHERE ${predicate}`);
+    const result = writeSdkMessageBody(this.db, () => stmt.run(...params), predicate, params, '?', [
+      JSON.stringify(message),
+    ]);
+    if (result.changes) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    return result.changes === 1;
+  }
+
   private saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string } {
     const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
     const stampInternalCompactionTurn =

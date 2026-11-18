@@ -15,7 +15,8 @@ const bindOxapRuntime = (
       events?: ReturnType<typeof createDaemonInternalEventBus>,
       db?: unknown,
       messageHub?: unknown,
-      providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null
+      providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null,
+      checkLogin?: () => Promise<void>
     ): (session: Session) => OxapQueryRuntime;
   }
 ).createOxapRuntime;
@@ -41,7 +42,8 @@ function createOxapRuntime(
     events,
     db,
     { event: mock(() => {}) },
-    (providerId) => (providerId === codexRecord.providerId ? codexRecord : null)
+    (providerId) => (providerId === codexRecord.providerId ? codexRecord : null),
+    async () => {}
   );
 }
 

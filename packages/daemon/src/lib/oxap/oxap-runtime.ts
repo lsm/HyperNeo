@@ -11,6 +11,7 @@ import { withOxapRecovery } from './oxap-recovery.ts';
 import { openOxapSession, type OxapReopenStore, type OxapReopenEvents } from './oxap-reopen.ts';
 import { decideOxapOpen } from '../agent/session-engine.ts';
 import { canonicalModelId } from '../model-service.ts';
+import { checkCodexLogin } from './oxap-codex-login.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -115,7 +116,8 @@ export function createOxapRuntime(
   events?: InternalEventBus<DaemonInternalEventMap>,
   db?: OxapReopenStore,
   messageHub?: OxapReopenEvents,
-  providerRecord: (providerId: string) => ProviderRecord | null = () => null
+  providerRecord: (providerId: string) => ProviderRecord | null = () => null,
+  checkLogin = checkCodexLogin
 ): (session: Session) => OxapQueryRuntime {
   const sessions = new Map<string, SessionSlot>();
   events?.subscribe(
@@ -179,6 +181,8 @@ export function createOxapRuntime(
               .then(async (client) => {
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.client = client;
+                if (session.config.harness === 'oxap-codex')
+                  await checkLogin(session.id, db, messageHub);
                 await openOxapSession(client, plan, session, db, messageHub, events, () => {
                   if (slot.deleted) throw new Error('Codex session was deleted');
                 });
