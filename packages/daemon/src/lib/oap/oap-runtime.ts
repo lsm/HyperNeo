@@ -10,6 +10,7 @@ import type { OapQueryHub } from './oap-query.ts';
 import { withOapRecovery } from './oap-recovery.ts';
 import { openOapSession, type OapReopenStore, type OapReopenEvents } from './oap-reopen.ts';
 import { decideOxapOpen } from '../agent/session-engine.ts';
+import { canonicalModelId } from '../model-service.ts';
 
 type OpenPlan = { sessionId: string; directory: string; request: Record<string, unknown> };
 
@@ -171,6 +172,7 @@ export function createOapRuntime(
           }
           if (!slot.opening) {
             slot.directory = plan.directory;
+            const adapter = plan.request.adapter as string;
             slot.opening = engine
               .getHub(hubOptions.read)
               .then(async (client) => {
@@ -181,7 +183,13 @@ export function createOapRuntime(
                 });
                 if (slot.deleted) throw new Error('Codex session was deleted');
                 slot.hub = withOapRecovery(
-                  engine.createQueryHub(client),
+                  engine.createQueryHub(client, {
+                    adapter,
+                    id: () => {
+                      const model = slot.session.config.model;
+                      return model && canonicalModelId(adapter, model);
+                    },
+                  }),
                   () => slot.session,
                   db,
                   messageHub

@@ -216,6 +216,16 @@ try {
     await waitFor(() => errors.includes(refusal), 'refusal after the provider left OXAP');
     assert.equal(app.db.getSession(firstId)?.config.harness, 'oxap-codex');
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart: 2, relativePathRefused: true, leftOxapRefusal: refusal, pass: true });
+  } else if (mode === 'model-id') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 1);
+    const sent = turns[0]?.request.params?.model;
+    console.log(`stored model=${app.db.getSession(firstId)?.config.model} turn/start model=${sent}`);
+    assert.equal(app.db.getSession(firstId)?.config.model, 'codex-6-luna');
+    assert.equal(sent, 'gpt-6-luna');
+    Object.assign(evidence, { port: app.server.port, storedModel: app.db.getSession(firstId)?.config.model, turnStartModel: sent, threadDefaultModel: 'synthetic-model', pass: true });
   } else if (mode === 'delta-coalesce') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic streamed response' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'streamed reply');
