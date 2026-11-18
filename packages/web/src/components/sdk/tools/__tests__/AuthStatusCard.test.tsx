@@ -49,6 +49,18 @@ describe('AuthStatusCard', () => {
         getByRole('link', { name: 'https://auth.openai.com/codex/device' }).getAttribute('href')
       ).toBe('https://auth.openai.com/codex/device');
     });
+    it.each(['.', ',', ')', ':'])('keeps trailing %s outside the sign-in link', (punctuation) => {
+      const { getByRole, container } = render(
+        <AuthStatusCard
+          isAuthenticating={true}
+          output={[`Open https://example.com/device${punctuation}`]}
+        />
+      );
+      const link = getByRole('link', { name: 'https://example.com/device' });
+      expect(link.getAttribute('href')).toBe('https://example.com/device');
+      expect(container.textContent).toContain(`Open https://example.com/device${punctuation}`);
+    });
+
     it('should display output messages', () => {
       const { container } = render(
         <AuthStatusCard isAuthenticating={false} output={['Login successful', 'Session created']} />

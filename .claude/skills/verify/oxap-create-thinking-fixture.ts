@@ -83,6 +83,15 @@ setModelsCache(
   ])
 );
 await rpc.request('models.list', {});
+const seeded = await rpc.request<{ sessionId: string }>('session.create', {
+  title: 'Synthetic sign-in', workspacePath: `${run}/home`,
+  config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' },
+});
+await app.db.saveSDKMessage(seeded.sessionId, {
+  type: 'auth_status', isAuthenticating: true, uuid: crypto.randomUUID(),
+  session_id: seeded.sessionId, output: ['Open https://example.com/device.', 'Enter code SYNTHETIC'],
+});
+console.log(`AUTH_SESSION=${seeded.sessionId}`);
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
 let failProviderList = true;
 app.db.providers.listProviders = () => {

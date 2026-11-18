@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const [port, code, output, run] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
@@ -127,6 +127,15 @@ try {
       assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
       assert.notEqual(await page.getByLabel('Hub binary').inputValue(), 'Installed automatically on save');
       console.log('Delayed first install saved and the installed hub persisted');
+      const authSession = /AUTH_SESSION=([a-f0-9-]+)/.exec(readFileSync(`${output}/daemon.log`, 'utf8'))?.[1];
+      assert(authSession);
+      await page.goto(`${base}/session/${authSession}`);
+      const authLink = page.getByRole('link', { name: /https:\/\/example\.com\/device/ });
+      await page.getByText('Open https://example.com/device.', { exact: false }).first().waitFor();
+      await page.screenshot({ path: `${output}/auth-link.png`, animations: 'disabled' });
+      assert.equal(await authLink.getAttribute('href'), 'https://example.com/device');
+      assert.equal(await authLink.textContent(), 'https://example.com/device');
+      console.log('Authentication link excludes surrounding punctuation');
     }
     await context.close();
   }

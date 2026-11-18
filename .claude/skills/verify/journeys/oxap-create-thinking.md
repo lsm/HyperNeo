@@ -24,3 +24,6 @@ beyond the default timeout, then shows success and the saved hub after reload.
 
 In each theme the OXAP actions menu shows exactly one separator above the disabled
 attachment action. Keep `oxap-menu-light.png` and `oxap-menu-dark.png`.
+
+A synthetic auth status card displays a URL followed by punctuation. The browser
+checks the link destination excludes that punctuation and keeps `auth-link.png`.
