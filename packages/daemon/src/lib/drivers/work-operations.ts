@@ -617,7 +617,7 @@ export async function startWork(
   );
 }
 
-/** @public Forwarded RPC starts bypass per_ask and per_todo and start fresh. */
+/** @public */
 export async function reuseIdleWorker(
   route: Route<'start'>,
   input: StartInput,
