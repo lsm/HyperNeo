@@ -100,7 +100,8 @@ export function createPackPreferenceQuestions(
                 cardLanguage(db, language()),
                 input.alternatives
                   .flat()
-                  .some((entry) => getNeoPackPreference(db, entry.pack, entry.scope, entry.key))
+                  .some((entry) => getNeoPackPreference(db, entry.pack, entry.scope, entry.key)),
+                input.hold === false
               )
             : formatPreferenceProposal(input.values!, packs(), language());
           const options =

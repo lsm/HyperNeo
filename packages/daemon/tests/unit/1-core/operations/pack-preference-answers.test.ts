@@ -114,6 +114,41 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('delegation choices do not repeat labels and explain the unsaved default', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    const choice = (value: string) => ({
+      pack: 'delegation',
+      scope: { kind: 'global', key: '' },
+      key: 'signIn',
+      value,
+    });
+    const ask = (requestId: string) =>
+      invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId,
+        alternatives: [[choice('self')], [choice('saved')]],
+        hold: false,
+      });
+    const reply = await ask('delegation-unsaved');
+    const question = service.todos.getQuestion(
+      (reply as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(question.text).toContain('- I sign in\n');
+    expect(question.text).not.toContain('I sign in: I sign in');
+    expect(question.text).toContain('Work continues using the default until you answer.');
+    await invoke(
+      'neo.question.answer',
+      { questionId: question.id, answer: question.options![0] },
+      human
+    );
+    const saved = await ask('delegation-saved');
+    const next = service.todos.getQuestion(
+      (saved as { value: { questionId: string } }).value.questionId
+    )!;
+    expect(next.text).not.toContain('Work continues using the default until you answer.');
+    expect(next.options?.at(-1)).toBe('Keep current settings');
+  });
+
   test('a settings choice explains each option without a table', async () => {
     db.updateGlobalSettings({ language: 'en' });
     const declaration = {
@@ -174,12 +209,14 @@ describe('immutable human settings proposals', () => {
       askId: 'ask',
       requestId: 'chinese-choice',
       alternatives: [[choice('one')], [choice('two')]],
+      hold: false,
     });
     const translated = service.todos.getQuestion(
       (chinese as { value: { questionId: string } }).value.questionId
     )!;
     expect(translated.text).toContain('选择哪个设置？');
     expect(translated.text).toContain('第一个行为');
+    expect(translated.text).toContain('回答之前，工作将继续使用默认设置。');
     expect(translated.options).toEqual(['一', '二', '暂时使用默认设置']);
   });
 

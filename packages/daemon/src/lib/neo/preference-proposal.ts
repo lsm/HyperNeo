@@ -97,7 +97,8 @@ export function formatPreferenceChoice(
   alternatives: readonly (readonly Input[])[],
   packs: readonly NeoPack[],
   language: LanguageSetting | undefined,
-  saved = false
+  saved = false,
+  continues = false
 ) {
   const locale = proposalLocale(language);
   const zh = locale === 'zh-Hans';
@@ -122,10 +123,27 @@ export function formatPreferenceChoice(
         declaration.valueDescriptions?.[key]?.[locale] ?? label ?? String(input.value);
       return keys.size === 1 ? description : `${declaration.label[locale]}: ${description}`;
     });
-    return `- ${markdown(options[index])}: ${markdown(descriptions.join('; '))}`;
+    const description = descriptions.join('; ');
+    return description === options[index]
+      ? `- ${markdown(options[index])}`
+      : `- ${markdown(options[index])}: ${markdown(description)}`;
   });
   return {
-    text: [title, lines.join('\n')].join('\n\n'),
+    text: [
+      title,
+      lines.join('\n'),
+      ...(!saved
+        ? [
+            continues
+              ? zh
+                ? '回答之前，工作将继续使用默认设置。'
+                : 'Work continues using the default until you answer.'
+              : zh
+                ? '回答之前，将使用默认设置。'
+                : 'The default applies until you answer.',
+          ]
+        : []),
+    ].join('\n\n'),
     options,
     keep: saved
       ? zh

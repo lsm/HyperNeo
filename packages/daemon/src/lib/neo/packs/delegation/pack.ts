@@ -14,9 +14,6 @@ const preference = (
   valueLabels: Object.fromEntries(
     Object.entries(choices).map(([value, [en, zh]]) => [value, { en, 'zh-Hans': zh }])
   ),
-  valueDescriptions: Object.fromEntries(
-    Object.entries(choices).map(([value, [en, zh]]) => [value, { en, 'zh-Hans': zh }])
-  ),
   scope: 'global',
   type: { kind: 'enum', values: Object.keys(choices) },
   default: Object.keys(choices)[0],

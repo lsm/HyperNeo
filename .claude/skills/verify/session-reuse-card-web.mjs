@@ -22,6 +22,12 @@ const address = { pack: 'core', scope, key: 'sessionReuse' };
 const alternatives = ['long_lived', 'per_ask', 'per_todo'].map((value) => [{ ...address, value }]);
 const { questionId } = rpc('pack.preferences.ask', { askId, requestId: 'synthetic-reuse', alternatives, hold: false });
 assert(questionId);
+const delegation = { pack: 'delegation', scope, key: 'signIn' };
+const delegationQuestion = rpc('pack.preferences.ask', {
+  askId, requestId: 'synthetic-sign-in', hold: false,
+  alternatives: [[{ ...delegation, value: 'self' }], [{ ...delegation, value: 'saved' }]],
+}).questionId;
+assert(delegationQuestion);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER });
 const observed = {};
@@ -35,6 +41,11 @@ try {
   await page.goto(`http://127.0.0.1:${port}/neo`);
   await page.getByRole('button', { name: /^Your work/ }).click();
   const card = await revealAsk(page, askId);
+  const signIn = card.locator(`[id="neo-ref-question-${delegationQuestion}"]`);
+  await signIn.waitFor();
+  observed.delegationText = await signIn.innerText();
+  assert(observed.delegationText.includes('Work continues using the default until you answer.'));
+  assert(!observed.delegationText.includes('I sign in: I sign in'));
   const body = card.locator(`[id="neo-ref-question-${questionId}"]`);
   await body.waitFor();
   observed.text = await body.innerText();
@@ -42,6 +53,7 @@ try {
   observed.options = await body.locator('[data-choice-option]').allTextContents();
   assert(observed.text.includes('How should sessions be reused?'));
   assert(observed.text.includes('Reuse this matter’s worker and wait if it is busy.'));
+  assert(observed.text.includes('Work continues using the default until you answer.'));
   assert.equal(observed.tables, 0);
   assert(observed.options.some((option) => option.includes('Use the default for now')));
   await page.screenshot({ path: `${run}/evidence/session-reuse-card.png`, fullPage: true });
