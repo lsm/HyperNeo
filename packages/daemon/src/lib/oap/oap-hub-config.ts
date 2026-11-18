@@ -26,6 +26,13 @@ export function harnessSettings(
   return value && typeof value === 'object' ? (value as Record<string, string>) : {};
 }
 
+export function missingSetting(
+  row: OxapHarness,
+  settings: Readonly<Record<string, string>>
+): string | undefined {
+  return row.settings.find((name) => !isAbsolute(settings[name] ?? ''));
+}
+
 export function buildHubConfig(
   records: Records,
   harnesses: Readonly<Record<string, OxapHarness>>,
@@ -39,8 +46,8 @@ export function buildHubConfig(
     if (harness === 'sdk') continue;
     const row = harnesses[harness];
     const settings = harnessSettings(record);
-    const missing = row.settings.find((name) => !isAbsolute(settings[name] ?? ''));
-    if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
+    const missing = missingSetting(row, settings);
+    if (missing) continue;
     const names = row.environment.filter((name) => environment[name] !== undefined);
     for (const name of names) config.environment[name] = environment[name]!;
     if (row.key && keys[record.providerId] !== undefined) {

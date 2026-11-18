@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationDefinition } from '../operations/registry.ts';
 import type { OapEngine, OapEngineOptions } from './oap-engine.ts';
-import { buildHubConfig, harnessOf } from './oap-hub-config.ts';
+import { buildHubConfig, harnessOf, missingSetting } from './oap-hub-config.ts';
 import type { OxapHubBinary } from './oxap-install.ts';
 
 export interface OxapSettingsDeps {
@@ -80,6 +80,11 @@ function planSave(input: Save, records: ProviderRecord[]) {
     )
   )
     return { reason: `${record.providerId} cannot run on ${input.harness}` };
+  const missing =
+    input.harness === 'sdk'
+      ? undefined
+      : missingSetting(oxapHarness(input.harness), input.settings ?? {});
+  if (missing) return { reason: `${record.providerId} needs an absolute ${missing} path` };
   let stored: Record<string, unknown>;
   try {
     stored = JSON.parse(record.configJson ?? '{}') as Record<string, unknown>;
