@@ -146,6 +146,22 @@ describe('ModelPicker', () => {
       expect(menu.textContent).not.toContain('SDK Model');
     });
 
+    it('keeps the current provider usable and offers a retry when provider lookup fails', async () => {
+      mockListProviders
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue({ providers: [] });
+      const { container, getByRole, getByText } = renderPicker({ harness: 'sdk' });
+      await openDropdown(container);
+      expect(getByText('Model Beta')).toBeTruthy();
+      expect(getByRole('alert').textContent).toContain('Could not load providers');
+      fireEvent.click(getByRole('button', { name: 'Retry providers' }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+    });
+
     it('hides OXAP providers from SDK chats', async () => {
       mockListProviders.mockResolvedValue({
         providers: [
