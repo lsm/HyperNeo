@@ -101,6 +101,15 @@ Each slice is one PR from `dev`, failing tests first.
 2. **Coding.** Mark design PRs as plans, the review brief, `checked_json` from
    `neo.coding.result`, review regardless of `crossModelReview` for plans.
 
+`bun run system-map impact` on `todo-follow-up.ts`, `todo-operations.ts`,
+`question-operations.ts`, `todo-runner.ts` and `packs/coding/stage-facts.ts`: `neo.todo.done`
+and `neo.todo.remove` are also called by the human's todo controls on the web
+(`packages/web/src/neo/todo-controls.ts`) and by the daemon's own cards
+(`daemon-cards.ts`), all through `todo-mutation-operation.ts`, so the same rule covers them:
+the web shows the refusal text, and a human-step card on a plan's step is unaffected.
+`stage-facts.ts` has 12 importers in the coding pack; slice 2 changes only
+`codingReviewerPolicy`'s inputs.
+
 Acceptance, one integration case per row:
 
 | Case | Expected |
