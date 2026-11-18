@@ -3,7 +3,7 @@ id: REVIEW_POLICY_GUIDANCE
 ---
 ### Review policy: review source and review depth
 
-Two policy knobs govern how review runs. Both have defaults, so silence always has a defined meaning. State the active review source and depth when you start review-relevant work, and record them in your review or gate artifact.
+Two policy knobs govern how review runs. Both have defaults, so silence always has a defined meaning. Record the active review source and depth in your review or gate artifact; a reviewer that reports to Neo puts them in its verdict message.
 
 **Review source** — who must pass review before this work is approved:
 
