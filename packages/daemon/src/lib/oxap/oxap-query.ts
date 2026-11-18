@@ -1,22 +1,22 @@
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage, RewindFilesResult } from '@hyperneo/shared/sdk';
 import type { QueryLike } from '../agent/query-like.ts';
-import { isDefiniteOapRefusal, type OapHubRequestError } from './oap-hub-client.ts';
-import { mapUserInputRequest } from './oap-permission-map.ts';
-import { initialOapTranslatorState, translateOapEvent } from './oap-sdk-translator.ts';
-export { createOapQueryHub } from './oap-query-hub.ts';
-export { createOapRuntime } from './oap-runtime.ts';
+import { isDefiniteOxapRefusal, type OxapHubRequestError } from './oxap-hub-client.ts';
+import { mapUserInputRequest } from './oxap-permission-map.ts';
+import { initialOxapTranslatorState, translateOxapEvent } from './oxap-sdk-translator.ts';
+export { createOxapQueryHub } from './oxap-query-hub.ts';
+export { createOxapRuntime } from './oxap-runtime.ts';
 
-type OapEvent = { type: string; [key: string]: unknown };
+type OxapEvent = { type: string; [key: string]: unknown };
 
-export type OapQueryHub = {
+export type OxapQueryHub = {
   submit(
     sessionId: string,
     message: SDKUserMessage,
     owner?: symbol,
     isLive?: () => boolean
   ): Promise<{ runId: string }>;
-  events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OapEvent>;
+  events(sessionId: string, runId: string, signal: AbortSignal): AsyncIterable<OxapEvent>;
   cancel(sessionId: string, runId: string): Promise<void>;
   release?(owner?: symbol): void;
   reportAdmissionFailure?(
@@ -26,32 +26,32 @@ export type OapQueryHub = {
   ): Promise<void>;
 };
 
-type OapQueryTranslator = {
+type OxapQueryTranslator = {
   beginRun?(): void;
-  translate(event: OapEvent): SDKMessage[];
+  translate(event: OxapEvent): SDKMessage[];
   flush?(): SDKMessage[];
-  settlesTool?(event: OapEvent): boolean;
+  settlesTool?(event: OxapEvent): boolean;
 };
 
-type OapQueryOptions = {
+type OxapQueryOptions = {
   sessionId: string;
   prompt: AsyncIterable<SDKUserMessage>;
-  hub: OapQueryHub;
-  translator: OapQueryTranslator;
+  hub: OxapQueryHub;
+  translator: OxapQueryTranslator;
   isLive?: () => boolean;
   maySettleInterrupted?: () => boolean;
   onSubmitted?: (message: SDKUserMessage) => Promise<void>;
   onAccepted?: (message: SDKUserMessage, runId: string) => Promise<void>;
-  onRefused?: (message: SDKUserMessage, error: OapHubRequestError) => Promise<void>;
+  onRefused?: (message: SDKUserMessage, error: OxapHubRequestError) => Promise<void>;
 };
 
-function isTerminal(event: OapEvent): boolean {
+function isTerminal(event: OxapEvent): boolean {
   return (
     event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled'
   );
 }
 
-function unsupportedInteraction(event: OapEvent): string | undefined {
+function unsupportedInteraction(event: OxapEvent): string | undefined {
   if (event.type === 'action.permission.requested') return 'permission requests are not supported';
   if (event.type !== 'user.input.requested') return undefined;
   try {
@@ -85,16 +85,16 @@ async function* untilClosed<T>(source: AsyncIterable<T>, signal: AbortSignal): A
   }
 }
 
-export class OapQuery implements QueryLike {
+export class OxapQuery implements QueryLike {
   readonly sessionId: string;
   private readonly prompt: AsyncIterable<SDKUserMessage>;
-  private readonly hub: OapQueryHub;
-  private readonly translator: OapQueryTranslator;
+  private readonly hub: OxapQueryHub;
+  private readonly translator: OxapQueryTranslator;
   private readonly isLive: () => boolean;
   private readonly maySettleInterrupted: () => boolean;
-  private readonly onSubmitted?: OapQueryOptions['onSubmitted'];
-  private readonly onAccepted?: OapQueryOptions['onAccepted'];
-  private readonly onRefused?: OapQueryOptions['onRefused'];
+  private readonly onSubmitted?: OxapQueryOptions['onSubmitted'];
+  private readonly onAccepted?: OxapQueryOptions['onAccepted'];
+  private readonly onRefused?: OxapQueryOptions['onRefused'];
   private activeRun: string | undefined;
   private pendingRun: Promise<string> | undefined;
   private cancelPromise: Promise<void> | undefined;
@@ -105,7 +105,7 @@ export class OapQuery implements QueryLike {
   private readonly closeSignal = new AbortController();
   private readonly owner = Symbol();
 
-  constructor(options: OapQueryOptions) {
+  constructor(options: OxapQueryOptions) {
     this.sessionId = options.sessionId;
     this.prompt = options.prompt;
     this.hub = options.hub;
@@ -155,7 +155,7 @@ export class OapQuery implements QueryLike {
         })
         .catch(async (error: unknown) => {
           finish();
-          if (isDefiniteOapRefusal(error) && this.isLive()) {
+          if (isDefiniteOxapRefusal(error) && this.isLive()) {
             await this.onRefused?.(message, error);
           }
           throw error;
@@ -294,14 +294,14 @@ export class OapQuery implements QueryLike {
   }
 }
 
-export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): OapQuery {
-  let state = initialOapTranslatorState(options.sessionId);
+export function createOxapQuery(options: Omit<OxapQueryOptions, 'translator'>): OxapQuery {
+  let state = initialOxapTranslatorState(options.sessionId);
   let runScope = '';
-  return new OapQuery({
+  return new OxapQuery({
     ...options,
     translator: {
       beginRun: () => {
-        state = initialOapTranslatorState(options.sessionId);
+        state = initialOxapTranslatorState(options.sessionId);
         runScope = generateUUID();
       },
       settlesTool: (event) => {
@@ -319,7 +319,7 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
         );
       },
       flush: () => {
-        const result = translateOapEvent(state, {
+        const result = translateOxapEvent(state, {
           type: 'stream.flush',
           id: runScope,
           payload: {},
@@ -337,7 +337,7 @@ export function createOapQuery(options: Omit<OapQueryOptions, 'translator'>): Oa
         ) {
           throw new Error('Invalid OAP event');
         }
-        const result = translateOapEvent(state, {
+        const result = translateOxapEvent(state, {
           type: event.type,
           id: `${runScope}:${event.id}`,
           payload: event.payload as Record<string, unknown>,

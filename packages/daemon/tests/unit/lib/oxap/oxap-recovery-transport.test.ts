@@ -2,11 +2,14 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine.ts';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
-import { OapQuery, type OapQueryHub } from '../../../../src/lib/oap/oap-query.ts';
-import type { OapReopenEvents, OapReopenStore } from '../../../../src/lib/oap/oap-reopen.ts';
-import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine.ts';
+import {
+  OxapHubRequestError,
+  type OxapHubClient,
+} from '../../../../src/lib/oxap/oxap-hub-client.ts';
+import { OxapQuery, type OxapQueryHub } from '../../../../src/lib/oxap/oxap-query.ts';
+import type { OxapReopenEvents, OxapReopenStore } from '../../../../src/lib/oxap/oxap-reopen.ts';
+import { bindCodexRuntime as createOxapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan.ts';
 import { DEFAULT_MAILBOX_ENTRY_POLICY } from '../../../../src/lib/mailbox/entry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
@@ -15,8 +18,8 @@ import { RetryPromptIdentity } from '../../../../src/lib/agent/retry-prompt-iden
 type Recovery = { previous: string | null; text: string; pendingOpen: boolean; claim?: string };
 type TestSession = Session & { metadata: Session['metadata'] & { oapRecovery?: Recovery } };
 
-const options: OapEngineOptions = {
-  binaryPath: '/synthetic/oapx',
+const options: OxapEngineOptions = {
+  binaryPath: '/synthetic/oxap',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
@@ -75,17 +78,17 @@ function fixture(initial?: Recovery) {
       }
       throw new Error(`unexpected operation ${op}`);
     }),
-  } as unknown as OapHubClient;
+  } as unknown as OxapHubClient;
   const submit = mock(async (_sessionId: string, _message: SDKUserMessage, _owner?: symbol) => ({
     runId: 'synthetic-run',
   }));
   const release = mock((_owner?: symbol) => {});
-  const transport = { submit, release } as unknown as OapQueryHub;
+  const transport = { submit, release } as unknown as OxapQueryHub;
   const engine = {
     getHub: mock(async () => client),
     isCurrentHub: mock(() => true),
     createQueryHub: mock(() => transport),
-  } as unknown as OapEngine;
+  } as unknown as OxapEngine;
   const getDeliveryContent = mock((_id: string, _uuid: string): { inputKind?: string } | null => ({
     inputKind: 'human',
   }));
@@ -102,20 +105,20 @@ function fixture(initial?: Recovery) {
   };
   const events = createDaemonInternalEventBus();
   const messageHub = { event: mock(() => {}) };
-  const bind = createOapRuntime(
+  const bind = createOxapRuntime(
     engine,
     options,
     events,
-    db as unknown as OapReopenStore,
-    messageHub as OapReopenEvents
+    db as unknown as OxapReopenStore,
+    messageHub as OxapReopenEvents
   );
   const restart = () =>
-    createOapRuntime(
+    createOxapRuntime(
       engine,
       options,
       events,
-      db as unknown as OapReopenStore,
-      messageHub as OapReopenEvents
+      db as unknown as OxapReopenStore,
+      messageHub as OxapReopenEvents
     )(structuredClone(stored));
   return {
     current,
@@ -137,7 +140,7 @@ describe('OAP recovery claim transport', () => {
   test('shows the unknown-outcome notice when admission refuses before transport submit', async () => {
     const host = fixture({ ...recovery(), claim: 'original-message' });
     const hub = await host.bind(host.current).hub;
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 'session-a',
       prompt: (async function* () {
         yield prompt('original-message');
@@ -278,7 +281,7 @@ describe('OAP recovery claim transport', () => {
     hub.release?.(owner);
     finish();
     const failure = await pending;
-    expect(failure).toBeInstanceOf(OapHubRequestError);
+    expect(failure).toBeInstanceOf(OxapHubRequestError);
     expect((failure as Error).message).toMatch(/closed.*restore|restore.*closed/i);
     expect(host.submit).not.toHaveBeenCalled();
     expect(host.getStored().metadata.oapRecovery?.claim).toBe('message-1');
@@ -326,7 +329,7 @@ describe('OAP recovery claim transport', () => {
     async (code) => {
       const host = fixture(recovery());
       const hub = await host.bind(host.current).hub;
-      host.submit.mockRejectedValueOnce(new OapHubRequestError(code, 'synthetic refusal'));
+      host.submit.mockRejectedValueOnce(new OxapHubRequestError(code, 'synthetic refusal'));
       await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow(
         'synthetic refusal'
       );
@@ -341,7 +344,7 @@ describe('OAP recovery claim transport', () => {
   test('keeps an ambiguous submission claimed and does not repeat it', async () => {
     const host = fixture(recovery());
     const hub = await host.bind(host.current).hub;
-    host.submit.mockRejectedValueOnce(new OapHubRequestError('timeout', 'synthetic timeout'));
+    host.submit.mockRejectedValueOnce(new OxapHubRequestError('timeout', 'synthetic timeout'));
     await expect(hub.submit('session-a', prompt('message-1'))).rejects.toThrow('synthetic timeout');
     expect(host.getStored().metadata.oapRecovery?.claim).toBe('message-1');
     const restarted = await host.restart().hub;
@@ -372,7 +375,7 @@ describe('OAP recovery claim transport', () => {
       }
       return host.persist(id, update);
     });
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 'session-a',
       prompt: (async function* () {
         yield prompt('message-1');
@@ -569,9 +572,9 @@ describe('OAP recovery claim transport', () => {
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(session.id, agent.message, 'submitted', agent.origin);
       expect(db.getSDKMessages(session.id).messages).toHaveLength(0);
-      const hub = await createOapRuntime(host.engine, options, undefined, db, {
+      const hub = await createOxapRuntime(host.engine, options, undefined, db, {
         event: mock(() => {}),
-      } as unknown as OapReopenEvents)(session).hub;
+      } as unknown as OxapReopenEvents)(session).hub;
       await hub.submit(session.id, agent.message);
       expect(JSON.stringify(host.submit.mock.calls[0])).not.toContain('saved excerpt');
       expect(db.getSession(session.id)?.metadata.oapRecovery).toEqual(recovery());

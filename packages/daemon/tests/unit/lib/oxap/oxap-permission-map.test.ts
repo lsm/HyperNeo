@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapUserInputRequest } from '../../../../src/lib/oap/oap-permission-map.ts';
+import { mapUserInputRequest } from '../../../../src/lib/oxap/oxap-permission-map.ts';
 
 describe('OAP interaction mapping', () => {
   it('returns an explicit unsupported result for text questions', () => {

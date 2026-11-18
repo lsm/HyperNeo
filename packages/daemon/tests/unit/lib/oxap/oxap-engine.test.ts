@@ -4,15 +4,15 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
-import type { OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine';
+import type { OxapHubClient } from '../../../../src/lib/oxap/oxap-hub-client';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
 
 const roots: string[] = [];
-const engines: OapEngine[] = [];
+const engines: OxapEngine[] = [];
 
 async function fixture(replaceAfterCheck = false) {
-  const { OapEngine } = await import('../../../../src/lib/oap/oap-engine');
+  const { OxapEngine } = await import('../../../../src/lib/oxap/oxap-engine');
   const root = await mkdtemp(join(tmpdir(), 'oap-engine-'));
   roots.push(root);
   const binaryPath = join(root, 'synthetic-hub');
@@ -33,7 +33,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
 `;
   await writeFile(binaryPath, script);
   await chmod(binaryPath, 0o700);
-  const options: OapEngineOptions = {
+  const options: OxapEngineOptions = {
     binaryPath,
     identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') },
     stateDirectory: join(root, 'state'),
@@ -42,7 +42,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
       environment: { HOME: join(root, 'home'), CODEX_HOME: join(root, 'codex-home') },
     },
   };
-  const engine = new OapEngine();
+  const engine = new OxapEngine();
   engines.push(engine);
   const read =
     (value: typeof options = options) =>
@@ -56,13 +56,13 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('OapEngine', () => {
+describe('OxapEngine', () => {
   test('creates independent query transports without launching the hub', async () => {
     const { engine, calls } = await fixture();
     const createQueryHub = (
-      engine as unknown as { createQueryHub(client: OapHubClient): OapQueryHub }
+      engine as unknown as { createQueryHub(client: OxapHubClient): OxapQueryHub }
     ).createQueryHub;
-    const client = {} as OapHubClient;
+    const client = {} as OxapHubClient;
     const first = createQueryHub.call(engine, client);
     const second = createQueryHub.call(engine, client);
     expect(first).not.toBe(second);

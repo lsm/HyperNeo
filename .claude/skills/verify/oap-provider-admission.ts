@@ -4,9 +4,9 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
-import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
-import { createOapQueryHub } from '../../../packages/daemon/src/lib/oap/oap-query-hub.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
+import { createOxapQueryHub } from '../../../packages/daemon/src/lib/oxap/oxap-query-hub.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
@@ -35,7 +35,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',text=>
   if(r.op==='cancel'){cancellations++;status='stopped';return reply(r.id,{type:'run.cancel.response',payload:{accepted:true,session_id:target,run_id:r.request.payload.run_id}});}
   reply(r.id,null);
 });`;
-const client = new OapHubClient({
+const client = new OxapHubClient({
   command: process.execPath,
   args: ['-e', script],
   cwd: run,
@@ -79,9 +79,9 @@ try {
   const legacy = { ...agent.getSessionData().config, tools: { type: 'preset', preset: 'claude_code' } } as typeof agent.session.config;
   await app.db.updateSession(codex, { config: legacy });
   agent.getSessionData().config = legacy;
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = {
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = {
     openDirectorySupported: true,
-    hub: createOapQueryHub(client),
+    hub: createOxapQueryHub(client),
   };
   await app.db.updateGlobalSettings({ permissionMode: 'plan' });
   await rpc.request('message.send', { sessionId: codex, content: 'Hello from Codex' });

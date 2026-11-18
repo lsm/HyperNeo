@@ -3,10 +3,10 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { durablePromptUuid } from '../agent/retry-prompt-identity.ts';
 import { Logger } from '../logger.ts';
-import { isDefiniteOapRefusal, OapHubRequestError } from './oap-hub-client.ts';
-import { announceOapNotice } from './oap-notice.ts';
-import type { OapQueryHub } from './oap-query.ts';
-import type { OapReopenEvents, OapReopenStore } from './oap-reopen.ts';
+import { isDefiniteOxapRefusal, OxapHubRequestError } from './oxap-hub-client.ts';
+import { announceOxapNotice } from './oxap-notice.ts';
+import type { OxapQueryHub } from './oxap-query.ts';
+import type { OxapReopenEvents, OxapReopenStore } from './oxap-reopen.ts';
 
 type Recovery = NonNullable<Session['metadata']['oapRecovery']>;
 const logger = new Logger('OapRecovery');
@@ -54,7 +54,7 @@ function recoveryMessage(message: SDKUserMessage, recovery: Recovery): SDKUserMe
     (!Array.isArray(content) ||
       content.some((part) => part.type !== 'text' || typeof part.text !== 'string'))
   ) {
-    throw new OapHubRequestError('invalid_submission', 'OAP currently supports text input only');
+    throw new OxapHubRequestError('invalid_submission', 'OAP currently supports text input only');
   }
   return {
     ...message,
@@ -86,7 +86,7 @@ function sameRecovery(left: Recovery | undefined, right: Recovery): boolean {
 async function writeRecovery(
   sessionId: string,
   getSession: () => Session,
-  db: OapReopenStore,
+  db: OxapReopenStore,
   expected: Recovery,
   next: Recovery | undefined
 ): Promise<boolean> {
@@ -102,12 +102,12 @@ async function writeRecovery(
   return true;
 }
 
-export function withOapRecovery(
-  hub: OapQueryHub,
+export function withOxapRecovery(
+  hub: OxapQueryHub,
   getSession: () => Session,
-  db: OapReopenStore,
-  messageHub: OapReopenEvents
-): OapQueryHub {
+  db: OxapReopenStore,
+  messageHub: OxapReopenEvents
+): OxapQueryHub {
   let pending: { owner?: symbol; cancelled: boolean } | undefined;
   const noticeUnknown = async (message: SDKUserMessage, owner?: symbol, isLive?: () => boolean) => {
     const session = getSession();
@@ -119,7 +119,7 @@ export function withOapRecovery(
     const attempt = { owner, cancelled: false };
     pending = attempt;
     try {
-      await announceOapNotice(
+      await announceOxapNotice(
         session.id,
         'Codex recovery was already submitted; outcome may be unknown',
         db,
@@ -150,12 +150,12 @@ export function withOapRecovery(
           : hub.submit(sessionId, prepared, owner);
       if (!recovery) return hub.submit(sessionId, message, owner);
       if (recovery.pendingOpen)
-        throw new OapHubRequestError('invalid_submission', 'Codex recovery is still opening');
+        throw new OxapHubRequestError('invalid_submission', 'Codex recovery is still opening');
       if (recovery.claim) {
         if (recovery.claim === deliveryUuid) {
           const text = 'Codex recovery was already submitted; outcome may be unknown';
           await noticeUnknown(message, owner, isLive);
-          throw new OapHubRequestError('outcome_unknown', text);
+          throw new OxapHubRequestError('outcome_unknown', text);
         }
         return forward(message);
       }
@@ -164,7 +164,7 @@ export function withOapRecovery(
       const input =
         deliveryUuid && db.getSDKMessageRepo().getDeliveryContent(sessionId, deliveryUuid);
       if (!input)
-        throw new OapHubRequestError(
+        throw new OxapHubRequestError(
           'invalid_submission',
           'Cannot identify the Codex recovery input'
         );
@@ -180,7 +180,7 @@ export function withOapRecovery(
             throw new Error('Recovery changed before claiming');
         } catch (error) {
           logger.warn('Failed to persist Codex recovery claim:', error);
-          throw new OapHubRequestError(
+          throw new OxapHubRequestError(
             'invalid_submission',
             'Could not save the Codex recovery claim'
           );
@@ -190,24 +190,24 @@ export function withOapRecovery(
             await writeRecovery(sessionId, getSession, db, claimed, recovery);
           } catch (cause) {
             logger.error('Could not restore Codex recovery context', cause);
-            throw new OapHubRequestError(
+            throw new OxapHubRequestError(
               'invalid_submission',
               'OAP recovery submission was closed; could not restore recovery context'
             );
           }
-          throw new OapHubRequestError('invalid_submission', 'OAP recovery submission was closed');
+          throw new OxapHubRequestError('invalid_submission', 'OAP recovery submission was closed');
         }
         pending = undefined;
         let accepted: { runId: string };
         try {
           accepted = await forward(prepared);
         } catch (error) {
-          if (isDefiniteOapRefusal(error)) {
+          if (isDefiniteOxapRefusal(error)) {
             try {
               await writeRecovery(sessionId, getSession, db, claimed, recovery);
             } catch (cause) {
               logger.error('Could not restore Codex recovery context', cause);
-              throw new OapHubRequestError(
+              throw new OxapHubRequestError(
                 error.code,
                 `${error.message}; could not restore recovery context`,
                 error.feature

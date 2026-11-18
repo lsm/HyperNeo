@@ -2,11 +2,11 @@ import { EventEmitter, on } from 'node:events';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
-import type { OapQueryHub } from './oap-query.ts';
+import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import type { OxapQueryHub } from './oxap-query.ts';
 
 type Event = { type: string; run_id: string; [key: string]: unknown };
-type ListenerInput = Parameters<Parameters<OapHubClient['subscribe']>[1]>[0];
+type ListenerInput = Parameters<Parameters<OxapHubClient['subscribe']>[1]>[0];
 type Stream = {
   owner: symbol;
   sessionId: string;
@@ -152,10 +152,10 @@ const planResubmit = (superpipe({})('oap.query.reconcileSubmit') as PipelineAPI)
   .pipe(decideResubmit, ['status', 'sessionId'], 'allowed')
   .end('allowed') as typeof decideResubmit;
 
-export function createOapQueryHub(
-  client: OapHubClient,
+export function createOxapQueryHub(
+  client: OxapHubClient,
   model?: { adapter: string; id: () => string | undefined }
-): OapQueryHub {
+): OxapQueryHub {
   const uncertainSessions = new Set<string>();
   let selects: boolean | undefined;
   let active: Stream | undefined;
@@ -179,7 +179,7 @@ export function createOapQueryHub(
             }
             if (decision.kind !== 'allow') throw new Error('unfinished or unconfirmed work');
           } catch (error) {
-            throw new OapHubRequestError(
+            throw new OxapHubRequestError(
               'run_active',
               `OAP previous submission outcome could not be confirmed: ${error instanceof Error ? error.message : String(error)}`
             );
@@ -217,7 +217,7 @@ export function createOapQueryHub(
         if (starting !== submission || (isLive && !isLive())) {
           await stream.release();
           if (isLive)
-            throw new OapHubRequestError(
+            throw new OxapHubRequestError(
               'invalid_submission',
               'OAP query hub submission was closed'
             );
@@ -228,7 +228,7 @@ export function createOapQueryHub(
           stream.runId = runId(await client.request('submit', parameters), sessionId);
           return { runId: stream.runId };
         } catch (error) {
-          if (error instanceof OapHubRequestError && error.code === 'timeout')
+          if (error instanceof OxapHubRequestError && error.code === 'timeout')
             uncertainSessions.add(sessionId);
           await stream.release().catch(() => {});
           throw error;

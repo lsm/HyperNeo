@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
-const codec = () => import('../../../../src/lib/oap/oap-hub-codec');
+const codec = () => import('../../../../src/lib/oxap/oxap-hub-codec');
 
 describe('OAP hub wire codec', () => {
   test('retains the refused feature identity without inventing one', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     for (const feature of ['session.open.reopen', 'run.cancel']) {
       expect(
-        decodeOapHubLine(
+        decodeOxapHubLine(
           JSON.stringify({
             id: 3,
             ok: false,
@@ -28,7 +28,7 @@ describe('OAP hub wire codec', () => {
       { feature: 12 },
       { reason: 'unknown' },
     ]) {
-      const frame = decodeOapHubLine(
+      const frame = decodeOxapHubLine(
         JSON.stringify({
           id: 3,
           ok: false,
@@ -39,9 +39,9 @@ describe('OAP hub wire codec', () => {
     }
   });
   test('decodes a real hub refusal that also carries a null result', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     expect(
-      decodeOapHubLine(
+      decodeOxapHubLine(
         '{"id":2,"ok":false,"result":null,"error":{"code":"unknown_session","message":"Synthetic missing session"}}'
       )
     ).toEqual({
@@ -54,10 +54,10 @@ describe('OAP hub wire codec', () => {
   });
 
   test('ok:false preserves its refusal code and only busy permits resending', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     for (const code of ['busy', 'unknown_session', 'internal', 'invalid_request']) {
       expect(
-        decodeOapHubLine(
+        decodeOxapHubLine(
           JSON.stringify({ id: 7, ok: false, error: { code, message: 'Synthetic refusal' } })
         )
       ).toEqual({
@@ -71,7 +71,7 @@ describe('OAP hub wire codec', () => {
   });
 
   test('event lines route by subscription id and retain envelope and cursor fields', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     for (const id of [12, 19]) {
       const data = {
         id,
@@ -80,7 +80,7 @@ describe('OAP hub wire codec', () => {
         sequence: 5,
         envelope: { type: 'content.delta', payload: { text: 'Hello' } },
       };
-      expect(decodeOapHubLine(JSON.stringify(data))).toEqual({
+      expect(decodeOxapHubLine(JSON.stringify(data))).toEqual({
         kind: 'event',
         id,
         event: 'envelope',
@@ -88,7 +88,7 @@ describe('OAP hub wire codec', () => {
       });
     }
     const data = { id: 12, event: 'oap-replay-gap', oldest_available: 3, latest_available: 8 };
-    expect(decodeOapHubLine(JSON.stringify(data))).toEqual({
+    expect(decodeOxapHubLine(JSON.stringify(data))).toEqual({
       kind: 'event',
       id: 12,
       event: 'oap-replay-gap',
@@ -97,9 +97,9 @@ describe('OAP hub wire codec', () => {
   });
 
   test('accepts unknown success fields while retaining the required response', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     expect(
-      decodeOapHubLine(
+      decodeOxapHubLine(
         JSON.stringify({
           id: 4,
           ok: true,
@@ -112,9 +112,9 @@ describe('OAP hub wire codec', () => {
   });
 
   test('accepts unknown refusal fields while retaining error and retry semantics', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     expect(
-      decodeOapHubLine(
+      decodeOxapHubLine(
         JSON.stringify({
           id: 4,
           ok: false,
@@ -127,9 +127,9 @@ describe('OAP hub wire codec', () => {
   });
 
   test('responses preserve arbitrary results including subscription acknowledgments', async () => {
-    const { decodeOapHubLine } = await codec();
+    const { decodeOxapHubLine } = await codec();
     for (const result of [null, false, [], { session_id: 'synthetic' }])
-      expect(decodeOapHubLine(JSON.stringify({ id: -2, ok: true, result }))).toEqual({
+      expect(decodeOxapHubLine(JSON.stringify({ id: -2, ok: true, result }))).toEqual({
         kind: 'response',
         id: -2,
         result,
@@ -150,28 +150,28 @@ describe('OAP hub wire codec', () => {
     '{"id":1,"event":"envelope","ok":false,"error":{"code":"busy","message":"retry"}}',
     '{"type":"run.completed","payload":{}}',
   ])('rejects a malformed hub line %s', async (line) => {
-    expect((await codec()).decodeOapHubLine.bind(null, line)).toThrow();
+    expect((await codec()).decodeOxapHubLine.bind(null, line)).toThrow();
   });
 
   test('encodes one newline-delimited hub request without altering its envelope', async () => {
-    const { encodeOapHubRequest } = await codec();
+    const { encodeOxapHubRequest } = await codec();
     const parameters = {
       adapter: 'memory',
       request: { type: 'session.open.request', payload: { session_id: 'synthetic' } },
     };
-    const line = encodeOapHubRequest(2, 'open', parameters);
+    const line = encodeOxapHubRequest(2, 'open', parameters);
     expect(line.endsWith('\n')).toBe(true);
     expect(line.split('\n')).toHaveLength(2);
     expect(JSON.parse(line)).toEqual({ id: 2, op: 'open', ...parameters });
-    expect(encodeOapHubRequest(0, 'adapters')).toBe('{"id":0,"op":"adapters"}\n');
+    expect(encodeOxapHubRequest(0, 'adapters')).toBe('{"id":0,"op":"adapters"}\n');
     expect(parameters.request.payload.session_id).toBe('synthetic');
   });
 
   test('rejects unsafe ids and parameters that replace correlation fields', async () => {
-    const { encodeOapHubRequest } = await codec();
-    expect(() => encodeOapHubRequest(Number.MAX_SAFE_INTEGER + 1, 'adapters')).toThrow();
-    expect(() => encodeOapHubRequest(1, '')).toThrow();
-    expect(() => encodeOapHubRequest(1, 'adapters', { id: 99 })).toThrow();
-    expect(() => encodeOapHubRequest(1, 'adapters', { op: 'shutdown' })).toThrow();
+    const { encodeOxapHubRequest } = await codec();
+    expect(() => encodeOxapHubRequest(Number.MAX_SAFE_INTEGER + 1, 'adapters')).toThrow();
+    expect(() => encodeOxapHubRequest(1, '')).toThrow();
+    expect(() => encodeOxapHubRequest(1, 'adapters', { id: 99 })).toThrow();
+    expect(() => encodeOxapHubRequest(1, 'adapters', { op: 'shutdown' })).toThrow();
   });
 });

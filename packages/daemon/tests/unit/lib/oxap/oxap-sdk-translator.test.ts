@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  translateOapEvent,
-  initialOapTranslatorState,
-} from '../../../../src/lib/oap/oap-sdk-translator';
+  translateOxapEvent,
+  initialOxapTranslatorState,
+} from '../../../../src/lib/oxap/oxap-sdk-translator';
 
-describe('translateOapEvent', () => {
+describe('translateOxapEvent', () => {
   it('translates text and emits exactly one terminal result', () => {
-    const state = initialOapTranslatorState('session-1');
-    const text = translateOapEvent(state, {
+    const state = initialOxapTranslatorState('session-1');
+    const text = translateOxapEvent(state, {
       type: 'content.delta',
       id: 'event-1',
       payload: { part: { type: 'text', text: 'hello' } },
@@ -16,7 +16,7 @@ describe('translateOapEvent', () => {
       type: 'stream_event',
       event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } },
     });
-    const completed = translateOapEvent(text.state, {
+    const completed = translateOxapEvent(text.state, {
       type: 'run.completed',
       id: 'event-2',
       payload: { stop_reason: 'end_turn' },
@@ -26,11 +26,11 @@ describe('translateOapEvent', () => {
       { type: 'result', subtype: 'success', is_error: false },
     ]);
     expect(
-      translateOapEvent(completed.state, { type: 'run.completed', id: 'event-3', payload: {} })
+      translateOxapEvent(completed.state, { type: 'run.completed', id: 'event-3', payload: {} })
         .messages
     ).toEqual([]);
     expect(
-      translateOapEvent(completed.state, {
+      translateOxapEvent(completed.state, {
         type: 'content.delta',
         id: 'event-4',
         payload: { part: { type: 'text', text: 'late' } },
@@ -38,7 +38,7 @@ describe('translateOapEvent', () => {
     ).toEqual([]);
   });
   it('translates a failed run into an error result', () => {
-    const result = translateOapEvent(initialOapTranslatorState('session-1'), {
+    const result = translateOxapEvent(initialOxapTranslatorState('session-1'), {
       type: 'run.failed',
       id: 'event-5',
       payload: { error: { message: 'failed' } },
@@ -51,13 +51,13 @@ describe('translateOapEvent', () => {
     });
   });
   it('coalesces anonymous text deltas and drops unsupported parts', () => {
-    const state = initialOapTranslatorState('session-1');
-    const first = translateOapEvent(state, {
+    const state = initialOxapTranslatorState('session-1');
+    const first = translateOxapEvent(state, {
       type: 'content.delta',
       id: 'event-1',
       payload: { part: { type: 'text', text: 'A' } },
     });
-    const second = translateOapEvent(first.state, {
+    const second = translateOxapEvent(first.state, {
       type: 'content.delta',
       id: 'event-2',
       payload: { part: { type: 'text', text: 'B' } },
@@ -65,7 +65,7 @@ describe('translateOapEvent', () => {
     expect(first.messages[0]).toMatchObject({ event: { delta: { text: 'A' } } });
     expect(second.messages[0]).toMatchObject({ event: { delta: { text: 'B' } } });
     expect(first.messages[0]?.uuid).not.toEqual(second.messages[0]?.uuid);
-    const done = translateOapEvent(second.state, {
+    const done = translateOxapEvent(second.state, {
       type: 'run.completed',
       id: 'end',
       payload: {},
@@ -75,7 +75,7 @@ describe('translateOapEvent', () => {
       { type: 'result' },
     ]);
     expect(
-      translateOapEvent(state, {
+      translateOxapEvent(state, {
         type: 'content.delta',
         id: 'event-3',
         payload: { part: { type: 'image' } },
@@ -84,7 +84,7 @@ describe('translateOapEvent', () => {
     expect(state.terminal).toBe(false);
   });
   it('settles a cancelled run once with its reason', () => {
-    const cancelled = translateOapEvent(initialOapTranslatorState('session-1'), {
+    const cancelled = translateOxapEvent(initialOxapTranslatorState('session-1'), {
       type: 'run.cancelled',
       id: 'event-7',
       payload: { reason: 'native turn interrupted' },
@@ -93,14 +93,14 @@ describe('translateOapEvent', () => {
       { type: 'result', is_error: true, errors: ['native turn interrupted'] },
     ]);
     expect(
-      translateOapEvent(cancelled.state, { type: 'run.failed', id: 'event-8', payload: {} })
+      translateOxapEvent(cancelled.state, { type: 'run.failed', id: 'event-8', payload: {} })
         .messages
     ).toEqual([]);
   });
 
   it('coalesces interleaved messages and preserves reasoning and text block order', () => {
-    const initial = initialOapTranslatorState('session-1');
-    const first = translateOapEvent(initial, {
+    const initial = initialOxapTranslatorState('session-1');
+    const first = translateOxapEvent(initial, {
       type: 'content.delta',
       id: 'one',
       payload: { message_id: 'message-a', part: { type: 'reasoning', reasoning: 'Think' } },
@@ -117,13 +117,13 @@ describe('translateOapEvent', () => {
     ];
     let state = first.state;
     for (const event of events) {
-      const translated = translateOapEvent(state, { type: 'content.delta', ...event });
+      const translated = translateOxapEvent(state, { type: 'content.delta', ...event });
       expect(translated.messages[0]?.type).toBe('stream_event');
       state = translated.state;
     }
     expect(initial.pending).toEqual([]);
     expect(first.state.pending[0]?.content).toMatchObject([{ thinking: 'Think' }]);
-    const done = translateOapEvent(state, { type: 'run.completed', id: 'end', payload: {} });
+    const done = translateOxapEvent(state, { type: 'run.completed', id: 'end', payload: {} });
     expect(done.messages).toMatchObject([
       {
         type: 'assistant',
@@ -146,23 +146,23 @@ describe('translateOapEvent', () => {
   });
 
   it.each(['run.failed', 'run.cancelled'])('preserves accumulated content before %s', (type) => {
-    const partial = translateOapEvent(initialOapTranslatorState('session-1'), {
+    const partial = translateOxapEvent(initialOxapTranslatorState('session-1'), {
       type: 'content.delta',
       id: 'partial',
       payload: { message_id: 'message-1', part: { type: 'text', text: 'unfinished' } },
     });
-    const terminal = translateOapEvent(partial.state, { type, id: 'end', payload: {} });
+    const terminal = translateOxapEvent(partial.state, { type, id: 'end', payload: {} });
     expect(terminal.messages).toMatchObject([
       { type: 'assistant', message: { content: [{ type: 'text', text: 'unfinished' }] } },
       { type: 'result', is_error: true },
     ]);
-    expect(translateOapEvent(terminal.state, { type, id: 'again', payload: {} }).messages).toEqual(
+    expect(translateOxapEvent(terminal.state, { type, id: 'again', payload: {} }).messages).toEqual(
       []
     );
   });
 
   it('keeps text and tool calls in stream order when a message spans a tool call', () => {
-    let state = initialOapTranslatorState('session-1');
+    let state = initialOxapTranslatorState('session-1');
     const messages = [];
     const events = [
       {
@@ -188,7 +188,7 @@ describe('translateOapEvent', () => {
       { type: 'run.completed', id: 'end', payload: {} },
     ];
     for (const event of events) {
-      const translated = translateOapEvent(state, event);
+      const translated = translateOxapEvent(state, event);
       state = translated.state;
       messages.push(...translated.messages.filter((message) => message.type !== 'stream_event'));
     }
@@ -208,12 +208,12 @@ describe('translateOapEvent', () => {
   });
 
   it('flushes pending content once without inventing a terminal result', () => {
-    const partial = translateOapEvent(initialOapTranslatorState('session-1'), {
+    const partial = translateOxapEvent(initialOxapTranslatorState('session-1'), {
       type: 'content.delta',
       id: 'first',
       payload: { message_id: 'message-1', part: { type: 'text', text: 'partial' } },
     });
-    const flushed = translateOapEvent(partial.state, {
+    const flushed = translateOxapEvent(partial.state, {
       type: 'stream.flush',
       id: 'flush',
       payload: {},
@@ -225,12 +225,12 @@ describe('translateOapEvent', () => {
       },
     ]);
     expect(
-      translateOapEvent(flushed.state, { type: 'stream.flush', id: 'again', payload: {} }).messages
+      translateOxapEvent(flushed.state, { type: 'stream.flush', id: 'again', payload: {} }).messages
     ).toEqual([]);
   });
 
   it('keeps segment identifiers distinct across multiple tool boundaries', () => {
-    let state = initialOapTranslatorState('session-1');
+    let state = initialOxapTranslatorState('session-1');
     const messages = [];
     const events = [
       {
@@ -259,7 +259,7 @@ describe('translateOapEvent', () => {
       { type: 'run.completed', id: 'h', payload: {} },
     ];
     for (const event of events) {
-      const translated = translateOapEvent(state, event);
+      const translated = translateOxapEvent(state, event);
       state = translated.state;
       messages.push(
         ...translated.messages.filter(
@@ -385,10 +385,10 @@ const usageFixture = {
   capability_revision: 'codex-appserver-0.163.0-oap-v2',
 };
 
-describe('translateOapEvent tool and usage fixtures', () => {
+describe('translateOxapEvent tool and usage fixtures', () => {
   it('pairs requested and completed calls without duplicating started events', () => {
     const [requested, started, completed] = commandFixture;
-    const first = translateOapEvent(initialOapTranslatorState('session-1'), requested);
+    const first = translateOxapEvent(initialOxapTranslatorState('session-1'), requested);
     expect(first.messages).toMatchObject([
       {
         type: 'assistant',
@@ -404,9 +404,9 @@ describe('translateOapEvent tool and usage fixtures', () => {
         },
       },
     ]);
-    const next = translateOapEvent(first.state, started);
+    const next = translateOxapEvent(first.state, started);
     expect(next.messages).toEqual([]);
-    const last = translateOapEvent(next.state, completed);
+    const last = translateOxapEvent(next.state, completed);
     expect(last.messages).toMatchObject([
       {
         type: 'user',
@@ -421,11 +421,11 @@ describe('translateOapEvent tool and usage fixtures', () => {
         },
       },
     ]);
-    expect(translateOapEvent(last.state, completed).messages).toEqual([]);
+    expect(translateOxapEvent(last.state, completed).messages).toEqual([]);
   });
   it('preserves fixture usage on the terminal result', () => {
     expect(
-      translateOapEvent(initialOapTranslatorState('session-1'), usageFixture).messages
+      translateOxapEvent(initialOxapTranslatorState('session-1'), usageFixture).messages
     ).toMatchObject([{ type: 'result', usage: { input_tokens: 2500, output_tokens: 100 } }]);
   });
   it('translates an OAP reasoning content part as SDK thinking', () => {
@@ -439,14 +439,14 @@ describe('translateOapEvent tool and usage fixtures', () => {
         part: { type: 'reasoning', reasoning: 'consider options' },
       },
     };
-    const partial = translateOapEvent(initialOapTranslatorState('session-1'), event);
+    const partial = translateOxapEvent(initialOxapTranslatorState('session-1'), event);
     expect(partial.messages).toMatchObject([
       {
         type: 'stream_event',
         event: { delta: { type: 'thinking_delta', thinking: 'consider options' } },
       },
     ]);
-    const done = translateOapEvent(partial.state, {
+    const done = translateOxapEvent(partial.state, {
       type: 'run.completed',
       id: 'end',
       payload: {},
@@ -464,17 +464,17 @@ describe('translateOapEvent tool and usage fixtures', () => {
   });
 });
 
-describe('translateOapEvent tool lifecycle', () => {
+describe('translateOxapEvent tool lifecycle', () => {
   it('keeps interleaved calls distinct and marks failed results', () => {
     const [request] = commandFixture;
-    const first = translateOapEvent(initialOapTranslatorState('session-1'), request);
+    const first = translateOxapEvent(initialOxapTranslatorState('session-1'), request);
     const other = {
       ...request,
       id: 'event-other',
       payload: { ...request.payload, tool_call_id: 'other' },
     };
-    const second = translateOapEvent(first.state, other);
-    const failed = translateOapEvent(second.state, {
+    const second = translateOxapEvent(first.state, other);
+    const failed = translateOxapEvent(second.state, {
       type: 'action.call.failed',
       id: 'failure',
       payload: { tool_call_id: 'tool-call-06', error: { code: 'failed', message: 'no' } },
@@ -494,7 +494,7 @@ describe('translateOapEvent tool lifecycle', () => {
         },
       },
     ]);
-    const completed = translateOapEvent(failed.state, {
+    const completed = translateOxapEvent(failed.state, {
       type: 'action.call.completed',
       id: 'done',
       payload: { tool_call_id: 'other', result: 'ok' },
@@ -507,7 +507,7 @@ describe('translateOapEvent tool lifecycle', () => {
         },
       },
     ]);
-    expect(translateOapEvent(completed.state, other).messages).toEqual([]);
+    expect(translateOxapEvent(completed.state, other).messages).toEqual([]);
     expect(first.state.tools).toEqual([{ id: 'tool-call-06', settled: false }]);
   });
   it('maps cache and reasoning usage and rejects invalid counts', () => {
@@ -524,30 +524,30 @@ describe('translateOapEvent tool lifecycle', () => {
         },
       },
     };
-    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
-      [
-        {
-          usage: {
-            input_tokens: 8,
-            output_tokens: 5,
-            cache_read_input_tokens: 3,
-            cache_creation_input_tokens: 2,
-            output_tokens_details: { thinking_tokens: 4 },
-          },
+    expect(
+      translateOxapEvent(initialOxapTranslatorState('session-1'), event).messages
+    ).toMatchObject([
+      {
+        usage: {
+          input_tokens: 8,
+          output_tokens: 5,
+          cache_read_input_tokens: 3,
+          cache_creation_input_tokens: 2,
+          output_tokens_details: { thinking_tokens: 4 },
         },
-      ]
-    );
+      },
+    ]);
     const invalid = {
       ...event,
       payload: { ...event.payload, usage: { input_tokens: -1, output_tokens: 1.5 } },
     };
     expect(
-      translateOapEvent(initialOapTranslatorState('session-1'), invalid).messages
+      translateOxapEvent(initialOxapTranslatorState('session-1'), invalid).messages
     ).toMatchObject([{ usage: { input_tokens: 0, output_tokens: 0 } }]);
   });
   it('creates a pair for a terminal call when its start was not observed', () => {
     const event = { ...commandFixture[2], id: 'isolated' };
-    const result = translateOapEvent(initialOapTranslatorState('session-1'), event);
+    const result = translateOxapEvent(initialOxapTranslatorState('session-1'), event);
     expect(result.messages).toMatchObject([
       {
         type: 'assistant',
@@ -565,8 +565,8 @@ describe('translateOapEvent tool lifecycle', () => {
       ...commandFixture[0],
       payload: { ...commandFixture[0].payload, arguments_json: null },
     };
-    expect(translateOapEvent(initialOapTranslatorState('session-1'), event).messages).toMatchObject(
-      [{ message: { content: [{ type: 'tool_use', input: null }] } }]
-    );
+    expect(
+      translateOxapEvent(initialOxapTranslatorState('session-1'), event).messages
+    ).toMatchObject([{ message: { content: [{ type: 'tool_use', input: null }] } }]);
   });
 });

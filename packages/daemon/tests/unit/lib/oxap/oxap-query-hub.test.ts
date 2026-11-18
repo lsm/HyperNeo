@@ -1,18 +1,18 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { type OapHubClient, OapHubRequestError } from '../../../../src/lib/oap/oap-hub-client';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
-import * as queryModule from '../../../../src/lib/oap/oap-query';
+import { type OxapHubClient, OxapHubRequestError } from '../../../../src/lib/oxap/oxap-hub-client';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
+import * as queryModule from '../../../../src/lib/oxap/oxap-query';
 
-const createOapQueryHub = (
+const createOxapQueryHub = (
   queryModule as unknown as {
-    createOapQueryHub(
-      client: OapHubClient,
+    createOxapQueryHub(
+      client: OxapHubClient,
       model?: { adapter: string; id: () => string | undefined }
-    ): OapQueryHub;
+    ): OxapQueryHub;
   }
-).createOapQueryHub;
-type Listener = Parameters<OapHubClient['subscribe']>[1];
+).createOxapQueryHub;
+type Listener = Parameters<OxapHubClient['subscribe']>[1];
 
 const prompt = {
   type: 'user',
@@ -71,11 +71,11 @@ function fixture(mode: 'text' | 'failed-stream' | 'refused-submit' = 'text') {
       };
     }
   );
-  const client = { subscribe, request } as unknown as OapHubClient;
+  const client = { subscribe, request } as unknown as OxapHubClient;
   return { client, subscribe, request, unsubscribe, operations };
 }
 
-function releaseHub(hub: OapQueryHub): void {
+function releaseHub(hub: OxapQueryHub): void {
   (hub as unknown as { release(): void }).release();
 }
 
@@ -84,14 +84,14 @@ describe('OAP query hub transport', () => {
     'a timed-out submit checks hub status %s before allowing another submit',
     async (status) => {
       const host = fixture();
-      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      const timeout = new OxapHubRequestError('timeout', 'submit timed out');
       const send = host.request.getMockImplementation()!;
       let submitted = false;
       host.request.mockImplementation(async (op, parameters) => {
         if (op === 'work.status') {
           host.operations.push(op);
           if (status === 'probe-timeout')
-            throw new OapHubRequestError('timeout', 'status timed out');
+            throw new OxapHubRequestError('timeout', 'status timed out');
           return { ref: { session_id: 'synthetic-session' }, status, run_id: 'run-1' };
         }
         if (op === 'submit' && !submitted) {
@@ -101,7 +101,7 @@ describe('OAP query hub transport', () => {
         }
         return send(op, parameters);
       });
-      const hub = createOapQueryHub(host.client);
+      const hub = createOxapQueryHub(host.client);
       await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
       host.operations.length = 0;
       await expect(hub.submit('synthetic-session', prompt)).rejects.toMatchObject({
@@ -116,9 +116,9 @@ describe('OAP query hub transport', () => {
     'a successful idle or unheld status probe permits a new prompt after timeout',
     async (work) => {
       const host = fixture();
-      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      const timeout = new OxapHubRequestError('timeout', 'submit timed out');
       host.request.mockRejectedValueOnce(timeout);
-      const hub = createOapQueryHub(host.client);
+      const hub = createOxapQueryHub(host.client);
       await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
       host.request.mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' }, ...work });
       await expect(
@@ -135,9 +135,9 @@ describe('OAP query hub transport', () => {
 
   test('reconciles a parked unsupported interaction by cancelling its run and checking again', async () => {
     const host = fixture();
-    const timeout = new OapHubRequestError('timeout', 'submit timed out');
+    const timeout = new OxapHubRequestError('timeout', 'submit timed out');
     host.request.mockRejectedValueOnce(timeout);
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
     host.request
       .mockResolvedValueOnce({
@@ -168,8 +168,8 @@ describe('OAP query hub transport', () => {
 
   test('a failed status probe can recover on a later successful probe', async () => {
     const host = fixture();
-    host.request.mockRejectedValueOnce(new OapHubRequestError('timeout', 'submit timed out'));
-    const hub = createOapQueryHub(host.client);
+    host.request.mockRejectedValueOnce(new OxapHubRequestError('timeout', 'submit timed out'));
+    const hub = createOxapQueryHub(host.client);
     await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow('submit timed out');
     host.request.mockRejectedValueOnce(new Error('status unavailable'));
     await expect(hub.submit('synthetic-session', prompt)).rejects.toMatchObject({
@@ -190,8 +190,8 @@ describe('OAP query hub transport', () => {
 
   test('a retired reconciliation cannot cancel work after its successor starts', async () => {
     const host = fixture();
-    host.request.mockRejectedValueOnce(new OapHubRequestError('timeout', 'submit timed out'));
-    const hub = createOapQueryHub(host.client);
+    host.request.mockRejectedValueOnce(new OxapHubRequestError('timeout', 'submit timed out'));
+    const hub = createOxapQueryHub(host.client);
     await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow('submit timed out');
     let finishProbe!: (value: unknown) => void;
     host.request.mockImplementationOnce(
@@ -221,9 +221,9 @@ describe('OAP query hub transport', () => {
     'a new prompt can submit after a timeout when hub work is %s',
     async (status) => {
       const host = fixture();
-      const timeout = new OapHubRequestError('timeout', 'submit timed out');
+      const timeout = new OxapHubRequestError('timeout', 'submit timed out');
       host.request.mockRejectedValueOnce(timeout);
-      const hub = createOapQueryHub(host.client);
+      const hub = createOxapQueryHub(host.client);
       await expect(hub.submit('synthetic-session', prompt)).rejects.toBe(timeout);
       host.request.mockResolvedValueOnce({ ref: { session_id: 'synthetic-session' }, status });
       await expect(
@@ -240,12 +240,12 @@ describe('OAP query hub transport', () => {
 
   test.each([
     [
-      new OapHubRequestError('timeout', 'submit timed out'),
-      new OapHubRequestError('invalid_request', 'unsubscribe refused'),
+      new OxapHubRequestError('timeout', 'submit timed out'),
+      new OxapHubRequestError('invalid_request', 'unsubscribe refused'),
     ],
     [
-      new OapHubRequestError('invalid_request', 'submit refused'),
-      new OapHubRequestError('timeout', 'unsubscribe timed out'),
+      new OxapHubRequestError('invalid_request', 'submit refused'),
+      new OxapHubRequestError('timeout', 'unsubscribe timed out'),
     ],
   ])(
     'preserves the submit outcome when releasing its subscription also fails',
@@ -253,9 +253,9 @@ describe('OAP query hub transport', () => {
       const host = fixture();
       host.request.mockRejectedValueOnce(submitError);
       host.unsubscribe.mockRejectedValueOnce(cleanupError);
-      await expect(createOapQueryHub(host.client).submit('synthetic-session', prompt)).rejects.toBe(
-        submitError
-      );
+      await expect(
+        createOxapQueryHub(host.client).submit('synthetic-session', prompt)
+      ).rejects.toBe(submitError);
       expect(host.unsubscribe).toHaveBeenCalledTimes(1);
     }
   );
@@ -266,7 +266,7 @@ describe('OAP query hub transport', () => {
       type: 'session.message.submit.response',
       payload: { accepted: true, session_id: 'other-session', run_id: 'run-1' },
     }));
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow(/accept|scope/i);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
   });
@@ -304,7 +304,7 @@ describe('OAP query hub transport', () => {
         payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
       };
     });
-    const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+    const hub = createOxapQueryHub({ subscribe, request } as unknown as OxapHubClient);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const received: unknown[] = [];
     for await (const event of hub.events(
@@ -320,7 +320,7 @@ describe('OAP query hub transport', () => {
 
   test('subscribes before submitting so immediate text and terminal events are not lost', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const received: unknown[] = [];
     for await (const event of hub.events(
@@ -357,9 +357,9 @@ describe('OAP query hub transport', () => {
 
   test('keeps a session hub usable after a completed query is closed', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     for (let turn = 0; turn < 2; turn++) {
-      const query = queryModule.createOapQuery({
+      const query = queryModule.createOxapQuery({
         sessionId: 'synthetic-session',
         prompt: (async function* () {
           yield prompt;
@@ -377,10 +377,10 @@ describe('OAP query hub transport', () => {
 
   test('a retired attempt cannot release its successor subscription', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client) as unknown as {
+    const hub = createOxapQueryHub(host.client) as unknown as {
       submit(sessionId: string, message: SDKUserMessage, owner: symbol): Promise<{ runId: string }>;
       release(owner: symbol): void;
-      events: OapQueryHub['events'];
+      events: OxapQueryHub['events'];
     };
     const oldOwner = Symbol('old');
     const currentOwner = Symbol('current');
@@ -441,7 +441,7 @@ describe('OAP query hub transport', () => {
         payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-1' },
       };
     });
-    const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+    const hub = createOxapQueryHub({ subscribe, request } as unknown as OxapHubClient);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const ids: unknown[] = [];
     for await (const event of hub.events(
@@ -475,7 +475,7 @@ describe('OAP query hub transport', () => {
       type: 'session.message.submit.response',
       payload: { accepted: true, session_id: 'synthetic-session', run_id: 'run-2' },
     }));
-    const hub = createOapQueryHub({ subscribe, request } as unknown as OapHubClient);
+    const hub = createOxapQueryHub({ subscribe, request } as unknown as OxapHubClient);
     const old = hub.submit('synthetic-session', prompt).catch((error: Error) => error);
     releaseHub(hub);
     const current = await hub.submit('synthetic-session', prompt);
@@ -491,7 +491,7 @@ describe('OAP query hub transport', () => {
 
   test('joins text blocks into the plain string required by the Codex adapter', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     await hub.submit('synthetic-session', {
       ...prompt,
       message: {
@@ -517,7 +517,7 @@ describe('OAP query hub transport', () => {
 
   test('reports a stream failure without automatically resubmitting', async () => {
     const host = fixture('failed-stream');
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     const { runId } = await hub.submit('synthetic-session', prompt);
     const consume = async () => {
       for await (const event of hub.events(
@@ -534,7 +534,7 @@ describe('OAP query hub transport', () => {
 
   test('releases the subscription if submission is refused', async () => {
     const host = fixture('refused-submit');
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     await expect(hub.submit('synthetic-session', prompt)).rejects.toThrow(
       'synthetic submit refusal'
     );
@@ -543,7 +543,7 @@ describe('OAP query hub transport', () => {
 
   test('rejects an unaccepted or mis-scoped cancellation response', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     for (const payload of [
       { accepted: false, session_id: 'synthetic-session', run_id: 'run-1' },
       { accepted: true, session_id: 'another-session', run_id: 'run-1' },
@@ -571,7 +571,10 @@ describe('OAP query hub transport', () => {
       finishSubscription = resolve;
     });
     const subscribe = mock(() => subscription);
-    const hub = createOapQueryHub({ subscribe, request: host.request } as unknown as OapHubClient);
+    const hub = createOxapQueryHub({
+      subscribe,
+      request: host.request,
+    } as unknown as OxapHubClient);
     const first = hub.submit('synthetic-session', prompt).catch((error: Error) => error);
     const second = hub.submit('synthetic-session', prompt).then(
       () => 'accepted',
@@ -595,16 +598,16 @@ describe('OAP query hub transport', () => {
     const subscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>((resolve) => {
       finishSubscription = resolve;
     });
-    const hub = createOapQueryHub({
+    const hub = createOxapQueryHub({
       subscribe: () => subscription,
       request: host.request,
-    } as unknown as OapHubClient);
+    } as unknown as OxapHubClient);
     const submission = hub.submit('synthetic-session', prompt);
     releaseHub(hub);
     finishSubscription({ id: 3, unsubscribe: host.unsubscribe });
     const failure = await submission.catch((error: Error) => error);
     expect(failure).toBeInstanceOf(Error);
-    expect(failure).not.toBeInstanceOf(OapHubRequestError);
+    expect(failure).not.toBeInstanceOf(OxapHubRequestError);
     expect((failure as Error).message).toMatch(/closed/i);
     expect(host.unsubscribe).toHaveBeenCalledTimes(1);
     expect(host.request).not.toHaveBeenCalled();
@@ -620,10 +623,10 @@ describe('OAP query hub transport', () => {
     const subscription = new Promise<{ id: number; unsubscribe(): Promise<void> }>((resolve) => {
       finishSubscription = resolve;
     });
-    const hub = createOapQueryHub({
+    const hub = createOxapQueryHub({
       subscribe: () => subscription,
       request,
-    } as unknown as OapHubClient) as OapQueryHub & {
+    } as unknown as OxapHubClient) as OxapQueryHub & {
       submit(
         session: string,
         message: SDKUserMessage,
@@ -642,7 +645,7 @@ describe('OAP query hub transport', () => {
 
   test('refuses non-text input instead of silently dropping it', async () => {
     const host = fixture();
-    const hub = createOapQueryHub(host.client);
+    const hub = createOxapQueryHub(host.client);
     const input = { ...prompt, message: { role: 'user', content: [{ type: 'image' }] } };
     await expect(hub.submit('synthetic-session', input as SDKUserMessage)).rejects.toThrow(/text/i);
     expect(host.operations).toEqual([]);
@@ -670,7 +673,7 @@ describe('OAP query hub transport', () => {
           submitted.push((parameters.request as { payload: Record<string, unknown> }).payload);
         return request(op, parameters);
       });
-      const hub = createOapQueryHub(host.client, {
+      const hub = createOxapQueryHub(host.client, {
         adapter: 'anthropic-codex',
         id: () => 'gpt-5.5',
       });

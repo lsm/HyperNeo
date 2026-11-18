@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideSessionOpen, decideReopenFailure } from '../../../../src/lib/oap/oap-session-open';
+import { decideSessionOpen, decideReopenFailure } from '../../../../src/lib/oxap/oxap-session-open';
 
 describe('decideSessionOpen', () => {
   it('opens a new session without a native id', () => {

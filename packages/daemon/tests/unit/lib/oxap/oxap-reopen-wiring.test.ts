@@ -1,25 +1,25 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine';
+import { OxapHubRequestError, type OxapHubClient } from '../../../../src/lib/oxap/oxap-hub-client';
+import { bindCodexRuntime as createOxapRuntime } from '../../../helpers/oxap-codex-runtime';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 
-const options: OapEngineOptions = {
-  binaryPath: '/synthetic/oapx',
+const options: OxapEngineOptions = {
+  binaryPath: '/synthetic/oxap',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
 };
-const bind = createOapRuntime as unknown as (
-  engine: OapEngine,
-  options: OapEngineOptions,
+const bind = createOxapRuntime as unknown as (
+  engine: OxapEngine,
+  options: OxapEngineOptions,
   events: ReturnType<typeof createDaemonInternalEventBus>,
   db: unknown,
   messageHub: unknown
-) => (session: Session) => { hub: Promise<OapQueryHub>; clear(): Promise<void> };
+) => (session: Session) => { hub: Promise<OxapQueryHub>; clear(): Promise<void> };
 
 function session(nativeId?: string, messageCount = 0): Session {
   return {
@@ -36,7 +36,7 @@ function fixture(
     known?: boolean;
     nativeId?: string;
     supportsReopen?: boolean;
-    refusal?: OapHubRequestError;
+    refusal?: OxapHubRequestError;
     history?: boolean;
     submitted?: boolean;
     failed?: boolean;
@@ -55,7 +55,7 @@ function fixture(
   const request = mock(async (op: string, params: Record<string, unknown>) => {
     operations.push({ op, params });
     if (op === 'work.status') {
-      if (!opened && !config.known) throw new OapHubRequestError('unknown_session', 'absent');
+      if (!opened && !config.known) throw new OxapHubRequestError('unknown_session', 'absent');
       return opened
         ? {
             ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
@@ -85,16 +85,16 @@ function fixture(
       const payload = (params.request as { payload: { reopen?: boolean } }).payload;
       if (payload.reopen && config.refusal) throw config.refusal;
       if (payload.reopen && !config.known)
-        throw new OapHubRequestError('unknown_session', 'absent');
+        throw new OxapHubRequestError('unknown_session', 'absent');
       if (!payload.reopen && config.failFreshOpenOnce && !freshOpenFailed) {
         freshOpenFailed = true;
-        throw new OapHubRequestError('timeout', 'synthetic interrupted fresh open');
+        throw new OxapHubRequestError('timeout', 'synthetic interrupted fresh open');
       }
       if (!payload.reopen && config.freshId) threadId = config.freshId;
       opened = true;
       if (!payload.reopen && config.loseFreshOpenResponseOnce && !freshOpenFailed) {
         freshOpenFailed = true;
-        throw new OapHubRequestError('timeout', 'synthetic lost fresh open response');
+        throw new OxapHubRequestError('timeout', 'synthetic lost fresh open response');
       }
       return { type: 'session.open.response', payload: { session_id: 'session-a' } };
     }
@@ -104,14 +104,14 @@ function fixture(
     }
     throw new Error(`unexpected operation ${op}`);
   });
-  const client = { request } as unknown as OapHubClient;
+  const client = { request } as unknown as OxapHubClient;
   const submit = mock(async () => ({ runId: 'synthetic-run' }));
-  const transport = { submit, release: mock(() => {}) } as unknown as OapQueryHub;
+  const transport = { submit, release: mock(() => {}) } as unknown as OxapQueryHub;
   const engine = {
     getHub: mock(async () => client),
     isCurrentHub: mock(() => true),
     createQueryHub: mock(() => transport),
-  } as unknown as OapEngine;
+  } as unknown as OxapEngine;
   let identityFailed = false;
   const db = {
     updateSession: mock(async (_id: string, update: Partial<Session>) => {
@@ -160,7 +160,7 @@ describe('OAP native session reopen wiring', () => {
       known: true,
       submitted: true,
       freshId: 'native-thread-b',
-      refusal: new OapHubRequestError('unknown_session', 'missing'),
+      refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     const current = session('native-thread-a', 1);
     const hub = await host.runtime(current).hub;
@@ -183,7 +183,7 @@ describe('OAP native session reopen wiring', () => {
     const host = fixture({
       known: true,
       freshId: 'native-thread-b',
-      refusal: new OapHubRequestError('unknown_session', 'missing'),
+      refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     host.db.getSDKMessages.mockReturnValue({
       messages: [
@@ -208,7 +208,7 @@ describe('OAP native session reopen wiring', () => {
       known: true,
       history: true,
       freshId: 'native-thread-b',
-      refusal: new OapHubRequestError('unknown_session', 'missing'),
+      refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     const current = session('native-thread-a', 2);
     const hub = await host.runtime(current).hub;
@@ -235,7 +235,7 @@ describe('OAP native session reopen wiring', () => {
       history: true,
       freshId: 'native-thread-b',
       loseFreshOpenResponseOnce: true,
-      refusal: new OapHubRequestError('unknown_session', 'missing'),
+      refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     const current = session('native-thread-a', 2);
     const runtime = host.runtime(current);
@@ -383,7 +383,7 @@ describe('OAP native session reopen wiring', () => {
     { known: false },
     {
       known: true,
-      refusal: new OapHubRequestError(
+      refusal: new OxapHubRequestError(
         'unsupported_feature',
         'cannot reopen',
         'session.open.reopen'
@@ -410,7 +410,7 @@ describe('OAP native session reopen wiring', () => {
   test('drops a reopen notice if its session is deleted while the notice is being saved', async () => {
     const host = fixture({
       known: true,
-      refusal: new OapHubRequestError('unknown_session', 'missing'),
+      refusal: new OxapHubRequestError('unknown_session', 'missing'),
     });
     let noticeStarted!: () => void;
     let finishNotice!: () => void;
@@ -475,9 +475,9 @@ describe('OAP native session reopen wiring', () => {
   });
 
   test.each([
-    new OapHubRequestError('unsupported_feature', 'unrelated', 'run.cancel'),
-    new OapHubRequestError('invalid_request', 'directory changed'),
-    new OapHubRequestError('timeout', 'transport timeout'),
+    new OxapHubRequestError('unsupported_feature', 'unrelated', 'run.cancel'),
+    new OxapHubRequestError('invalid_request', 'directory changed'),
+    new OxapHubRequestError('timeout', 'transport timeout'),
   ])('never opens a new thread after an unrelated or infrastructure failure', async (refusal) => {
     const host = fixture({ known: true, refusal });
     await expect(host.runtime(session('native-thread-a', 2)).hub).rejects.toBe(refusal);
