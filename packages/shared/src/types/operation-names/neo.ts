@@ -51,6 +51,8 @@ export const NEO_OPERATION_NAMES = [
   'neo.rule.applyAnswer',
   'neo.rule.ask',
   'neo.rule.save',
+  'neo.workerOwnership.apply',
+  'neo.workerOwnership.candidates',
   'neo.session.archive',
   'neo.session.link',
   'neo.session.mute',
