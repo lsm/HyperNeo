@@ -177,8 +177,19 @@ export function wireNeoTodoMutations(
       'outcome'
     )
     .pipe(
-      (result: Result) => (result.ok ? { value: result } : { reason: result }),
-      'outcome',
+      (result: Result, input: Input) =>
+        result.ok
+          ? { value: result }
+          : {
+              reason:
+                input.kind === 'done' && result.reason.startsWith('card_unanswered:')
+                  ? {
+                      ...result,
+                      reason: `${result.reason} Its session may have stopped; the todo is unchanged.`,
+                    }
+                  : result,
+            },
+      ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(

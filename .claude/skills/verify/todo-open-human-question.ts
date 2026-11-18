@@ -5,6 +5,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 
 const run = resolve(process.argv.at(-1)!);
@@ -12,8 +13,13 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 mkdirSync(join(run, 'evidence'), { recursive: true });
+let activeService: NeoService | undefined;
+const recover = NeoService.prototype.recover;
+NeoService.prototype.recover = async function () { activeService = this; return recover.call(this); };
 const app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true }, verbose: false });
 await app.jobProcessor.stop();
+await app.spaceRuntimeService.ready();
+assert(activeService);
 const service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
 const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers: { authorization: `Bearer ${await readLocalCredential()}` } } as unknown as string[]);
 await new Promise<void>((ok, fail) => { ws.onopen = () => ok(); ws.onerror = () => fail(new Error('RPC unavailable')); });
@@ -61,10 +67,25 @@ try {
   const removed = await rpc('neo.todo.remove', { todoId: 'removed', reason: 'No longer needed' });
   assert.equal(removed.ok, true, JSON.stringify(removed));
   assert.equal(store.getQuestion(removedId)?.state, 'retired');
+  store.addTodo('race', 'ask', { title: 'race', doneWhen: 'Complete', check: null, instruction: null, named: null }, 1);
+  const originalStop = activeService.todoRunner.stop;
+  activeService.todoRunner.stop = async () => {
+    store.askQuestion('late', 'ask', { kind: 'reply', text: 'Answer during stop?', todoId: 'race', options: null, multiple: false, yesLabel: null, noLabel: null }, Date.now());
+    return null;
+  };
+  const raced = await rpc('neo.todo.done', { todoId: 'race' });
+  activeService.todoRunner.stop = originalStop;
+  assert.equal(raced.ok, false, JSON.stringify(raced));
+  assert(String(raced.reason).includes('card_unanswered: card late'));
+  assert(String(raced.reason).includes('session may have stopped'));
+  assert.equal(store.getTodo('race')?.state, 'todo');
+  assert.equal(store.getQuestion('late')?.state, 'open');
+  evidence.push({ raced });
   evidence.push({ answer, done, legacy: store.getQuestion(legacyId), removed: store.getQuestion(removedId) });
   console.log('PASS: completion refused with question id; answer permits completion; legacy done keeps card; removal retires it.');
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   ws.close();
+  NeoService.prototype.recover = recover;
   await app.cleanup();
 }
