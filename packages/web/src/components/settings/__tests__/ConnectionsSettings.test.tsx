@@ -130,7 +130,9 @@ it('reconnects and disconnects a Microsoft account through Microsoft operations'
     connectionId: account.id,
   });
   command = () => ({ ok: true });
-  fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+  const disconnect = screen.getByRole('button', { name: 'Disconnect' });
+  await waitFor(() => expect(disconnect.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(disconnect);
   await waitFor(() =>
     expect(invocations('connections.microsoft.disconnect')[0]?.input).toEqual({
       connectionId: account.id,

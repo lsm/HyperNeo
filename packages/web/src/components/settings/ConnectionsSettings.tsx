@@ -7,8 +7,10 @@ import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
 import { SettingsSection, SettingsGroup } from './SettingsSection.tsx';
 
+type Provider = 'google' | 'microsoft';
 type Account = {
   id: string;
+  provider: Provider;
   email: string;
   scopes: string[];
   health: 'healthy' | 'reconnect_needed' | 'disconnected';
@@ -19,29 +21,29 @@ type Attempt = {
   authorizeUrl?: string;
   storage?: { warning?: string };
 };
-type Command = {
-  name: 'connections.google.connect' | 'connections.google.disconnect';
-  input: unknown;
-};
+type Command = { provider: Provider; action: 'connect' | 'disconnect'; input: unknown };
 type Receipt = Partial<Attempt> & { ok?: boolean };
 type View = { accounts: Account[]; attempt: Attempt };
 const call = async <T,>(name: Parameters<typeof invokeOperation>[1], input: unknown = {}) =>
   invokeOperation<T>(await connectionManager.getHub(), name, input);
 
 const update = (superpipe({})('google-connection-settings') as PipelineAPI)
-  .input('command')
+  .input(['provider', 'command'])
   .pipe(
-    (command?: Command) => (command ? call<Receipt>(command.name, command.input) : null),
+    (command?: Command) =>
+      command
+        ? call<Receipt>(`connections.${command.provider}.${command.action}`, command.input)
+        : null,
     'command',
     'receipt'
   )
   .pipe(
-    (_receipt: Receipt | null) =>
+    (provider: Provider, _receipt: Receipt | null) =>
       Promise.all([
         call<{ connections: Account[] }>('connections.list'),
-        call<Attempt>('connections.google.login'),
+        call<Attempt>(`connections.${provider}.login`),
       ]),
-    'receipt',
+    ['provider', 'receipt'],
     'snapshot'
   )
   .pipe(
@@ -53,7 +55,10 @@ const update = (superpipe({})('google-connection-settings') as PipelineAPI)
     ['snapshot', 'receipt'],
     'view'
   )
-  .endAsync('view') as (command?: Command) => Promise<View & { receipt: Receipt | null }>;
+  .endAsync('view') as (
+  provider: Provider,
+  command?: Command
+) => Promise<View & { receipt: Receipt | null }>;
 
 const scopeLabels: Record<string, MessageKey> = {
   openid: 'connections.identity',
@@ -62,46 +67,70 @@ const scopeLabels: Record<string, MessageKey> = {
   'https://www.googleapis.com/auth/gmail.compose': 'connections.gmailDraft',
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly': 'connections.calendars',
   'https://www.googleapis.com/auth/calendar.events.readonly': 'connections.events',
+  'Mail.ReadWrite': 'connections.outlookMail',
+  'Calendars.Read': 'connections.outlookCalendars',
 };
+
+const copy = {
+  google: {
+    connect: 'connections.connect',
+    pending: 'connections.pending',
+    continue: 'connections.continue',
+    setup: 'connections.setup',
+    clientId: 'connections.clientId',
+    sameAccount: 'connections.sameAccount',
+    failed: 'connections.failed',
+  },
+  microsoft: {
+    connect: 'connections.connectMicrosoft',
+    pending: 'connections.pendingMicrosoft',
+    continue: 'connections.continueMicrosoft',
+    setup: 'connections.setupMicrosoft',
+    clientId: 'connections.clientIdMicrosoft',
+    sameAccount: 'connections.sameAccountMicrosoft',
+    failed: 'connections.failedMicrosoft',
+  },
+} satisfies Record<Provider, Record<string, MessageKey>>;
 
 export function ConnectionsSettings() {
   const [view, setView] = useState<View>({ accounts: [], attempt: { state: 'missing' } });
   const [error, setError] = useState('');
   const [readError, setReadError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [provider, setProvider] = useState<Provider>('google');
   const [setup, setSetup] = useState<{ connectionId?: string } | null>(null);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [consentUrl, setConsentUrl] = useState('');
   const popup = useRef<Window | null>(null);
-  const reload = useCallback(async (command?: Command) => {
-    const next = await update(command);
+  const reload = useCallback(async (from: Provider, command?: Command) => {
+    const next = await update(from, command);
     setReadError('');
     setView(next);
     return next.receipt;
   }, []);
   useEffect(() => {
     const load = () => {
-      void reload().catch((failure: unknown) => setReadError(String(failure)));
+      void reload(provider).catch((failure: unknown) => setReadError(String(failure)));
     };
     load();
     const timer = setInterval(load, view.attempt.state === 'pending' ? 1000 : 15000);
     return () => clearInterval(timer);
-  }, [reload, view.attempt.state]);
+  }, [reload, provider, view.attempt.state]);
+  const text = copy[provider];
   const act = async (command: Command) => {
     setBusy(true);
     setError('');
+    setProvider(command.provider);
     const window =
-      command.name === 'connections.google.connect'
-        ? globalThis.window.open('about:blank', '_blank')
-        : null;
+      command.action === 'connect' ? globalThis.window.open('about:blank', '_blank') : null;
     if (window) window.opener = null;
     try {
-      const receipt = await reload(command);
+      const receipt = await reload(command.provider, command);
       if (receipt?.reason === 'client_not_configured') {
         setSetup(command.input as { connectionId?: string });
       } else if (receipt?.state === 'failed' || receipt?.ok === false) {
-        setError(receipt.reason ?? t('connections.failed'));
+        setError(receipt.reason ?? t(copy[command.provider].failed));
       } else if (receipt?.authorizeUrl) {
         popup.current?.close();
         popup.current = window;
@@ -124,15 +153,25 @@ export function ConnectionsSettings() {
       title={t('connections.tabAccounts')}
       description={t('connections.description')}
       actions={
-        <Button disabled={busy} onClick={() => setSetup({})}>
-          {t('connections.connect')}
-        </Button>
+        <div class="flex flex-wrap gap-2">
+          {(['google', 'microsoft'] as const).map((next) => (
+            <Button
+              key={next}
+              disabled={busy}
+              onClick={() => {
+                setProvider(next);
+                setSetup({});
+              }}
+            >
+              {t(copy[next].connect)}
+            </Button>
+          ))}
+        </div>
       }
     >
       {failure && (
         <p role="alert" class="text-sm text-danger">
-          {t('connections.failed')}:{' '}
-          {failure === 'account_mismatch' ? t('connections.sameAccount') : failure}
+          {t(text.failed)}: {failure === 'account_mismatch' ? t(text.sameAccount) : failure}
         </p>
       )}
       {view.attempt.storage?.warning && (
@@ -140,7 +179,7 @@ export function ConnectionsSettings() {
       )}
       {view.attempt.state === 'pending' && (
         <p role="status" class="text-sm text-fg-soft">
-          {t('connections.pending')}
+          {t(text.pending)}
           {consentUrl && (
             <a
               class="ml-2 text-accent hover:underline"
@@ -148,7 +187,7 @@ export function ConnectionsSettings() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              {t('connections.continue')}
+              {t(text.continue)}
             </a>
           )}
         </p>
@@ -159,15 +198,16 @@ export function ConnectionsSettings() {
           onSubmit={(event) => {
             event.preventDefault();
             void act({
-              name: 'connections.google.connect',
+              provider,
+              action: 'connect',
               input: { ...setup, clientId, ...(clientSecret ? { clientSecret } : {}) },
             });
             setClientSecret('');
           }}
         >
-          <p class="text-sm text-fg-soft">{t('connections.setup')}</p>
+          <p class="text-sm text-fg-soft">{t(text.setup)}</p>
           <label class="block text-sm text-fg-soft">
-            {t('connections.clientId')}
+            {t(text.clientId)}
             <input
               class={FORM_CONTROL_CLASS}
               required
@@ -176,19 +216,21 @@ export function ConnectionsSettings() {
               onInput={(event) => setClientId(event.currentTarget.value)}
             />
           </label>
-          <label class="block text-sm text-fg-soft">
-            {t('connections.clientSecret')}
-            <input
-              class={FORM_CONTROL_CLASS}
-              type="password"
-              value={clientSecret}
-              autoComplete="off"
-              onInput={(event) => setClientSecret(event.currentTarget.value)}
-            />
-          </label>
+          {provider === 'google' && (
+            <label class="block text-sm text-fg-soft">
+              {t('connections.clientSecret')}
+              <input
+                class={FORM_CONTROL_CLASS}
+                type="password"
+                value={clientSecret}
+                autoComplete="off"
+                onInput={(event) => setClientSecret(event.currentTarget.value)}
+              />
+            </label>
+          )}
           <div class="flex gap-2">
             <Button type="submit" disabled={busy}>
-              {t('connections.continue')}
+              {t(text.continue)}
             </Button>
             <Button
               variant="ghost"
@@ -228,7 +270,8 @@ export function ConnectionsSettings() {
                   disabled={busy}
                   onClick={() =>
                     void act({
-                      name: `connections.google.${action}`,
+                      provider: account.provider,
+                      action,
                       input: { connectionId: account.id },
                     })
                   }
