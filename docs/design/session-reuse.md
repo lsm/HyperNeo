@@ -69,6 +69,20 @@ which free worker another todo may reuse (rule 2 below):
   as the coding pack's question does today (`neo/packs/coding/session-strategy.ts`).
   Until it is answered, `long_lived` applies and nothing is saved. When the human says
   they want to change it, Neo asks the same card again.
+- **The card says plainly what it asks.** Today a settings choice card is built by
+  `formatPreferenceChoice` (`neo/preference-proposal.ts`): a generic title ("Choose one of
+  these settings?"), one near-identical table per option, a "Keep current settings" option
+  even when nothing is set, and the declaration's own `ask` text unused. This PR changes
+  that function for every pack, not only this setting:
+  - the title is the declaration's question (`ask`);
+  - each option is one line: its label and a one-sentence description, a new
+    `valueDescriptions` field next to `valueLabels`; no tables;
+  - when nothing is saved, the last option is "Use the default for now (<label>)", and the
+    card says the work goes on with the default until it is answered; "Keep current
+    settings" stays only when a value is saved;
+  - it is written in the human's language. `proposalLocale` falls back to the machine
+    locale when no language is set, which produced an English card for a Chinese-speaking
+    human; it uses the human's configured reply language instead.
 - It applies in `reuseIdleWorker` (`drivers/work-operations.ts`) through the candidate
   filter of `chooseReusableWorker`. "Worked on this ask" reads `neo_todo_sessions` until
   PR 4, then `neo_todo_roles`.
@@ -179,6 +193,7 @@ Acceptance, one integration case per row:
 | a session with no start record | never released, archived or reclaimed by the daemon |
 | a non-coding todo started with role `check` | never the session that did it |
 | no `sessionReuse` saved, first reusable start in a project | one card asks; the work goes on as `long_lived` meanwhile |
+| that card | titled with the question, one line per option with its description, a "use the default for now" option, in the human's language, no tables |
 | `per_ask`, a free worker that only worked on another ask | not reused; a new worker starts |
 | `per_ask`, the ask's worker is busy | the todo waits for it |
 | `per_todo`, a free worker from another todo | not reused |
