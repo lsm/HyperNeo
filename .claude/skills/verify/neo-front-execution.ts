@@ -371,6 +371,11 @@ try {
     assert.equal(evidence.handoffAdmissionRefused, true);
     assert.deepEqual(evidence.handoffOutcome, { delivered: true, outcome: 'failed' });
     assert.equal(evidence.failedInputStatus, 'failed');
+    const asks = await invoke<{ ok: boolean; items: Array<{ requestId: string; messageStatus?: string; delivery?: { state: string } }> }>('neo.conversation.asks.read', { conversationId });
+    assert.equal(asks.ok, true);
+    const failedAsk = asks.items.find((item) => item.requestId === failedDeliveryId);
+    assert.equal(failedAsk?.messageStatus, 'failed');
+    assert.deepEqual(failedAsk?.delivery, { state: 'failed' });
     assert.equal(publications.list(conversationId)?.some((row) => row.replyTo?.includes(failedDeliveryId)), false);
     assert.equal((await invoke<{ ok: boolean }>('neo.front.set', { enabled: false })).ok, true);
     assert.equal((await publish('single-mode', [], 'Single-mode reply.')).accepted, true);
