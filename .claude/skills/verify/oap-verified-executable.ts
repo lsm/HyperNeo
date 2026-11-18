@@ -44,7 +44,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { syntheticHub: true };
 try {
-  client = await engine.getHub({ binaryPath, identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') }, stateDirectory, codexExecutable: process.execPath, codexHome: join(run, 'home') });
+  client = await engine.getHub(async () => ({ binaryPath, identity: { version: 'synthetic-1', sha256: createHash('sha256').update(script).digest('hex') }, stateDirectory, hub: { adapters: {}, environment: {} } }));
   assert(!existsSync(stale));
   evidence.staleSnapshotRemoved = true;
   assert.notEqual(readFileSync(binaryPath, 'utf8'), script);
