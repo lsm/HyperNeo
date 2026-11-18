@@ -46,6 +46,8 @@ try {
     await popup.getByRole('heading', { name: 'Fake Microsoft consent' }).waitFor();
     await page.getByRole('status').filter({ hasText: 'Finish signing in on Microsoft.' }).waitFor();
     if (capture) {
+      await page.reload();
+      await page.getByRole('status').filter({ hasText: 'Finish signing in on Microsoft.' }).waitFor();
       await shot('pending');
       await popup.screenshot({ path: `${run}/evidence/microsoft-settings-consent.png` });
     }

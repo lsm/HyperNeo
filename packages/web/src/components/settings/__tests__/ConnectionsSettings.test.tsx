@@ -106,6 +106,19 @@ it('connects Microsoft with only an application client ID and polls its own sign
   await waitFor(() => expect(invocations('connections.microsoft.login').length).toBeGreaterThan(0));
 });
 
+it('shows a pending Microsoft sign-in after the settings page reloads', async () => {
+  request.mockImplementation(async (_method, data: Invocation) => {
+    if (data.name === 'connections.list') return { connections: [] };
+    if (data.name === 'connections.microsoft.login') return { state: 'pending' };
+    if (data.name === 'connections.google.login') return { state: 'missing' };
+    throw new Error(`Unexpected operation ${data.name}`);
+  });
+  render(<MainContent />);
+  expect((await screen.findByRole('status')).textContent).toContain(
+    'Finish signing in on Microsoft.'
+  );
+});
+
 it('starts Microsoft with an empty client ID after switching from Google', async () => {
   render(<MainContent />);
   fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));

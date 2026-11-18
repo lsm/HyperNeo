@@ -23,7 +23,8 @@ connection operation.
 At Settings > Connections: capture the empty view with both Connect buttons, open
 Connect Google, enter a synthetic client ID, then switch to Microsoft and confirm
 its client ID is empty. Enter a synthetic Application (client) ID (no client secret
-field is shown) and capture the form. Capture the pending status and the fake
+field is shown) and capture the form. Reload during sign-in and confirm the
+Microsoft pending status remains visible. Capture the pending status and the fake
 consent page, approve, and observe the account, Connected and the Outlook mail
 and calendar access. Reconnect reuses the saved client ID without the form.
 Capture the mobile width, disconnect, reload and confirm the disabled account
