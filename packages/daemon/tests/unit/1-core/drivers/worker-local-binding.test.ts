@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   installClaudeNativeWrites,
+  prepareClaudeWorkEnvironment,
   readClaudeWorkerSandbox,
 } from '../../../../src/lib/drivers/claude-native-writes.ts';
 import {
@@ -69,6 +70,22 @@ test.each([false, true])(
 test('Codex named profile enables network access for local servers', () => {
   const policy = codexWorkerSandbox(root);
   expect(policy.config.permissions['hyperneo-worker'].network.enabled).toBe(true);
+});
+
+test('unsandboxed worker refresh clears a legacy evidence hint while preserving settings', async () => {
+  mkdirSync(join(root, '.claude'));
+  writeFileSync(
+    join(root, '.claude/settings.local.json'),
+    JSON.stringify({
+      env: { HYPERNEO_EVIDENCE: '/synthetic/old-evidence', CUSTOM_WORKER_VALUE: 'retain' },
+      customSetting: true,
+    })
+  );
+  const write = await prepareClaudeWorkEnvironment(root);
+  await write();
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
+  expect(settings().env.CUSTOM_WORKER_VALUE).toBe('retain');
+  expect(settings().customSetting).toBe(true);
 });
 
 test('installed Claude worker settings export the data-root work locations', async () => {
