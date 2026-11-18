@@ -398,12 +398,19 @@ describe('neo.message.send replyTo', () => {
       'Use the compact table everywhere',
     ]);
     choice('both', true);
-    await send(crypto.randomUUID(), 'one and two', { kind: 'question', id: 'both' });
+    await send(crypto.randomUUID(), 'first and second', { kind: 'question', id: 'both' });
     expect(store.getQuestion('both')?.answer).toEqual(['保留旧的列表布局，只调整间距', 'Cards']);
     choice('glued', true);
     await send(crypto.randomUUID(), '第二天出发', { kind: 'question', id: 'glued' });
     expect(store.getQuestion('glued')?.answer).toBe('第二天出发');
-    for (const [index, words] of ['1、3', 'A', '4', 'a bit of both'].entries()) {
+    for (const [index, words] of [
+      '1、3',
+      'A',
+      '4',
+      'no one',
+      'the one',
+      'a bit of both',
+    ].entries()) {
       choice(`raw${index}`, false);
       await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
       expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);

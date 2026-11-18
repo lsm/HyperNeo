@@ -22494,19 +22494,6 @@
                             ],
                             "type": "string"
                           },
-                          "labels": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "multiple": {
                             "type": "boolean"
                           },
@@ -22541,6 +22528,15 @@
                             },
                             "type": "array"
                           },
+                          "optionDetails": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
                           "optionLabels": {
                             "items": {
                               "type": "string"
@@ -22559,6 +22555,9 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "recommended": {
+                            "type": "string"
                           },
                           "replacedBy": {
                             "type": [
@@ -25027,19 +25026,6 @@
                           ],
                           "type": "string"
                         },
-                        "labels": {
-                          "anyOf": [
-                            {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
                         "multiple": {
                           "type": "boolean"
                         },
@@ -25074,6 +25060,15 @@
                           },
                           "type": "array"
                         },
+                        "optionDetails": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
                         "optionLabels": {
                           "items": {
                             "type": "string"
@@ -25092,6 +25087,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "recommended": {
+                          "type": "string"
                         },
                         "replacedBy": {
                           "type": [
@@ -32090,19 +32088,6 @@
                             ],
                             "type": "string"
                           },
-                          "labels": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "multiple": {
                             "type": "boolean"
                           },
@@ -32137,6 +32122,15 @@
                             },
                             "type": "array"
                           },
+                          "optionDetails": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
                           "optionLabels": {
                             "items": {
                               "type": "string"
@@ -32155,6 +32149,9 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "recommended": {
+                            "type": "string"
                           },
                           "replacedBy": {
                             "type": [
@@ -35744,19 +35741,6 @@
                     ],
                     "type": "string"
                   },
-                  "labels": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -35765,6 +35749,15 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "optionDetails": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   },
                   "options": {
                     "anyOf": [
@@ -35778,6 +35771,9 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "recommended": {
+                    "type": "string"
                   },
                   "replacedBy": {
                     "type": [
@@ -36107,6 +36103,18 @@
                     ],
                     "type": "object"
                   },
+                  "details": {
+                    "additionalProperties": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "description": "One short line shown under an option, keyed by that option's exact text.",
+                    "propertyNames": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
                   "document": {
                     "description": "Full detail shown apart from the short card text.",
                     "minLength": 1,
@@ -36124,15 +36132,6 @@
                     "const": "choice",
                     "type": "string"
                   },
-                  "labels": {
-                    "description": "One distinct uppercase letter A–F per option, when the text names approaches by letter. Defaults to A, B, C… in order.",
-                    "items": {
-                      "pattern": "^[A-F]$",
-                      "type": "string"
-                    },
-                    "maxItems": 6,
-                    "type": "array"
-                  },
                   "multiple": {
                     "default": false,
                     "type": "boolean"
@@ -36145,6 +36144,11 @@
                     "maxItems": 6,
                     "minItems": 1,
                     "type": "array"
+                  },
+                  "recommended": {
+                    "description": "The exact text of the option you recommend; the card tags it without selecting it.",
+                    "minLength": 1,
+                    "type": "string"
                   },
                   "replaces": {
                     "minLength": 1,
@@ -36713,19 +36717,6 @@
                     ],
                     "type": "string"
                   },
-                  "labels": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -36734,6 +36725,15 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "optionDetails": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   },
                   "options": {
                     "anyOf": [
@@ -36747,6 +36747,9 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "recommended": {
+                    "type": "string"
                   },
                   "replacedBy": {
                     "type": [
@@ -37710,19 +37713,6 @@
                     ],
                     "type": "string"
                   },
-                  "labels": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -37731,6 +37721,15 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "optionDetails": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   },
                   "options": {
                     "anyOf": [
@@ -37744,6 +37743,9 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "recommended": {
+                    "type": "string"
                   },
                   "replacedBy": {
                     "type": [
@@ -38184,19 +38186,6 @@
                     ],
                     "type": "string"
                   },
-                  "labels": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "multiple": {
                     "type": "boolean"
                   },
@@ -38205,6 +38194,15 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "optionDetails": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   },
                   "options": {
                     "anyOf": [
@@ -38218,6 +38216,9 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "recommended": {
+                    "type": "string"
                   },
                   "replacedBy": {
                     "type": [
@@ -40331,19 +40332,6 @@
                             ],
                             "type": "string"
                           },
-                          "labels": {
-                            "anyOf": [
-                              {
-                                "items": {
-                                  "type": "string"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
                           "multiple": {
                             "type": "boolean"
                           },
@@ -40378,6 +40366,15 @@
                             },
                             "type": "array"
                           },
+                          "optionDetails": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
                           "optionLabels": {
                             "items": {
                               "type": "string"
@@ -40396,6 +40393,9 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "recommended": {
+                            "type": "string"
                           },
                           "replacedBy": {
                             "type": [

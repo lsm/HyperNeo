@@ -148,11 +148,11 @@ export function neoLabelledOptions(options: readonly string[], picked: readonly 
 const ZH_DIGITS = '一二三四五六';
 const EN_ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
 const EN_WORDS = ['one', 'two', 'three', 'four', 'five', 'six'];
-const NUMBER = `(?:[1-6]|[${ZH_DIGITS}]|${EN_ORDINALS.join('|')}|${EN_WORDS.join('|')})`;
+const NUMBER = `(?:[1-6]|[${ZH_DIGITS}]|${EN_ORDINALS.join('|')})`;
 const ONE_PICK = `(?:第\\s*)?${NUMBER}(?:\\s*(?:号|个|项|条))?`;
 const JOIN = '\\s*(?:[,，、&和与跟]|and)\\s*|\\s+';
 const NUMBER_REPLY = new RegExp(
-  `^(?:我?选(?:择|项)?|option|choice|pick|number|no\\.?|#|the)?\\s*(${ONE_PICK}(?:(?:${JOIN})${ONE_PICK})*)\\s*(?:吧|好了)?\\s*[.。!！]?$`,
+  `^(?:我?选(?:择|项)?|option|choice|pick|number|#|the)?\\s*(${ONE_PICK}(?:(?:${JOIN})${ONE_PICK})*)\\s*(?:吧|好了)?\\s*[.。!！]?$`,
   'i'
 );
 
@@ -165,9 +165,7 @@ function optionNumber(word: string): number | undefined {
   const zh = ZH_DIGITS.indexOf(bare);
   if (zh >= 0) return zh + 1;
   const ordinal = EN_ORDINALS.indexOf(bare);
-  if (ordinal >= 0) return ordinal + 1;
-  const plain = EN_WORDS.indexOf(bare);
-  return plain >= 0 ? plain + 1 : undefined;
+  return ordinal >= 0 ? ordinal + 1 : undefined;
 }
 
 export function neoChoiceByNumber(
@@ -176,7 +174,11 @@ export function neoChoiceByNumber(
 ): string[] | null {
   const said = words
     .trim()
-    .replace(new RegExp(`\\b(${EN_ORDINALS.join('|')})\\s+one\\b`, 'gi'), '$1');
+    .replace(new RegExp(`\\b(${EN_ORDINALS.join('|')})\\s+one\\b`, 'gi'), '$1')
+    .replace(
+      new RegExp(`\\b(option|choice|number)\\s+(${EN_WORDS.join('|')})\\b`, 'gi'),
+      (_, lead, word) => `${lead} ${EN_WORDS.indexOf(word.toLowerCase()) + 1}`
+    );
   const list = said.match(NUMBER_REPLY)?.[1];
   if (question?.kind !== 'choice' || !question.options || !list) return null;
   const parts = list.match(new RegExp(ONE_PICK, 'gi')) ?? [];
