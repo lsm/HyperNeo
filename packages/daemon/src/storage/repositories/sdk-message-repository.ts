@@ -953,6 +953,13 @@ export class SDKMessageRepository {
     }
   }
 
+  updateAuthStatusMessage(
+    sessionId: string,
+    message: Extract<SDKMessage, { type: 'auth_status' }>
+  ): boolean {
+    return this.updateMessageByUuid(sessionId, message.uuid, message);
+  }
+
   private saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string } {
     const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
     const stampInternalCompactionTurn =
@@ -2731,31 +2738,40 @@ export class SDKMessageRepository {
     messageUuid: string,
     updated: HyperNeoActionMessage
   ): void {
+    this.updateMessageByUuid(sessionId, messageUuid, updated);
+  }
+
+  private updateMessageByUuid(
+    sessionId: string,
+    messageUuid: string,
+    updated: HyperNeoActionMessage | Extract<SDKMessage, { type: 'auth_status' }>
+  ): boolean {
     const derived = this.derivedColumns(updated);
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
        WHERE session_id = ?
-         AND message_type = 'hyperneo_action'
+         AND message_type = ?
          AND sdk_uuid = ?`
       )
-      .get(sessionId, messageUuid) as { id: string } | undefined;
+      .get(sessionId, updated.type, messageUuid) as { id: string } | undefined;
     const stmt = this.db.prepare(
       `UPDATE sdk_messages SET ${derived.update.slice(2)}
        WHERE session_id = ?
-         AND message_type = 'hyperneo_action'
+         AND message_type = ?
          AND sdk_uuid = ?`
     );
     const result = writeSdkMessageBody(
       this.db,
-      () => stmt.run(...derived.values, sessionId, messageUuid),
-      "session_id = ? AND sdk_uuid = ? AND message_type = 'hyperneo_action'",
-      [sessionId, messageUuid],
+      () => stmt.run(...derived.values, sessionId, updated.type, messageUuid),
+      'session_id = ? AND sdk_uuid = ? AND message_type = ?',
+      [sessionId, messageUuid, updated.type],
       '?',
       [JSON.stringify(updated)]
     );
     if (row) this.scheduleMessageSearchIndex(row.id);
     if (result.changes > 0) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    return result.changes === 1;
   }
 
   searchMessages(params: MessageSearchParams): MessageSearchResponse {
