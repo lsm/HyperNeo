@@ -194,6 +194,7 @@ describe('neo.ask.open repo', () => {
       runMigrations(db, () => {});
       createTables(db);
       const store = new NeoAskTodoRepository(db);
+      historicalAsk(store, 'neo', 'Repository worker');
       const packs = createTodoCheckPacks(db);
       const open = createNeoAskRecordOperations(
         store,
