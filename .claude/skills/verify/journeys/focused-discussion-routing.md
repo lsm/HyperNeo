@@ -38,3 +38,6 @@ acceptance test. The prompt always offers the multi-provider HyperNeo session
 alongside available Claude Code in Desktop or Codex Desktop, uses the human's
 preference and leaves ordinary bounded delegation intact. No new operation,
 schema, persistent ask link (#8410) or outcome integration (#8411) is added.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

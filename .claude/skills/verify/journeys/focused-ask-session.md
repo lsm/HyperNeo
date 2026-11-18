@@ -49,3 +49,6 @@ then verify the todo opener enters the session and Back restores the same card.
 Await asynchronous delivery-input fixture writes before using the dispatch ID;
 an unawaited ID is a Promise that cannot cross the DB-worker boundary and fails
 before the browser surface is reached.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

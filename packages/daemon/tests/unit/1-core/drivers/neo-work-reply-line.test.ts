@@ -50,10 +50,12 @@ function harness(adapter: string) {
       adapters: () => [backend],
       daemonName: 'laptop',
       remote: { list: () => [], invoke: async () => ({}) },
+      noticeReply: () => true,
+      acceptedTodo: () => true,
     })
   );
   const call = async (name: string, input: object, caller = neo) => {
-    const request = name === 'work.start' ? input : { notice: true, ...input };
+    const request = name === 'work.start' || 'todoId' in input ? input : { notice: true, ...input };
     const result = await invokeOperation(registry, name, request, caller);
     expect(result.kind).toBe('completed');
     if (result.kind === 'completed') expect(result.value).toMatchObject({ ok: true });
@@ -124,7 +126,15 @@ describe('Neo external worker reply instructions', () => {
         { source: 'rpc' as const },
         { source: 'mcp' as const, sessionId: 'neo:spoofed', role: 'workflow_worker' as const },
       ])
-        await call('work.send', { ref: { adapter, id: 'worker' }, message: 'Same text.' }, caller);
+        await call(
+          'work.send',
+          {
+            ref: { adapter, id: 'worker' },
+            message: 'Same text.',
+            ...(caller.source === 'mcp' ? { todoId: '10000000-0000-4000-8000-000000000001' } : {}),
+          },
+          caller
+        );
       if (!['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter))
         await call('work.send', { ref: { adapter, id: 'worker' }, message: 'Same text.' });
       expect(received.every((message) => message === 'Same text.')).toBe(true);

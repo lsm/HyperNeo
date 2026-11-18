@@ -1029,6 +1029,8 @@ describe('codex-desktop adapter status and send', () => {
         adapters: () => [driver],
         daemonName: 'test',
         isOpenTodo: (todoId) => todoId === 'open-todo',
+        acceptedTodo: () => true,
+        noticeReply: () => true,
         remote: { list: () => [], invoke: async () => ({}) },
       })
     );

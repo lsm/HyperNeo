@@ -870,7 +870,11 @@ export function createNeoOperations(
       () => service.installedPacks(),
       (id) => new SessionGoalRepository(service.db.getDatabase()).get(id),
       (todos) => service.todoWorkers(todos),
-      { gateway: mutationGateway, changed: () => service.notifyChanged() }
+      {
+        gateway: mutationGateway,
+        changed: () => service.notifyChanged(),
+        language: () => service.db.getGlobalSettings().language,
+      }
     ),
     ...createNeoQuestionOperations(
       service.todos,

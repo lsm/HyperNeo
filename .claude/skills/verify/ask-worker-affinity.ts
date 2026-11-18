@@ -1,3 +1,4 @@
+import { acceptProposalFixture } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -44,7 +45,8 @@ try {
   const world = packWorkerStartFixture(db, {
     invoke: (name, input) => invokeOperation(registry, name, input, { source: 'internal', role: 'neo', sessionId: 'fixture-neo' }),
   });
-  const open = async () => { await world.open(); return world.store.listOpenAsks()[0].id; };
+  let askNumber = 0;
+  const open = async () => { const result = await world.invoke('neo.ask.open', { title: `Synthetic matter ${askNumber++}`, request: 'Track tasks', todos: [] }); const askId = result.ask.id; acceptProposalFixture(world.store, askId); return askId; };
   const bind = async (askId: string, id: string, at: number) => {
     const result = await world.invoke('neo.todo.add', { after: [], askId, ...world.draft(id), instruction: null, target: undefined });
     world.bind(result.todo.id, id);

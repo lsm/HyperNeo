@@ -32,3 +32,16 @@ End state, from `evidence/work-start-reuse.json`:
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.
 - `neoBuildBesideFreeHumanReviewer.gotReviewer` is false: the free human-opened
   session is never reused, so the build gets a new session and the count grows by one.
+
+`evidence/session-reuse-dispatch.json` additionally records a fresh session under
+`per_todo` and a doing todo returning to the queue when its ask's workers are busy
+under `per_ask`.
+When an already-bound todo cannot be queued on a busy worker, it starts a
+fresh session instead of reporting a wait that was never recorded.
+The helper also forwards a start through the destination's real RPC door while
+an unrelated worker is idle. The forwarded start creates a fresh session. Remote
+`per_ask` waiting is not implemented by this route.
+Starts with no todo or a todo owned by another Neo also start fresh when the
+daemon cannot determine which matter's reuse setting applies.
+If opening the reuse question fails, work still starts using the default and Neo
+receives a note about the missing card.

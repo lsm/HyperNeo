@@ -40,3 +40,6 @@ public card reader and migrated SQLite/audit repositories. No listener,
 provider, worker or network is used. It proves the data consumed by web/mobile
 readers, not native iOS rendering or browser layout.
 The mark-done-settle journey separately covers the human menu and stop errors.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

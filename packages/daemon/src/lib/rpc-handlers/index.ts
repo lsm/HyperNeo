@@ -463,6 +463,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...familyContext,
     startupTasks,
     workCleanupAttention: (event) => neoService.attention(event, Date.now()),
+    neoAttention: (event) => neoService.attention(event, Date.now()),
     workerNameSource: (read) => {
       neoService.workerNames = read;
     },

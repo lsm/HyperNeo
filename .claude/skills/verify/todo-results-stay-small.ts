@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -35,6 +36,7 @@ try {
   };
   db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic todo size proof', '/tmp', '2026-11-13T00:00:00Z', '2026-11-13T00:00:00Z', 'active', '{}', '{}')").run(sender);
   new NeoRepository(db).reserveBinding({ sessionId: sender, kind: 'neo', projectId: null });
+  seedHistoricalAsk(store, sender, { title: 'Synthetic eleven-step ask', request: 'Measure todo result sizes' });
   const opened = await agent('neo.ask.open', {
     title: 'Synthetic eleven-step ask',
     request: 'Measure todo result sizes',
@@ -46,7 +48,7 @@ try {
   const held = await agent('neo.todo.hold', { todoId: ids[0], reason: 'Synthetic wait' });
   const edited = await agent('neo.todo.edit', { todoId: ids[1], title: 'Step 1 renamed' });
   const others = (result: unknown, own: number) => ids.filter((_, n) => n !== own && JSON.stringify(result).includes(`Instruction ${n}:`));
-  assert.equal(held.todo.id, ids[0]); assert.equal(held.todo.state, 'blocked'); assert(!('todos' in held));
+  assert.equal(held.todo.id, ids[0]); assert(held.records.some((record: string) => record.startsWith('held:'))); assert(!('todos' in held));
   assert.deepEqual(others(held, 0), []);
   assert.equal(edited.todo.title, 'Step 1 renamed'); assert(!('todos' in edited));
   assert.deepEqual(others(edited, 1), []);

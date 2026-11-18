@@ -53,6 +53,10 @@ export class NeoSessionMessageRepository {
     );
   }
 
+  sentTo(sender: string, recipient: string): boolean {
+    return !!this.select('WHERE from_session=? AND to_session=? LIMIT 1').get(sender, recipient);
+  }
+
   record(message: NeoSessionMessageDraft): Promise<void> {
     return gatewayFor(this.db).run(recordNeoSessionMessage, message);
   }

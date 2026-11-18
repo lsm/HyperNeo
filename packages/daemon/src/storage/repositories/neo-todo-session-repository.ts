@@ -1,6 +1,7 @@
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { NeoStepRead } from '../../lib/neo/attention/sweep.ts';
 import { neoTodoWithoutFollowUp } from '../../lib/neo/todo-follow-up.ts';
+import { hasPendingTodoDecision } from '../../lib/neo/proposal.ts';
 import { neoTodoWaitReason } from '../../lib/neo/todo-start-gate.ts';
 import { neoTodoCovered } from '../../lib/neo/todo-state.ts';
 import { NeoTurnReportReceipts } from '../../lib/neo/turn-report-receipts.ts';
@@ -169,6 +170,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
     if (!todo || store.getAsk(todo.askId)?.status !== 'open') return;
+    if (hasPendingTodoDecision(store.listQuestions(todo.askId), todo.id)) return;
     this.recordStartedAt(todoId, 'queued' in delivered ? null : (delivered.startedAt ?? null));
     this.recordSent(todoId, sent);
     const prior = this.readNudge(todoId);
@@ -553,14 +555,28 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
-  queueOn(todoId: string, ref: WorkRef, message: string): 'message' | 'instruction' | 'none' {
+  queueOn(
+    todoId: string,
+    ref: WorkRef,
+    message: string,
+    options?: { requeueDoing: boolean }
+  ): 'message' | 'instruction' | 'none' {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
-    if (todo?.state !== 'todo' || todo.startedAt !== null) return 'none';
+    if (
+      !todo ||
+      !(
+        (todo.state === 'todo' && todo.startedAt === null) ||
+        (options?.requeueDoing && todo.state === 'doing' && !this.readRef(todoId))
+      )
+    )
+      return 'none';
     this.db
       .prepare(`INSERT INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)
         ON CONFLICT(todo_id) DO UPDATE SET target = excluded.target`)
       .run(todoId, JSON.stringify({ verb: 'send', ref }));
+    if (todo.state === 'doing')
+      store.updateTodo(todo, { state: 'todo', startedAt: null }, Date.now());
     if (todo.instruction) return 'instruction';
     store.updateTodo(todo, { instruction: message }, Date.now());
     return 'message';

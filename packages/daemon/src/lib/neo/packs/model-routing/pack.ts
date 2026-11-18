@@ -38,7 +38,9 @@ const listPreference = (
   value: readonly unknown[] = []
 ): NeoPackPreferenceDeclaration => ({
   label: { en, 'zh-Hans': zh },
+  question: { en, 'zh-Hans': zh },
   valueLabels: {},
+  valueDescriptions: {},
   scope: 'global',
   type: { kind },
   default: value,

@@ -131,6 +131,13 @@ its viewport and clipboard permissions. Reuse the state across sibling checkers;
 the pairing code is single-use. Only use the fresh isolated fixture's fields.
 Never reuse a human profile or the live daemon's credential for browser proofs.
 
+## Accepted ask fixtures
+
+For journeys that exercise unrelated behavior on historical work, the
+`accepted-ask-fixtures.ts` helper seeds a historical ask or records a synthetic
+approval. These are setup only. Use `journeys/new-work-source.md` to verify the
+actual Neo MCP and human RPC approval path.
+
 ## In-process RPC proofs
 
 On macOS, run `bash .claude/skills/verify/resource-check.sh` before every heavy

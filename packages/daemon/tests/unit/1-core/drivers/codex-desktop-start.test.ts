@@ -44,7 +44,6 @@ const threadAccess = {
     shell_environment_policy: {
       set: {
         HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
-        HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
         HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
       },
     },
@@ -987,7 +986,6 @@ describe('codex-desktop start', () => {
         shell_environment_policy: {
           set: {
             HYPERNEO_WORKTREES: expect.stringMatching(/worktrees$/),
-            HYPERNEO_EVIDENCE: expect.stringContaining('/work/evidence/'),
             HYPERNEO_BUILDS: expect.stringContaining('/work/builds/'),
           },
         },

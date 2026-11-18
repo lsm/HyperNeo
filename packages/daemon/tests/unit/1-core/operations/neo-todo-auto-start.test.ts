@@ -99,6 +99,23 @@ function setup(
   ];
   const invoke = async (name: string, input: unknown) => {
     const op = operations.find((candidate) => candidate.name === name)!;
+    const draft = input as { title?: string; request?: string; todos?: unknown[] };
+    if (
+      name === 'neo.ask.open' &&
+      draft.todos?.length &&
+      draft.title &&
+      draft.request &&
+      !store.findAsk(caller.sessionId!, null, draft.title)
+    )
+      store.openAsk({
+        id: crypto.randomUUID(),
+        projectId: null,
+        sessionId: caller.sessionId!,
+        originMessageId: null,
+        title: draft.title,
+        request: draft.request,
+        createdAt: 1,
+      });
     return (await op.execute(op.inputSchema.parse(input), caller)) as {
       ok: boolean;
       reason?: string;

@@ -43,3 +43,6 @@ authorizes a merge. The default executor remains owner and missing review
 settings are explicit. Notification reads use the existing DB gateway; the
 synchronous worker hook reads through the same repository policy reader.
 Browser layout, real GitHub decisions and deployed behaviour are unverified.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

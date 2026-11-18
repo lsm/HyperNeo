@@ -11,3 +11,6 @@
    SKILL.md's proof wrapper. A two-repository `neo.ask.open` must return one open
    ask with both todos. Its public reader must preserve that result after database
    reopen, while historical child cards remain readable as independent cards.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.
