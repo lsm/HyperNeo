@@ -47,7 +47,7 @@ def finish_login():
  emit({'method':'account/login/completed','params':{'loginId':'synthetic-login','success':True,'error':None}})
 for line in sys.stdin:
  request=json.loads(line)
- with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'request':request})+'\\n')
+ with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'pid':os.getpid(),'request':request})+'\\n')
  method=request.get('method')
  if 'id' not in request or not method: continue
  if method=='account/login/start' and ${mode === 'login-start-failure' ? 'True' : 'False'}:
@@ -93,6 +93,7 @@ for line in sys.stdin:
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
   emit({'method':'turn/completed','params':{'threadId':request['params']['threadId'],'turn':{'id':request['params']['turnId'],'status':'interrupted'}}})
+open(os.path.join(os.environ['CODEX_HOME'],'closed-'+str(os.getpid())),'w').close()
 `);
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
@@ -108,7 +109,7 @@ let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
 const evidence: Record<string, unknown> = { synthetic: true, mode, binaryVersion: version, binarySha256: sha256 };
 const calls = () => existsSync(join(run, 'codex-home/calls.jsonl'))
-  ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
+  ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; pid: number; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
   : [];
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 20000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -226,6 +227,11 @@ try {
     assert.equal(calls().filter((call) => call.request.method === 'account/read').length, 2);
     assert.equal(calls().filter((call) => call.request.method === 'account/login/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
+    const owner = calls().find((call) => call.request.method === 'account/login/start')!.pid;
+    const joining = calls().find((call) => call.request.method === 'account/read' && call.pid !== owner);
+    assert(joining);
+    await waitFor(() => existsSync(join(run, `codex-home/closed-${joining.pid}`)), 'joining app-server closes while login is pending');
+    assert(!existsSync(join(run, `codex-home/closed-${owner}`)));
     writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating), 'device sign-in completion');
     await waitFor(() => calls().filter((call) => call.request.method === 'thread/start').length === 2, 'both threads open after sign-in');
