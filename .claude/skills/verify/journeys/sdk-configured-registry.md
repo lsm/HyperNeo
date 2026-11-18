@@ -13,7 +13,8 @@ Pass `npm-failure` as the fifth argument to make npm fail. The daemon must
 report its exit code without logging stderr or invoking pnpm or curl.
 
 Pass `pnpm-failure` as the fifth argument to serve the local tarball after a
-fake pnpm fails. The daemon must report the SDK ready through fake curl.
+fake pnpm fails. An unspawnable npm fixture and isolated PATH prevent real npm
+from running. The daemon must report the SDK ready through fake curl.
 
 Pass `mirror-failure` as the fifth argument to make fake curl fail against a
 pnpm mirror. The daemon must report the mirror host in the failure.

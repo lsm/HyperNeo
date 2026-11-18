@@ -40,7 +40,8 @@ SCRIPT
   chmod +x "$RUN/bin/pnpm"
 fi
 if [[ "$MODE" == mirror-failure ]]; then
-  rm "$RUN/bin/npm"
+  printf '#!/nonexistent/hyperneo-fixture-npm\n' > "$RUN/bin/npm"
+  chmod +x "$RUN/bin/npm"
   cat > "$RUN/bin/pnpm" <<'SCRIPT'
 #!/bin/sh
 printf 'https://mirror.example.test\n'
@@ -51,7 +52,8 @@ exit 7
 SCRIPT
   chmod +x "$RUN/bin/pnpm"
 elif [[ "$MODE" == pnpm-failure ]]; then
-  rm "$RUN/bin/npm"
+  printf '#!/nonexistent/hyperneo-fixture-npm\n' > "$RUN/bin/npm"
+  chmod +x "$RUN/bin/npm"
   INTEGRITY=$(openssl dgst -sha512 -binary "$RUN/fixture.tgz" | openssl base64 -A)
   cat > "$RUN/bin/pnpm" <<SCRIPT
 #!/bin/sh

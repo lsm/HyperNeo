@@ -12,14 +12,20 @@ done
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
 cat > "$RUN/bin/curl" <<'CURL'
 #!/bin/sh
-echo call >> "$HYPERNEO_DATA_DIR/curl.log"
-if [ "$DOWNLOAD_FIXTURE" = html ]; then printf '<html>blocked</html>'; exit 0; fi
-if [ "$DOWNLOAD_FIXTURE" = slow ]; then /bin/sleep 50; fi
-echo 'curl: connection failed' >&2
-exit 7
+printf 'curl\n' >> "$HYPERNEO_DATA_DIR/download.log"
+printf '<html>blocked</html>'
 CURL
 chmod +x "$RUN/bin/curl"
-clean=(env -i HOME="$RUN/home" PATH="$RUN/bin:/usr/bin:/bin:/usr/sbin" TMPDIR="$RUN" NODE_ENV=test)
+if [[ "$MODE" != html ]]; then
+  cat > "$RUN/bin/npm" <<'NPM'
+#!/bin/sh
+printf 'npm\n' >> "$HYPERNEO_DATA_DIR/download.log"
+if [ "$DOWNLOAD_FIXTURE" = slow ]; then /bin/sleep 50; fi
+exit 7
+NPM
+  chmod +x "$RUN/bin/npm"
+fi
+clean=(env -i HOME="$RUN/home" PATH="$RUN/bin" TMPDIR="$RUN" NODE_ENV=test)
 "${clean[@]}" "$(command -v bun)" .claude/skills/verify/neo-model-settings-mock.ts "$MOCK" > "$RUN/mock.log" 2>&1 &
 MOCK_PID=$!
 "${clean[@]}" DOWNLOAD_FIXTURE="$MODE" HYPERNEO_DATA_DIR="$RUN/data" ANTHROPIC_BASE_URL="http://127.0.0.1:$MOCK" "$BIN" --port "$PORT" --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
@@ -43,12 +49,17 @@ bun -e 'const r=JSON.parse(await Bun.file(process.argv[1]).text()).reply; const 
 if [[ "$MODE" = slow ]]; then
   bun -e 'const e=JSON.parse(await Bun.file(process.argv[1]).text()).reply.error; if(e.message!=="Claude Code is still downloading. Try again shortly.") process.exit(1); console.log("slow_download=still_running");' "$RUN/evidence/state.json"
 fi
-before=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
+before=$(wc -l < "$RUN/data/download.log" | tr -d ' ')
 rpc daemon.retryClaudeDownload '{}' > "$RUN/evidence/retry.json"
-after=$(wc -l < "$RUN/data/curl.log" | tr -d ' ')
+after=$(wc -l < "$RUN/data/download.log" | tr -d ' ')
 rpc rpc:message.sdkMessages "{\"sessionId\":\"$SESSION\",\"limit\":200}" > "$RUN/evidence/messages-after.json"
 bun -e 'const a=JSON.parse(await Bun.file(process.argv[1]).text()).reply.sdkMessages; const b=JSON.parse(await Bun.file(process.argv[2]).text()).reply.sdkMessages; if(JSON.stringify(a)!==JSON.stringify(b)) process.exit(1); console.log(`messages_before=${a.length} messages_after=${b.length}`)' "$RUN/evidence/messages.json" "$RUN/evidence/messages-after.json"
 cp "$RUN/daemon.log" "$RUN/evidence/daemon.log"
+if [[ "$MODE" = html ]]; then
+  [[ $(/usr/bin/grep -vc '^curl$' "$RUN/data/download.log" || true) -eq 0 ]]
+else
+  [[ $(/usr/bin/grep -vc '^npm$' "$RUN/data/download.log" || true) -eq 0 ]]
+fi
 printf 'download_attempts_before=%s after=%s\n' "$before" "$after"
 if [[ "$MODE" = slow ]]; then
   [[ "$after" -eq "$before" ]]
