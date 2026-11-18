@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { inferWorkerOwnership } from '../../../../src/lib/neo/worker-ownership-backfill.ts';
 
 describe('inferWorkerOwnership', () => {
-  test('lists unreleased legacy starts with evidence and excludes protected sessions', async () => {
-    const path = '../../../../src/lib/neo/worker-ownership-backfill.ts';
-    const { inferWorkerOwnership } = await import(path);
+  test('lists unreleased legacy starts with evidence and excludes protected sessions', () => {
     const rows = [
       'created',
       'reused',
