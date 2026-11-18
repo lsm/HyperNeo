@@ -63,7 +63,10 @@ import {
   codingBranchReads,
   codingBranchWrites,
 } from '../../lib/neo/packs/coding/branch-facts-db.ts';
-import { neoProjectForgetWrites } from '../repositories/neo-project-forget-writes.ts';
+import {
+  neoProjectForgetWrites,
+  projectSessionPathsReads,
+} from '../repositories/neo-project-forget-writes.ts';
 import { jobEnqueueWrites } from '../repositories/job-enqueue-writes.ts';
 import { neoProjectCleanupWrites } from '../repositories/neo-project-cleanup-writes.ts';
 import { toolDefaultTransitions } from '../repositories/tool-default-transition.ts';
@@ -264,6 +267,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingBranchReads,
     codingBranchWrites,
     neoProjectForgetWrites,
+    projectSessionPathsReads,
     neoProjectCleanupWrites,
     reserveNeoHomeProjects,
     neoTodoSessionReads,

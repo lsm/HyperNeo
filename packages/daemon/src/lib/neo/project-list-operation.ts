@@ -4,7 +4,10 @@ import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { defineOperation } from '../operations/registry.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
-type ListRepo = Pick<NeoRepository, 'listProjects' | 'projectMerges' | 'sessionWorkspacePaths'>;
+type ListRepo = Pick<
+  NeoRepository,
+  'listProjects' | 'projectMerges' | 'sessionWorkspacePathsAsync'
+>;
 type LocalFolder = { projectId: string; folder: string };
 
 const ListedProject = z.object({
@@ -42,8 +45,8 @@ const runNeoProjectList = (superpipe({})('neo.projects.list') as PipelineAPI)
     'folders'
   )
   .pipe(
-    (repo: ListRepo, folders: readonly LocalFolder[]) => {
-      const paths = repo.sessionWorkspacePaths();
+    async (repo: ListRepo, folders: readonly LocalFolder[]) => {
+      const paths = await repo.sessionWorkspacePathsAsync();
       return new Set(
         folders.filter((entry) => paths.has(entry.folder)).map((entry) => entry.projectId)
       );
@@ -52,7 +55,7 @@ const runNeoProjectList = (superpipe({})('neo.projects.list') as PipelineAPI)
     'busy'
   )
   .pipe(listNeoProjects, ['projects', 'folders', 'busy'], 'listed')
-  .end('listed') as (repo: ListRepo, machine: string) => Listed;
+  .endAsync('listed') as (repo: ListRepo, machine: string) => Promise<Listed>;
 
 export function createNeoProjectListOperation(repo: ListRepo, machine: () => string) {
   return defineOperation({

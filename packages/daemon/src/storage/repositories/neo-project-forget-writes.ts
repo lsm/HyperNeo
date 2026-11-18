@@ -4,6 +4,7 @@ import { unwatchCodingRepos } from '../../lib/neo/packs/coding/watched-repos.ts'
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoRepository } from './neo-repository.ts';
+import { SessionRepository } from './session-repository.ts';
 
 class NeoProjectForgetCommands {
   constructor(private readonly db: Database) {}
@@ -25,4 +26,18 @@ export const neoProjectForgetWrites = defineRepositoryOp(
   'write',
   NeoProjectForgetCommands,
   ['forget']
+);
+
+class ProjectSessionPathsReader {
+  constructor(private readonly db: Database) {}
+  list() {
+    return new SessionRepository(this.db).listSessions({ workspacePaths: true });
+  }
+}
+
+export const projectSessionPathsReads = defineRepositoryOp(
+  'neo.project.session-paths',
+  'read',
+  ProjectSessionPathsReader,
+  ['list']
 );

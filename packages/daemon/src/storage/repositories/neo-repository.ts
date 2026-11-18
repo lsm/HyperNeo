@@ -2,7 +2,7 @@ import { frontSessionId } from '../../lib/neo/front-mode.ts';
 import type { NeoProjectSaveRequest } from '../../lib/neo/project-save.ts';
 import { neoProjectMoveWrites } from './neo-project-move-writes.ts';
 import type { OperationCaller } from '../../lib/operations/registry.ts';
-import { neoProjectForgetWrites } from './neo-project-forget-writes.ts';
+import { neoProjectForgetWrites, projectSessionPathsReads } from './neo-project-forget-writes.ts';
 import { neoProjectCleanupWrites } from './neo-project-cleanup-writes.ts';
 import type { NeoProjectCleanup } from '../../lib/neo/project-cleanup.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
@@ -15,6 +15,8 @@ import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { reserveNeoConversation } from './neo-conversation-reservation.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
+import { WorkspaceHistoryRepository } from './workspace-history-repository.ts';
+import { SessionRepository } from './session-repository.ts';
 
 const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,
   created_at AS createdAt, updated_at AS updatedAt`;
@@ -36,12 +38,19 @@ export class NeoRepository {
       .all() as NeoProject[];
   }
 
+  async sessionWorkspacePathsAsync(): Promise<Set<string>> {
+    const rows = await gatewayFor(this.db).call(projectSessionPathsReads, 'list');
+    return new Set(
+      rows.flatMap((row) =>
+        [row.workspace, row.main, row.execution].filter(
+          (path): path is string => typeof path === 'string'
+        )
+      )
+    );
+  }
+
   sessionWorkspacePaths(): Set<string> {
-    const rows = this.db
-      .prepare(`SELECT workspace_path AS workspace, main_repo_path AS main,
-      CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.executionProjectPath') END AS execution
-      FROM sessions`)
-      .all() as { workspace: string | null; main: string | null; execution: string | null }[];
+    const rows = new SessionRepository(this.db).listSessions({ workspacePaths: true });
     return new Set(
       rows.flatMap((row) =>
         [row.workspace, row.main, row.execution].filter(
@@ -55,10 +64,8 @@ export class NeoRepository {
     const folders = this.projectMerges
       .localFolders(machine)
       .filter((entry) => entry.projectId === projectId);
-    const find =
-      this.db.prepare(`SELECT 1 FROM sessions WHERE workspace_path = ?1 OR main_repo_path = ?1
-      OR (json_valid(metadata) AND json_extract(metadata, '$.executionProjectPath') = ?1) LIMIT 1`);
-    return folders.some(({ folder }) => !!find.get(folder));
+    const paths = this.sessionWorkspacePaths();
+    return folders.some(({ folder }) => paths.has(folder));
   }
 
   projectCleanupFacts(): NeoProjectFacts[] {
@@ -135,10 +142,8 @@ export class NeoRepository {
         const folders = this.projectMerges
           .localFolders(hostname())
           .filter((entry) => entry.projectId === projectId);
-        const remove = this.db.prepare(
-          'DELETE FROM workspace_history WHERE path = ? AND NOT EXISTS (SELECT 1 FROM workspace_project_folders WHERE path = ?)'
-        );
-        for (const { folder } of folders) remove.run(folder, folder);
+        const history = new WorkspaceHistoryRepository(this.db);
+        for (const { folder } of folders) history.remove(folder, true);
       }
       this.db.prepare('UPDATE neo_asks SET project_id = NULL WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
