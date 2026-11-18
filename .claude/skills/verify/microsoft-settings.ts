@@ -8,6 +8,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createHttpWsServer } from '../../../packages/daemon/src/lib/runtime-server/index.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { DatabaseCredentialStore } from '../../../packages/daemon/src/lib/credentials/credential-store.ts';
+import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -50,13 +51,22 @@ try {
   const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
   server = await createHttpWsServer({ hostname: '127.0.0.1', port, websocket: createWebSocketHandlers(app.transport, app.sessionManager), fetch: async (request, upgrade, client) => {
     const path = new URL(request.url).pathname;
+    if (path === '/pair' && request.method === 'POST') return app.handlePair(request);
     if (path === '/ws') return upgrade(request, { connectionSessionId: 'global', device: await app.authenticateUpgrade(request, client?.remoteAddress ?? null) }) ?? new Response('Upgrade refused', { status: 500 });
     const file = resolve(dist, `.${path}`);
     if (!file.startsWith(`${dist}/`)) return new Response('Not found', { status: 404 });
     const asset = existsSync(file) && extname(file) ? file : join(dist, 'index.html');
     return new Response(readFileSync(asset), { headers: { 'content-type': types[extname(asset)] ?? 'text/html' } });
   } });
-  const child = spawn('node', ['.claude/skills/verify/microsoft-settings.mjs', String(port), run], { env: process.env, stdio: 'inherit' });
+  const ws = createLocalSocket(`ws://127.0.0.1:${port}/ws`);
+  const pairing = await new Promise<{ ok: boolean; code: string }>((done, fail) => {
+    const id = crypto.randomUUID();
+    ws.onerror = () => fail(new Error('Isolated RPC unavailable'));
+    ws.onmessage = (event) => { const reply = JSON.parse(String(event.data)); if (reply.requestId !== id && reply.id !== id) return; reply.error ? fail(new Error(JSON.stringify(reply.error))) : done(reply.data); };
+    ws.onopen = () => ws.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name: 'device.pair.create', input: { kind: 'human', name: 'Synthetic settings browser' } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  }).finally(() => ws.close());
+  assert(pairing.ok);
+  const child = spawn('node', ['.claude/skills/verify/microsoft-settings.mjs', String(port), pairing.code, run], { env: process.env, stdio: 'inherit' });
   assert.equal(await new Promise((done, fail) => { child.once('error', fail); child.once('close', done); }), 0, 'isolated browser proof failed');
 } finally { server?.stop(true); await app.cleanup(); }
 assert.equal(exchanges, 2);

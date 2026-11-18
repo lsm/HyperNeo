@@ -16,7 +16,9 @@ daemon's identity requests go to an in-process fake Microsoft token and key-set
 endpoint; the browser's request to the Microsoft authorize URL is answered by a
 fake consent page inside the browser route, and every other browser request must
 stay on loopback. Consent still drives the real PKCE loopback listener on
-`localhost` and the daemon's signed ID-token checks.
+`localhost` and the daemon's signed ID-token checks. The browser context is paired
+through the real `/pair` endpoint first; an unpaired browser is refused every
+connection operation.
 
 At Settings > Connections: capture the empty view with both Connect buttons, open
 Connect Microsoft, enter a synthetic Application (client) ID (no client secret

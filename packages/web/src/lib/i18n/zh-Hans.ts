@@ -43,7 +43,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'connections.connectMicrosoft': '连接 Microsoft',
   'connections.pendingMicrosoft': '请在 Microsoft 页面完成登录。',
   'connections.continueMicrosoft': '继续前往 Microsoft',
-  'connections.setupMicrosoft': '输入 Microsoft 应用注册的应用程序（客户端）ID，它会随账号保存在此实例中。',
+  'connections.setupMicrosoft':
+    '输入 Microsoft 应用注册的应用程序（客户端）ID，它会随账号保存在此实例中。',
   'connections.clientIdMicrosoft': '应用程序（客户端）ID',
   'connections.sameAccountMicrosoft': '请使用原来的 Microsoft 账号重新连接。',
   'connections.failedMicrosoft': 'Microsoft 连接失败',

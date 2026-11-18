@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
-const [port, run] = process.argv.slice(2);
+const [port, pairCode, run] = process.argv.slice(2);
 assert(port && port !== '8399');
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VERIFY_BROWSER, timeout: 20000 });
 const observations = [];
 const authorizations = [];
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
+  const pairing = await browser.newContext();
+  const paired = await pairing.request.post(`http://127.0.0.1:${port}/pair`, { headers: { origin: `http://127.0.0.1:${port}` }, data: { code: pairCode, name: 'Synthetic settings browser' } });
+  assert.equal(paired.status(), 200);
+  const storageState = await pairing.storageState();
+  await pairing.close();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'en-US', storageState });
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
     if (`${url.origin}${url.pathname}` === 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize') {
@@ -31,7 +36,7 @@ try {
   const shot = async (name) => {
     await page.screenshot({ path: `${run}/evidence/microsoft-settings-${name}.png`, fullPage: true, animations: 'disabled' });
     const text = await page.locator('main').count() ? await page.locator('main').innerText() : await page.locator('body').innerText();
-    for (const secret of ['synthetic-access-token', 'synthetic-refresh-token', 'synthetic-code']) assert(!text.includes(secret));
+    for (const secret of ['synthetic-access-token', 'synthetic-refresh-token', 'synthetic-code', pairCode]) assert(!text.includes(secret));
     observations.push({ name, text });
   };
   const consent = async (begin, capture = false) => {
@@ -69,6 +74,10 @@ try {
   assert.equal(await page.getByLabel('Application (client) ID', { exact: true }).count(), 0);
   await page.setViewportSize({ width: 390, height: 900 });
   await shot('mobile');
+  const description = await page.getByText('Connect Google and Microsoft accounts for this instance.', { exact: true }).boundingBox();
+  assert(description.height <= 40, 'the section description must not be squeezed by the connect buttons');
+  const button = await page.getByRole('button', { name: 'Connect Microsoft', exact: true }).boundingBox();
+  assert(button.x >= 0 && button.x + button.width <= 391);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
   await page.getByText('Disconnected', { exact: true }).waitFor();

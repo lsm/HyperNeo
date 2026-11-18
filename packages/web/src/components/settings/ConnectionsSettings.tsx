@@ -152,23 +152,21 @@ export function ConnectionsSettings() {
     <SettingsSection
       title={t('connections.tabAccounts')}
       description={t('connections.description')}
-      actions={
-        <div class="flex flex-wrap gap-2">
-          {(['google', 'microsoft'] as const).map((next) => (
-            <Button
-              key={next}
-              disabled={busy}
-              onClick={() => {
-                setProvider(next);
-                setSetup({});
-              }}
-            >
-              {t(copy[next].connect)}
-            </Button>
-          ))}
-        </div>
-      }
     >
+      <div class="flex flex-wrap gap-2">
+        {(['google', 'microsoft'] as const).map((next) => (
+          <Button
+            key={next}
+            disabled={busy}
+            onClick={() => {
+              setProvider(next);
+              setSetup({});
+            }}
+          >
+            {t(copy[next].connect)}
+          </Button>
+        ))}
+      </div>
       {failure && (
         <p role="alert" class="text-sm text-danger">
           {t(text.failed)}: {failure === 'account_mismatch' ? t(text.sameAccount) : failure}
