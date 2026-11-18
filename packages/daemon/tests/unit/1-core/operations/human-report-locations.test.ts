@@ -5,10 +5,10 @@ import { projectNeoAskEntries } from '../../../../src/lib/neo/ask-entries.ts';
 import { workerWorkLocationsBrief, todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 
 describe('human report locations', () => {
-  test('the delivered worker brief separates reports from private completion evidence', () => {
+  test('the delivered worker brief directs reports to a visible folder', () => {
     const brief = workerWorkLocationsBrief('/repo');
     expect(brief).toContain('~/HyperNeo/<matter>/');
-    expect(brief).toMatch(/never link/i);
+    expect(brief).not.toContain('HYPERNEO_EVIDENCE');
     expect(brief).toContain('full absolute path');
     expect(NEO_ROOT_PROMPT).toContain('~/HyperNeo/<matter>/');
     expect(NEO_ROOT_PROMPT).toContain('~/.hyperneo/work');

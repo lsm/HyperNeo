@@ -47,7 +47,7 @@ function doneWhen(rule: NeoTodoCheck) {
 
 type CheckDraft = Pick<NeoTodo, 'check'> & { id?: string };
 const invalid =
-  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} (on a todo, {} for a daemon-assigned path), or deployed {repo: lsm/HyperNeo, sha: full commit}.';
+  'invalid_core_check: use human_confirmed {questionId}, evidence {path: absolute file path} (on edit omit the check to keep the current one), or deployed {repo: lsm/HyperNeo, sha: full commit}.';
 const admit = (superpipe({})('neo.todo.core-admission') as PipelineAPI)
   .input(['draft', 'peers'])
   .pipe(
@@ -98,6 +98,7 @@ export function neoEvidencePathRefusal(
     : `evidence_in_data_dir: ${path} is inside the daemon data directory. Use a persistent location visible to the human.`;
 }
 
+/** @public */
 export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
   check: T,
   file: string
@@ -106,6 +107,7 @@ export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
     ? { ...check, params: { path: file } }
     : check;
 
+/** @public */
 export function neoEvidenceRefusal(
   check: NeoTodoCheck | null | undefined,
   repo: string | null | undefined,

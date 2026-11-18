@@ -4,7 +4,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { getDataDir } from '../../../../src/lib/data-dir.ts';
 import { workerWritableRoots } from '../../../../src/lib/drivers/worker-sandbox.ts';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
-import { neoEvidenceRefusal } from '../../../../src/lib/neo/core-todo-checks.ts';
+import { neoEvidencePathRefusal } from '../../../../src/lib/neo/core-todo-checks.ts';
 import { todoEvidenceFile } from '../../../../src/lib/work-locations.ts';
 import {
   createNeoTodoOperations,
@@ -119,9 +119,9 @@ function setup(repository: string | null, seedPeer = true) {
 }
 
 describe('neo.todo.add evidence paths', () => {
-  test('a report in the user folder keeps a separate assigned completion check', async () => {
-    const { add, edit, store } = setup('lsm/hyperneo');
-    const added = await add({});
+  test('a report in the user folder keeps its explicit completion check', async () => {
+    const { add, edit, store } = setup(null);
+    const added = await add({ path: join(userFolder, 'proof.md') });
     if (!added.ok) throw new Error(added.reason);
     const report = `Read ${join(userFolder, 'Travel', 'report.md')}`;
     expect((await edit({ todoId: added.todo.id, done: 'reported', evidence: report })).ok).toBe(
@@ -136,11 +136,11 @@ describe('neo.todo.add evidence paths', () => {
     expect(result.ok).toBe(false);
   });
 
-  test('a repo todo naming the user folder is refused and told to omit the path', async () => {
+  test('a repo todo naming the user folder is refused', async () => {
     const { add, store } = setup('lsm/hyperneo');
     const result = await add({ path: join(userFolder, 'proof.md') });
     expect(result).toMatchObject({ ok: false });
-    expect(!result.ok && result.reason).toContain('Omit');
+    expect(!result.ok && result.reason).toContain('coding_evidence_refused');
     expect(store.listTodos('ask').map((todo) => todo.id)).toEqual(['repo-context']);
   });
 
@@ -180,7 +180,7 @@ describe('neo.todo.add evidence paths', () => {
       title: 'New work',
       request: 'New work',
       todos: [
-        { after: [], title: 'First', check: evidence({}) },
+        { after: [], title: 'First', check: evidence({ path: '/visible/result.md' }) },
         {
           after: [],
           title: 'Second',
@@ -219,19 +219,41 @@ describe('neo.todo.add evidence paths', () => {
       check: { pack: 'core', kind: 'evidence', params: { path: join(userFolder, 'proof.md') } },
     });
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain('Omit');
+    expect(result.reason).toContain('coding_evidence_refused');
   });
 
-  test('a differently cased user folder is still the user folder', async () => {
-    const { add } = setup('lsm/hyperneo');
-    expect((await add({ path: join(userFolder.toLowerCase(), 'proof.md') })).ok).toBe(false);
-    expect((await add({ path: '/USERS/ME/RESULTS/proof.md' })).ok).toBe(false);
+  test('a differently cased data directory is still refused', async () => {
+    const { add } = setup(null);
+    expect((await add({ path: join(getDataDir().toUpperCase(), 'proof.md') })).ok).toBe(false);
   });
 
-  test('an unchanged path on an existing todo keeps working', () => {
-    const check = { pack: 'core', kind: 'evidence', params: { path: `${userFolder}/old.md` } };
-    expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, check)).toBeNull();
-    expect(neoEvidenceRefusal(check, 'lsm/hyperneo', userFolder, null)).toContain('Omit');
+  test('an unchanged hidden path on an existing todo keeps working', () => {
+    const check = { pack: 'core', kind: 'evidence', params: { path: todoEvidenceFile('old') } };
+    expect(neoEvidencePathRefusal(check, check, getDataDir())).toBeNull();
+    expect(neoEvidencePathRefusal(check, null, getDataDir())).toContain('evidence_in_data_dir');
+  });
+
+  test('a legacy coding check survives edits but a changed check is refused', async () => {
+    const { edit, store } = setup('lsm/hyperneo');
+    const check = { pack: 'core', kind: 'evidence', params: { path: todoEvidenceFile('legacy') } };
+    store.addTodo(
+      'legacy',
+      'ask',
+      { title: 'Legacy', doneWhen: 'Existing file', check, instruction: null, named: null },
+      1,
+      'lsm/hyperneo'
+    );
+    expect((await edit({ todoId: 'legacy', title: 'Renamed' })).ok).toBe(true);
+    expect((await edit({ todoId: 'legacy', check })).ok).toBe(true);
+    expect(
+      (
+        await edit({
+          todoId: 'legacy',
+          check: { ...check, params: { path: join(userFolder, 'new.md') } },
+        })
+      ).ok
+    ).toBe(false);
+    expect(store.getTodo('legacy')?.check).toEqual(check);
   });
 
   test('a sandboxed worker cannot write another todo evidence', () => {
