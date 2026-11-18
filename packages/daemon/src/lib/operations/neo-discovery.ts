@@ -69,6 +69,7 @@ export const NEO_RARE_OPERATION_NAMES = [
   'neo.snapshot',
   'neo.todo.retarget',
   'neo.topic.merge',
+  'outlook.calendar_list',
   'outlook.draft',
   'outlook.read_thread',
   'outlook.search',

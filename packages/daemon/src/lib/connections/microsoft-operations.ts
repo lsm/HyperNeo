@@ -6,6 +6,7 @@ import { googleConnectionAttempt as connectionAttempt } from './status.ts';
 import { getConnectionService, type GoogleConnectionDependencies } from './operations.ts';
 import { createOutlookMailOperations } from './outlook-mail-operations.ts';
 import { createOutlookDraftOperations } from './outlook-draft-operations.ts';
+import { createOutlookCalendarOperations } from './outlook-calendar-operations.ts';
 
 const policy = { safetyClass: 'human_only' as const, caller: 'local_user' as const };
 const id = z.string().min(1).max(200);
@@ -43,6 +44,7 @@ export function createMicrosoftConnectionOperations(
   return [
     ...createOutlookMailOperations(db, service),
     ...createOutlookDraftOperations(service),
+    ...createOutlookCalendarOperations(service),
     defineOperation({
       name: 'connections.microsoft.connect',
       description:

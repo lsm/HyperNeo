@@ -45324,6 +45324,292 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "connectionId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "cursor": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "kind": {
+            "default": "calendars",
+            "enum": [
+              "calendars",
+              "events"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 25,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeMax": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "timeMin": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connectionId"
+        ],
+        "type": "object"
+      },
+      "name": "outlook.calendar_list",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "isDefaultCalendar": {
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "default": "",
+                          "type": "string"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "truncated"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 25,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "calendars",
+                    "type": "string"
+                  },
+                  "nextCursor": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "ok": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "untrusted": {
+                    "const": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "ok",
+                  "untrusted",
+                  "truncated",
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "end": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "date": {
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "date"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "dateTime": {
+                                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?$",
+                                  "type": "string"
+                                },
+                                "timeZone": {
+                                  "maxLength": 100,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "dateTime",
+                                "timeZone"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "endTimeZone": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 1024,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "isAllDay": {
+                          "type": "boolean"
+                        },
+                        "isCancelled": {
+                          "type": "boolean"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "start": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "date": {
+                                  "format": "date",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "date"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "dateTime": {
+                                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?$",
+                                  "type": "string"
+                                },
+                                "timeZone": {
+                                  "maxLength": 100,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "dateTime",
+                                "timeZone"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "startTimeZone": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "subject",
+                        "location",
+                        "isAllDay",
+                        "isCancelled",
+                        "start",
+                        "end",
+                        "truncated"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 25,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "events",
+                    "type": "string"
+                  },
+                  "nextCursor": {
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "ok": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "untrusted": {
+                    "const": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "ok",
+                  "untrusted",
+                  "truncated",
+                  "kind",
+                  "items"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
           "bcc": {
             "default": [],
             "items": {
