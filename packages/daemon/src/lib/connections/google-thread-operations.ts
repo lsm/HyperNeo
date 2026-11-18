@@ -132,7 +132,7 @@ function pageResult(
   return resultFor(emitted);
 }
 export function createGoogleThreadOperations(service: () => Promise<Service>) {
-  const read = (superpipe({})('gmail-read-thread') as PipelineAPI)
+  const read = (superpipe({})('gmail.read_thread') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admit, 'caller', 'result:result')
     .pipe(readCursor, 'input', 'result:result')
