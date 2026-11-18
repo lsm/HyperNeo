@@ -30,11 +30,7 @@ import { neoUserFolder } from '../neo/folder.ts';
 import { createNeoService, neoPacksExtension } from '../neo/packs/runtime.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { createDaemonExtensionsOperation, type DaemonExtensions } from '../extensions/contract.ts';
-import {
-  NEO_DRIVER_REFRESH,
-  refreshNeoDriverWork,
-  scheduleDriverRefresh,
-} from '../neo/driver-refresh.ts';
+import { refreshNeoDriverWork, scheduleDriverRefresh } from '../neo/driver-refresh.ts';
 import { NEO_PACK_SWEEP, schedulePackSweep, sweepNeoPacks } from '../neo/pack-sweep.ts';
 import { NEO_REQUEST_REPLY } from '../neo/request-todo.ts';
 import {
@@ -223,6 +219,7 @@ export interface RPCHandlerSetupResult<SpaceServices> {
   sessionScheduler: SessionScheduler;
   handlePeerMessage: (req: Request) => Promise<Response>;
   frontInference: ReturnType<typeof createNeoFrontHandler>;
+  driverRefresh: () => ReturnType<typeof refreshNeoDriverWork>;
   prepareNeoInput: ReturnType<typeof createNeoService>['speech']['prepareInput'];
   attendPollingConcern: (event: NeoAttentionEvent) => Promise<unknown>;
 }
@@ -561,9 +558,6 @@ export async function setupRPCHandlers<SpaceServices = never>(
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
-  deps.jobProcessor.register(NEO_DRIVER_REFRESH, () =>
-    refreshNeoDriverWork(deps.jobQueue, neoService)
-  );
   scheduleDriverRefresh(deps.jobQueue);
   deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
   deps.jobProcessor.register(NEO_REQUEST_REPLY, (job) => neoService.deliverRequestReply(job));
@@ -647,6 +641,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     attendPollingConcern: (event: NeoAttentionEvent) => neoService.attend(event),
     handlePeerMessage: createPeerMessageRoute(neoService),
     frontInference: createNeoFrontHandler(neoService),
+    driverRefresh: () => refreshNeoDriverWork(deps.jobQueue, neoService),
     prepareNeoInput: neoService.speech.prepareInput.bind(neoService.speech),
   };
 }
