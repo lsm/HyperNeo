@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-RUN=${1:?usage: neo-web-message-status.sh <fresh-absolute-run-dir> [port]}
+RUN=${1:?usage: neo-ui-retry.sh <fresh-absolute-run-dir> [port]}
 PORT=${2:-9473}
 case "$RUN" in /*) ;; *) echo 'Use an absolute run directory' >&2; exit 2 ;; esac
 if [[ -e "$RUN" || "$PORT" = 8399 ]]; then echo 'Use a fresh run directory and an isolated port' >&2; exit 2; fi

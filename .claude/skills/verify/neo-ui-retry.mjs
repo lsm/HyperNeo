@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
 const [port, directory] = process.argv.slice(2);
-assert(port && directory, 'usage: neo-web-message-status.mjs <port> <run-dir>');
+assert(port && directory, 'usage: neo-ui-retry.mjs <port> <run-dir>');
 assert.notEqual(port, '8399');
 const run = resolve(directory);
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
@@ -29,18 +29,9 @@ for (const [i, state] of states.entries()) {
   const ask = { conversationId, requestId: id, askOrigin: { sessionId, messageId: id }, content };
   const at = new Date(now + i).toISOString();
   seed += `INSERT INTO neo_conversation_asks(conversation_id,request_id,payload_json,created_at) VALUES(${quote(conversationId)},${quote(id)},${quote(JSON.stringify(ask))},${quote(at)});`;
-  if (state !== 'received') {
-    const message = { type: 'user', uuid: id, session_id: sessionId, parent_tool_use_id: null, inputKind: 'human', message: { role: 'user', content } };
-    const status = state === 'queued' ? 'enqueued' : state === 'failed' ? 'failed' : 'consumed';
-    seed += `INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,sdk_uuid,timestamp,send_status) VALUES(${quote(crypto.randomUUID())},${quote(sessionId)},'user',${quote(JSON.stringify(message))},${quote(id)},${quote(at)},${quote(status)});`;
-  }
+  const message = { type: 'user', uuid: id, session_id: sessionId, parent_tool_use_id: null, inputKind: 'human', message: { role: 'user', content } };
+  seed += `INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,sdk_uuid,timestamp,send_status) VALUES(${quote(crypto.randomUUID())},${quote(sessionId)},'user',${quote(JSON.stringify(message))},${quote(id)},${quote(at)},'failed');`;
 }
-const publication = (id, replyTo) => {
-  const payload = { conversationId, publicationId: id, shortText: 'Synthetic explicit reply.', fullText: 'Synthetic explicit reply.', links: [], replyTo };
-  return `INSERT INTO neo_publications(conversation_id,publication_id,payload_json,created_at) VALUES(${quote(conversationId)},${quote(id)},${quote(JSON.stringify(payload))},${quote(new Date(now + 10).toISOString())});`;
-};
-
-
 sql(seed);
 const askPage = rpc('neo.conversation.asks.read', { conversationId });
 const conversation = rpc('neo.conversation.read', { conversationId });
@@ -73,6 +64,10 @@ try {
     await page.screenshot({ path: `${run}/evidence/after-${theme}.png` });
   }
   const failed = pages[0].locator('article').filter({ hasText: 'SERVER FAILED synthetic input' });
+  sql(`UPDATE sdk_messages SET send_status='consumed' WHERE sdk_uuid=${quote(ids.failed)};`);
+  await failed.getByRole('button', { name: 'Retry', exact: true }).click();
+  await pages[0].getByText('This message is no longer available to retry.').waitFor({ timeout: 5000 });
+  sql(`UPDATE sdk_messages SET send_status='failed' WHERE sdk_uuid=${quote(ids.failed)};`);
   await failed.getByRole('button', { name: 'Retry', exact: true }).click();
   await failed.getByText('Retried').waitFor();
   assert.equal(await failed.getByRole('button', { name: 'Retry', exact: true }).count(), 0);
