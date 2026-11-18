@@ -50,8 +50,11 @@ for line in sys.stdin:
  with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'request':request})+'\\n')
  method=request.get('method')
  if 'id' not in request or not method: continue
+ if method=='account/login/start' and ${mode === 'login-start-failure' ? 'True' : 'False'}:
+  emit({'id':request['id'],'error':{'code':-32601,'message':'Device login unavailable'}})
+  continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
- elif method=='account/read': result={'account':None if ${['login-device', 'login-crash'].includes(mode) ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
+ elif method=='account/read': result={'account':None if ${['login-device', 'login-crash', 'login-start-failure'].includes(mode) ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
  elif method=='account/login/start': result={'type':'chatgptDeviceCode','loginId':'synthetic-login','verificationUrl':'https://example.com/device','userCode':'SYNTHETIC'}
  elif method in ['thread/start','thread/resume']:
   name=os.path.basename(os.getcwd())
@@ -232,6 +235,12 @@ try {
       assert(cards[0] && cards[0].type === 'auth_status' && !cards[0].isAuthenticating);
     }
     Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, loginCompleted: true, pass: true });
+  } else if (mode === 'login-start-failure') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in failure' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating && row.error?.includes('Device login unavailable')), 'device sign-in start failure card');
+    await waitFor(() => errors.includes('Codex is not signed in. Sign in, then send again.'), 'device sign-in start failure');
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
+    Object.assign(evidence, { failureCard: true, openRefused: true, pass: true });
   } else if (mode === 'login-crash') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in before crash' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in before crash');
