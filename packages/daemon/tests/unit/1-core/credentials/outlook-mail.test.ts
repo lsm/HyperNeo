@@ -74,6 +74,17 @@ beforeEach(async () => {
     if (mode === 'rate') return new Response('synthetic-sensitive-error', { status: 429 });
     if (url.pathname === '/v1.0/me/messages') {
       expect(url.searchParams.get('$select')).not.toContain('body,');
+      if (mode === 'many')
+        return Response.json({
+          value: [
+            {
+              ...message('n1'),
+              toRecipients: Array.from({ length: 600 }, (_, i) => ({
+                emailAddress: { address: `m${i}@x.test` },
+              })),
+            },
+          ],
+        });
       if (mode === 'crowded') {
         const crowded = url.searchParams.get('$select')!.includes('toRecipients');
         const recipients = Array.from({ length: 500 }, (_, i) => ({
@@ -306,4 +317,12 @@ test('a page too large for its recipient lists still returns headers, marked tru
   const thread = await read();
   expect(thread.ok).toBe(true);
   expect(thread.items).toHaveLength(2);
+});
+
+test('a message with more than 500 recipients returns clipped recipients, marked truncated', async () => {
+  mode = 'many';
+  const page = await search();
+  expect(page.ok).toBe(true);
+  expect(page.items[0].to.length).toBe(512);
+  expect(page.items[0].truncated).toBe(true);
 });
