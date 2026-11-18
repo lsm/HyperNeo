@@ -197,17 +197,6 @@ async function deliverMessage(
   }
 }
 
-export async function sendTaskMessage(
-  input: TaskMessageSendInput,
-  caller: OperationCaller,
-  deps: TaskMessageSendDependencies
-): Promise<TaskMessageSendResult> {
-  return (await createSendTaskMessageOperation(deps).execute(
-    input,
-    caller
-  )) as TaskMessageSendResult;
-}
-
 export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies) {
   const send = (superpipe({ deps })('task.message.send') as PipelineAPI)
     .input(['input', 'caller'])
