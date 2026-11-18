@@ -130,13 +130,10 @@ describe('neo.todo.add evidence paths', () => {
     expect(store.getTodo(added.todo.id)?.report).toBe(report);
     expect(store.getTodo(added.todo.id)?.check).toEqual(added.todo.check);
   });
-  test('an omitted path is assigned under the data dir and named in the completion', async () => {
-    const { add } = setup('lsm/hyperneo');
+  test('an omitted evidence path is refused', async () => {
+    const { add } = setup(null);
     const result = await add({});
-    if (!result.ok) throw new Error(result.reason);
-    const path = join(getDataDir(), 'work', 'evidence', result.todo.id, 'result.md');
-    expect(result.todo.check?.params).toEqual({ path });
-    expect(result.todo.doneWhen).toContain(path);
+    expect(result.ok).toBe(false);
   });
 
   test('a repo todo naming the user folder is refused and told to omit the path', async () => {
@@ -162,9 +159,14 @@ describe('neo.todo.add evidence paths', () => {
     expect((await add({ path: join(userFolder, 'itinerary.md') })).ok).toBe(true);
   });
 
-  test('a repo todo may name a path outside the user folder', async () => {
+  test('a repo todo cannot use evidence even outside the user folder', async () => {
     const { add } = setup('lsm/hyperneo');
-    expect((await add({ path: `${userFolder}-other/proof.md` })).ok).toBe(true);
+    expect((await add({ path: `${userFolder}-other/proof.md` })).ok).toBe(false);
+  });
+
+  test('a new evidence path under the data directory is refused', async () => {
+    const { add } = setup(null);
+    expect((await add({ path: join(getDataDir(), 'work', 'proof.md') })).ok).toBe(false);
   });
 
   test('neo.ask.open refuses a misplaced path before recording anything', async () => {
