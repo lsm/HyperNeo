@@ -153,6 +153,9 @@ jobs:
       - name: Test getDatabase ratchet CLI
         run: bun run test:get-database
 
+      - name: Test pipeline ratchet CLI
+        run: bun run test:pipeline-ratchet
+
       - name: Test test-type ratchet CLI
         run: bun run test:test-types
 
