@@ -203,7 +203,7 @@ describe('root Neo system prompt', () => {
         'Most tasks write nothing',
         'filled form',
         'table',
-        '旅行/2026圣诞',
+        'itineraries',
         'home root',
         'hidden state',
       ])

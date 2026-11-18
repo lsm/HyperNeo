@@ -11,7 +11,7 @@ describe('human report locations', () => {
     expect(brief).not.toContain('HYPERNEO_EVIDENCE');
     expect(brief).toContain('full absolute path');
     expect(NEO_ROOT_PROMPT).toContain('~/HyperNeo/<matter>/');
-    expect(NEO_ROOT_PROMPT).toContain('~/.hyperneo/work');
+    expect(NEO_ROOT_PROMPT).toContain('hidden state private');
   });
 
   test.each(['assigned', 'human-evidence', 'another-todo'])(
