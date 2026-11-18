@@ -1,10 +1,10 @@
+import { type NeoQuestionKind, neoChoiceByNumber } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
-import type { Database } from '../sqlite-compat.ts';
 import { neoStandingRules } from '@hyperneo/shared/types/settings';
-import { SettingsRepository } from './settings-repository.ts';
-import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
 import { humanPickedApply } from '../../lib/neo/human-card.ts';
-import { neoChoiceByNumber, type NeoQuestionKind } from '@hyperneo/shared/types/neo-ask';
+import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
+import type { Database } from '../sqlite-compat.ts';
+import { SettingsRepository } from './settings-repository.ts';
 
 function readNeoRuleProposal(db: Database, questionId: string) {
   const row = db
@@ -88,19 +88,21 @@ export function readNeoRuleApproval(
           )
           .join(' ');
   const proposal = readNeoRuleProposal(db, human.replyTo.id);
+  const picked = proposal
+    ? neoChoiceByNumber(words, {
+        ...proposal,
+        kind: proposal.kind as NeoQuestionKind,
+        multiple: false,
+      })
+    : null;
   if (
     !proposal ||
     proposal.session_id !== human.askOrigin.sessionId ||
     proposal.state !== 'answered' ||
     !applied(proposal) ||
     proposal.answered_by !== 'chat' ||
-    JSON.stringify(
-      neoChoiceByNumber(words, {
-        ...proposal,
-        kind: proposal.kind as NeoQuestionKind,
-        multiple: false,
-      }) ?? words.trim()
-    ) !== proposal.answer ||
+    picked === 'invalid' ||
+    JSON.stringify(picked ?? words.trim()) !== proposal.answer ||
     proposal.text !== proposal.question_text
   )
     return false;

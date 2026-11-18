@@ -1,12 +1,12 @@
-import guidanceQuestions from './fixtures/question-guidance.json';
 import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
-import { neoRelativeTime } from '../neo-time.ts';
-import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
+import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
+import { neoRelativeTime } from '../neo-time.ts';
+import guidanceQuestions from './fixtures/question-guidance.json';
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
@@ -997,12 +997,12 @@ describe('NeoAskTodos', () => {
             question('one', {
               kind: 'choice',
               options: ['Keep', 'Cards'],
-              optionLabels: ['A', 'B'],
+              optionLabels: ['1', '2'],
             }),
             question('many', {
               kind: 'choice',
               options: ['iPhone', 'iPad'],
-              optionLabels: ['A', 'B'],
+              optionLabels: ['1', '2'],
               multiple: true,
             }),
           ],
@@ -1038,28 +1038,56 @@ describe('NeoAskTodos', () => {
       [...app.container.querySelectorAll('[data-choice-option]')].map(
         (button) => button.textContent
       )
-    ).toEqual(['Park Hyatt', 'Hotel Gracery推荐离车站 12 分钟，每晚 ¥1,600']);
+    ).toEqual(['1Park Hyatt', '2Hotel Gracery推荐离车站 12 分钟，每晚 ¥1,600']);
     expect(onAnswer).not.toHaveBeenCalled();
     fireEvent.click(app.getByRole('button', { name: /Hotel Gracery/ }));
     expect(onAnswer).toHaveBeenCalledWith('hotel', ['Hotel Gracery']);
   });
 
-  it('draws no letter before an option that already carries one', () => {
-    const options = ['A 先只改服务器', 'B 服务器和客户端一起改'];
+  it('numbers each option with the daemon label on single and multiple choice', () => {
+    const options = ['先只改服务器', '服务器和客户端一起改'];
     const app = render(
       <NeoAskTodos
         entry={entry({
-          questions: [question('one', { kind: 'choice', options, optionLabels: ['A', 'B'] })],
+          questions: [
+            question('one', { kind: 'choice', options, optionLabels: ['1', '2'] }),
+            question('many', {
+              kind: 'choice',
+              options,
+              optionLabels: ['1', '2'],
+              multiple: true,
+            }),
+          ],
         })}
         onAnswer={() => {}}
       />
     );
-    expect(
-      [...app.container.querySelectorAll('[data-choice-option]')].map(
-        (button) => button.textContent
-      )
-    ).toEqual(options);
-    expect(app.getByRole('button', { name: 'A 先只改服务器' })).toBeTruthy();
+    for (const id of ['one', 'many']) {
+      const card = app.container.querySelector(`[data-ask-question="${id}"]`)!;
+      expect(
+        [...card.querySelectorAll('[data-choice-number]')].map((number) => number.textContent)
+      ).toEqual(['1', '2']);
+    }
+    expect(app.getByRole('button', { name: '先只改服务器' })).toBeTruthy();
+  });
+
+  it('keeps hostile option details as plain text', () => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('one', {
+              kind: 'choice',
+              options: ['Keep'],
+              optionDetails: { Keep: '<img src=x onerror=alert(1)>' },
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    expect(app.container.querySelector('img')).toBeNull();
+    expect(app.container.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
   it('shows each choice exactly as written and wraps long options inside the card', () => {
@@ -1072,11 +1100,11 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           questions: [
-            question('one', { kind: 'choice', options: long, optionLabels: ['A', 'B', 'C'] }),
+            question('one', { kind: 'choice', options: long, optionLabels: ['1', '2', '3'] }),
             question('many', {
               kind: 'choice',
               options: long,
-              optionLabels: ['A', 'B', 'C'],
+              optionLabels: ['1', '2', '3'],
               multiple: true,
             }),
           ],
@@ -1086,7 +1114,9 @@ describe('NeoAskTodos', () => {
     );
     const one = app.container.querySelector('[data-ask-question="one"]')!;
     const buttons = [...one.querySelectorAll('[data-choice-option]')];
-    expect(buttons.map((button) => button.textContent)).toEqual(long);
+    expect(buttons.map((button) => button.textContent)).toEqual(
+      long.map((option, index) => `${index + 1}${option}`)
+    );
     for (const button of buttons) {
       expect(button.className).not.toMatch(/shrink-0|truncate|whitespace-nowrap|line-clamp/);
       expect(button.className).toContain('min-w-0');
@@ -1096,7 +1126,7 @@ describe('NeoAskTodos', () => {
     const many = app.container.querySelector('[data-ask-question="many"]')!;
     expect(
       [...many.querySelectorAll('[data-choice-option]')].map((label) => label.textContent)
-    ).toEqual(long);
+    ).toEqual(long.map((option, index) => `${index + 1}${option}`));
   });
 
   it('draws each todo state with its line and opens a session', () => {
@@ -1342,7 +1372,7 @@ describe('neoQuestionAnswerLabel', () => {
         question('q', {
           kind: 'choice',
           options: ['Keep', 'Cards', 'Table'],
-          optionLabels: ['A', 'B', 'C'],
+          optionLabels: ['1', '2', '3'],
           answer: ['Keep', 'Table'],
           answeredBy: 'chat',
         }),

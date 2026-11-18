@@ -1,5 +1,5 @@
-import type { WorkerIdentity } from './worker-identity.ts';
 import type { ArtifactProjection, ArtifactRef, PublicHandoffReference } from './artifact-file.ts';
+import type { WorkerIdentity } from './worker-identity.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
@@ -171,7 +171,7 @@ function optionNumber(word: string): number | undefined {
 export function neoChoiceByNumber(
   words: string,
   question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple'> | null
-): string[] | null {
+): string[] | 'invalid' | null {
   const said = words
     .trim()
     .replace(new RegExp(`\\b(${EN_ORDINALS.join('|')})\\s+one\\b`, 'gi'), '$1')
@@ -188,7 +188,7 @@ export function neoChoiceByNumber(
   return picked.every((option) => option !== undefined) &&
     (question.multiple || picked.length === 1)
     ? (picked as string[])
-    : null;
+    : 'invalid';
 }
 
 export interface NeoReplyTo {
