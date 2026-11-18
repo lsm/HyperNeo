@@ -719,6 +719,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     shared: boolean;
     humanNamed: boolean;
     releasedBy: string | null;
+    owned: boolean;
+    pending: { reason: string; since: number; notified: boolean } | null;
   }[] {
     const match = (column: string, key: string) =>
       `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
@@ -726,6 +728,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
+              EXISTS (SELECT 1 FROM work_started_sessions w WHERE w.adapter = json_extract(s.ref, '$.adapter') AND w.id = json_extract(s.ref, '$.id') AND w.role = 'worker') AS owned,
+              (SELECT value_json FROM pack_facts WHERE todo_id = s.todo_id AND pack = 'core' AND key = 'release_pending') AS pending,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
                 WHERE json_extract(ot.named, '$.session') IS NOT NULL
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
@@ -735,7 +739,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
               ) AS shared,
               (SELECT o.todo_id FROM neo_todo_sessions o JOIN pack_facts f
-                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released'
+                  ON f.todo_id = o.todo_id AND f.pack = 'core' AND f.key = 'released' AND json_extract(f.value_json, '$.kept') IS NULL
                 WHERE o.todo_id <> s.todo_id
                   AND ${match('=', 'adapter')} AND ${match('=', 'id')} AND ${match('IS', 'daemon')}
                 LIMIT 1) AS releasedBy
@@ -753,6 +757,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         shared: number;
         humanNamed: number;
         releasedBy: string | null;
+        owned: number;
+        pending: string | null;
       }[]
     ).map((row) => ({
       todoId: row.todoId,
@@ -761,6 +767,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       shared: row.shared === 1,
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
+      owned: row.owned === 1,
+      pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
 
@@ -808,6 +816,13 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   recordReleased(todoId: string, released: unknown): void {
     this.writeCoreFact(todoId, 'released', released);
+  }
+
+  recordReleasePending(
+    todoId: string,
+    pending: { reason: string; since: number; notified: boolean }
+  ): void {
+    this.writeCoreFact(todoId, 'release_pending', pending);
   }
 
   awaitingReports(): { todoId: string; ref: WorkRef }[] {
@@ -863,5 +878,6 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'claimWorker',
     'unclaimWorker',
     'recordReleased',
+    'recordReleasePending',
   ]
 );

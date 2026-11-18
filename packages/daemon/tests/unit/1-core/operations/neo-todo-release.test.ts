@@ -241,13 +241,13 @@ describe('neo todo runner refresh releases finished workers', () => {
       const fact = h.db
         .prepare("SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'released'")
         .get() as { value_json: string };
-      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'not_started_by_us' });
+      expect(JSON.parse(fact.value_json)).toEqual({ kept: 'sent_to_existing' });
     } finally {
       h.db.close();
     }
   });
 
-  test('archives a daemon-started worker after work was sent to it', async () => {
+  test('keeps a daemon-started worker after work was sent to it', async () => {
     const h = setup();
     try {
       recordWorkerStarted(h.db, worker);
@@ -258,7 +258,7 @@ describe('neo todo runner refresh releases finished workers', () => {
       );
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
-      expect(h.archived).toEqual([worker]);
+      expect(h.archived).toEqual([]);
       expect(h.released()).toHaveLength(1);
     } finally {
       h.db.close();
@@ -294,19 +294,20 @@ describe('neo todo runner refresh releases finished workers', () => {
       await h.finishTodo(h.add({ verb: 'send', ref: worker }, { session: 'dev-6' }));
       await h.refresh();
       expect(h.archived).toEqual([]);
-      expect(h.released()).toEqual([]);
+      expect(h.released()).toHaveLength(2);
     } finally {
       h.db.close();
     }
   });
 
-  test('does not release a worker sent work when the archive does not succeed', async () => {
+  test('keeps a worker sent work without invoking archive', async () => {
     const h = setup();
     try {
       h.setArchive(() => ({ ok: false, reason: 'busy' }));
       await h.finishTodo(h.add({ verb: 'send', ref: worker }));
       await h.refresh();
-      expect(h.released()).toEqual([]);
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toHaveLength(1);
     } finally {
       h.db.close();
     }
@@ -624,7 +625,8 @@ describe('releaseNeoTodoWorkers', () => {
           admitSessionArchive(worker, caller, db) ?? { ok: true, value: { archived: true } }
       );
       await releaseNeoTodoWorkers(h.sessions, h.invoke, () => {});
-      expect(h.released()).toEqual([]);
+      expect(h.archived).toEqual([]);
+      expect(h.released()).toHaveLength(1);
     } finally {
       h.db.close();
     }

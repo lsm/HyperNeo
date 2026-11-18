@@ -12,7 +12,7 @@ done todos on HyperNeo worker sessions: one the todo started with a generated
 name, one Neo named (`dev-6`), one the human named (the todo's `named.session`),
 and one whose folder is a Git
 checkout with an uncommitted file. A fifth todo is `removed` without a finish
-time, as `neo.todo.remove` leaves it. A sixth start request landed on an existing session without a worker-start marker. It moves the pending driver refresh
+time, as `neo.todo.remove` leaves it. A sixth start request landed on an existing session without a worker-start marker and with a dirty folder. It moves the pending driver refresh
 job to now and waits for that job to run.
 
 End state in `todo-release.json`: the generated-name worker, the Neo-named
@@ -23,3 +23,15 @@ archived workers carry `released_at` in `work_started_sessions`, and with every
 the reuse path reads. `proof.log` shows the
 "uncommitted changes" pending warning that a later refresh rechecks. No model,
 provider or real data is used.
+
+Run the pending notification proof with the same isolated setup:
+
+```bash
+bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
+  .claude/skills/verify/todo-release-pending.ts verify
+```
+
+The helper advances a synthetic clock through repeated daemon refreshes and
+checks that a dirty worker produces one Neo mailbox event after 24 hours,
+with the todo, worker and reason. Retain `todo-release-pending.json` and
+`proof.log`.

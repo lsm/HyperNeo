@@ -69,7 +69,7 @@ try {
   assert.equal(raw.prepare('SELECT 1 FROM work_started_sessions WHERE adapter = ? AND id = ?').get('hyperneo', workers.existing), null);
   assert.deepEqual((evidence.releasedWorkers as { id: string }[]).map((row) => row.id), [workers.released, workers.neoNamed, workers.removed].sort());
   assert.ok(!(evidence.freeLaterThanAnHour as string[]).some((id) => id === workers.released || id === workers.neoNamed || id === workers.removed));
-  assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id).sort(), ['todo-existing', 'todo-neoNamed', 'todo-released', 'todo-removed']);
+  assert.deepEqual((evidence.releasedFacts as { todo_id: string }[]).map((row) => row.todo_id).sort(), ['todo-existing', 'todo-named', 'todo-neoNamed', 'todo-released', 'todo-removed']);
   assert.deepEqual(JSON.parse((evidence.releasedFacts as { todo_id: string; value_json: string }[]).find((row) => row.todo_id === 'todo-existing')!.value_json), { kept: 'not_started_by_us' });
   console.log('PASS: the daemon refresh job archived the workers finished and removed todos started (one only Neo named), fenced them against reuse with no expiry, recorded each once, and kept the human-named worker and the worker with unsaved work active.');
 } finally {
