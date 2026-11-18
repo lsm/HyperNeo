@@ -113,6 +113,23 @@ async function writeSave(deps: OxapSettingsDeps, binary: OxapHubBinary | undefin
   return true;
 }
 
+type SaveResult = { accepted: true } | string;
+
+const commitSave = (superpipe({})('oxap.settings.commit') as PipelineAPI)
+  .input(['input', 'deps', 'binary'])
+  .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
+  .pipe(planSave, ['input', 'records'], 'result:plan')
+  .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
+  .pipe(checkHub, ['plan', 'keys'], 'result:plan')
+  .pipe(writeSave, ['deps', 'binary', 'plan'], 'saved')
+  .pipe((deps: OxapSettingsDeps, _saved: true) => deps.engine.restart(), ['deps', 'saved'], 'done')
+  .pipe(() => ({ accepted: true as const }), undefined, 'plan')
+  .endAsync('plan') as (
+  input: Save,
+  deps: OxapSettingsDeps,
+  binary: OxapHubBinary | undefined
+) => Promise<SaveResult>;
+
 const saveSettings = (superpipe({})('oxap.settings.save') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe((deps: OxapSettingsDeps) => deps.records(), 'deps', 'records')
@@ -120,13 +137,13 @@ const saveSettings = (superpipe({})('oxap.settings.save') as PipelineAPI)
   .pipe((plan: Plan, deps: OxapSettingsDeps) => readKeys(plan.next, deps), ['plan', 'deps'], 'keys')
   .pipe(checkHub, ['plan', 'keys'], 'result:plan')
   .pipe(readBinary, ['input', 'deps'], 'binary')
-  .pipe(writeSave, ['deps', 'binary', 'plan'], 'saved')
-  .pipe((deps: OxapSettingsDeps, _saved: true) => deps.engine.restart(), ['deps', 'saved'], 'done')
-  .pipe(() => ({ accepted: true as const }), undefined, 'plan')
-  .endAsync('plan') as (
-  input: Save,
-  deps: OxapSettingsDeps
-) => Promise<{ accepted: true } | string>;
+  .pipe(
+    (input: Save, deps: OxapSettingsDeps, binary: OxapHubBinary | undefined) =>
+      withProviderLock(() => commitSave(input, deps, binary)),
+    ['input', 'deps', 'binary'],
+    'plan'
+  )
+  .endAsync('plan') as (input: Save, deps: OxapSettingsDeps) => Promise<SaveResult>;
 
 export function createOxapSettingsOperations(deps: OxapSettingsDeps): OperationDefinition[] {
   return [
@@ -141,7 +158,7 @@ export function createOxapSettingsOperations(deps: OxapSettingsDeps): OperationD
       ]),
       policy: { safetyClass: 'human_only', caller: 'local_user' },
       execute: async (input) => {
-        const result = await withProviderLock(() => saveSettings(input, deps));
+        const result = await saveSettings(input, deps);
         return typeof result === 'string' ? { accepted: false as const, reason: result } : result;
       },
     }),
