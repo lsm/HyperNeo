@@ -182,6 +182,13 @@ describe('oxap.settings.save', () => {
     expect((await readHubOptions(h.deps)).hub.adapters).toEqual({});
   });
 
+  it('keeps other providers on the hub when one stored harness setting is broken', async () => {
+    const h = host();
+    await h.run({ providerId: 'synthetic-memory', harness: 'oxap-synthetic' });
+    h.records[0].configJson = '{"harness":"oxap-codex"}';
+    expect(Object.keys((await readHubOptions(h.deps)).hub.adapters)).toEqual(['synthetic-memory']);
+  });
+
   it('refuses to start a hub before one is installed', async () => {
     await expect(readHubOptions(host().deps)).rejects.toThrow('OXAP hub is not installed');
   });

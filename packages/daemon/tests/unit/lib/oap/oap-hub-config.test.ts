@@ -45,10 +45,10 @@ describe('buildHubConfig', () => {
     });
   });
 
-  test('refuses a harness setting that is not an absolute path', () => {
+  test('leaves out a provider whose harness setting is not an absolute path', () => {
     expect(
       buildHubConfig([codex('anthropic-codex', { executable: 'codex' })], OXAP_HARNESSES, {}, {})
-    ).toEqual({ reason: 'anthropic-codex needs an absolute executable path' });
+    ).toEqual({ value: { adapters: {}, environment: {} } });
   });
 
   test('puts a provider key only in the hub environment, never in the adapter entry', () => {
