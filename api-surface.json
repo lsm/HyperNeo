@@ -33146,6 +33146,10 @@
             "maxLength": 100,
             "minLength": 1,
             "type": "string"
+          },
+          "removeHistory": {
+            "default": false,
+            "type": "boolean"
           }
         },
         "required": [
@@ -33510,6 +33514,9 @@
                   },
                   "type": "array"
                 },
+                "hasSessions": {
+                  "type": "boolean"
+                },
                 "id": {
                   "type": "string"
                 },
@@ -33524,7 +33531,8 @@
                 "id",
                 "name",
                 "folders",
-                "updatedAt"
+                "updatedAt",
+                "hasSessions"
               ],
               "type": "object"
             },
