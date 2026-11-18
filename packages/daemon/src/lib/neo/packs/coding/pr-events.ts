@@ -15,6 +15,9 @@ import {
 import {
   CODING_MANUAL_MERGE_NEXT_STEP,
   codingDeliveryKey,
+  codingFailingReviewKey,
+  codingFailingText,
+  CodingPrSweepRepository,
   codingReviewKey,
   codingPrUrl,
   type CodingSweepDeps,
@@ -34,18 +37,24 @@ const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}
 export function planCodingPrEvent(
   row: CodingPrTransition
 ): { key: string; text: string; findings?: string[] } | null {
-  const findings = row.state === 'changes_requested' ? (row.findings ?? []) : [];
+  const findings = ['changes_requested', 'failing'].includes(row.state) ? (row.findings ?? []) : [];
   const owner = (text: string) => ({
-    key: codingDeliveryKey(
-      `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(findings)}`
-    ),
+    key:
+      row.state === 'failing' && findings.length
+        ? codingFailingReviewKey({ ...row, findings })
+        : codingDeliveryKey(
+            `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}${codingReviewKey(findings)}`
+          ),
     text: `${pr(row)} ${text}`,
     ...(findings.length ? { findings } : {}),
   });
   if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
   if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
   if (row.state === 'failing')
-    return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
+    return {
+      ...owner(`has failing CI on head ${head(row)}. Fix it and push.`),
+      text: codingFailingText(row),
+    };
   if (row.state === 'changes_requested')
     return owner(`has requested changes on head ${head(row)}. Address the review and push.`);
   if (row.state === 'dirty')
@@ -67,6 +76,14 @@ export class CodingPrEventRepository {
   constructor(private readonly db: Database) {}
 
   private delivery: Promise<void> = Promise.resolve();
+
+  reviewSent(key: string): Promise<boolean> {
+    return new CodingPrSweepRepository(this.db).reviewSentLater(key);
+  }
+
+  markReview(key: string): Promise<void> {
+    return new CodingPrSweepRepository(this.db).markReviewLater(key);
+  }
 
   exclusive(deliver: () => Promise<void>): Promise<void> {
     const run = this.delivery.then(deliver, deliver);
@@ -179,11 +196,14 @@ export async function deliverCodingPrEvents(
         continue;
       }
       if (!owner) continue;
+      const review = row.state === 'failing' && !!event?.findings?.length;
       const told = event
-        ? await deps
+        ? (review && (await repo.reviewSent(event.key))) ||
+          (await deps
             .tell(owner, event.key, event.text, codingPrUrl(deps.host, row), event.findings)
-            .catch(() => false)
+            .catch(() => false))
         : true;
+      if (told && event && review) await repo.markReview(event.key);
       if (told) await repo.acceptEvent(row, owner);
       if (!event) continue;
       log.warn(

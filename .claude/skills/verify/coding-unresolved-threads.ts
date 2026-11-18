@@ -71,7 +71,6 @@ try {
     commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
   });
   const told: { ref: unknown; key: string; text: string }[] = [];
-  const delivered = new Set<string>();
   const woken: string[] = [];
   const ledger = new CodingPrLedgerRepository(db);
   const pack = createCodingPack({
@@ -94,8 +93,7 @@ try {
     }),
     prSweepDeps: {
       tell: async (ref, key, text) => {
-        if (!delivered.has(key)) told.push({ ref, key, text });
-        delivered.add(key);
+        told.push({ ref, key, text });
         return true;
       },
       wake: async (_key, text) => {
@@ -243,6 +241,14 @@ try {
   assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
   await sweep('unchanged review', 76);
   assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r3`)).length, 1);
+  assert.equal(ledger.pollFacts.record(
+    { credentialId: 'github-connector', url, accept: 'application/vnd.hyperneo.pr-review-threads+json', apiVersion: 'v1' },
+    { value: { headOid: head, unresolvedThreadUrls: [`${url}#discussion_r3`, `${url}#discussion_r4`] }, etag: null, next: null },
+    t0 + 77 * MIN, 4
+  ), true);
+  await sweep('another finding arrives', 77);
+  await sweep('findings unchanged', 78);
+  assert.equal(told.filter((item) => item.text.includes('failing CI') && item.text.includes(`${url}#discussion_r4`)).length, 1);
   writeFileSync(join(run, 'evidence', 'unresolved-thread.json'), JSON.stringify({ before, reminder, resolved, decision, refreshes, cross, escalated, reopened, lateReview: told }, null, 2));
 } finally {
   db.close();

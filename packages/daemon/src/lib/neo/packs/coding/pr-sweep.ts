@@ -99,6 +99,20 @@ export const codingDeliveryKey = (key: string) =>
     ? key
     : `${key.slice(0, 100)}:${createHash('sha256').update(key).digest('hex')}`;
 
+export const codingFailingReviewKey = (
+  row: Pick<CodingSweepRow, 'repo' | 'number' | 'head' | 'findings'>
+) =>
+  codingDeliveryKey(
+    `neo-pr-event:${row.repo}#${row.number}:${row.head}:failing:review:${createHash('sha256')
+      .update(JSON.stringify([...new Set(row.findings)].sort()))
+      .digest('hex')}`
+  );
+
+export const codingFailingText = (
+  row: Pick<CodingSweepRow, 'repo' | 'number' | 'title' | 'head'>
+) =>
+  `${row.repo}#${row.number} "${row.title}" has failing CI on head ${row.head.slice(0, 7)}. Fix it and push.`;
+
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
   return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
@@ -132,30 +146,49 @@ export class CodingPrSweepRepository {
         ...row,
         mergeBy: new CodingPrLedgerRepository(this.db).policy(row.repo).mergeBy,
         owner: row.owner ? (JSON.parse(row.owner) as WorkRef) : null,
-        findings:
-          row.state === 'changes_requested'
-            ? [
-                ...codingCrossModelFindings(
-                  row.head,
-                  new CodingStageFactsRepository(this.db).read(
-                    `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
-                  )
-                ),
-                ...(() => {
-                  const threads = readCodingReviewThreads(
-                    this.db,
-                    `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
-                    Date.now()
-                  );
-                  return threads?.headOid === row.head ? threads.unresolvedThreadUrls : [];
-                })(),
-              ]
-            : [],
+        findings: ['changes_requested', 'failing'].includes(row.state)
+          ? [
+              ...codingCrossModelFindings(
+                row.head,
+                new CodingStageFactsRepository(this.db).read(
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`
+                )
+              ),
+              ...(() => {
+                const threads = readCodingReviewThreads(
+                  this.db,
+                  `https://${process.env.GH_HOST ?? 'github.com'}/${row.repo}/pull/${row.number}`,
+                  Date.now()
+                );
+                return threads?.headOid === row.head ? threads.unresolvedThreadUrls : [];
+              })(),
+            ]
+          : [],
       }));
   }
 
   markLater(row: CodingSweepRow, nudges: number, now: number): Promise<void> {
     return gatewayFor(this.db).call(codingSweepWrites, 'mark', row, nudges, now);
+  }
+
+  reviewSentLater(key: string): Promise<boolean> {
+    return gatewayFor(this.db).call(codingSweepReads, 'reviewSent', key);
+  }
+
+  markReviewLater(key: string): Promise<void> {
+    return gatewayFor(this.db).call(codingSweepWrites, 'markReview', key);
+  }
+
+  reviewSent(key: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM message_send_receipts WHERE key = ?').get(key);
+  }
+
+  markReview(key: string): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, '{}')"
+      )
+      .run(key, key);
   }
 
   mark(row: CodingSweepRow, nudges: number, now: number): void {
@@ -177,6 +210,20 @@ export async function sweepCodingPrs(
   now: number
 ): Promise<void> {
   for (const row of await repo.rowsAsync()) {
+    if (
+      row.state === 'failing' &&
+      row.owner &&
+      row.findings?.length &&
+      now - row.readAt <= CODING_PR_FRESH_MS
+    ) {
+      const key = codingFailingReviewKey(row);
+      const told =
+        !(await repo.reviewSentLater(key)) &&
+        (await deps
+          .tell(row.owner, key, codingFailingText(row), codingPrUrl(deps.host, row), row.findings)
+          .catch(() => false));
+      if (told) await repo.markReviewLater(key);
+    }
     const nudge = planCodingPrNudge(row, now);
     if (!nudge) continue;
     const key = codingDeliveryKey(
@@ -221,12 +268,12 @@ export const codingSweepWrites = defineRepositoryOp(
   'coding.sweepWrites',
   'write',
   CodingPrSweepRepository,
-  ['mark']
+  ['mark', 'markReview']
 );
 
 export const codingSweepReads = defineRepositoryOp(
   'coding.sweep.read',
   'read',
   CodingPrSweepRepository,
-  ['rows'] as const
+  ['rows', 'reviewSent'] as const
 );
