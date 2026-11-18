@@ -20,11 +20,11 @@ cat > "$RUN/bin/curl" <<'SCRIPT'
 #!/bin/sh
 exit 7
 SCRIPT
-if [[ "$MODE" == npm-failure ]]; then
+if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
   cat > "$RUN/bin/npm" <<SCRIPT
 #!/bin/sh
 printf '%s\n' "\$@" > "$RUN/npm-args"
-printf 'private-token-example' >&2
+printf 'npm error code ETIMEDOUT\nprivate-token-example' >&2
 exit 7
 SCRIPT
   cat > "$RUN/bin/pnpm" <<SCRIPT
@@ -51,8 +51,8 @@ for _ in $(seq 1 120); do
 done
 if [[ -f "$RUN/npm-args" ]]; then count=$(wc -l < "$RUN/npm-args" | tr -d ' '); else count=0; fi
 printf 'npm argument count: %s\n' "$count"
-if [[ "$MODE" == npm-failure ]]; then
-  grep -q 'npm could not download the package (exit 7); check your npm registry and login' "$RUN/daemon.log"
+if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
+  grep -q 'npm could not download the package (exit 7) (ETIMEDOUT); check your npm registry and login' "$RUN/daemon.log"
   ! grep -q 'private-token-example' "$RUN/daemon.log"
   [[ "$count" -eq 4 && ! -e "$RUN/pnpm-called" && ! -e "$RUN/curl-called" ]]
   echo 'PASS: npm failure was reported without fallback or stderr'

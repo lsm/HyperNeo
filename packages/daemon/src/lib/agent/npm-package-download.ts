@@ -142,14 +142,19 @@ async function fetchVerifiedTarball(
 
 async function runPackageManager(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
+    execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
       if (!err) return resolve(String(stdout).trim());
       if (err.code === 'ENOENT') return resolve(null);
       const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
       if (command === 'npm') {
+        const code =
+          /^npm (?:ERR!|error) code (ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\s*$/m.exec(
+            stderr
+          )?.[1];
+        const network = code ? ` (${code})` : '';
         reject(
           new Error(
-            `npm could not download the package${detail}; check your npm registry and login`
+            `npm could not download the package${detail}${network}; check your npm registry and login`
           )
         );
         return;
