@@ -158,6 +158,11 @@ export function ConnectionsSettings() {
   const text = copy[provider ?? 'google'];
   const statusText = copy[view.provider];
   const act = async (command: Command) => {
+    if (command.provider !== watched.current) watched.current = command.provider;
+    if (command.provider !== provider) {
+      setClientId('');
+      setClientSecret('');
+    }
     setBusy(true);
     setError('');
     setProvider(command.provider);
