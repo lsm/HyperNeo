@@ -142,8 +142,7 @@ async function fetchVerifiedTarball(
 
 async function runPackageManager(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
-      if (!err) return resolve(String(stdout).trim());
+    const fail = (err: { code?: number | string }, stderr = '') => {
       if (err.code === 'ENOENT' || command === 'pnpm') return resolve(null);
       if (command === 'npm' && process.platform === 'win32' && typeof err.code === 'string')
         return resolve(null);
@@ -162,7 +161,15 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
         return;
       }
       reject(new Error(`${command} failed while preparing the package download${detail}`));
-    });
+    };
+    try {
+      execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
+        if (err) return fail(err, stderr);
+        resolve(String(stdout).trim());
+      });
+    } catch (error) {
+      fail(error as NodeJS.ErrnoException);
+    }
   });
 }
 
