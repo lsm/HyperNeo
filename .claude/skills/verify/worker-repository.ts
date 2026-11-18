@@ -95,6 +95,17 @@ try {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_delivery_inputs').get().n, 0);
   };
   await call('work.status', { ref: refs[0] });
+  for (const verb of ['send', 'bind'] as const) {
+    const title = `Open matching ${verb}`;
+    const opened = await call('neo.ask.open', { title, request: 'Use matching worker', todos: [{ title: 'Matching worker', after: [], check, instruction: verb === 'send' ? 'Implement' : null, target: { verb, ref: refs[0] } }] });
+    assert.equal(opened.ok, true, JSON.stringify(opened));
+  }
+  const countAsks = () => (db.prepare('SELECT count(*) AS n FROM neo_asks').get() as { n: number }).n;
+  const beforeBadAsk = countAsks();
+  const badAsk = await call('neo.ask.open', { title: 'Open wrong worker', request: 'Use the wrong worker', todos: [{ title: 'Wrong worker', after: [], check, instruction: 'Implement', target: { verb: 'send', ref: refs[1] } }] });
+  assert.equal(badAsk.ok, false, JSON.stringify(badAsk));
+  assert.match(badAsk.reason, /^worker_repository_mismatch:/);
+  assert.equal(countAsks(), beforeBadAsk);
   assert.equal((await add({ instruction: 'Implement change', target: { verb: 'send', ref: refs[0] } })).ok, true);
   assert.equal((await add({ instruction: 'Renamed repository', target: { verb: 'send', ref: refs[3] } })).ok, true);
   assert.equal((await add({ check: { ...check, params: { urls: ['https://github.com/example/old-name/pull/1'] } }, instruction: 'Existing repository name', target: { verb: 'send', ref: refs[3] } })).ok, true);
@@ -103,13 +114,13 @@ try {
     const before = todos.listTodos('ask').length;
     refusal(await add({ instruction: 'Implement change', target: { verb: 'send', ref } }));
     assert.equal(todos.listTodos('ask').length, before);
-    const converted = await add({ check: { pack: 'core', kind: 'evidence', params: {} } });
+    const converted = await add({ check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-question' } } });
     refusal(await call('neo.todo.edit', { todoId: converted.todo.id, check, instruction: 'Implement change', target: { verb: 'send', ref } }));
     assert.equal(sessions.get(converted.todo.id), null);
     assert.equal(todos.getTodo(converted.todo.id)!.check!.pack, 'core');
     const deferredAsk = `edited-${ref.id}`;
     todos.openAsk({ id: deferredAsk, sessionId: sender, projectId: null, originMessageId: null, title: 'Edited repository', request: 'Introduce a coding check later', createdAt: 1 });
-    const deferred = await call('neo.todo.add', { after: [], askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'evidence', params: {} } });
+    const deferred = await call('neo.todo.add', { after: [], askId: deferredAsk, title: 'Unassigned coding work', check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-question' } } });
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), null);
     assert.equal((await call('neo.todo.edit', { todoId: deferred.todo.id, check })).ok, true);
     assert.equal(coding.repository(todos.getTodo(deferred.todo.id)!, { ask: todos.getAsk(deferredAsk) }), 'github.com/example/repo');
@@ -131,7 +142,7 @@ try {
     refusal(await call('neo.todo.continue', { todoId: pending.todo.id, message: 'Continue change' }));
   }
   assert.equal((await add({ target: { verb: 'bind', ref: refs[0] } })).ok, true);
-  assert.equal((await add({ check: { pack: 'core', kind: 'evidence', params: {} }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
+  assert.equal((await add({ check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic-question' } }, instruction: 'Non-coding task', target: { verb: 'send', ref: refs[1] } })).ok, true);
   assert.equal((await add({ instruction: 'Remote coding task', target: { verb: 'send', ref: remoteRef } })).ok, true);
   assert(remoteLookups > 0);
   for (const remotes of [['https://github.com/example/other.git'], []]) {
