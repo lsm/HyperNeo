@@ -153,7 +153,7 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
           return reject(new Error(`npm could not start${code}`));
         }
         const code =
-          /^npm (?:ERR!|error) code (ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN)\s*$/m.exec(
+          /^npm (?:ERR!|error) code (ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN|ECONNRESET|EPIPE)\s*$/m.exec(
             stderr
           )?.[1];
         const network = code ? ` (${code})` : '';

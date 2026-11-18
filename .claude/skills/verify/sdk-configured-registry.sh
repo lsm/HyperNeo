@@ -24,7 +24,7 @@ if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
   cat > "$RUN/bin/npm" <<SCRIPT
 #!/bin/sh
 printf '%s\n' "\$@" > "$RUN/npm-args"
-printf 'npm error code ETIMEDOUT\nprivate-token-example' >&2
+printf 'npm error code ECONNRESET\nprivate-token-example' >&2
 exit 7
 SCRIPT
   cat > "$RUN/bin/pnpm" <<SCRIPT
@@ -72,7 +72,7 @@ done
 if [[ -f "$RUN/npm-args" ]]; then count=$(wc -l < "$RUN/npm-args" | tr -d ' '); else count=0; fi
 printf 'npm argument count: %s\n' "$count"
 if [[ "$MODE" == npm-failure || "$MODE" == npm-network ]]; then
-  grep -q 'npm could not download the package (exit 7) (ETIMEDOUT); check your npm registry and login' "$RUN/daemon.log"
+  grep -q 'npm could not download the package (exit 7) (ECONNRESET); check your npm registry and login' "$RUN/daemon.log"
   ! grep -q 'private-token-example' "$RUN/daemon.log"
   [[ "$count" -eq 4 && ! -e "$RUN/pnpm-called" && ! -e "$RUN/curl-called" ]]
   echo 'PASS: npm failure was reported without fallback or stderr'
