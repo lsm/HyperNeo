@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert.notEqual(port, '8399');
@@ -14,7 +15,7 @@ try {
   const page = await browser.newPage({ viewport: { width, height: 1000 } });
   await page.goto(`http://127.0.0.1:${port}/neo`);
   if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
-  const card = page.locator(`[data-ask="${evidence.askId}"]:visible`);
+  const card = await revealAsk(page, evidence.askId);
   await card.waitFor();
   await page.screenshot({ path: `${run}/evidence/loaded-${width}.png`, fullPage: true });
   writeFileSync(`${run}/evidence/card-${width}.txt`, await card.innerText());

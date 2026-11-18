@@ -46,7 +46,7 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { ObservedToolInventory } from './observed-tool-inventory.ts';
 import type { QueryLike } from './query-like.ts';
-import { createOapQuery, type OapQueryHub } from '../oap/oap-query.ts';
+import { createOxapQuery, type OxapQueryHub } from '../oxap/oxap-query.ts';
 import { isOxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import { codexSessionRefusal, selectSessionEngine, type SessionEngine } from './session-engine.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
@@ -359,9 +359,9 @@ interface RetryTeardownOptions {
   snapshotRequeueLabel?: string;
 }
 
-export interface OapQueryRuntime {
+export interface OxapQueryRuntime {
   openDirectorySupported: boolean;
-  hub: OapQueryHub | Promise<OapQueryHub>;
+  hub: OxapQueryHub | Promise<OxapQueryHub>;
   clear?(): Promise<void>;
 }
 
@@ -378,7 +378,7 @@ export interface QueryRunnerContext {
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly messageHandler: SDKMessageHandler;
   readonly toolGuards?: DeclarativeToolGuard[];
-  readonly oap?: OapQueryRuntime;
+  readonly oxap?: OxapQueryRuntime;
 
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
@@ -808,7 +808,7 @@ export class QueryRunner {
     let removeFlagSettingsFile: (() => void) | undefined;
     let episodeId: string | undefined;
     let engine: SessionEngine = 'sdk';
-    let oapQuery: ReturnType<typeof createOapQuery> | undefined;
+    let oxapQuery: ReturnType<typeof createOxapQuery> | undefined;
     const interruptEpoch = messageQueue.getUserInterruptEpoch?.();
     const owns = () =>
       this.ctx.getQueryGeneration() === queryGeneration && !this.ctx.isCleaningUp();
@@ -818,7 +818,7 @@ export class QueryRunner {
     try {
       engine = selectSessionEngine(session.config.harness);
       if (isOxapHarness(engine)) {
-        if (!this.ctx.oap?.openDirectorySupported) {
+        if (!this.ctx.oxap?.openDirectorySupported) {
           throw new Error('Codex is unavailable: OAP open-directory support is not available.');
         }
         const refusal = codexSessionRefusal(
@@ -836,7 +836,7 @@ export class QueryRunner {
         if (refusal) throw new Error(refusal);
         runAbortController = new AbortController();
         this.ctx.queryAbortController = runAbortController;
-        const oapHub = await this.ctx.oap.hub;
+        const oxapHub = await this.ctx.oxap.hub;
         if (!live()) return;
         const prompt = this.createMessageGeneratorWrapper(
           queryGeneration,
@@ -846,10 +846,10 @@ export class QueryRunner {
           humanInputs,
           false
         );
-        oapQuery = createOapQuery({
+        oxapQuery = createOxapQuery({
           sessionId: session.id,
           prompt,
-          hub: oapHub,
+          hub: oxapHub,
           isLive: live,
           maySettleInterrupted,
           onSubmitted: async (message) => {
@@ -894,9 +894,9 @@ export class QueryRunner {
             }
           },
         });
-        this.ctx.queryObject = oapQuery;
+        this.ctx.queryObject = oxapQuery;
         for await (const message of this.createAbortableQuery(
-          oapQuery,
+          oxapQuery,
           runAbortController.signal
         )) {
           const sdkMessage = message as SDKMessage;
@@ -916,7 +916,7 @@ export class QueryRunner {
             !live() &&
             !(
               (sdkMessage.type === 'assistant' || sdkMessage.type === 'result' || toolResult) &&
-              oapQuery.wasInterrupted() &&
+              oxapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )
           )
@@ -932,7 +932,7 @@ export class QueryRunner {
             !live() &&
             !(
               (sdkMessage.type === 'assistant' || toolResult) &&
-              oapQuery.wasInterrupted() &&
+              oxapQuery.wasInterrupted() &&
               maySettleInterrupted()
             )
           )
@@ -2139,7 +2139,7 @@ export class QueryRunner {
         stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
       }
 
-      if (isStaleQuery && isOxapHarness(engine)) oapQuery?.close();
+      if (isStaleQuery && isOxapHarness(engine)) oxapQuery?.close();
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;

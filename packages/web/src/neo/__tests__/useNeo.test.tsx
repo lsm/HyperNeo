@@ -152,3 +152,56 @@ describe('useNeo root conversation', () => {
     await waitFor(() => expect(screen.getByText('Session: root')).toBeTruthy());
   });
 });
+
+function HoldProbe() {
+  const neo = useNeo();
+  return (
+    <>
+      <button onClick={() => void neo.holdQuestion('q1', true)}>Hold card</button>
+      {neo.error && <p role="alert">{neo.error}</p>}
+    </>
+  );
+}
+
+describe('useNeo hold', () => {
+  it('holds a card on a plain-HTTP page where crypto.randomUUID is missing', async () => {
+    const original = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      value: undefined,
+      configurable: true,
+    });
+    try {
+      request.mockImplementation(async () => ({ ok: true, sessionId: 'root', projects: [] }));
+      render(<HoldProbe />);
+      fireEvent.click(screen.getByRole('button', { name: 'Hold card' }));
+      await waitFor(() =>
+        expect(
+          request.mock.calls.find(([, call]) => call.name === 'neo.question.hold')
+        ).toBeTruthy()
+      );
+      const [, call] = request.mock.calls.find(([, call]) => call.name === 'neo.question.hold')!;
+      expect(call.input).toEqual({
+        questionId: 'q1',
+        held: true,
+        requestId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        ),
+      });
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        value: original,
+        configurable: true,
+      });
+    }
+  });
+
+  it('says the card could not be held when holding fails', async () => {
+    request.mockImplementation(async (_method: string, { name }: { name: string }) => {
+      if (name === 'neo.question.hold') throw 'lost';
+      return { ok: true, sessionId: 'root', projects: [] };
+    });
+    render(<HoldProbe />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hold card' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('That card could not be held.');
+  });
+});

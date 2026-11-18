@@ -5,11 +5,11 @@ import { createRequire } from 'node:module';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { checkOapBinary } from '../../../packages/daemon/src/lib/oap/oap-binary.ts';
-import { releaseName } from '../../../packages/daemon/src/lib/oap/oxap-install.ts';
-import { readHubOptions } from '../../../packages/daemon/src/lib/oap/oxap-settings.ts';
-import { OapHubRequestError } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
-import { decideReopenFailure } from '../../../packages/daemon/src/lib/oap/oap-session-open.ts';
+import { checkOxapBinary } from '../../../packages/daemon/src/lib/oxap/oxap-binary.ts';
+import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
+import { readHubOptions } from '../../../packages/daemon/src/lib/oxap/oxap-settings.ts';
+import { OxapHubRequestError } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
+import { decideReopenFailure } from '../../../packages/daemon/src/lib/oxap/oxap-session-open.ts';
 import { getSdkStartupGate } from '../../../packages/daemon/src/lib/agent/sdk-startup-gate.ts';
 import { deliverAgentMessageToTarget, type AgentMessageDeliveryDeps } from '../../../packages/daemon/src/lib/messaging/delivery-pipeline.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
@@ -22,7 +22,7 @@ const run = resolve(runArgument);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
-assert.deepEqual(await checkOapBinary(binary, { version, sha256 }), { ok: true });
+assert.deepEqual(await checkOxapBinary(binary, { version, sha256 }), { ok: true });
 for (const name of ['workspace-a', 'workspace-b', 'codex-home', 'evidence']) {
   mkdirSync(join(run, name), { recursive: true });
 }
@@ -83,7 +83,7 @@ assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for 
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
 const config = getConfig({ host: '127.0.0.1', port: 0, dbPath: join(run, 'data/daemon.db'), workspaceRoot: join(run, 'workspace-a') });
-const liveHub = (current: NonNullable<typeof app>) => current.oapEngine.getHub(() => readHubOptions(current.oxapSettings));
+const liveHub = (current: NonNullable<typeof app>) => current.oxapEngine.getHub(() => readHubOptions(current.oxapSettings));
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
@@ -204,7 +204,7 @@ try {
     copyFileSync(peer, secondPeer);
     chmodSync(secondPeer, 0o700);
     assert.deepEqual(await hub.request('operation.invoke', { name: 'oxap.settings.save', input: { providerId: 'anthropic-codex', harness: 'oxap-codex', settings: { executable: secondPeer } } }), { accepted: true });
-    assert.equal(app.oapEngine.isCurrentHub(before), false);
+    assert.equal(app.oxapEngine.isCurrentHub(before), false);
     assert.deepEqual(releaseRequests, ['SHA256SUMS.txt', `${version}.tar.gz`]);
     await turn('Synthetic turn after resave', 2);
     assert.equal(servedConfig().adapters['anthropic-codex']?.executable, secondPeer);
@@ -216,6 +216,16 @@ try {
     await waitFor(() => errors.includes(refusal), 'refusal after the provider left OXAP');
     assert.equal(app.db.getSession(firstId)?.config.harness, 'oxap-codex');
     Object.assign(evidence, { port: app.server.port, resavedExecutable: secondPeer, hubRestartedOnSave: true, turnsAcrossRestart: 2, relativePathRefused: true, leftOxapRefusal: refusal, pass: true });
+  } else if (mode === 'model-id') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic model selection' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'turn with a chosen model');
+    const turns = calls().filter((call) => call.request.method === 'turn/start');
+    assert.equal(turns.length, 1);
+    const sent = turns[0]?.request.params?.model;
+    console.log(`stored model=${app.db.getSession(firstId)?.config.model} turn/start model=${sent}`);
+    assert.equal(app.db.getSession(firstId)?.config.model, 'codex-6-luna');
+    assert.equal(sent, 'gpt-6-luna');
+    Object.assign(evidence, { port: app.server.port, storedModel: app.db.getSession(firstId)?.config.model, turnStartModel: sent, threadDefaultModel: 'synthetic-model', pass: true });
   } else if (mode === 'delta-coalesce') {
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic streamed response' });
     await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'result') && !first.queryPromise, 'streamed reply');
@@ -230,7 +240,7 @@ try {
     await verifyNoticeInBrowser(app, firstId, expected, assistant.uuid);
     Object.assign(evidence, { port: app.server.port, textDeltas: 96, storedAssistantRows: 1, joinedText: expected, pass: true });
   } else if (mode === 'feature-refusal') {
-    await first.oap!.hub;
+    await first.oxap!.hub;
     const engineHub = await liveHub(app);
     const refusal = await engineHub.request('settings', {
       session_id: firstId,
@@ -240,7 +250,7 @@ try {
         payload: { session_id: firstId, compaction_policy: { kind: 'off' } },
       },
     }).then(() => null, (error: Error) => error);
-    assert(refusal instanceof OapHubRequestError);
+    assert(refusal instanceof OxapHubRequestError);
     assert.equal(refusal.code, 'unsupported_feature');
     assert.equal(refusal.feature, 'session.compaction.policy');
     assert.equal(decideReopenFailure(refusal).mode, 'error');
@@ -261,7 +271,7 @@ try {
     await exited;
     await waitFor(() => !first.queryPromise, 'first crashed turn stopped');
     unlinkSync(join(stateDirectory, 'session-history.jsonl'));
-    await first.oap!.hub;
+    await first.oxap!.hub;
     assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery, undefined);
     const notice = 'The previous OXAP Codex thread cannot be resumed. A new thread will start without earlier conversation.';
     assert(app.db.getSDKMessages(firstId, 1000).messages.some((row) => JSON.stringify(row).includes(notice)));
@@ -288,7 +298,7 @@ try {
     unlinkSync(join(stateDirectory, 'session-history.jsonl'));
     await new Promise((done) => setTimeout(done, 500));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 2);
-    await first.oap!.hub;
+    await first.oxap!.hub;
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
     const excerpt = app.db.getSession(firstId)?.metadata.oapRecovery?.text;
     assert(excerpt?.includes('Synthetic prior completed turn'));
@@ -324,7 +334,7 @@ try {
     assert.equal(app.db.getSession(firstId)?.metadata.oapRecovery, undefined);
     Object.assign(evidence, { port: app.server.port, visibleNoticeSaved: true, priorCrashNotResent: true, unfinishedTurnExcluded: true, summaryPersistedAcrossRestart: true, summaryOnlyOnExplicitTurn: true, automaticResends: 0, pass: true });
   } else if (mode === 'recovery-claim') {
-    const queryHub = await first.oap!.hub;
+    const queryHub = await first.oxap!.hub;
     const { planMailboxAdmission } = await import('../../../packages/daemon/src/lib/mailbox/admission-plan.ts');
     const { DEFAULT_MAILBOX_ENTRY_POLICY } = await import('../../../packages/daemon/src/lib/mailbox/entry.ts');
     const { RetryPromptIdentity } = await import('../../../packages/daemon/src/lib/agent/retry-prompt-identity.ts');
@@ -493,7 +503,7 @@ try {
     assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, nativeId);
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, nativeId);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    await first.oap!.hub;
+    await first.oxap!.hub;
     assert.equal(app.db.getSession(firstId)?.sdkSessionId, 'native-workspace-a-2');
     assert.equal(app.db.getSession(firstId)?.metadata?.oapClearThreadId, undefined);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
@@ -525,7 +535,7 @@ try {
     unlinkSync(join(stateDirectory, 'session-history.jsonl'));
     if (mode.startsWith('clear-')) {
       await assert.rejects(first.clearConversationContext(), /cannot be resumed/i);
-    } else await assert.rejects(Promise.resolve(first.oap!.hub), /cannot be resumed/i);
+    } else await assert.rejects(Promise.resolve(first.oxap!.hub), /cannot be resumed/i);
     const notices = app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('The previous OXAP Codex thread cannot be resumed'));
     assert.equal(notices.length, 1);
     assert.equal(app.db.getSDKMessages(firstId, 1000).messages.filter((row) => JSON.stringify(row).includes('Could not clear the Codex thread')).length, 0);
@@ -569,9 +579,9 @@ try {
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
     Object.assign(evidence, { port: app.server.port, nativeThreadIdSaved: true, sameThreadReopened: true, explicitTurns: turns.length, automaticResends: 0, pass: true });
   } else if (mode === 'retry') {
-    const failure = await Promise.resolve(first.oap!.hub).then(() => '', (error: Error) => error.message);
+    const failure = await Promise.resolve(first.oxap!.hub).then(() => '', (error: Error) => error.message);
     assert(failure, 'the first synthetic app-server start must fail');
-    const resumedHub = await first.oap!.hub;
+    const resumedHub = await first.oxap!.hub;
     assert(resumedHub);
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic after open retry' });
     await waitFor(() => app!.db.getSDKMessages(firstId).messages.some((row) => row.type === 'result'), 'turn after open retry');
@@ -593,10 +603,10 @@ try {
     await new Promise((done) => setTimeout(done, 4000));
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 1);
-    await first.oap!.hub;
+    await first.oxap!.hub;
     assert.equal(calls().filter((call) => call.request.method === 'thread/resume').length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start').length, 1);
-    assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
+    assert.equal(app.oxapEngine.isCurrentHub(engineHub), false);
     const { sessionId: freshId } = await makeSession('workspace-b');
     await hub.request('message.send', { sessionId: freshId, content: 'Synthetic fresh session after first-turn crash' });
     await waitFor(() => app!.db.getSDKMessages(freshId).messages.some((row) => row.type === 'result'), 'fresh session after first-turn crash');
@@ -674,9 +684,9 @@ try {
     await waitFor(() => secondResults === 1 && !second.queryPromise && !second.messageQueue.isRunning(), 'second workspace turn');
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic later prompt' });
     await waitFor(() => firstResults === 3 && !first.queryPromise && !first.messageQueue.isRunning(), 'later first-session turn');
-    const firstHub = await first.oap!.hub;
-    assert.equal(await first.oap!.hub, firstHub);
-    assert.notEqual(await second.oap!.hub, firstHub);
+    const firstHub = await first.oxap!.hub;
+    assert.equal(await first.oxap!.hub, firstHub);
+    assert.notEqual(await second.oxap!.hub, firstHub);
     const engineHub = await liveHub(app);
     assert.equal(await liveHub(app), engineHub);
     const allCalls = calls();
@@ -697,14 +707,14 @@ try {
     assert.equal(errors.length, 0, JSON.stringify(errors));
     await hub.request('session.delete', { sessionId: secondId });
     assert.equal(app.db.getSession(secondId), null);
-    await assert.rejects(Promise.resolve(second.oap!.hub), /deleted/i);
+    await assert.rejects(Promise.resolve(second.oxap!.hub), /deleted/i);
     const live = await engineHub.request('sessions') as { sessions: Array<{ session_id: string }> };
     assert(live.sessions.some((entry) => entry.session_id === firstId));
     assert(!live.sessions.some((entry) => entry.session_id === secondId));
     const { sessionId: idleId } = await makeSession('workspace-b');
     const idle = app.sessionManager.getSession(idleId);
     assert(idle);
-    await idle.oap!.hub;
+    await idle.oxap!.hub;
     await hub.request('message.send', { sessionId: firstId, content: 'Synthetic hold for crash' });
     await waitFor(() => calls().some((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')), 'in-flight run before hub crash');
     const child = (engineHub as unknown as { child: { pid: number; kill(signal: string): boolean; once(event: string, callback: () => void): void } }).child;
@@ -717,9 +727,9 @@ try {
     const heldTurns = calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash'));
     assert.equal(heldTurns.length, 1);
     assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 3);
-    assert.equal(app.oapEngine.isCurrentHub(engineHub), false);
-    await idle.oap!.hub;
-    await first.oap!.hub;
+    assert.equal(app.oxapEngine.isCurrentHub(engineHub), false);
+    await idle.oxap!.hub;
+    await first.oxap!.hub;
     assert.equal(calls().filter((call) => call.request.method === 'thread/resume').length, 2);
     assert.equal(calls().filter((call) => call.request.method === 'turn/start' && JSON.stringify(call).includes('Synthetic hold for crash')).length, 1);
     const restartedHub = await liveHub(app);

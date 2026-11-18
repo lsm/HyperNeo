@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { leaveSession, sessionTitle } from './session-pane-web.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 const [port, run] = process.argv.slice(2);
 assert(port && port !== '8399');
 const saved = JSON.parse(readFileSync(`${run}/evidence/observed.json`, 'utf8'));
@@ -14,7 +15,7 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${port}/neo`);
       if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
-      const card = page.locator(`[data-ask="${saved.askId}"]:visible`);
+      const card = await revealAsk(page, saved.askId);
       await card.waitFor();
       assert.equal(await card.locator('[data-ask-question]').count(), 0);
       const header = card.locator('[data-ask-focused-session]');

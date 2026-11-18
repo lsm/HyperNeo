@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 const [port, run, executablePath, modulePath, code, phase = 'after'] = process.argv.slice(2);
 assert(!['8399', '8499'].includes(port));
 const before = phase === 'before';
@@ -20,7 +21,7 @@ try {
     try {
       await page.goto(`${base}/neo`);
       if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-      const card = page.locator('[data-ask="composer-fixture"]:visible');
+      const card = await revealAsk(page, 'composer-fixture');
       await card.locator('[data-question-source]').getByRole('button', { name: 'Open session: Synthetic worker', exact: true }).click();
       const pane = page.locator('.neo-session-pane');
       const input = pane.getByRole('textbox', { name: 'Message this chat', exact: true });

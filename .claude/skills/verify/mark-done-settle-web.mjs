@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run, mode] = process.argv.slice(2);
 assert.notEqual(port, '8399');
@@ -21,48 +22,48 @@ try {
     }
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = (id) => page.locator(`[data-ask="${id}"]:visible`);
+    const card = (id) => revealAsk(page, id);
     if (mode === 'verify') {
-      await card('unfinished').getByRole('button', { name: 'Ask actions' }).click();
+      await (await card('unfinished')).getByRole('button', { name: 'Ask actions' }).click();
       await page.getByRole('menuitem', { name: 'Mark done' }).click();
-      const refusal = card('unfinished').getByRole('alert');
+      const refusal = (await card('unfinished')).getByRole('alert');
       await refusal.waitFor();
       assert.match(await refusal.innerText(), /todos_unfinished:/);
-      assert.equal(await card('unfinished').getAttribute('data-ask-state'), 'todo');
-      await card('unfinished').getByRole('button', { name: 'Ask actions' }).click();
+      assert.equal(await (await card('unfinished')).getAttribute('data-ask-state'), 'todo');
+      await (await card('unfinished')).getByRole('button', { name: 'Ask actions' }).click();
       await page.getByRole('menuitem', { name: 'Mark done' }).waitFor();
       await page.keyboard.press('Escape');
-      await card('unfinished').screenshot({ path: `${run}/evidence/unfinished-${width}.png` });
+      await (await card('unfinished')).screenshot({ path: `${run}/evidence/unfinished-${width}.png` });
     }
     if (width === 1280) {
-      await card('finish').getByRole('button', { name: 'Ask actions' }).click();
+      await (await card('finish')).getByRole('button', { name: 'Ask actions' }).click();
       await page.getByRole('menuitem', { name: 'Mark done' }).click();
       if (mode === 'before') {
         await page.getByRole('alert').filter({ hasText: 'todos_unfinished' }).waitFor();
-        assert.equal(await card('finish').getByRole('alert').count(), 0);
+        assert.equal(await (await card('finish')).getByRole('alert').count(), 0);
         await page.screenshot({ path: `${run}/evidence/before.png` });
         evidence.refusedWithNoCardError = true;
         break;
       }
       await page.locator('[data-ask="finish"][data-ask-state="done"]:visible').waitFor();
-      await card('finish').getByRole('button', { name: 'Ask actions' }).click();
+      await (await card('finish')).getByRole('button', { name: 'Ask actions' }).click();
       await page.getByRole('menuitem', { name: 'Mark done' }).waitFor({ state: 'hidden' });
       evidence.settledActions = await page.getByRole('menuitem').allTextContents();
       assert.deepEqual(evidence.settledActions, ['Copy link', 'Reply']);
       await page.keyboard.press('Escape');
       await page.getByRole('menu').waitFor({ state: 'hidden' });
-      await card('finish').screenshot({ path: `${run}/evidence/marked-done.png` });
+      await (await card('finish')).screenshot({ path: `${run}/evidence/marked-done.png` });
     }
-    await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();
+    await (await card('stop-failure')).getByRole('button', { name: 'Ask actions' }).click();
     await page.getByRole('menuitem', { name: 'Mark done' }).click();
-    const alert = card('stop-failure').getByRole('alert');
+    const alert = (await card('stop-failure')).getByRole('alert');
     await alert.waitFor();
     assert.match(await alert.innerText(), /still open/);
     assert.equal(await alert.count(), 1);
-    assert.equal(await card('finish').getByRole('alert').count(), 0);
-    await card('stop-failure').screenshot({ path: `${run}/evidence/card-error-${width}.png` });
+    assert.equal(await (await card('finish')).getByRole('alert').count(), 0);
+    await (await card('stop-failure')).screenshot({ path: `${run}/evidence/card-error-${width}.png` });
     await page.getByRole('menu').waitFor({ state: 'hidden' });
-    await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();
+    await (await card('stop-failure')).getByRole('button', { name: 'Ask actions' }).click();
     await page.getByRole('menuitem', { name: 'Mark done' }).click();
     await alert.waitFor();
     evidence.widths.push({ width, cardError: await alert.innerText(), retry: true });

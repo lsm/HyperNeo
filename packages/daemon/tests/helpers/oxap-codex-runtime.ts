@@ -1,8 +1,8 @@
-import type { OapEngine, OapEngineOptions } from '../../src/lib/oap/oap-engine';
-import { createOapRuntime } from '../../src/lib/oap/oap-runtime';
+import type { OxapEngine, OxapEngineOptions } from '../../src/lib/oxap/oxap-engine';
+import { createOxapRuntime } from '../../src/lib/oxap/oxap-runtime';
 
-export const syntheticHubOptions: OapEngineOptions = {
-  binaryPath: '/synthetic/oapx',
+export const syntheticHubOptions: OxapEngineOptions = {
+  binaryPath: '/synthetic/oxap',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
@@ -14,13 +14,13 @@ export const codexRecord = {
 } as never;
 
 export function bindCodexRuntime(
-  engine: OapEngine,
-  options?: OapEngineOptions,
-  events?: Parameters<typeof createOapRuntime>[2],
+  engine: OxapEngine,
+  options?: OxapEngineOptions,
+  events?: Parameters<typeof createOxapRuntime>[2],
   db?: unknown,
   messageHub?: unknown
 ) {
-  return createOapRuntime(
+  return createOxapRuntime(
     engine,
     options ? { installed: () => true, read: async () => options } : undefined,
     events,

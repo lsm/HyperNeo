@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { OXAP_VERSION } from '../../../packages/daemon/src/lib/oap/oxap-install.ts';
+import { OXAP_VERSION } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 
 const PROBE = 'https://api.openai.com/v1/responses';
 

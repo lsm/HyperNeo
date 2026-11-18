@@ -26,6 +26,7 @@ import { connectionState, reconnectAttemptCount } from '../lib/state.ts';
 import { readNeoAskImages } from './conversation-ask-client.ts';
 import { NeoTopicChips } from './NeoTopicChips.tsx';
 import { NeoAskTodos, QuestionBox } from './NeoAskTodos.tsx';
+import { NeoHumanQueue, neoHumanQueueHolds } from './NeoHumanQueue.tsx';
 import { NeoWorkSearch } from './NeoWorkSearch.tsx';
 import { useNeoWorkSearch } from './useNeoWorkSearch.ts';
 import { NeoComposer } from './NeoComposer.tsx';
@@ -133,6 +134,7 @@ export function NeoLive() {
   );
   const [roomy, setRoomy] = useState(() => window.matchMedia('(min-width: 2400px)').matches);
   const [cardTarget, setCardTarget] = useState<NeoWorkFocus | null>(null);
+  const [reveal, setReveal] = useState(0);
   const [cardDetails, setCardDetails] = useState<Record<string, NeoAskEntry>>({});
   const [cardUnavailable, setCardUnavailable] = useState(false);
   const [cardOpening, setCardOpening] = useState(false);
@@ -309,6 +311,60 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
+  const askCard = (
+    entry: NeoAskEntry,
+    listed = false,
+    refreshing = false,
+    hideOpenCards = false
+  ) => (
+    <NeoAskTodos
+      key={entry.ask.id}
+      entry={entry}
+      focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
+      disabled={!connected || !!neo.busyWork || refreshing}
+      onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+      onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+      onControl={(todo, control) => neo.controlTodo(todo, control)}
+      onReply={replyToQuestion}
+      hideOpenCards={hideOpenCards}
+      onDetails={(read) => setCardDetails((known) => ({ ...known, [read.ask.id]: read }))}
+      onReplyAsk={
+        ready
+          ? () =>
+              replyInComposer({
+                author: 'Neo',
+                text: entry.ask.title,
+                anchor: `neo-ref-ask-${entry.ask.id}`,
+                replyTo: { kind: 'ask', id: entry.ask.id },
+              })
+          : undefined
+      }
+      onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
+      onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+      onTopic={
+        workQuery.trim() &&
+        !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey)
+          ? undefined
+          : (next) => {
+              if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
+              setWorkQuery('');
+              chooseTopic(next);
+            }
+      }
+      onLoadDone={(askId, offset) =>
+        connectionManager.getHub().then((hub) =>
+          invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
+            askId,
+            offset,
+          })
+        )
+      }
+      onLoadDetails={
+        listed ? (input) => loadNeoAskDetails(input).then(withoutQueued) : loadNeoAskDetails
+      }
+      onOpen={openSession}
+    />
+  );
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
   const sceneEntries = sceneGroups.flatMap((group) => group.entries);
   const [savedTopic, setSavedTopic] = useState(() => {
@@ -439,6 +495,36 @@ export function NeoLive() {
     sheet: sceneSheet,
   });
   const attentionCount = view?.needsYou ?? 0;
+  const fullQueue = workQuery.trim() ? undefined : view?.humanQueue;
+  const topicAsks = topic
+    ? workEntries
+        .filter((entry) => entry.ask.topicKey === topic)
+        .map((entry) => entry.ask.id)
+        .join()
+    : '';
+  const humanQueue = useMemo(() => {
+    if (!fullQueue || !topic) return fullQueue;
+    const asks = new Set(topicAsks.split(','));
+    return {
+      items: fullQueue.items.filter((item) => asks.has(item.askId)),
+      counts: Object.fromEntries(Object.entries(fullQueue.counts).filter(([id]) => asks.has(id))),
+    };
+  }, [fullQueue, topic, topicAsks]);
+  const outsideQueue =
+    fullQueue && cardTarget && !neoHumanQueueHolds(fullQueue, cardTarget) ? cardTarget.askId : null;
+  const withoutQueued = (entry: NeoAskEntry): NeoAskEntry =>
+    fullQueue
+      ? {
+          ...entry,
+          questions: entry.questions.filter(
+            (question) =>
+              !neoHumanQueueHolds(fullQueue, { askId: entry.ask.id, questionId: question.id })
+          ),
+          todos: entry.todos.filter(
+            (todo) => !neoHumanQueueHolds(fullQueue, { askId: entry.ask.id, todoId: todo.id })
+          ),
+        }
+      : entry;
   const neoUnhandled = view?.neoUnhandled ?? 0;
   const ready = !!neo.sessionId && neo.store.activeSessionId.value === neo.sessionId;
   const replyInComposer = (quote: NeoQuote) => {
@@ -726,13 +812,16 @@ export function NeoLive() {
         if (referenceRequest.current !== ticket) return;
         setCardOpening(false);
         if (result === 'unavailable') return setCardUnavailable(true);
+        if (topic && result.entry.ask.topicKey !== topic) chooseTopic(null);
         if (!loadedEntries.some((entry) => entry.ask.id === result.entry.ask.id))
           setReferenced({
             scope: sceneScope,
             entry: neoWorkReferenceEntry(result.entry),
           });
         requestAnimationFrame(() => {
-          if (referenceRequest.current === ticket) setCardTarget(result.target);
+          if (referenceRequest.current !== ticket) return;
+          setCardTarget(result.target);
+          setReveal((value) => value + 1);
         });
         if (!result.target.questionId && !result.target.todoId)
           requestAnimationFrame(() =>
@@ -1077,7 +1166,39 @@ export function NeoLive() {
           {!workQuery.trim() && (
             <NeoTopicChips entries={sceneEntries} selected={topic} onSelect={chooseTopic} />
           )}
-          {!workQuery.trim() && openCards.length > 0 && (
+          {humanQueue && (
+            <NeoHumanQueue
+              queue={humanQueue}
+              entries={workEntries}
+              disabled={!connected || !!neo.busyWork}
+              onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
+              onHold={(questionId, held) => void neo.holdQuestion(questionId, held)}
+              onLoadDetails={loadNeoAskDetails}
+              onOpen={openSession}
+              focus={cardTarget}
+              reveal={reveal}
+              renderAsk={(entry, refreshing) => askCard(entry, false, refreshing)}
+              onStale={() =>
+                neo.refresh().catch((cause: unknown) => {
+                  neo.setError(cause instanceof Error ? cause.message : t('queue.refreshFailed'));
+                  throw cause;
+                })
+              }
+              onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+              onReply={
+                ready
+                  ? (question) =>
+                      replyInComposer({
+                        author: 'Neo',
+                        text: neoQuestionText(question),
+                        anchor: `neo-ref-question-${question.id}`,
+                        replyTo: { kind: 'question', id: question.id },
+                      })
+                  : undefined
+              }
+            />
+          )}
+          {!fullQueue && !workQuery.trim() && openCards.length > 0 && (
             <section aria-label={t('live.group.cards')} class="mt-6 space-y-3" data-neo-cards>
               <h2 class="text-xs font-medium text-fg-muted">
                 {t('live.group.cards')} · {openCards.length}
@@ -1100,9 +1221,18 @@ export function NeoLive() {
             ? [{ key: 'search', label: t('live.searchWork'), entries: search.results }]
             : sceneGroups.map((group) => ({
                 ...group,
-                entries: topic
+                entries: (topic
                   ? group.entries.filter((entry) => entry.ask.topicKey === topic)
-                  : group.entries,
+                  : group.entries
+                )
+                  .filter(
+                    (entry) =>
+                      !fullQueue ||
+                      group.key === 'outcomes' ||
+                      entry.ask.id === outsideQueue ||
+                      !fullQueue.counts[entry.ask.id]
+                  )
+                  .map(withoutQueued),
               }))
           ).map((group) =>
             group.entries.length === 0 ? null : (
@@ -1114,56 +1244,13 @@ export function NeoLive() {
               >
                 <h2 class="text-xs font-medium text-fg-muted">
                   {group.label} ·{' '}
-                  {group.key === 'attention' && !topic ? attentionCount : group.entries.length}
+                  {group.key === 'attention' && !topic && !fullQueue
+                    ? attentionCount
+                    : group.entries.length}
                 </h2>
-                {group.entries.map((entry) => (
-                  <NeoAskTodos
-                    key={entry.ask.id}
-                    entry={entry}
-                    focusedItem={cardTarget?.askId === entry.ask.id ? cardTarget : undefined}
-                    disabled={!connected || !!neo.busyWork}
-                    onAnswer={(questionId, answer) => void neo.answerQuestion(questionId, answer)}
-                    onControl={(todo, control) => neo.controlTodo(todo, control)}
-                    onReply={replyToQuestion}
-                    hideOpenCards={group.key === 'attention'}
-                    onDetails={(read) =>
-                      setCardDetails((known) => ({ ...known, [read.ask.id]: read }))
-                    }
-                    onReplyAsk={
-                      ready
-                        ? () =>
-                            replyInComposer({
-                              author: 'Neo',
-                              text: entry.ask.title,
-                              anchor: `neo-ref-ask-${entry.ask.id}`,
-                              replyTo: { kind: 'ask', id: entry.ask.id },
-                            })
-                        : undefined
-                    }
-                    onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
-                    onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
-                    onTopic={
-                      workQuery.trim() &&
-                      !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey)
-                        ? undefined
-                        : (next) => {
-                            if (!workQuery.trim()) return chooseTopic(next === topic ? null : next);
-                            setWorkQuery('');
-                            chooseTopic(next);
-                          }
-                    }
-                    onLoadDone={(askId, offset) =>
-                      connectionManager.getHub().then((hub) =>
-                        invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
-                          askId,
-                          offset,
-                        })
-                      )
-                    }
-                    onLoadDetails={loadNeoAskDetails}
-                    onOpen={openSession}
-                  />
-                ))}
+                {group.entries.map((entry) =>
+                  askCard(entry, true, false, !fullQueue && group.key === 'attention')
+                )}
               </section>
             )
           )}

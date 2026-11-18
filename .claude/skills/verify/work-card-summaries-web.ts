@@ -6,6 +6,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
+import { readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const run = resolve(process.argv.at(-1)!);
 assert.equal(process.env.NODE_ENV, 'test');
@@ -38,7 +39,14 @@ const front = Bun.serve({
       return new Response('Upgrade failed', { status: 500 });
     }
     const file = Bun.file(join(dist, path === '/neo' ? 'neo/index.html' : path));
-    return (await file.exists()) ? new Response(file) : new Response('Not found', { status: 404 });
+    if (!(await file.exists())) return new Response('Not found', { status: 404 });
+    return path === '/neo'
+      ? new Response(file, {
+          headers: {
+            'Set-Cookie': `hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict`,
+          },
+        })
+      : new Response(file);
   },
   websocket: createWebSocketHandlers(app.transport, app.sessionManager),
 });
@@ -88,6 +96,22 @@ try {
     store.updateTodo(done, { state: 'done' }, Date.now());
   }
   store.askQuestion("synthetic-choice", "a-api", { text: "Which synthetic option?", kind: "choice", options: ["Ship", "Wait"], multiple: false, noLabel: null, yesLabel: null, confirm: null }, Date.now());
+  store.openAsk({
+    id: 'a-history', title: 'Finished synthetic history', request: 'Synthetic summary outside the queue',
+    sessionId: root, projectId: null, originMessageId: null, createdAt: Date.now() - 1000,
+  });
+  for (let index = 0; index < 21; index++) {
+    const done = store.addTodo(`history-done-${index}`, 'a-history', {
+      title: `Finished history task ${index}`, doneWhen: 'Done',
+      check: null, instruction: null, named: null,
+    }, Date.now() - 1000);
+    store.updateTodo(done, { state: 'done' }, Date.now() - 1000);
+  }
+  const kept = store.addTodo('history-task', 'a-history', {
+    title: 'Keep history replies', doneWhen: 'Same ask reference',
+    check: null, instruction: 'Full synthetic history instructions', named: null,
+  }, Date.now());
+  store.updateTodo(kept, { report: 'Full synthetic history report', state: 'done' }, Date.now());
   if (process.argv.includes('--manual')) {
     writeFileSync(process.argv[3], JSON.stringify({ port: front.port, run }));
     const deadline = Date.now() + 300000;

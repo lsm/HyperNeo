@@ -261,8 +261,6 @@ import mdToolSpeechCatalog from './neo/tools/neo.speech.catalog.md' with { type:
 import mdToolSpeechListen from './neo/tools/neo.speech.listen.md' with { type: 'text' };
 import mdToolSpeechPreview from './neo/tools/neo.speech.preview.md' with { type: 'text' };
 import mdToolSpeechSay from './neo/tools/neo.speech.say.md' with { type: 'text' };
-import mdToolRelaySendersSet from './neo/tools/neo.relaySenders.set.md' with { type: 'text' };
-import mdToolRelaySendersRecent from './neo/tools/neo.relaySenders.recent.md' with { type: 'text' };
 import { buildPromptRegistry, fillPrompt } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
@@ -719,8 +717,6 @@ export const NEO_TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = Object.fr
     'neo/tools/neo.speech.listen.md': mdToolSpeechListen,
     'neo/tools/neo.speech.preview.md': mdToolSpeechPreview,
     'neo/tools/neo.speech.say.md': mdToolSpeechSay,
-    'neo/tools/neo.relaySenders.set.md': mdToolRelaySendersSet,
-    'neo/tools/neo.relaySenders.recent.md': mdToolRelaySendersRecent,
   })
 );
 

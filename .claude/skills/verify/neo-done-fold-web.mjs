@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifyDoneFold(page, fixture, { phase, evidence, touch = false }) {
   await page.goto(fixture.url);
@@ -6,7 +7,7 @@ export async function verifyDoneFold(page, fixture, { phase, evidence, touch = f
   if (touch) await use(page.getByRole('button', { name: /^Your work/ }));
   const observed = [];
   for (const { askId, count } of fixture.cases) {
-    const card = page.locator(`[data-ask="${askId}"]:visible`);
+    const card = await revealAsk(page, askId);
     await card.waitFor();
     const all = card.getByRole('button', { name: /^All · / });
     if (await all.count()) {
