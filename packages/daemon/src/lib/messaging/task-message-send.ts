@@ -200,17 +200,17 @@ async function deliverMessage(
 export function createSendTaskMessageOperation(deps: TaskMessageSendDependencies) {
   const send = (superpipe({ deps })('task.message.send') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(admitSender, ['input', 'caller'], 'result:admission')
-    .pipe(admitTask, ['admission', 'input', 'deps'], 'result:admission')
-    .pipe(admitWorkflow, ['admission', 'input', 'deps'], 'result:admission')
+    .pipe(admitSender, ['input', 'caller'], 'result:outcome')
+    .pipe(admitTask, ['outcome', 'input', 'deps'], 'result:outcome')
+    .pipe(admitWorkflow, ['outcome', 'input', 'deps'], 'result:outcome')
     .pipe(
       (admission: Admission) => deps.listNodeExecutions(admission.task.workflowRunId!),
-      ['admission'],
+      ['outcome'],
       'executions'
     )
-    .pipe(admitTarget, ['admission', 'input', 'executions', 'deps'], 'result:admission')
-    .pipe(deliverMessage, ['admission', 'input', 'deps'], 'admission')
-    .endAsync('admission') as (
+    .pipe(admitTarget, ['outcome', 'input', 'executions', 'deps'], 'result:outcome')
+    .pipe(deliverMessage, ['outcome', 'input', 'deps'], 'outcome')
+    .endAsync('outcome') as (
     input: TaskMessageSendInput,
     caller: OperationCaller
   ) => Promise<TaskMessageSendResult>;
