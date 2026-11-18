@@ -76,7 +76,7 @@ export function createOutlookDraftOperations(service: () => Promise<Service>) {
     defineOperation({
       name: 'outlook.draft',
       description:
-        'Create a text draft in Outlook Drafts, or update one named by draftId. Returns its id; the human reviews and sends in Outlook. Any message that is not a draft is refused, and there is no send action. If the outcome is unknown, check Outlook drafts before retrying.',
+        'Create a text draft in Outlook Drafts, or update one named by draftId. Returns its id; the human reviews and sends in Outlook. Any message that is not a draft is refused, and there is no send action. The draft check and the update are separate requests, so a draft sent or moved in between returns draft_outcome_unknown. If the outcome is unknown, check Outlook drafts before retrying.',
       policy: { ...policy, safetyClass: 'mutate' },
       inputSchema: outlookDraftInput,
       resultSchema: z.union([failure, z.object({ ok: z.literal(true), draftId })]),
