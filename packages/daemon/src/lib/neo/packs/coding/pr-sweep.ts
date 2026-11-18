@@ -6,6 +6,7 @@ import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
+import { JobQueueRepository } from '../../../../storage/repositories/job-queue-repository.ts';
 import { type CodingAttend, codingPrHeadEvent } from './attention.ts';
 import { CodingPrLedgerRepository, type CodingPrState } from './pr-ledger.ts';
 import { CodingStageFactsRepository, codingCrossModelFindings } from './stage-facts.ts';
@@ -180,15 +181,13 @@ export class CodingPrSweepRepository {
   }
 
   reviewSent(key: string): boolean {
-    return !!this.db.prepare('SELECT 1 FROM message_send_receipts WHERE key = ?').get(key);
+    return new JobQueueRepository(this.db).submissionReceipt(key, key) !== null;
   }
 
   markReview(key: string): void {
-    this.db
-      .prepare(
-        "INSERT OR IGNORE INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, '{}')"
-      )
-      .run(key, key);
+    const receipts = new JobQueueRepository(this.db);
+    if (receipts.submissionReceipt(key, key) === null)
+      receipts.recordSubmissionReceipt(key, key, {});
   }
 
   mark(row: CodingSweepRow, nudges: number, now: number): void {
