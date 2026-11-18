@@ -10,6 +10,8 @@ const {
   mockNavigateToSessions,
   mockGetWorkspaceHistory,
   mockListSystemProjects,
+  mockFindProjectWork,
+  mockForgetSystemProject,
   mockAddWorkspaceToHistory,
   mockRemoveWorkspaceFromHistory,
   mockArchiveSession,
@@ -24,6 +26,8 @@ const {
   mockNavigateToSessions: vi.fn(),
   mockGetWorkspaceHistory: vi.fn(),
   mockListSystemProjects: vi.fn(),
+  mockFindProjectWork: vi.fn(),
+  mockForgetSystemProject: vi.fn(),
   mockAddWorkspaceToHistory: vi.fn(),
   mockRemoveWorkspaceFromHistory: vi.fn(),
   mockArchiveSession: vi.fn(),
@@ -52,6 +56,8 @@ vi.mock('../../lib/router.ts', () => ({
 vi.mock('../../lib/api-helpers.ts', () => ({
   getWorkspaceHistory: mockGetWorkspaceHistory,
   listSystemProjects: mockListSystemProjects,
+  findProjectWork: mockFindProjectWork,
+  forgetSystemProject: mockForgetSystemProject,
   addWorkspaceToHistory: mockAddWorkspaceToHistory,
   removeWorkspaceFromHistory: mockRemoveWorkspaceFromHistory,
   archiveSession: mockArchiveSession,
@@ -132,8 +138,10 @@ describe('SessionsSidebar', () => {
     mockSessionStatusesSignal.value = new Map();
     mockGetWorkspaceHistory.mockResolvedValue([]);
     mockListSystemProjects.mockResolvedValue([]);
+    mockFindProjectWork.mockResolvedValue(false);
+    mockForgetSystemProject.mockResolvedValue(undefined);
     mockAddWorkspaceToHistory.mockImplementation(async (path: string) => createHistory(path, 2));
-    mockRemoveWorkspaceFromHistory.mockResolvedValue({ success: true });
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(true);
     mockArchiveSession.mockResolvedValue({ success: true });
     mockHubRequest.mockResolvedValue({ path: '/workspace/new-project' });
     mockGetHubIfConnected.mockReturnValue({ request: mockHubRequest });
@@ -194,7 +202,7 @@ describe('SessionsSidebar', () => {
     const remaining = { ...project, folders: ['/docs'] };
     mockGetWorkspaceHistory.mockResolvedValue([{ ...createHistory('/docs'), project: remaining }]);
     mockRemoveWorkspaceFromHistory
-      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('Disconnected'));
     fireEvent.click(screen.getByRole('button', { name: 'Remove project Product' }));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
@@ -208,6 +216,14 @@ describe('SessionsSidebar', () => {
       expect(screen.queryByRole('button', { name: 'Remove project Product' })).toBeNull()
     );
     expect(mockRemoveWorkspaceFromHistory.mock.calls).toEqual([['/docs']]);
+  });
+
+  it('reports a refused history removal', async () => {
+    mockGetWorkspaceHistory.mockResolvedValue([createHistory('/code')]);
+    mockRemoveWorkspaceFromHistory.mockResolvedValue(false);
+    render(<SessionsSidebar />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove project code' }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Failed to remove project'));
   });
 
   it('archives every open chat after confirmation and then removes the project', async () => {
@@ -279,9 +295,140 @@ describe('SessionsSidebar', () => {
     expect(screen.getByText('Review')).toBeTruthy();
     expect(screen.queryByText('neo-read')).toBeNull();
     expect(screen.getAllByText('No chats')).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /^Remove project/ })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Remove project Neo Read' }).hasAttribute('disabled')
+    ).toBe(true);
+    expect(screen.getByRole('button', { name: 'Remove project Idle' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New session in Idle' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'New session in Section' })).toBeNull();
+  });
+
+  it('keeps the empty-project control available across unrelated session updates', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: [],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    mockSessionsSignal.value = [createMockSession('chat', 'Other', '/code/other')];
+    await screen.findByText('Other');
+    await waitFor(() => expect(mockListSystemProjects.mock.calls.length).toBeGreaterThan(1));
+    expect(remove.hasAttribute('disabled')).toBe(false);
+    expect(mockFindProjectWork).toHaveBeenCalledTimes(1);
+    fireEvent.click(remove);
+    fireEvent.click(screen.getByRole('button', { name: 'Forget project' }));
+    await waitFor(() => expect(mockForgetSystemProject).toHaveBeenCalledWith('idle'));
+  });
+
+  it('rechecks a failed work lookup after the project list refreshes', async () => {
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions: false,
+        unknownWork: false,
+      },
+      {
+        id: 'ok',
+        name: 'Okay',
+        folders: ['/code/okay'],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+      },
+    ]);
+    mockFindProjectWork.mockImplementation(async (folders: string[]) => {
+      if (
+        folders[0] === '/code/idle' &&
+        mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle').length === 1
+      )
+        throw new Error('offline');
+      return false;
+    });
+    render(<SessionsSidebar />);
+    const idle = await screen.findByRole('button', { name: 'Remove project Idle' });
+    const okay = await screen.findByRole('button', { name: 'Remove project Okay' });
+    await waitFor(() => expect(idle.getAttribute('title')).toBe('Could not check project work'));
+    await waitFor(() => expect(okay.hasAttribute('disabled')).toBe(false));
+    mockSessionsSignal.value = [createMockSession('other', 'Other', '/code/other')];
+    await waitFor(() => expect(idle.hasAttribute('disabled')).toBe(false));
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/idle')
+    ).toHaveLength(2);
+    expect(
+      mockFindProjectWork.mock.calls.filter((args) => args[0][0] === '/code/okay')
+    ).toHaveLength(1);
+  });
+
+  it('checks work again after a project stops reporting chats', async () => {
+    let hasSessions = false;
+    mockListSystemProjects.mockImplementation(async () => [
+      {
+        id: 'idle',
+        name: 'Idle',
+        folders: ['/code/idle'],
+        updatedAt: 2,
+        hasSessions,
+        unknownWork: false,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Idle' });
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+    hasSessions = true;
+    mockSessionsSignal.value = [createMockSession('one', 'Other', '/code/other')];
+    await waitFor(() =>
+      expect(remove.getAttribute('title')).toBe('Project has chats, including archived chats')
+    );
+    hasSessions = false;
+    mockSessionsSignal.value = [createMockSession('two', 'Other', '/code/other')];
+    await waitFor(() => expect(mockFindProjectWork).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(remove.hasAttribute('disabled')).toBe(false));
+  });
+
+  it('disables removal of a protected project', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'inbox',
+        name: 'Inbox',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: false,
+        isProtected: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Inbox' });
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('This project cannot be forgotten.');
+  });
+
+  it('refuses when a project has work that cannot be checked', async () => {
+    mockListSystemProjects.mockResolvedValue([
+      {
+        id: 'remote',
+        name: 'Remote',
+        folders: [],
+        updatedAt: 1,
+        hasSessions: false,
+        unknownWork: true,
+      },
+    ]);
+    render(<SessionsSidebar />);
+    const remove = await screen.findByRole('button', { name: 'Remove project Remote' });
+    expect(remove.hasAttribute('disabled')).toBe(true);
+    expect(remove.getAttribute('title')).toBe('Cannot check all work for this project');
   });
 
   it('adds no empty duplicate when a sidebar project already owns the folders', async () => {

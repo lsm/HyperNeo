@@ -118,14 +118,18 @@ export class WorkspaceHistoryRepository {
     return gatewayFor(this.db).call(workspaceHistoryRemoveWrites, 'remove', path);
   }
 
-  remove(path: string): boolean {
+  remove(path: string, unownedOnly = false): boolean {
     return this.db.transaction(() => {
-      const result = this.db.prepare('DELETE FROM workspace_history WHERE path = ?').run(path);
-      this.db
-        .prepare(`DELETE FROM workspace_projects WHERE NOT EXISTS (
+      const result = this.db
+        .prepare(`DELETE FROM workspace_history WHERE path = ?1
+        AND (?2 = 0 OR NOT EXISTS (SELECT 1 FROM workspace_project_folders WHERE path = ?1))`)
+        .run(path, unownedOnly ? 1 : 0);
+      if (!unownedOnly)
+        this.db
+          .prepare(`DELETE FROM workspace_projects WHERE NOT EXISTS (
         SELECT 1 FROM workspace_project_folders WHERE project_id = workspace_projects.id
       )`)
-        .run();
+          .run();
       return result.changes > 0;
     })();
   }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { hostname } from 'node:os';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -109,6 +110,45 @@ describe('neo.project.forget', () => {
       .run('session:worker', atlas);
     expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
+  });
+
+  test('sidebar forget refuses a session that is hidden from the sidebar', async () => {
+    alias(`folder:${hostname()}\0/code/hidden`, atlas);
+    await db.createSession({
+      ...createTestSession('session:hidden'),
+      workspacePath: '/code/hidden',
+    });
+    db.getDatabase()
+      .prepare("UPDATE sessions SET type = 'space_task_agent' WHERE id = ?")
+      .run('session:hidden');
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_in_use' },
+    });
+    expect(repo.getProject(atlas)).not.toBeNull();
+  });
+
+  test('sidebar forget refuses a project with work on another machine', async () => {
+    alias('folder:remote-machine\0/code/project', atlas);
+    const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
+    const result = await invokeOperation(
+      registry,
+      'neo.project.forget',
+      { projectId: atlas, removeHistory: true },
+      human
+    );
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'project_in_use' },
+    });
+    expect(repo.getProject(atlas)).not.toBeNull();
   });
 
   test('an open ask blocks forget; a settled ask moves to the root', async () => {

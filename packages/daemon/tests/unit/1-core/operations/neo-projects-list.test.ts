@@ -29,6 +29,7 @@ beforeEach(async () => {
     ['project:read', 'neo-read'],
     ['project:empty', 'empty'],
     ['project:old', 'old'],
+    ['inbox', 'Inbox'],
   ])
     repo.saveProject({ id, title, summary: '', context: '' }, 0);
   alias('folder:here\u0000/code/neo-read', 'project:read');
@@ -47,11 +48,13 @@ describe('neo.projects.list', () => {
     };
     const byId = new Map(result.projects.map((project) => [project.id, project]));
 
-    expect([...byId.keys()].sort()).toEqual(['project:empty', 'project:read']);
+    expect([...byId.keys()].sort()).toEqual(['inbox', 'project:empty', 'project:read']);
     expect(byId.get('project:read')).toMatchObject({
       name: 'neo-read',
       folders: ['/code/neo-read'],
     });
     expect(byId.get('project:empty')?.folders).toEqual([]);
+    expect(byId.get('inbox')).toMatchObject({ isProtected: true });
+    expect(byId.get('project:empty')).toMatchObject({ isProtected: false });
   });
 });

@@ -234,24 +234,38 @@ export class SessionRepository {
     return row.incarnation;
   }
 
+  listSessions(options: {
+    workspacePaths: true;
+  }): { workspace: string | null; main: string | null; execution: string | null }[];
   listSessions(options?: {
     status?: string;
     includeArchived?: boolean;
     includeSpaceSessions?: boolean;
-  }): Session[] {
-    let sql = `SELECT * FROM sessions
+  }): Session[];
+  listSessions(options?: {
+    status?: string;
+    includeArchived?: boolean;
+    includeSpaceSessions?: boolean;
+    workspacePaths?: boolean;
+  }): Session[] | { workspace: string | null; main: string | null; execution: string | null }[] {
+    let sql = options?.workspacePaths
+      ? `SELECT workspace_path AS workspace, main_repo_path AS main,
+        CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.executionProjectPath') END AS execution FROM sessions WHERE 1`
+      : `SELECT * FROM sessions
 				WHERE type NOT IN ('lobby', 'spaces_global', 'room_chat', 'planner', 'coder', 'leader', 'space_chat')
 				AND room_id IS NULL`;
     const params: string[] = [];
-    if (!options?.includeSpaceSessions) {
+    if (!options?.workspacePaths && !options?.includeSpaceSessions) {
       sql += ` AND space_id IS NULL`;
     }
 
-    if (options?.status) {
-      sql += ` AND status = ?`;
-      params.push(options.status);
-    } else if (!options?.includeArchived) {
-      sql += ` AND status != 'archived'`;
+    if (!options?.workspacePaths) {
+      if (options?.status) {
+        sql += ` AND status = ?`;
+        params.push(options.status);
+      } else if (!options?.includeArchived) {
+        sql += ` AND status != 'archived'`;
+      }
     }
 
     sql += ` ORDER BY last_active_at DESC`;
@@ -259,6 +273,8 @@ export class SessionRepository {
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as Record<string, unknown>[];
 
+    if (options?.workspacePaths)
+      return rows as { workspace: string | null; main: string | null; execution: string | null }[];
     return rows.map((r) => this.rowToSession(r));
   }
 
