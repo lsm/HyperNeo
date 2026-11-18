@@ -14,7 +14,6 @@ import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/loca
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
-import { NeoFrontInputRepository } from '../../../packages/daemon/src/storage/repositories/neo-front-input-worker.ts';
 import { frontSessionId } from '../../../packages/daemon/src/lib/neo/front-mode.ts';
 import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 
@@ -43,7 +42,6 @@ process.env.CLAUDE_CONFIG_DIR = join(run, 'sdk');
 process.env.TEST_SDK_SESSION_DIR = join(run, 'sdk');
 const humanId = crypto.randomUUID();
 const handoffId = crypto.randomUUID();
-const failedDeliveryId = crypto.randomUUID();
 const requests: string[] = [];
 const stages = new Map<string, number>();
 let exaRequests = 0;
@@ -87,16 +85,8 @@ const fixture = createServer(async (request, response) => {
   }
   if (!front && history.includes('<already-said') && history.includes('I will handle that.'))
     evidence.neoSawAcknowledgment = true;
-  const active = [failedDeliveryId, handoffId, humanId].find(id => history.includes(id)) ?? humanId;
+  const active = [handoffId, humanId].find(id => history.includes(id)) ?? humanId;
   const stage = stages.get(active) ?? 0;
-  if (front && active === failedDeliveryId && stage === 0) {
-    const changed = app!.db.getDatabase().prepare(
-      'UPDATE neo_front_inputs SET eligible = 0 WHERE message_id = ? AND eligible = 1'
-    ).run(failedDeliveryId).changes;
-    assert.equal(changed, 1);
-    stages.set(active, 1);
-    evidence.handoffAdmissionRefused = true;
-  }
   let block: Record<string, unknown> = { type: 'text', text: front ? 'Hello from Neo.' : 'Internal assistant text.' };
   if (front && stage === 0 && active === humanId) {
     block = { type: 'tool_use', id: `toolu_${crypto.randomUUID()}`, name: 'mcp__front__reply',

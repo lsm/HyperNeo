@@ -1,6 +1,6 @@
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import { SessionRepository } from './session-repository.ts';
-import { markRefusedNeoInput } from './neo-front-input-worker.ts';
+import { markRefusedNeoInput } from './neo-front-refusal-worker.ts';
 import type { RunDbOp } from '../db-gateway/db-op.ts';
 import { sdkMessageWrites } from './sdk-message-writes.ts';
 import type { SdkMessageWriteMethod } from './sdk-message-writes.ts';

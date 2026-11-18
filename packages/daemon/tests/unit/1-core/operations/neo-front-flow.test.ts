@@ -2681,7 +2681,7 @@ test.each([
       result: 'Provider refused',
       user_message_uuid: id,
       parent_tool_use_id: parent,
-    } as import('@hyperneo/shared/sdk').SDKMessage);
+    } as unknown as import('@hyperneo/shared/sdk').SDKMessage);
     expect(saved).toBe(true);
     expect(db.getSDKMessageRepo().getUserSendStatus(root, id)).toBe(expected);
     const row = db
@@ -2762,7 +2762,9 @@ test('retry operation accepts only a failed local input and refuses another retr
     result: 'Provider refused',
     user_message_uuid: id,
   } as import('@hyperneo/shared/sdk').SDKMessage);
-  const retry = await operation.execute(input, human);
+  const retry = (await operation.execute(input, human)) as
+    | { accepted: true; requestId: string }
+    | { accepted: false; reason: string };
   expect(retry).toMatchObject({ accepted: true });
   if (!retry.accepted) throw new Error(retry.reason);
   expect(service.asks.find(conversationId, retry.requestId)).toMatchObject({
@@ -2832,10 +2834,10 @@ test('retry keeps the quoted question, answers it, and gives Neo its reference',
     result: 'Provider refused',
     user_message_uuid: originalId,
   } as import('@hyperneo/shared/sdk').SDKMessage);
-  const retry = await createNeoRetryOperation(service).execute(
+  const retry = (await createNeoRetryOperation(service).execute(
     { conversationId, requestId: originalId },
     { source: 'rpc', principal: 'local' }
-  );
+  )) as { accepted: true; requestId: string } | { accepted: false; reason: string };
   expect(retry.accepted).toBe(true);
   if (!retry.accepted) throw new Error(retry.reason);
   expect(service.todos.getQuestion(questionId)?.state).toBe('answered');

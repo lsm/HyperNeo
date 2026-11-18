@@ -16,6 +16,7 @@ const workers = new Set([
   'storage/repositories/google-connections-worker.ts',
   'storage/repositories/neo-ask-input-worker.ts',
   'storage/repositories/neo-front-input-worker.ts',
+  'storage/repositories/neo-front-refusal-worker.ts',
   'storage/repositories/neo-ask-topic-read.ts',
   'storage/repositories/neo-front-read-worker.ts',
   'storage/repositories/session-goal-review-read-worker.ts',

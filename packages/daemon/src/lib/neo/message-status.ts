@@ -8,7 +8,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 import { frontSessionId } from './front-mode.ts';
 import { neoDerivedId } from './derived-id.ts';
-import { readRefusedNeoInput } from '../../storage/repositories/neo-front-input-worker.ts';
+import { readRefusedNeoInput } from '../../storage/repositories/neo-front-refusal-worker.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
 export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
