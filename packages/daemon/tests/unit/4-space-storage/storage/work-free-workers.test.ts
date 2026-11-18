@@ -97,6 +97,7 @@ describe('readFreeWorkers', () => {
       store.updateTodo(store.getTodo('next')!, { state: 'doing', startedAt: 4 }, 4);
       expect(sessions.queueOn('next', ref, 'Next step.')).toBe('instruction');
       expect(sessions.get('next')).toMatchObject({ verb: 'send', ref });
+      expect(store.getTodo('next')?.state).toBe('todo');
     });
 
     test('a released worker is never offered again, also once its unusable mark expired', () => {
@@ -251,5 +252,36 @@ describe('readFreeWorkers', () => {
       store.settleAsk(store.getAsk('ask')!, 'done', 'Observed', 300);
       expect(readReusableWorkers(db, 'claude-desktop').get('shared')?.settledAt).toBe(300);
     });
+  });
+});
+
+describe('session reuse preference migration', () => {
+  test('copies a repository strategy to its project without removing the old value', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at)
+      VALUES ('project', 'Project', '', '', 1, 1, 1);
+      INSERT INTO neo_project_workspaces (alias, project_id)
+      VALUES ('repository:github.com/example/project', 'project');
+      INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', 'example/project', 'sessionStrategy', '"per_pr"', 'human', 1);
+      DELETE FROM migration_markers WHERE key = 'migration_525'`);
+    runMigrations(db, () => {});
+    expect(
+      db
+        .prepare(`SELECT value_json AS value FROM neo_pack_preferences
+      WHERE pack = 'core' AND scope_kind = 'project' AND scope_key = 'project'
+      AND key = 'sessionReuse'`)
+        .get()
+    ).toEqual({ value: '"per_todo"' });
+    expect(
+      db
+        .prepare(`SELECT value_json AS value FROM neo_pack_preferences
+      WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = 'example/project'
+      AND key = 'sessionStrategy'`)
+        .get()
+    ).toEqual({ value: '"per_pr"' });
+    db.close();
   });
 });
