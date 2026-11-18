@@ -9,25 +9,20 @@ human chooses them. Paths without a prefix are under `packages/daemon/src/lib/`.
 
 A user should be able to point HyperNeo at the speech service they already pay for, or
 at their own server, and have recorded voice, live voice and spoken replies all work.
-Today only some combinations do, and spoken replies cannot be configured from the app at
-all.
+The daemon supports these combinations, but the web form does not expose every setting.
 
 ## What exists
 
 | Job | How it is configured | What it can talk to |
 |---|---|---|
-| Recorded voice to text | Web settings: "Batch endpoint", "Model", "API key" (`VoiceSettings` in `packages/shared/src/types/settings.ts`) | Only the OpenAI shape: multipart `file` + `model` to `/v1/audio/transcriptions` (`voice/transcribe-pipeline.ts`) |
-| Live voice to text | Web settings: "Live endpoint" | Only Deepgram's stream (`voice/stream-protocols.ts`). `openai-realtime` is in the type but has no implementation, and the form treats any other protocol as no live route (`hasLiveRoute` in `packages/web/src/components/settings/VoiceSettings.tsx`). The form has no protocol picker. |
-| Text to speech | Not in settings. The `HYPERNEO_SPEECH_URL` environment variable of the daemon process (`neo/speech-audio.ts`) | `POST {base}/v1/audio/speech` with no key, plus a non-standard `language` field; voices from `{base}/v1/audio/voices`, which the OpenAI API does not have; default voice `vivian` (`neo/speech.ts`), which only one self-hosted model knows |
+| Recorded voice to text | Web settings: "Batch endpoint", "Model", "API key" | OpenAI-shaped and Deepgram requests |
+| Live voice to text | Web settings: "Live endpoint" | Deepgram and OpenAI Realtime; the form has no provider picker |
+| Text to speech | Speech settings or the `HYPERNEO_SPEECH_URL` fallback | OpenAI-shaped and Deepgram requests |
 
-Keys: there is one key, stored as the credential `voice-transcription` and sent only to
-the batch endpoint it was saved for (`resolveApiKey`). The live stream reuses that key
-(`voice/stream-relay.ts` checks it against the batch endpoint, not the live address), so a live
-service on another host is sent the batch host's key. Text to speech
-sends none.
-
-So today a Deepgram user cannot transcribe recordings, an OpenAI user has no live voice,
-and nobody can use a hosted text-to-speech service.
+The three parts and their providers are already supported by the daemon (slices 1–4).
+The web form does not expose per-part providers or speech settings. One credential,
+`voice-transcription`, is bound to one host: `resolveVoiceKey` checks each target host
+before returning it, including for live streams and speech.
 
 ## The design
 
@@ -92,8 +87,8 @@ voice up by answering Neo:
 
 - **One part or one voice: on request.** When the human asks to change only one part, its
   model or its voice ("use voice X"), Neo asks a card naming that part's choices (the
-  adapter's voice list, or a typed name by reply). The existing web voice settings form keeps
-  its fields for the same edits; no new page is built.
+  adapter's voice list, or a typed name by reply). The web voice settings form gains
+  fields for the same edits; no new page is built.
 
 **Upgrade.** Existing settings map without loss: the batch endpoint and model become the
 recorded part (`openai`), the live endpoint becomes the live part (`deepgram`, or its saved
@@ -126,14 +121,16 @@ to 200 production lines, failing tests first.
 5. **Keys per host.** Store one key per host (today one key, `voice-transcription`,
    bound to one host in `resolveVoiceKey`, `voice/voice-parts.ts`), look a part's key up by
    its own host, keep a legacy key as today, and one password field per needed host in the
-   web voice settings.
+   web voice settings, plus fields for each part's provider and the speech address, model
+   and voice.
 6. **Tests Neo can run.** `voice.testLive` and `voice.testSpeech` as above, and
    `voice.testConnection` registered as an operation too (today it is only a web RPC,
    `rpc-handlers/voice-handlers.ts`), so Neo can call all three. Saving a key wakes Neo with
    an attention event naming the host (never the key), so it runs them.
 7. **The provider card.** The preset preference, asked on a card; for "My own server" the
    reply card for its base URL, which fills the three addresses; and the follow-up that names
-   the hosts still missing a key and runs the three tests.
+   the hosts still missing a key and runs the three tests. The on-request card changes one
+   part, model or voice.
 
 Acceptance, one test per row: against local fake servers for requests and tests, and as
 daemon integration cases for cards and Neo messages:
