@@ -119,7 +119,9 @@ to 200 production lines, failing tests first.
    bound to one host in `resolveVoiceKey`, `voice/voice-parts.ts`), look a part's key up by
    its own host, keep a legacy key as today, and one password field per needed host in the
    web voice settings.
-6. **Tests Neo can run.** `voice.testLive` and `voice.testSpeech` as above.
+6. **Tests Neo can run.** `voice.testLive` and `voice.testSpeech` as above, and
+   `voice.testConnection` registered as an operation too (today it is only a web RPC,
+   `rpc-handlers/voice-handlers.ts`), so Neo can call all three.
 7. **The provider card.** The preset preference, asked on a card, and the follow-up that
    names the hosts still missing a key and runs the three tests.
 
