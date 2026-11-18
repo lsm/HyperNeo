@@ -5,6 +5,7 @@ import {
   readHubOptions,
   type OxapSettingsDeps,
 } from '../../../../src/lib/oap/oxap-settings';
+import { withProviderLock } from '../../../../src/lib/rpc-handlers/provider-mutation-lock';
 
 vi.mock('@hyperneo/shared/types/oxap-harnesses', async (importOriginal) =>
   (await import('../../../helpers/synthetic-oxap-harness')).withSyntheticOxapRow(importOriginal)
@@ -199,6 +200,21 @@ describe('oxap.settings.save', () => {
       h.run({ providerId: 'synthetic-memory-2', harness: 'oxap-synthetic' }),
     ]);
     expect(results.map((result) => result.accepted)).toEqual([true, false]);
+  });
+
+  it('installs the hub without holding the provider lock', async () => {
+    const h = host();
+    let finish: (value: typeof binary) => void = () => {};
+    h.install.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const saving = h.run({
+      providerId: 'anthropic-codex',
+      harness: 'oxap-codex',
+      settings: { executable: '/c' },
+    });
+    await vi.waitFor(() => expect(h.install).toHaveBeenCalledOnce());
+    expect(await withProviderLock(async () => 'provider edit ran')).toBe('provider edit ran');
+    finish(binary);
+    expect(await saving).toEqual({ accepted: true });
   });
 
   it('refuses to start a hub before one is installed', async () => {
