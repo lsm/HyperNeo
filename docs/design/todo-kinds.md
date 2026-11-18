@@ -76,7 +76,7 @@ their call sites:
 | the runner's automatic done (`planNeoTodoCheck` and the pack judge, `todo-runner.ts`) | leaves the plan open with the unmet item as its reason and wakes Neo |
 | `neo.ask.settle` (`ask-record-operations.ts`) | settling `done`; `dropped` stays allowed |
 | the settle sweep (`service.ts`) and the follow-up wake (`packages/daemon/src/storage/repositories/neo-todo-session-repository.ts`) | the same: not settled `done`, Neo is woken |
-| `planNeoTodoRemove` | removing a plan's last live step without `replacedBy` |
+| `planNeoTodoRemove`, and an `after` change in `planNeoTodoEdit` | removing a plan's last live step without `replacedBy`, or taking the plan out of its last live step's `after` |
 
 Steps wait without new code: they depend on the plan, so they become ready when it is
 done (`neoTodoReady` in `todo-dependencies.ts`).
@@ -108,14 +108,15 @@ lines resolve to a single model.
 |---|---|
 | a plan with no steps asks for sign-off | refused: steps missing |
 | steps filed, no check, sign-off asked | refused: check missing |
-| check recorded, then a step removed | refused until checked again |
+| checked and signed, then a step removed | refused until checked and signed again |
+| re-signed after the step change | the card names the new steps; the plan can be done |
 | check from the plan's own session, or from a session with no delivery for it | not recorded |
 | check on the doer's model while another model is usable | not accepted |
 | check on the doer's model, one usable model | accepted |
 | a reply, or a card without `signoff`, on a plan | does not sign it |
 | plan signed and done | its steps become ready |
 | all steps done | the plan still has its steps; the ask settles |
-| the last live step removed without `replacedBy` | refused |
+| the last live step removed without `replacedBy`, or edited off the plan's `after` | refused |
 | an abandoned plan's ask settled `dropped` | allowed |
 | a repository with `crossModelReview` off, a design PR | a review stage runs and its pass writes `checked_json` with a reviewer model other than the author's |
 | the same, one usable model | the review runs on another session of that model and counts |
