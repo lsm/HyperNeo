@@ -1,7 +1,7 @@
 process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -73,6 +73,12 @@ try {
   assert.equal(notices().length, 1);
   const payload = JSON.stringify(notices()[0]);
   assert(payload.includes(todo.id) && payload.includes(worker) && payload.includes('uncommitted changes'));
+  rmSync(join(workspace, 'draft'));
+  await service.refreshDriverWork();
+  writeFileSync(join(workspace, 'second'), 'second');
+  git('add', 'second');
+  git('commit', '-q', '--no-gpg-sign', '-m', 'second');
+  await service.refreshDriverWork();
   console.log('PASS: a dirty worker stayed active and woke Neo once after 24 hours');
 } finally {
   writeFileSync(join(run, 'evidence/todo-release-pending.json'), JSON.stringify(evidence, null, 2));

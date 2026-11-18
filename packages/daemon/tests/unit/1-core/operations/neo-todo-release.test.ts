@@ -530,6 +530,25 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
     }
   });
 
+  test('logs a pending archive reason once when its details change', async () => {
+    const h = setup();
+    const warnings: unknown[] = [];
+    let detail = 1;
+    try {
+      await h.finishTodo(h.add(started));
+      h.setArchive(() => ({ ok: false, reason: 'busy', detail }));
+      const warn = (message: string, error: unknown) => {
+        if (message.includes('worker archive pending')) warnings.push(error);
+      };
+      await h.refresh(warn);
+      detail = 2;
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('wakes Neo once after a worker remains pending for 24 hours', async () => {
     const h = setup();
     const now = Date.now();
