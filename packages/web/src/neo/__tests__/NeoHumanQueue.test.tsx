@@ -751,11 +751,14 @@ describe('NeoHumanQueue', () => {
       fireEvent.click(await view.findByRole('button', { name: 'Open the ask' }));
       const pick = () => view.getByRole('checkbox', { name: 'iPad' }) as HTMLInputElement;
       const confirm = () => view.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement;
-      const desktop = () =>
-        view.getByRole('checkbox', { name: 'Let the agent use this computer' }) as HTMLInputElement;
+      const desktop = () => {
+        if (!view.queryByRole('menuitem', { name: 'Let it use this computer' }))
+          fireEvent.click(view.getByRole('button', { name: 'Step actions: Call the garage' }));
+        return view.getByRole('menuitem', {
+          name: 'Let it use this computer',
+        }) as HTMLButtonElement;
+      };
       fireEvent.click(pick());
-      const details = view.queryByRole('button', { name: 'Show details: Call the garage' });
-      if (details) fireEvent.click(details);
       expect(desktop().disabled).toBe(false);
       view.rerender(<NeoHumanQueue {...props} entries={[at(2, true)]} />);
       await waitFor(() => expect(reads).toHaveLength(2));

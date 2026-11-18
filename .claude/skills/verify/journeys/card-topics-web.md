@@ -19,8 +19,8 @@ End state, in `$RUN/evidence/`:
 
 - `card-topics.json` has `passed: true` and chips `全部 11`, `家长控制 2`, one `kids 2`,
   two `Shop 1`, and `其他 2` last.
-- Cards show the topic with its color square at left, and a state dot and word at right,
-  with no pill. The untopiced card shows 其他.
+- Each card shows its topic as a tag with a colored border right after the title, and the
+  state word first on the line below. The untopiced card shows 其他.
 - Each `Shop` chip shows only its own project's card; the `kids` chip shows both picks and
   survives reload; a card's topic button selects the same set as its chip.
 - Tapping a chip filters, the filter survives reload, and a second tap clears it. Tapping a
