@@ -1,31 +1,31 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client';
-import * as query from '../../../../src/lib/oap/oap-query';
-import type { OapQueryRuntime } from '../../../../src/lib/agent/query-runner';
-import type { OapQueryHub } from '../../../../src/lib/oap/oap-query';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine';
+import { OxapHubRequestError, type OxapHubClient } from '../../../../src/lib/oxap/oxap-hub-client';
+import * as query from '../../../../src/lib/oxap/oxap-query';
+import type { OxapQueryRuntime } from '../../../../src/lib/agent/query-runner';
+import type { OxapQueryHub } from '../../../../src/lib/oxap/oxap-query';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 
-const bindOapRuntime = (
+const bindOxapRuntime = (
   query as unknown as {
-    createOapRuntime(
-      engine: OapEngine,
-      options?: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
+    createOxapRuntime(
+      engine: OxapEngine,
+      options?: { installed: () => boolean; read: () => Promise<OxapEngineOptions> },
       events?: ReturnType<typeof createDaemonInternalEventBus>,
       db?: unknown,
       messageHub?: unknown,
       providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null
-    ): (session: Session) => OapQueryRuntime;
+    ): (session: Session) => OxapQueryRuntime;
   }
-).createOapRuntime;
+).createOxapRuntime;
 
-function createOapRuntime(
-  engine: OapEngine,
-  options?: OapEngineOptions,
+function createOxapRuntime(
+  engine: OxapEngine,
+  options?: OxapEngineOptions,
   events?: ReturnType<typeof createDaemonInternalEventBus>,
   history = false
-): (session: Session) => OapQueryRuntime {
+): (session: Session) => OxapQueryRuntime {
   const db = {
     updateSession: mock(async () => 'written'),
     getSDKMessages: mock(() => ({
@@ -35,7 +35,7 @@ function createOapRuntime(
     getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
     saveSDKMessage: mock(async () => true),
   };
-  return bindOapRuntime(
+  return bindOxapRuntime(
     engine,
     options ? { installed: () => true, read: readOptions } : undefined,
     events,
@@ -45,8 +45,8 @@ function createOapRuntime(
   );
 }
 
-const options: OapEngineOptions = {
-  binaryPath: '/synthetic/oapx',
+const options: OxapEngineOptions = {
+  binaryPath: '/synthetic/oxap',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
   hub: { adapters: {}, environment: {} },
@@ -86,7 +86,7 @@ function fixture(status?: { directory: string }) {
           held: false,
           state: 'live',
         };
-      throw new OapHubRequestError('unknown_session', 'no session');
+      throw new OxapHubRequestError('unknown_session', 'no session');
     }
     if (op === 'capabilities')
       return {
@@ -99,37 +99,37 @@ function fixture(status?: { directory: string }) {
       const envelope = parameters.request as { payload: { session_id: string; reopen?: boolean } };
       const id = envelope.payload.session_id;
       if (envelope.payload.reopen && !recorded.has(id) && !status)
-        throw new OapHubRequestError('unknown_session', 'no session');
+        throw new OxapHubRequestError('unknown_session', 'no session');
       opened.set(id, parameters.directory as string);
       return { type: 'session.open.response', payload: { session_id: id } };
     }
     throw new Error(`unexpected operation ${op}`);
   });
-  const client = { request } as unknown as OapHubClient;
+  const client = { request } as unknown as OxapHubClient;
   const getHub = mock(async () => client);
   const createQueryHub = mock(
-    (_client: OapHubClient) =>
+    (_client: OxapHubClient) =>
       ({
         release: mock(() => {}),
         submit: mock(async () => ({ runId: 'synthetic-run' })),
-      }) as unknown as OapQueryHub
+      }) as unknown as OxapQueryHub
   );
-  const isCurrentHub = mock((_client: OapHubClient) => true);
-  const engine = { getHub, createQueryHub, isCurrentHub } as unknown as OapEngine;
+  const isCurrentHub = mock((_client: OxapHubClient) => true);
+  const engine = { getHub, createQueryHub, isCurrentHub } as unknown as OxapEngine;
   return { engine, client, getHub, createQueryHub, isCurrentHub, operations, recorded };
 }
 
 describe('OAP daemon runtime', () => {
   test('lazily opens the exact session workspace once, even across concurrent callers', async () => {
     const host = fixture();
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     const runtime = bind(session('session-a', '/synthetic/workspace'));
     expect(host.getHub).not.toHaveBeenCalled();
     const [first, second] = await Promise.all([runtime.hub, runtime.hub]);
     expect(first).toBe(second);
     expect(host.createQueryHub).toHaveBeenCalledTimes(1);
     const [client, model] = host.createQueryHub.mock.calls[0] as unknown as [
-      OapHubClient,
+      OxapHubClient,
       { adapter: string; id(): string | undefined },
     ];
     expect(client).toBe(host.client);
@@ -155,7 +155,7 @@ describe('OAP daemon runtime', () => {
 
   test('keeps separate query transports for sessions sharing one daemon hub', async () => {
     const host = fixture();
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     const first = bind(session('session-a', '/synthetic/workspace'));
     const second = bind(session('session-b', '/synthetic/other'));
     const [firstHub, secondHub] = await Promise.all([first.hub, second.hub]);
@@ -172,7 +172,7 @@ describe('OAP daemon runtime', () => {
   test('retries a failed hub start only on a later explicit request', async () => {
     const host = fixture();
     host.getHub.mockRejectedValueOnce(new Error('synthetic startup failure'));
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
@@ -190,7 +190,7 @@ describe('OAP daemon runtime', () => {
     const replacement = fixture();
     replacement.recorded.set('session-a', '/synthetic/workspace');
     replacement.recorded.set('session-b', '/synthetic/other');
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     const first = bind(session('session-a', '/synthetic/workspace'));
     const second = bind(session('session-b', '/synthetic/other'));
     const [oldFirst, oldSecond] = await Promise.all([first.hub, second.hub]);
@@ -222,7 +222,7 @@ describe('OAP daemon runtime', () => {
   test('refuses a replacement that returns the old thread after the shared hub dies', async () => {
     const host = fixture();
     const replacement = fixture();
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     const runtime = bind(session('session-a', '/synthetic/workspace'));
     await runtime.hub;
     host.isCurrentHub.mockImplementation((client) => client === replacement.client);
@@ -245,7 +245,7 @@ describe('OAP daemon runtime', () => {
   test('does not replace a completed session when its hub history is missing', async () => {
     const host = fixture();
     const replacement = fixture();
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     await bind(session('session-a', '/synthetic/workspace')).hub;
     host.isCurrentHub.mockReturnValue(false);
     host.getHub.mockResolvedValue(replacement.client);
@@ -266,12 +266,12 @@ describe('OAP daemon runtime', () => {
   test('does not create a fresh thread after the first submitted turn loses its hub', async () => {
     const host = fixture();
     const replacement = fixture();
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
     const oldHub = await runtime.hub;
-    await oldHub.submit('session-a', {} as Parameters<OapQueryHub['submit']>[1]);
+    await oldHub.submit('session-a', {} as Parameters<OxapQueryHub['submit']>[1]);
     host.isCurrentHub.mockImplementation((client) => client === replacement.client);
     host.getHub.mockResolvedValue(replacement.client);
 
@@ -289,7 +289,7 @@ describe('OAP daemon runtime', () => {
     let created = false;
     (host.client.request as ReturnType<typeof mock>).mockImplementation(async (op: string) => {
       if (op === 'work.status') {
-        if (!created) throw new OapHubRequestError('unknown_session', 'no session');
+        if (!created) throw new OxapHubRequestError('unknown_session', 'no session');
         return {
           ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
           directory: '/synthetic/workspace',
@@ -300,11 +300,11 @@ describe('OAP daemon runtime', () => {
       if (op === 'open') {
         openCount++;
         created = true;
-        throw new OapHubRequestError('timeout', 'synthetic ambiguous open');
+        throw new OxapHubRequestError('timeout', 'synthetic ambiguous open');
       }
       throw new Error(`unexpected operation ${op}`);
     });
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
@@ -316,7 +316,7 @@ describe('OAP daemon runtime', () => {
   test('closes only the deleted session and prevents its stale runtime reopening', async () => {
     const host = fixture();
     const events = createDaemonInternalEventBus();
-    const bind = createOapRuntime(host.engine, options, events);
+    const bind = createOxapRuntime(host.engine, options, events);
     const first = bind(session('session-a', '/synthetic/workspace'));
     const second = bind(session('session-b', '/synthetic/other'));
     const [, secondHub] = await Promise.all([first.hub, second.hub]);
@@ -351,7 +351,7 @@ describe('OAP daemon runtime', () => {
       }
       return original(op, parameters);
     });
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options,
       events
@@ -379,7 +379,7 @@ describe('OAP daemon runtime', () => {
       ...session('session-a', '/synthetic/workspace'),
       worktree: { worktreePath: '/synthetic/worktree' },
     } as Session;
-    await createOapRuntime(host.engine, options)(withWorktree).hub;
+    await createOxapRuntime(host.engine, options)(withWorktree).hub;
     expect(host.operations.find(({ op }) => op === 'open')?.parameters.directory).toBe(
       '/synthetic/worktree'
     );
@@ -387,7 +387,7 @@ describe('OAP daemon runtime', () => {
 
   test('rejects changing an already opened session workspace', async () => {
     const host = fixture();
-    const bind = createOapRuntime(host.engine, options);
+    const bind = createOxapRuntime(host.engine, options);
     await bind(session('session-a', '/synthetic/workspace')).hub;
     await expect(bind(session('session-a', '/synthetic/other')).hub).rejects.toThrow(/workspace/i);
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
@@ -395,7 +395,7 @@ describe('OAP daemon runtime', () => {
 
   test('reopens an existing history binding', async () => {
     const host = fixture({ directory: '/synthetic/workspace' });
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
@@ -411,7 +411,7 @@ describe('OAP daemon runtime', () => {
   test('recovers a saved native session when hub history is missing', async () => {
     const host = fixture();
     const resumed = { ...session('session-a', '/synthetic/workspace'), sdkSessionId: 'native-a' };
-    const runtime = createOapRuntime(host.engine, options)(resumed);
+    const runtime = createOxapRuntime(host.engine, options)(resumed);
     await expect(runtime.hub).resolves.toBeDefined();
     expect(resumed.sdkSessionId).toBe('native-session-a');
     expect(host.operations.find(({ op }) => op === 'open')?.parameters).toMatchObject({
@@ -425,7 +425,7 @@ describe('OAP daemon runtime', () => {
       ...session('session-a', '/synthetic/workspace'),
       metadata: { messageCount: 1 },
     } as Session;
-    const runtime = createOapRuntime(host.engine, options, undefined, true)(resumed);
+    const runtime = createOxapRuntime(host.engine, options, undefined, true)(resumed);
     await expect(runtime.hub).resolves.toBeDefined();
     expect(resumed.metadata.oapRecovery).toBeUndefined();
     expect(host.operations.filter(({ op }) => op === 'open')).toHaveLength(1);
@@ -436,14 +436,14 @@ describe('OAP daemon runtime', () => {
     let probes = 0;
     (host.client.request as ReturnType<typeof mock>).mockImplementation(async (op: string) => {
       if (op === 'work.status' && ++probes === 1)
-        throw new OapHubRequestError('unknown_session', 'no session');
+        throw new OxapHubRequestError('unknown_session', 'no session');
       if (op === 'work.status') return { directory: '/synthetic/other' };
       return {
         type: 'session.open.response',
         payload: { session_id: 'session-a' },
       };
     });
-    const runtime = createOapRuntime(
+    const runtime = createOxapRuntime(
       host.engine,
       options
     )(session('session-a', '/synthetic/workspace'));
@@ -453,10 +453,10 @@ describe('OAP daemon runtime', () => {
   test('refuses an uninstalled hub or nonabsolute workspace before launching a hub', async () => {
     const host = fixture();
     await expect(
-      createOapRuntime(host.engine)(session('a', '/synthetic/workspace')).hub
+      createOxapRuntime(host.engine)(session('a', '/synthetic/workspace')).hub
     ).rejects.toThrow('OXAP hub is not installed');
     await expect(
-      bindOapRuntime(
+      bindOxapRuntime(
         host.engine,
         { installed: () => false, read: readOptions },
         undefined,
@@ -465,7 +465,7 @@ describe('OAP daemon runtime', () => {
       )(session('a', '/synthetic/workspace')).hub
     ).rejects.toThrow('OXAP hub is not installed');
     await expect(
-      createOapRuntime(host.engine, options)(session('a', 'relative')).hub
+      createOxapRuntime(host.engine, options)(session('a', 'relative')).hub
     ).rejects.toThrow(/absolute/i);
     expect(host.getHub).not.toHaveBeenCalled();
   });

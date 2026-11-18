@@ -52,15 +52,15 @@ const checkSnapshot = (superpipe({})('check-oap-binary') as PipelineAPI)
   .pipe(checkIdentity, ['expected', 'sha256', 'version'], 'result')
   .endAsync('result') as (path: string, expected: BinaryIdentity) => Promise<BinaryCheck>;
 
-export type PreparedOapBinary =
+export type PreparedOxapBinary =
   | { ok: true; path: string; cleanup(): Promise<void> }
   | Extract<BinaryCheck, { ok: false }>;
 
-export async function prepareOapBinary(
+export async function prepareOxapBinary(
   path: string,
   expected: BinaryIdentity,
   stateDirectory: string
-): Promise<PreparedOapBinary> {
+): Promise<PreparedOxapBinary> {
   if (!isAbsolute(path)) throw new Error('OAP binary path must be absolute');
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(join(stateDirectory, 'oap-verified-'));
@@ -81,8 +81,11 @@ export async function prepareOapBinary(
   }
 }
 
-export async function checkOapBinary(path: string, expected: BinaryIdentity): Promise<BinaryCheck> {
-  const binary = await prepareOapBinary(path, expected, tmpdir());
+export async function checkOxapBinary(
+  path: string,
+  expected: BinaryIdentity
+): Promise<BinaryCheck> {
+  const binary = await prepareOxapBinary(path, expected, tmpdir());
   if (!binary.ok) return binary;
   await binary.cleanup();
   return { ok: true };

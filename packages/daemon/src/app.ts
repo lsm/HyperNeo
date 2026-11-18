@@ -210,10 +210,10 @@ import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
-import { OapEngine } from './lib/oap/oap-engine.ts';
-import { createOapRuntime } from './lib/oap/oap-query.ts';
-import { readHubOptions, type OxapSettingsDeps } from './lib/oap/oxap-settings.ts';
-import { installOxapHub } from './lib/oap/oxap-install.ts';
+import { OxapEngine } from './lib/oxap/oxap-engine.ts';
+import { createOxapRuntime } from './lib/oxap/oxap-query.ts';
+import { readHubOptions, type OxapSettingsDeps } from './lib/oxap/oxap-settings.ts';
+import { installOxapHub } from './lib/oxap/oxap-install.ts';
 import { getDataDir } from './lib/data-dir.ts';
 import { providerRpcWrites, providerWriter } from './storage/repositories/provider-rpc-writes.ts';
 
@@ -367,7 +367,7 @@ export interface CreateDaemonAppOptions {
 }
 
 export interface DaemonAppContext {
-  oapEngine: OapEngine;
+  oxapEngine: OxapEngine;
   oxapSettings: OxapSettingsDeps;
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
@@ -423,7 +423,7 @@ async function invalidateInFlightModelLoads(): Promise<void> {
 
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
-  const oapEngine = new OapEngine();
+  const oxapEngine = new OxapEngine();
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
@@ -832,7 +832,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return credentials?.type === 'api_key' ? credentials.apiKey : undefined;
       },
       install: (installed) => installOxapHub(join(oxapStateDirectory, 'install'), installed),
-      engine: oapEngine,
+      engine: oxapEngine,
       stateDirectory: oxapStateDirectory,
       environment: process.env,
     };
@@ -859,8 +859,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .getCredentialStore()
             .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
         ),
-      createOapRuntime(
-        oapEngine,
+      createOxapRuntime(
+        oxapEngine,
         {
           installed: () => !!oxapSettings.settings().oxapHub,
           read: () => readHubOptions(oxapSettings),
@@ -1783,7 +1783,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .live.map((pid) => ({ pid, daemonPid: process.pid })),
         ];
         await sessionManager.cleanup();
-        await oapEngine.close();
+        await oxapEngine.close();
         try {
           await collectDaemonScratch(false, scratchChildrenAtExit, logScratchError);
         } catch (error) {
@@ -1836,7 +1836,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       } finally {
         try {
           try {
-            await oapEngine.close();
+            await oxapEngine.close();
           } finally {
             await closeFileLogCapture();
           }
@@ -1861,7 +1861,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     return {
-      oapEngine,
+      oxapEngine,
       oxapSettings,
       server,
       handlePair,
@@ -1906,7 +1906,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupTimer.finish();
     await failedStartupCleanup?.();
-    await oapEngine.close();
+    await oxapEngine.close();
     stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();

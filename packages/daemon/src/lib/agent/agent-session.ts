@@ -58,7 +58,7 @@ import {
   type LoginRefreshState,
 } from './login-recovery.ts';
 import { Logger } from '../logger.ts';
-import { OapReopenRefusedError } from '../oap/oap-reopen.ts';
+import { OxapReopenRefusedError } from '../oxap/oxap-reopen.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
 import {
   type CallerScopeResolver,
@@ -165,7 +165,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
-  oap?: import('./query-runner.ts').OapQueryRuntime;
+  oxap?: import('./query-runner.ts').OxapQueryRuntime;
   getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
@@ -546,8 +546,8 @@ export class AgentSession
     return this.db.mcpEnablement;
   }
 
-  get oap(): import('./query-runner.ts').OapQueryRuntime | undefined {
-    return this.runtimeOptions.oap;
+  get oxap(): import('./query-runner.ts').OxapQueryRuntime | undefined {
+    return this.runtimeOptions.oxap;
   }
 
   constructor(
@@ -1509,14 +1509,14 @@ export class AgentSession
   }
 
   private async clearCodexContext(): Promise<void> {
-    if (!this.oap?.clear) await this.refuseContextClear();
+    if (!this.oxap?.clear) await this.refuseContextClear();
     try {
       const reset = await this.resetQuery({ restartQuery: false });
       if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
       await this.retirePastSdkContext();
-      await this.oap!.clear!();
+      await this.oxap!.clear!();
     } catch (error) {
-      if (error instanceof OapReopenRefusedError)
+      if (error instanceof OxapReopenRefusedError)
         throw new ClearConversationUnsupportedError(error.message);
       this.logger.warn('Failed to clear the Codex thread:', error);
       await this.refuseContextClear('Could not clear the Codex thread. No message was sent.');

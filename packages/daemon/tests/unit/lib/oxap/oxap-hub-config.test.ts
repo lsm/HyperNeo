@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { OXAP_HARNESSES, type OxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
-import { buildHubConfig } from '../../../../src/lib/oap/oap-hub-config';
+import { buildHubConfig } from '../../../../src/lib/oxap/oxap-hub-config';
 
 const codex = (providerId: string, settings: Record<string, string> = {}) => ({
   providerId,

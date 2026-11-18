@@ -1,11 +1,11 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createOapQuery, OapQuery } from '../../../../src/lib/oap/oap-query';
+import { createOxapQuery, OxapQuery } from '../../../../src/lib/oxap/oxap-query';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
-describe('OapQuery', () => {
+describe('OxapQuery', () => {
   test('preserves accumulated text when a live query is closed', async () => {
     const prompt = {
       type: 'user',
@@ -13,7 +13,7 @@ describe('OapQuery', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'request' },
     } as SDKUserMessage;
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield prompt;
@@ -50,7 +50,7 @@ describe('OapQuery', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'request' },
     } as SDKUserMessage;
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       isLive: () => live,
       prompt: (async function* () {
@@ -88,7 +88,7 @@ describe('OapQuery', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'request' },
     } as SDKUserMessage;
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield prompt;
@@ -134,7 +134,7 @@ describe('OapQuery', () => {
         parent_tool_use_id: null,
         message: { role: 'user', content: 'request' },
       } as SDKUserMessage;
-      const query = createOapQuery({
+      const query = createOxapQuery({
         sessionId: 's1',
         prompt: (async function* () {
           yield prompt;
@@ -189,7 +189,7 @@ describe('OapQuery', () => {
     } as SDKUserMessage;
     const identities: string[][] = [];
     for (let turn = 0; turn < 2; turn++) {
-      const query = createOapQuery({
+      const query = createOxapQuery({
         sessionId: 's1',
         prompt: (async function* () {
           yield message;
@@ -227,7 +227,7 @@ describe('OapQuery', () => {
       message: { role: 'user', content: 'hello' },
     } as SDKUserMessage;
     const cancel = mock(async () => {});
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield message;
@@ -282,7 +282,7 @@ describe('OapQuery', () => {
       translator: { translate: () => [{ type: 'result' } as SDKMessage] },
       isLive: () => live,
     };
-    const query = new OapQuery(options);
+    const query = new OxapQuery(options);
     const next = query[Symbol.asyncIterator]().next();
     await submitted;
     live = false;
@@ -311,7 +311,7 @@ describe('OapQuery', () => {
     const cancel = mock(async () => {
       release();
     });
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield message;
@@ -352,7 +352,7 @@ describe('OapQuery', () => {
       message: { role: 'user', content: 'hello' },
     } as SDKUserMessage;
     const cancel = mock(async () => {});
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield message;
@@ -385,7 +385,7 @@ describe('OapQuery', () => {
       yield message;
     })();
     const submit = mock(async () => ({ runId: `r${submit.mock.calls.length}` }));
-    const query = createOapQuery({
+    const query = createOxapQuery({
       sessionId: 's1',
       prompt,
       hub: {
@@ -405,7 +405,7 @@ describe('OapQuery', () => {
         },
       },
     });
-    expect(query).toBeInstanceOf(OapQuery);
+    expect(query).toBeInstanceOf(OxapQuery);
     const messages: SDKMessage[] = [];
     for await (const item of query) {
       if (item.type !== 'stream_event') messages.push(item);
@@ -430,7 +430,7 @@ describe('OapQuery', () => {
     } as SDKUserMessage;
     const cancel = mock(async () => {});
     const translate = mock(() => []);
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield message;
@@ -468,7 +468,7 @@ describe('OapQuery', () => {
       message: { role: 'user', content: 'hello' },
     } as SDKUserMessage;
     const cancel = mock(async () => {});
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: (async function* () {
         yield message;
@@ -500,7 +500,7 @@ describe('OapQuery', () => {
     async function* prompt() {
       yield user;
     }
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: {
@@ -538,7 +538,7 @@ describe('OapQuery', () => {
       });
     });
     const cancel = mock(async () => {});
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: {
@@ -578,7 +578,7 @@ describe('OapQuery', () => {
       yield { type: 'run.completed', runId };
     });
     const translate = mock(() => []);
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: { submit, events, cancel: async () => {} },
@@ -613,7 +613,7 @@ describe('OapQuery', () => {
         signal.addEventListener('abort', () => resolve(), { once: true })
       );
     };
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: { submit: async () => ({ runId: 'r1' }), events, cancel },
@@ -641,7 +641,7 @@ describe('OapQuery', () => {
     async function* prompt() {
       yield message;
     }
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: {
@@ -681,7 +681,7 @@ describe('OapQuery', () => {
       yield { type: 'run.cancelled' };
     });
     const translate = mock(() => []);
-    const query = new OapQuery({
+    const query = new OxapQuery({
       sessionId: 's1',
       prompt: prompt(),
       hub: { submit, cancel, events },

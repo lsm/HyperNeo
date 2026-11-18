@@ -9,7 +9,7 @@ import {
   LogLevel,
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger';
-import type { OapHubFrame } from '../../../../src/lib/oap/oap-hub-codec';
+import type { OxapHubFrame } from '../../../../src/lib/oxap/oxap-hub-codec';
 import { testDirectories } from '../../../helpers/temporary-directory';
 
 const directory = testDirectories();
@@ -67,10 +67,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (t
 `;
 
 async function client(command = process.execPath, timeoutMs?: number) {
-  const { OapHubClient } = await import('../../../../src/lib/oap/oap-hub-client');
+  const { OxapHubClient } = await import('../../../../src/lib/oxap/oxap-hub-client');
   const root = directory(join(tmpdir(), 'oap-hub-client-'));
   for (const name of ['home', 'tmp', 'data']) mkdirSync(join(root, name));
-  const hub = new OapHubClient({
+  const hub = new OxapHubClient({
     command,
     args: ['-e', script],
     cwd: root,
@@ -92,7 +92,7 @@ afterEach(async () => {
 
 describe('OAP hub child lifecycle and correlation', () => {
   test('delivers the refused feature to the reopen decision without replay', async () => {
-    const { decideReopenFailure } = await import('../../../../src/lib/oap/oap-session-open');
+    const { decideReopenFailure } = await import('../../../../src/lib/oxap/oxap-session-open');
     const hub = await client();
     await hub.connect();
     for (const feature of ['session.open.reopen', 'run.cancel']) {
@@ -111,7 +111,7 @@ describe('OAP hub child lifecycle and correlation', () => {
     async (code) => {
       const hub = await client(process.execPath, 200);
       await hub.connect();
-      const received: Array<OapHubFrame | Error> = [];
+      const received: Array<OxapHubFrame | Error> = [];
       await hub.subscribe('synthetic', (frame) => received.push(frame));
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       let unrelatedFailure: Error | undefined;
@@ -140,7 +140,7 @@ describe('OAP hub child lifecycle and correlation', () => {
   test('a cleanup timeout still fails the transport and notifies established subscribers', async () => {
     const hub = await client(process.execPath, 200);
     await hub.connect();
-    const received: Array<OapHubFrame | Error> = [];
+    const received: Array<OxapHubFrame | Error> = [];
     await hub.subscribe('synthetic', (frame) => received.push(frame));
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -261,7 +261,7 @@ describe('OAP hub child lifecycle and correlation', () => {
   test('child exit rejects all pending hub requests exactly once', async () => {
     const hub = await client();
     await hub.connect();
-    const events: Array<OapHubFrame | Error> = [];
+    const events: Array<OxapHubFrame | Error> = [];
     await hub.subscribe('synthetic', (event) => events.push(event));
     const rejected = [0, 0];
     const results = await Promise.allSettled(
@@ -309,8 +309,8 @@ describe('OAP hub child lifecycle and correlation', () => {
   test('overlapping subscriptions preserve ids and same-chunk events then unsubscribe once', async () => {
     const hub = await client();
     await hub.connect();
-    const first: Array<OapHubFrame | Error> = [],
-      second: Array<OapHubFrame | Error> = [];
+    const first: Array<OxapHubFrame | Error> = [],
+      second: Array<OxapHubFrame | Error> = [];
     const a = await hub.subscribe('synthetic', (event) => first.push(event));
     const b = await hub.subscribe('synthetic', (event) => second.push(event), {
       after: 3,

@@ -6,19 +6,19 @@ import {
 } from '@hyperneo/shared/types/oxap-harnesses';
 import type { Database } from '../../storage/index.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { OapHubRequestError, type OapHubClient } from './oap-hub-client.ts';
-import { announceOapNotice } from './oap-notice.ts';
-import { recoveryContext } from './oap-recovery.ts';
-import { decideReopenFailure, decideSessionOpen } from './oap-session-open.ts';
+import { OxapHubRequestError, type OxapHubClient } from './oxap-hub-client.ts';
+import { announceOxapNotice } from './oxap-notice.ts';
+import { recoveryContext } from './oxap-recovery.ts';
+import { decideReopenFailure, decideSessionOpen } from './oxap-session-open.ts';
 
-export class OapReopenRefusedError extends Error {
+export class OxapReopenRefusedError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'OapReopenRefusedError';
+    this.name = 'OxapReopenRefusedError';
   }
 }
 
-export type OapReopenStore = Pick<
+export type OxapReopenStore = Pick<
   Database,
   | 'updateSession'
   | 'getSDKMessages'
@@ -26,8 +26,8 @@ export type OapReopenStore = Pick<
   | 'saveSDKMessage'
   | 'getSDKMessageRepo'
 >;
-export type OapReopenEvents = Pick<MessageHub, 'event'>;
-export type OapOpenPlan = {
+export type OxapReopenEvents = Pick<MessageHub, 'event'>;
+export type OxapOpenPlan = {
   sessionId: string;
   directory: string;
   request: Record<string, unknown>;
@@ -45,14 +45,14 @@ export function sessionHarness(session: Session): OxapHarness {
   return oxapHarness(session.config.harness);
 }
 
-function validatePlacement(status: WorkStatus, plan: OapOpenPlan): void {
+function validatePlacement(status: WorkStatus, plan: OxapOpenPlan): void {
   if (status.directory !== plan.directory)
     throw new Error('OAP open-directory did not confirm the workspace');
   if (status.ref?.adapter !== plan.request.adapter || status.ref?.session_id !== plan.sessionId)
     throw new Error('OAP returned an invalid session identity');
 }
 
-function nativeId(status: WorkStatus | undefined, plan: OapOpenPlan, row: OxapHarness): string {
+function nativeId(status: WorkStatus | undefined, plan: OxapOpenPlan, row: OxapHarness): string {
   if (!status) throw new Error(`OAP did not confirm the ${row.label} thread identity`);
   validatePlacement(status, plan);
   const id = typeof status.link === 'string' ? row.nativeId(status.link) : undefined;
@@ -61,7 +61,7 @@ function nativeId(status: WorkStatus | undefined, plan: OapOpenPlan, row: OxapHa
   return id;
 }
 
-async function open(client: OapHubClient, plan: OapOpenPlan, revision?: string): Promise<void> {
+async function open(client: OxapHubClient, plan: OxapOpenPlan, revision?: string): Promise<void> {
   const envelope = plan.request.request as { payload: Record<string, unknown> };
   const request = revision
     ? { ...envelope, capability_revision: revision, payload: { ...envelope.payload, reopen: true } }
@@ -75,7 +75,7 @@ async function open(client: OapHubClient, plan: OapOpenPlan, revision?: string):
 }
 
 async function reopenRevision(
-  client: OapHubClient,
+  client: OxapHubClient,
   session: Session,
   adapter: unknown
 ): Promise<string | undefined> {
@@ -99,7 +99,7 @@ async function reopenRevision(
   return decision.mode === 'unavailable' || !supported ? undefined : response.capability_revision;
 }
 
-function hasHistory(db: OapReopenStore, sessionId: string): boolean {
+function hasHistory(db: OxapReopenStore, sessionId: string): boolean {
   const { messages } = db.getSDKMessages(sessionId, 100);
   return (
     messages.some((message) => message.type === 'assistant' || message.type === 'user') ||
@@ -116,8 +116,8 @@ function recoveryNotice(text: string, row: OxapHarness): string {
 }
 
 async function openAfterClear(
-  client: OapHubClient,
-  plan: OapOpenPlan,
+  client: OxapHubClient,
+  plan: OxapOpenPlan,
   session: Session,
   status: WorkStatus | undefined,
   ensureLive: () => void,
@@ -134,7 +134,10 @@ async function openAfterClear(
           session_id: plan.sessionId,
         })) as WorkStatus;
       } catch (error) {
-        if (!(error instanceof OapHubRequestError) || decideReopenFailure(error).mode !== 'summary')
+        if (
+          !(error instanceof OxapHubRequestError) ||
+          decideReopenFailure(error).mode !== 'summary'
+        )
           throw error;
       }
       ensureLive();
@@ -155,12 +158,12 @@ async function openAfterClear(
   return current;
 }
 
-export async function openOapSession(
-  client: OapHubClient,
-  plan: OapOpenPlan,
+export async function openOxapSession(
+  client: OxapHubClient,
+  plan: OxapOpenPlan,
   session: Session,
-  db: OapReopenStore,
-  hub: OapReopenEvents,
+  db: OxapReopenStore,
+  hub: OxapReopenEvents,
   events: InternalEventBus<DaemonInternalEventMap> | undefined,
   ensureLive: () => void
 ): Promise<void> {
@@ -168,7 +171,7 @@ export async function openOapSession(
   try {
     status = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;
   } catch (error) {
-    if (!(error instanceof OapHubRequestError) || error.code !== 'unknown_session') throw error;
+    if (!(error instanceof OxapHubRequestError) || error.code !== 'unknown_session') throw error;
   }
   ensureLive();
   const row = sessionHarness(session);
@@ -187,7 +190,7 @@ export async function openOapSession(
     );
   } else if (recovery?.pendingOpen) {
     status = await openAfterClear(client, plan, session, status, ensureLive, recovery.previous);
-    await announceOapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
+    await announceOxapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
   } else if (!status || status.held === false) {
     let fallback = false;
     if (prior) {
@@ -202,7 +205,7 @@ export async function openOapSession(
           } catch (error) {
             ensureLive();
             if (
-              !(error instanceof OapHubRequestError) ||
+              !(error instanceof OxapHubRequestError) ||
               decideReopenFailure(error).mode !== 'summary'
             )
               throw error;
@@ -223,7 +226,7 @@ export async function openOapSession(
       session.metadata = metadata;
       await open(client, plan);
       ensureLive();
-      await announceOapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
+      await announceOxapNotice(session.id, recoveryNotice(recovery.text, row), db, hub, ensureLive);
     }
     ensureLive();
     status = (await client.request('work.status', { session_id: plan.sessionId })) as WorkStatus;

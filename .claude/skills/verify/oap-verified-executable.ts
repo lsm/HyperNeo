@@ -5,10 +5,10 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
-import { OapEngine } from '../../../packages/daemon/src/lib/oap/oap-engine.ts';
-import type { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
-import { createOapQueryHub } from '../../../packages/daemon/src/lib/oap/oap-query-hub.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { OxapEngine } from '../../../packages/daemon/src/lib/oxap/oxap-engine.ts';
+import type { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
+import { createOxapQueryHub } from '../../../packages/daemon/src/lib/oxap/oxap-query-hub.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
@@ -34,8 +34,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',text=>
   for(const e of [{type:'content.delta',payload:{part:{type:'text',text:'Verified executable reply'}}},{type:'run.completed',payload:{final_response:{content:'Verified executable reply'}}}])process.stdout.write(JSON.stringify({id:subscription,event:'envelope',envelope:{...e,id:e.type,session_id:r.session_id,run_id:'synthetic-run'}})+'\\n');
 });`;
 writeFileSync(binaryPath, script, { mode: 0o700 });
-const engine = new OapEngine();
-let client: OapHubClient | undefined;
+const engine = new OxapEngine();
+let client: OxapHubClient | undefined;
 const stateDirectory = join(run, 'data/oap');
 const stale = join(stateDirectory, 'oap-verified-x');
 mkdirSync(stale, { recursive: true });
@@ -65,7 +65,7 @@ try {
   const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = { openDirectorySupported: true, hub: createOapQueryHub(client) };
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = { openDirectorySupported: true, hub: createOxapQueryHub(client) };
   await rpc.request('message.send', { sessionId, content: 'Synthetic request' });
   const deadline = Date.now() + 10_000;
   while (!app.db.getSDKMessages(sessionId).messages.some((row) => row.type === 'result' && 'result' in row && row.result === 'Verified executable reply') || agent.queryPromise || agent.messageQueue.isRunning()) {

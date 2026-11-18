@@ -4,7 +4,7 @@ import {
   createOxapSettingsOperations,
   readHubOptions,
   type OxapSettingsDeps,
-} from '../../../../src/lib/oap/oxap-settings';
+} from '../../../../src/lib/oxap/oxap-settings';
 import { withProviderLock } from '../../../../src/lib/rpc-handlers/provider-mutation-lock';
 
 vi.mock('@hyperneo/shared/types/oxap-harnesses', async (importOriginal) =>
