@@ -720,7 +720,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     humanNamed: boolean;
     releasedBy: string | null;
     owned: boolean;
-    pending: { reason: string; since: number; notified: boolean } | null;
+    pending: { code?: string; reason: string; since: number; notified: boolean } | null;
   }[] {
     const match = (column: string, key: string) =>
       `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
@@ -820,7 +820,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   recordReleasePending(
     todoId: string,
-    pending: { reason: string; since: number; notified: boolean }
+    pending: { code: string; reason: string; since: number; notified: boolean }
   ): void {
     this.writeCoreFact(todoId, 'release_pending', pending);
   }

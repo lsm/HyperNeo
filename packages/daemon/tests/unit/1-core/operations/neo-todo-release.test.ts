@@ -544,6 +544,11 @@ describe('neo todo runner refresh keeps workers with unsaved work', () => {
       detail = 2;
       await h.refresh(warn);
       expect(warnings).toHaveLength(1);
+      h.setArchive(() => {
+        throw new Error('archive unavailable');
+      });
+      await h.refresh(warn);
+      expect(warnings).toHaveLength(2);
     } finally {
       h.db.close();
     }

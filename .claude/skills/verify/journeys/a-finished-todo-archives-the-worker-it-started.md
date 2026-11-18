@@ -27,8 +27,11 @@ provider or real data is used.
 Run the pending notification proof with the same isolated setup:
 
 ```bash
-bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory \
-  .claude/skills/verify/todo-release-pending.ts verify
+EVIDENCE=/absolute/fresh/evidence-directory
+bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
+  .claude/skills/verify/todo-release-pending.ts verify && \
+count=$(grep -c 'worker archive pending.*unpushed commits' "$EVIDENCE/proof.log") && \
+printf 'unpushed warning count: %s\n' "$count" && test "$count" -eq 1
 ```
 
 The helper advances a synthetic clock through repeated daemon refreshes and
@@ -36,3 +39,5 @@ checks that a dirty worker produces one Neo mailbox event after 24 hours,
 with the todo, worker and reason. It also checks that a daemon-started worker
 stays active without a release fact while a follow-up is live, and is archived
 after the follow-up finishes. Retain `todo-release-pending.json` and `proof.log`.
+The helper changes the unpushed commit count between sweeps; the log must have
+one warning for that pending reason.
