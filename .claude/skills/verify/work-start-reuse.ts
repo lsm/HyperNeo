@@ -55,6 +55,21 @@ assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('syntheti
 store.addTodo('todo-plan', 'synthetic-ask', { title: 'Plan', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
 try {
   assert.notEqual(app.server.port, 8399);
+  store.addTodo('todo-card-error', 'synthetic-ask', { title: 'Card error', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
+  const registry = app.sessionManager.getOperationRegistry();
+  const getRegistry = app.sessionManager.getOperationRegistry;
+  let cardError;
+  try {
+    app.sessionManager.getOperationRegistry = () => { throw new Error('synthetic question failure'); };
+    cardError = await invokeOperation(registry, 'work.start', input('card-error', 'todo-card-error'), neo);
+  } finally {
+    app.sessionManager.getOperationRegistry = getRegistry;
+  }
+  assert.equal(cardError.kind, 'completed', 'a failed question must not prevent work from starting');
+  const afterCardError = (cardError as { value: Result<WorkStarted> }).value;
+  assert(afterCardError.ok, JSON.stringify(afterCardError));
+  todos.bind('todo-card-error', afterCardError.value.ref, Date.now());
+  store.updateTodo(store.getTodo('todo-card-error')!, { state: 'doing' }, 2);
   const first = await start('first', neo);
   const questions = db.prepare("SELECT count(*) AS n FROM neo_pack_preference_proposals WHERE request_id LIKE 'core.sessionReuse:%'").get() as { n: number };
   assert.equal(questions.n, 1, 'the first eligible start opens a reuse question');
