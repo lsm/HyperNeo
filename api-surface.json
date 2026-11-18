@@ -45324,6 +45324,115 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "bcc": {
+            "default": [],
+            "items": {
+              "format": "email",
+              "maxLength": 254,
+              "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "cc": {
+            "default": [],
+            "items": {
+              "format": "email",
+              "maxLength": 254,
+              "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "connectionId": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "draftId": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject": {
+            "default": "",
+            "maxLength": 200,
+            "pattern": "^[^\\r\\n]*$",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "to": {
+            "items": {
+              "format": "email",
+              "maxLength": 254,
+              "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "connectionId",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "outlook.draft",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "draftId": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ok": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ok",
+              "draftId"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
           "body": {
             "default": false,
             "type": "boolean"
