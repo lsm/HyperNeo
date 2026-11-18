@@ -24,10 +24,9 @@ New work starts only from the human, and the human always acts on their own devi
 - A human message to Neo. This already opens an ask through `neo.todo.add` with `input` (`claimNeoInputAsk`).
 - Tapping Track on a session (`neo.session.track`).
 - "Do it" on a proposal card.
-- A goal's mandate the human confirmed on a card (`goal-cycle.md`). Asks in that goal's cycle (`neo.ask.open` with `goalId`) are accepted only when the caller is the session that owns the goal (`sessionId` on the goal), because the human already said yes to its "Do alone" section. The same call from any other session, such as a worker, is a proposal. Anything under "Needs the human" still goes to a card, as today.
 - The human's answer to a relayed session question (`neo.question.relaySession`, written through the Track path). That card is the proposal: its ask is accepted once the human answers it, and not before.
 
-**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.open`, the same call asks a yes/no card on it ("Do it" / "Don't"). The card shows the request and why. This covers both Neo's own ideas and words another session relayed, which the card shows as a quote.
+**2. Everything else is a proposal.** When Neo opens an ask with `neo.ask.open`, the same call asks a yes/no card on it ("Do it" / "Don't"). The card shows the request and why. This covers Neo's own ideas, words another session relayed (shown as a quote), and asks in a goal's cycle (`neo.ask.open` with `goalId`). A confirmed goal mandate does not skip the card: any session can create a goal and point it at a confirmed revision, so it cannot prove the human wanted this ask.
 
 - The ask takes no todos until the human answers "Do it".
 - "Don't" settles the ask as `dropped`.
@@ -63,7 +62,7 @@ The checks are pure functions added as steps in the existing superpipe pipelines
 - `start-work`, before `routeStart`;
 - `work.send` and `work.queue`, beside `requireSendPurpose`.
 
-Each check takes facts and returns a `Gate`. The facts are the ask, its proposal card, its relayed session question, whether the caller owns its goal, whether its goal's `mandateRev` names a `neo.home.save` commit made with a confirm card the human answered (`goal-cycle.md`), whether it holds a session-request reply todo (`named.requestFrom`, written by `request-todo.ts`), the caller, and for a notice, whether the target session sent Neo a message. A fact step reads those facts first. No new table or column is added.
+Each check takes facts and returns a `Gate`. The facts are the ask, its proposal card, its relayed session question, whether it holds a session-request reply todo (`named.requestFrom`, written by `request-todo.ts`), the caller, and for a notice, whether the target session sent Neo a message. A fact step reads those facts first. No new table or column is added.
 
 ## Tests (written first)
 
@@ -71,7 +70,7 @@ Each check takes facts and returns a `Gate`. The facts are the ask, its proposal
 - `neo.ask.open` with todos for a new proposal is refused, and nothing is written. The same holds on retry.
 - A human message to Neo opens an accepted ask, and its todo starts.
 - An existing ask with no proposal card still takes todos, unless it is a session-request ask or has an unanswered relayed question.
-- An ask in a goal cycle whose mandate the human confirmed takes todos without a proposal card. The same ask opened by a worker is a proposal. An ask for a goal with no confirmed mandate is a proposal.
+- An ask in a goal's cycle is a proposal, even when the goal's mandate was confirmed.
 - A relayed session question's ask takes no todos until the human answers its card.
 - A session request records its ask and reply todo. A work todo on that ask is refused.
 - `work.start` with no todo is refused from Neo and from a worker. It still starts from a human device and from an internal call.
