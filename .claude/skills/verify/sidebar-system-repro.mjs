@@ -73,6 +73,42 @@ try {
   assert(await inbox.isDisabled(), 'the protected Inbox must refuse removal');
   assert.equal(await inbox.getAttribute('title'), 'This project cannot be forgotten.');
   console.log('Protected Inbox cannot be forgotten');
+  async function callRpc(method, data) {
+    return page.evaluate(async ({method, data}) => {
+      const socket = new WebSocket(`${location.origin.replace('http', 'ws')}/ws`);
+      await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
+      const id = crypto.randomUUID();
+      const result = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('RPC timed out')), 10000);
+        socket.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.id !== id && message.requestId !== id) return;
+          clearTimeout(timer);
+          if (message.error) reject(new Error(JSON.stringify(message.error))); else resolve(message.data);
+        };
+        socket.send(JSON.stringify({id,type:'REQ',sessionId:'global',method,data,timestamp:new Date().toISOString(),version:'1.0.0'}));
+      });
+      socket.close();
+      return result;
+    }, {method, data});
+  }
+  const shared = page.getByRole('button', {name:'Remove project Shared project'});
+  await shared.click();
+  await shared.waitFor({state:'detached'});
+  let historyResult = await callRpc('workspace.history', {});
+  assert(!historyResult.entries.some((entry) => entry.path.endsWith('/projects/shared-a') || entry.path.endsWith('/projects/shared-b')));
+  assert(existsSync(`${run}/projects/shared-a/retained.txt`));
+  console.log('Both shared folders disappeared and the file remained');
+  const stale = page.getByRole('button', {name:'Remove project Stale project'});
+  await stale.waitFor({state:'attached'});
+  assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:true});
+  await stale.click();
+  await page.getByText('Failed to remove project').waitFor();
+  historyResult = await callRpc('workspace.history', {});
+  const remaining = historyResult.entries.find((entry) => entry.path.endsWith('/projects/stale-b'));
+  assert(remaining && remaining.project.folders.length === 1 && remaining.project.folders[0].endsWith('/projects/stale-b'));
+  assert.deepEqual(await callRpc('workspace.remove', {path:`${run}/projects/stale-a`}), {success:false});
+  console.log('Missing folder produced an error; remaining membership was intact');
   const archived = page.getByRole('button', {name: 'Remove project archived-chat'});
   await archived.waitFor({state: 'attached'});
   assert(await archived.isDisabled());
