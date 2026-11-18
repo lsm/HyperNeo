@@ -66,7 +66,7 @@ const graphMessage = z.object({
   receivedDateTime: z.string().default(''),
   bodyPreview: z.string().default(''),
   from: address,
-  toRecipients: z.array(address).max(500).default([]),
+  toRecipients: z.array(address).default([]),
 });
 const itemSchema = z.object({
   id,
