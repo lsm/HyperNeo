@@ -313,7 +313,8 @@ export const en = {
   'chat.notSentReason': 'Not sent: {reason}',
   'download.registryUnreachable': "Can't download Claude Code: Cannot reach the npm registry.",
   'download.registryMetadata':
-    "Can't download Claude Code: The npm registry did not return package metadata.",
+    "Can't download Claude Code: registry returned a web page, not package metadata (blocked by the network?)",
+  'download.npmFailure': "Can't download Claude Code: check your npm registry and login.",
   'download.stillDownloading': 'Claude Code is still downloading. Try again shortly.',
   'download.retryFailed': "Can't retry the Claude Code download. Try again shortly.",
   'download.retrying': 'Retrying…',

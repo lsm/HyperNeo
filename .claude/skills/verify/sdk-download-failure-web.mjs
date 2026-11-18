@@ -32,7 +32,7 @@ try {
   assert.equal(await retry.count(), mode === 'after' ? 1 : 0);
   if (mode === 'after') {
     assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).count(), 1);
-    const count = () => execFileSync('/usr/bin/wc', ['-l', join(run, 'data/curl.log')], { encoding: 'utf8' }).trim().split(/\s/)[0];
+    const count = () => execFileSync('/usr/bin/wc', ['-l', join(run, 'data/download.log')], { encoding: 'utf8' }).trim().split(/\s/)[0];
     const before = Number(count());
     await retry.click();
     if (fixture === 'slow') {

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
@@ -32,7 +32,7 @@ export class PackageDownloadError extends Error {
   override name = 'PackageDownloadError';
 }
 
-type CurlFailure = { code?: number | string; stderr: string };
+type CurlFailure = { code?: number | string; stderr: string; host?: string };
 
 type TarEntry = { path: string; mode: number; data: Buffer };
 
@@ -52,18 +52,20 @@ function registryUrl(): string {
 }
 
 function registryHost(): string {
-  return new URL(registryUrl()).hostname;
+  try {
+    return new URL(registryUrl()).hostname;
+  } catch {
+    return 'unknown registry';
+  }
 }
 
 export function describeCurlFailure(failure: CurlFailure, host: string): string {
-  const detail = failure.stderr.trim();
   if (failure.code === 'ENOENT') return 'curl is not installed or not on PATH';
-  if (failure.code === DISK_CURL_CODE) return `disk full or not writable: ${detail}`;
-  if (failure.code === 6) return `cannot reach npm (ENOTFOUND ${host}): ${detail}`;
-  if (failure.code === 7) return `cannot reach npm (ECONNREFUSED ${host}:443): ${detail}`;
+  if (failure.code === DISK_CURL_CODE) return 'Disk full or not writable.';
   if (typeof failure.code === 'number' && NETWORK_CURL_CODES.has(failure.code))
-    return `cannot reach npm (ETIMEDOUT ${host}:443): ${detail}`;
-  return `npm request failed: ${detail || `curl exited with ${failure.code}`}`;
+    return `Cannot reach npm registry at ${host}.`;
+  const detail = typeof failure.code === 'number' ? ` (curl exit ${failure.code})` : '';
+  return `npm request failed${detail}.`;
 }
 
 export function describeWriteFailure(err: unknown): string {
@@ -80,13 +82,17 @@ export function mustRestartDownload(failure: CurlFailure): boolean {
 
 function curl(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
+    let host: string | undefined;
+    try {
+      host = new URL(args[args.length - 1]).hostname;
+    } catch {}
     execFile(
       'curl',
       ['-sS', ...CURL_PATIENCE, ...args],
       { encoding: 'utf-8' },
       (err, stdout, stderr) =>
         err
-          ? reject({ code: (err as { code?: number | string }).code, stderr } as CurlFailure)
+          ? reject({ code: (err as { code?: number | string }).code, stderr, host } as CurlFailure)
           : resolve(String(stdout))
     );
   });
@@ -101,10 +107,17 @@ async function sha512OfFile(filePath: string): Promise<string> {
 
 async function fetchNpmPackageMeta(
   packageName: string,
-  version: string
+  version: string,
+  registry: string
 ): Promise<{ tarballUrl: string; integrity: string }> {
-  const url = `${registryUrl()}/${encodeURIComponent(packageName)}/${version}`;
-  const meta = JSON.parse((await curl(['-f', url])).trim());
+  const url = `${registry.replace(/\/$/, '')}/${encodeURIComponent(packageName)}/${version}`;
+  const response = (await curl(['-f', url])).trim();
+  let meta: { dist?: { tarball?: string; integrity?: string } };
+  try {
+    meta = JSON.parse(response);
+  } catch {
+    throw new Error('registry returned a web page, not package metadata (blocked by the network?)');
+  }
   const tarballUrl = meta?.dist?.tarball;
   const integrity = meta?.dist?.integrity;
   if (tarballUrl && integrity) return { tarballUrl, integrity };
@@ -123,9 +136,10 @@ async function resumeTarball(url: string, destPath: string): Promise<void> {
 async function fetchVerifiedTarball(
   packageName: string,
   version: string,
-  destPath: string
+  destPath: string,
+  registry: string
 ): Promise<void> {
-  const meta = await fetchNpmPackageMeta(packageName, version);
+  const meta = await fetchNpmPackageMeta(packageName, version, registry);
   if (existsSync(destPath) && (await sha512OfFile(destPath)) === meta.integrity) return;
   await resumeTarball(meta.tarballUrl, destPath);
   const actualIntegrity = await sha512OfFile(destPath);
@@ -136,6 +150,64 @@ async function fetchVerifiedTarball(
   );
 }
 
+async function runPackageManager(command: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const fail = (err: { code?: number | string }) => {
+      if (err.code === 'ENOENT' || command === 'pnpm') return resolve(null);
+      if (command === 'npm' && process.platform === 'win32' && err.code === 'EINVAL')
+        return resolve(null);
+      const detail = typeof err.code === 'number' ? ` (exit ${err.code})` : '';
+      if (command === 'npm') {
+        if (typeof err.code === 'string') {
+          const code = /^E[A-Z0-9_]{1,31}$/.test(err.code) ? ` (${err.code})` : '';
+          return reject(new Error(`npm could not start${code}`));
+        }
+        reject(
+          new Error(
+            `npm could not download the package${detail}; check your npm registry and login`
+          )
+        );
+        return;
+      }
+      reject(new Error(`${command} failed while preparing the package download${detail}`));
+    };
+    try {
+      execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
+        if (err) return fail(err);
+        resolve(String(stdout).trim());
+      });
+    } catch (error) {
+      fail(error as NodeJS.ErrnoException);
+    }
+  });
+}
+
+async function downloadWithConfiguredManager(
+  packageName: string,
+  version: string,
+  destPath: string
+): Promise<void> {
+  const directory = await mkdtemp(join(dirname(destPath), '.npm-pack-'));
+  try {
+    const output = await runPackageManager('npm', [
+      'pack',
+      `${packageName}@${version}`,
+      '--pack-destination',
+      directory,
+    ]);
+    if (output !== null) {
+      const archives = readdirSync(directory).filter((name) => name.endsWith('.tgz'));
+      if (archives.length !== 1) throw new Error('npm pack returned no package');
+      await rename(join(directory, archives[0]), destPath);
+      return;
+    }
+    const registry = await runPackageManager('pnpm', ['config', 'get', 'registry']);
+    await fetchVerifiedTarball(packageName, version, destPath, registry || registryUrl());
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 export async function downloadVerifiedTarball(
   packageName: string,
   version: string,
@@ -143,22 +215,14 @@ export async function downloadVerifiedTarball(
 ): Promise<void> {
   try {
     mkdirSync(dirname(destPath), { recursive: true });
-    await fetchVerifiedTarball(packageName, version, destPath);
+    await downloadWithConfiguredManager(packageName, version, destPath);
   } catch (err) {
     const reason =
       err instanceof Error
         ? describeWriteFailure(err)
-        : describeCurlFailure(err as CurlFailure, registryHost());
+        : describeCurlFailure(err as CurlFailure, (err as CurlFailure).host ?? registryHost());
     logWarn(`[npm-package-download] ${packageName}@${version}: ${reason}`);
-    const message =
-      err instanceof SyntaxError
-        ? 'The npm registry did not return package metadata.'
-        : !(err instanceof Error) &&
-            typeof (err as CurlFailure).code === 'number' &&
-            NETWORK_CURL_CODES.has((err as CurlFailure).code as number)
-          ? 'Cannot reach the npm registry.'
-          : reason;
-    throw new PackageDownloadError(message, { cause: err });
+    throw new PackageDownloadError(reason);
   }
 }
 

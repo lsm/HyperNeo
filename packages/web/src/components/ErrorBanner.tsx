@@ -103,8 +103,17 @@ export function ErrorBanner({
 function downloadMessage(message: string): string {
   if (message === "Can't download Claude Code: Cannot reach the npm registry.")
     return t('download.registryUnreachable');
-  if (message === "Can't download Claude Code: The npm registry did not return package metadata.")
+  if (
+    message ===
+    "Can't download Claude Code: registry returned a web page, not package metadata (blocked by the network?)"
+  )
     return t('download.registryMetadata');
+  if (
+    /^Can't download Claude Code: npm could not download the package(?: \(exit \d+\))?; check your npm registry and login$/.test(
+      message
+    )
+  )
+    return t('download.npmFailure');
   if (message === 'Claude Code is still downloading. Try again shortly.')
     return t('download.stillDownloading');
   return message;

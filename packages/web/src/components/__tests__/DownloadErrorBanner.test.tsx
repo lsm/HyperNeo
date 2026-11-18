@@ -39,12 +39,24 @@ describe('ErrorBanner', () => {
     render(
       <ErrorBanner
         downloadFailure
-        error="Can't download Claude Code: Cannot reach the npm registry."
+        error="Can't download Claude Code: npm could not download the package (exit 7); check your npm registry and login"
         onDismiss={vi.fn()}
       />
     );
-    expect(screen.getByText('无法下载 Claude Code：无法连接 npm 软件源。')).toBeTruthy();
+    expect(screen.getByText('无法下载 Claude Code：请检查 npm 软件源和登录信息。')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
+  });
+
+  it('localizes a registry web page response', () => {
+    locale.value = 'zh-Hans';
+    render(
+      <ErrorBanner
+        downloadFailure
+        error="Can't download Claude Code: registry returned a web page, not package metadata (blocked by the network?)"
+        onDismiss={vi.fn()}
+      />
+    );
+    expect(screen.getByText('无法下载 Claude Code：npm 软件源没有返回软件包信息。')).toBeTruthy();
   });
 
   it('does not start another download while retry is pending', async () => {
