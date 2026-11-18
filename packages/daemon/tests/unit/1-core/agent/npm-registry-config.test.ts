@@ -87,6 +87,20 @@ describe('configured package downloads', () => {
     expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://mirror.example.test/');
   });
 
+  it('uses the default registry when pnpm fails', async () => {
+    const archive = npmTarball([{ path: 'package/claude', body: 'binary' }]);
+    writeFileSync(join(run, 'fixture.tgz'), archive);
+    script('pnpm', 'exit 1');
+    script(
+      'curl',
+      `case "$*" in *-fL*) while [ "$1" != '-o' ]; do shift; done; /bin/cp '${run}/fixture.tgz' "$2";; *) printf '%s' "$*" > '${run}/url'; printf '%s' '{"dist":{"tarball":"https://registry.example.test/pkg.tgz","integrity":"${integrityOf(archive)}"}}';; esac`
+    );
+    const dest = join(run, 'result.tgz');
+    await downloadVerifiedTarball('pkg', '1.0.0', dest);
+    expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
+    expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://registry.npmjs.org/');
+  });
+
   it('reports a registry web page in plain language', async () => {
     script('curl', "printf '<html>blocked</html>'");
     await expect(downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'))).rejects.toThrow(
