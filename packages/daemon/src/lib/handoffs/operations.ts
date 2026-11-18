@@ -71,7 +71,7 @@ function rejected(error: unknown): Rejected {
   return { kind: 'rejected', reason: error instanceof Error ? error.message : String(error) };
 }
 
-const publishArtifact = (superpipe({})('publish-worker-handoff') as PipelineAPI)
+const publishArtifact = (superpipe({})('handoff.publish') as PipelineAPI)
   .input(['caller', 'status', 'name'])
   .pipe(requirePublisher, ['caller', 'status'], 'result:outcome')
   .pipe(publish, ['outcome', 'name'], 'outcome')
