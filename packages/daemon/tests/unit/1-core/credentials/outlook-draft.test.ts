@@ -4,6 +4,7 @@ import { createTestDb } from '../../../helpers/database.ts';
 import { DatabaseCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
 import { ConnectionVault } from '../../../../src/lib/connections/vault.ts';
 import { createMicrosoftConnectionOperations } from '../../../../src/lib/connections/microsoft-operations.ts';
+import { createOutlookDraftOperations } from '../../../../src/lib/connections/outlook-draft-operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { artifactIdentityWrites } from '../../../../src/storage/repositories/artifact-file-identity-write.ts';
@@ -68,6 +69,8 @@ beforeEach(async () => {
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
     if (mode === 'down') return new Response('synthetic-sensitive-error', { status: 503 });
+    if (mode === 'raced' && method === 'PATCH')
+      return Response.json({ error: { code: 'ErrorInvalidRequest' } }, { status: 400 });
     if (method === 'POST') return Response.json({ id: 'draft-new', isDraft: true, subject: 'x' });
     const id = decodeURIComponent(url.pathname.split('/').at(-1)!);
     if (method === 'GET') return Response.json({ id, isDraft: id !== 'sent-one' });
@@ -154,6 +157,19 @@ test('a reply naming another message reports an unknown outcome', async () => {
     ok: false,
     reason: 'draft_outcome_unknown',
   });
+});
+
+test('a draft sent between the check and the update reports an unknown outcome', async () => {
+  mode = 'raced';
+  expect(await draft({ draftId: 'draft-one' })).toEqual({
+    ok: false,
+    reason: 'draft_outcome_unknown',
+  });
+});
+
+test('the operation tells agents the draft check can race a send', async () => {
+  const [operation] = createOutlookDraftOperations(() => Promise.reject(new Error('unused')));
+  expect(operation.description).toContain('sent or moved');
 });
 
 test('a failed write reports an unknown outcome without Graph error text', async () => {
