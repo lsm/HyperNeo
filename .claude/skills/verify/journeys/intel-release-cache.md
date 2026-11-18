@@ -2,10 +2,11 @@
 
 Read shared SKILL.md first. Run heavy builds only on CI.
 
-After this workflow reaches the default branch, dispatch Warm Intel desktop cache
-on dev and require success. Confirm its Cache Cargo post-step saved the Intel key
-on dev. Dispatch Release with publish disabled from a different ref at the same
-commit and require the Intel Cache Cargo step to restore that key from dev. Check
-that the Intel build, signing, notarization and artifact upload succeed. Report
-both run URLs, the cache restore line, and the Intel job duration alongside the
-cold baseline. A cache hit alone does not prove the release build succeeds.
+After this workflow reaches the default branch, dispatch Warm desktop caches on
+dev and require all four jobs to succeed. For each target, confirm the Cargo cache
+was restored or saved on dev. Dispatch Release with publish disabled from a
+different ref at the same commit and require each desktop job to restore its
+target's cache from dev. Check that each build and artifact upload succeeds, and
+that both macOS jobs sign and notarize successfully. Report both run URLs, each
+cache restore line and each job duration alongside the cold baseline. A cache
+hit alone does not prove the release build succeeds.
