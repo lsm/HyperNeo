@@ -14,18 +14,17 @@ import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { type Place, type WorkRef } from '../drivers/types.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
+import { getDataDir } from '../data-dir.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { planNeoHoldCard } from './daemon-cards.ts';
 import { openHumanCard } from './human-card.ts';
 import { NeoTodoAddTargetSchema, NeoTodoTargetSchema } from './driver-work.ts';
-import { neoUserFolder } from './folder.ts';
 import { type NeoInputReads, noNeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import {
+  neoTodoRepository,
   type NeoPack,
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
-  neoTodoRepository,
 } from './pack-contract.ts';
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
@@ -263,8 +262,7 @@ export async function recordNeoTodo(
   packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo?: NeoTodo; records?: string[] } | Rejection> {
   const id = crypto.randomUUID();
-  const check = withAssignedEvidence(input.check, todoEvidenceFile(id));
-  const planned = planNeoTodoDraft({ ...input, check }, packs);
+  const planned = planNeoTodoDraft(input, packs);
   if ('reason' in planned) return planned.reason;
   const draft = planned.value;
   const peers = todos.listTodos(ask.id);
@@ -272,7 +270,7 @@ export async function recordNeoTodo(
   const repo = neoTodoRepository(draft, packs, scope);
   const placeless = neoTodoPlaceRefusal(draft, packs, scope);
   if (placeless) return { ok: false, reason: placeless };
-  const misplaced = neoEvidenceRefusal(check, repo, controls.userFolder ?? neoUserFolder());
+  const misplaced = neoEvidencePathRefusal(input.check, null, getDataDir());
   if (misplaced) return { ok: false, reason: misplaced };
   if (ask.status !== 'open')
     return {

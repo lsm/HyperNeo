@@ -265,7 +265,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     const draft = {
       after: [],
       title: 'Recorded work',
-      check: pendingTodoCheck,
+      check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
       named: { repository: 'synthetic/one' },
     };
     const opened = await call('neo.ask.open', { ...base, todos: [draft] }, turn('initial'));
@@ -312,7 +312,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
           {
             after: [],
             title: 'Repeated',
-            check: pendingTodoCheck,
+            check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
             named: { repository: 'synthetic/one' },
           },
         ],
@@ -329,13 +329,13 @@ describe('neo.ask.open and neo.ask.settle', () => {
           {
             after: [],
             title: 'New sibling',
-            check: pendingTodoCheck,
+            check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
             named: { repository: 'synthetic/two' },
           },
           {
             after: [],
             title: 'Repeated',
-            check: pendingTodoCheck,
+            check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
             instruction: 'Keep working',
             target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'worker' } },
           },

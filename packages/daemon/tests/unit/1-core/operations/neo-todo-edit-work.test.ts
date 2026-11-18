@@ -198,7 +198,12 @@ describe('todos given work later', () => {
         target: { verb: 'start', adapter: 'hyperneo' },
       };
       expect(
-        await invoke('neo.todo.add', { askId: ask.id, ...step('New'), ...placeless })
+        await invoke('neo.todo.add', {
+          askId: ask.id,
+          ...step('New'),
+          check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
+          ...placeless,
+        })
       ).toMatchObject({ ok: false, reason: expect.stringMatching(/^place_required:/) });
       expect(store.listTodos(ask.id).map((todo) => todo.id)).toEqual(['repository-anchor']);
       const waiting = store.addTodo(

@@ -16,5 +16,5 @@ For standing outcomes: neo.home.init if needed; draft a mandate from the human's
 
 Add all ask steps as todos, each with after, before starting the first. Supported checks {pack,kind,params} generate doneWhen; never supply it. Core covers human confirmation, evidence, deployment. Human requests use input; plain follow-ups add their open askId. Questions use todoId. Retry failed todos with neo.todo.continue, never remove/replace. Plain titles omit identifiers, fields, paths.
 
-Human reports live in `~/HyperNeo/<matter>/` or the configured workspace. Link absolute paths in cards/messages. Keep hidden state in `~/.hyperneo/work` private, never linked. Completion uses core.evidence {} separately. Non-coding omits target.place. Most tasks write nothing. Results include filled forms, tables, itineraries (`旅行/2026圣诞`). Other places need the human’s named path. Never write in the home root. Coding keeps repo worktrees.
+Human reports live in `~/HyperNeo/<matter>/` or the configured workspace. Link absolute paths in cards/messages. Keep hidden state private, never linked. Coding todos use repository checks. Non-coding evidence requires an explicit visible path. Non-coding omits target.place. Most tasks write nothing. Results include filled forms, tables, itineraries. Other places need the human’s named path. Never write in the home root.
 Edit/commit home.

@@ -63,21 +63,17 @@ try {
   db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ?').run('lsm/hyperneo', 'synthetic-ask');
   assert.equal((db.prepare('SELECT repo FROM neo_asks WHERE id = ?').get('synthetic-ask') as { repo: string }).repo, 'lsm/hyperneo');
   const invoke = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: owner, role: 'neo' }));
-  async function add(title: string, params: Record<string, string>) {
-    const reply = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title, named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params } } })).content[0].text);
-    assert(reply.ok && reply.todo, JSON.stringify(reply));
-    return reply.todo as NeoTodo;
-  }
-  const internal = await add('Prepare the human report', {});
-  const hidden = join(data, 'work/evidence', internal.id, 'result.md');
-  assert.equal(internal.check?.params.path, hidden);
-  assert(internal.doneWhen.includes(hidden));
+  const hidden = join(data, 'work/evidence/legacy/result.md');
+  const internal = store.addTodo('legacy', 'synthetic-ask', { title: 'Prepare the human report', doneWhen: `File ${hidden} exists.`, instruction: null, named: null, check: { pack: 'core', kind: 'evidence', params: { path: hidden } } }, Date.now());
   const report = join(workspace, 'Travel/report.md');
   mkdirSync(dirname(report), { recursive: true });
   writeFileSync(report, '# Travel report\n\nA report for the human.');
-  const misplaced = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Misplaced completion proof', named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params: { path: report } } } })).content[0].text);
+  const misplaced = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'synthetic-ask', title: 'Coding evidence', named: { repository: 'lsm/hyperneo' }, check: { pack: 'core', kind: 'evidence', params: { path: report } } } })).content[0].text);
   assert.equal(misplaced.ok, false);
-  assert.match(misplaced.reason, /evidence_in_user_folder/);
+  assert.match(misplaced.reason, /coding_evidence_refused/);
+  store.openAsk({ id: 'report-ask', sessionId: owner, projectId: null, originMessageId: null, title: 'Visible report', request: 'Prepare a report', createdAt: Date.now() });
+  const visibleAdd = JSON.parse((await invoke({ name: 'neo.todo.add', input: { after: [], askId: 'report-ask', title: 'Visible result', check: { pack: 'core', kind: 'evidence', params: { path: report } } } })).content[0].text);
+  assert.equal(visibleAdd.ok, true, JSON.stringify(visibleAdd));
   store.updateTodo(store.getTodo(internal.id)!, { startedAt: Date.now() }, Date.now());
   const waiting = JSON.parse((await invoke({ name: 'neo.todo.edit', input: { todoId: internal.id, done: 'met', evidence: 'Waiting for the synthetic file' } })).content[0].text);
   assert.equal(waiting.todo?.state, 'blocked');
@@ -105,7 +101,7 @@ try {
   assert.equal(store.getTodo(internal.id)?.evidence, `File ${hidden} exists.`);
   const brief = workerWorkLocationsBrief(workspace);
   assert(brief.includes('~/HyperNeo/<matter>/'));
-  assert(/never link/i.test(brief));
+  assert(!brief.includes('HYPERNEO_EVIDENCE'));
   writeFileSync(join(run, 'evidence/worker-brief.txt'), brief);
   const browserAt = process.argv.indexOf('--browser');
   if (browserAt >= 0) {
@@ -128,7 +124,7 @@ try {
     assert(existsSync(join(control, 'done')));
     assert.equal(JSON.parse(readFileSync(join(run, 'evidence/browser.json'), 'utf8')).passed, true);
   }
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ passed: true, card: card.entry, rawCompletionRetained: true, generatedProofHidden: true, reportPreserved: true, userFolderCheckRefused: true, hiddenReadForbidden: true, reportReadable: true, completionCheckPassed: true }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ passed: true, card: card.entry, rawCompletionRetained: true, generatedProofHidden: true, reportPreserved: true, codingEvidenceRefused: true, visibleEvidenceAccepted: true, hiddenReadForbidden: true, reportReadable: true, completionCheckPassed: true }, null, 2));
 } finally {
   socket?.close();
   await front?.stop(true);

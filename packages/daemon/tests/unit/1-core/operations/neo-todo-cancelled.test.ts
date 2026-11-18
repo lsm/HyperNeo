@@ -570,7 +570,12 @@ describe('cancelled prerequisites', () => {
         request: 'Finish A before D.',
         todos: [
           step('A', []),
-          { ...step('D', [0]), ...work, named: { repository: 'synthetic/elsewhere' } },
+          {
+            ...step('D', [0]),
+            ...work,
+            check: { pack: 'core', kind: 'human_confirmed', params: { questionId: 'synthetic' } },
+            named: { repository: 'synthetic/elsewhere' },
+          },
         ],
       });
       const [a, d] = opened.todos;

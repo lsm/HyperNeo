@@ -3,9 +3,8 @@ import { openHumanCard, requireHumanCard } from './human-card.ts';
 import { neoToolDescription } from '@hyperneo/prompts';
 import { neoTodoAfterRefusal } from './todo-dependencies.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { todoEvidenceFile } from '../work-locations.ts';
-import { neoEvidenceRefusal, withAssignedEvidence } from './core-todo-checks.ts';
-import { neoUserFolder } from './folder.ts';
+import { getDataDir } from '../data-dir.ts';
+import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -21,6 +20,7 @@ import {
   type NeoTodoControls,
   NeoTodoDraftSchema,
   planNeoTodoDraft,
+  neoTodoPlaceRefusal,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { recordNeoTodoAdmission } from './todo-add-operation.ts';
@@ -289,15 +289,10 @@ export function createNeoAskRecordOperations(
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
           .map((todo) => {
-            const check = withAssignedEvidence(todo.check, todoEvidenceFile('pending'));
-            const reason = neoEvidenceRefusal(
-              check,
-              neoTodoRepository(todo, policies, readScope),
-              controls.userFolder ?? neoUserFolder()
-            );
+            const reason = neoEvidencePathRefusal(todo.check, null, getDataDir());
             return reason
               ? { reason: { ok: false as const, reason } }
-              : planNeoTodoDraft({ ...todo, check }, policies);
+              : planNeoTodoDraft(todo, policies);
           })
           .find((planned) => 'reason' in planned);
         if (refused && 'reason' in refused) return refused.reason;
@@ -326,6 +321,11 @@ export function createNeoAskRecordOperations(
           }
           const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
           if ('reason' in resolved) return resolved.reason;
+          const placeRefusal = neoTodoPlaceRefusal(resolved.value, policies, {
+            ...readScope,
+            workerRemotes: resolved.value.workerRemotes,
+          });
+          if (placeRefusal) return { ok: false, reason: placeRefusal };
           drafts.push(resolved.value);
         }
         const current = priorAsk

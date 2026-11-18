@@ -1,7 +1,8 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ConnectionVault } from './vault.ts';
 import type { ConnectionStatus, ConnectionTokens } from './status.ts';
-import { refreshGoogleGrant, type OfflineGrant, type RefreshOutcome } from './refresh-token.ts';
+import { refreshGrant, type OfflineGrant, type RefreshOutcome } from './refresh-token.ts';
+import { microsoftTokenEndpoint } from './microsoft-login.ts';
 
 type Access =
   | { ok: true; accessToken: string; expiresAt: number; scopes: string[] }
@@ -13,6 +14,10 @@ type Decision =
   | { kind: 'disable'; connection: ConnectionStatus; result: Access }
   | { kind: 'backoff'; id: string; until: number; result: Access }
   | { kind: 'persist'; connection: ConnectionStatus; tokens: ConnectionTokens; result: Access };
+const endpoint = (connection: ConnectionStatus) =>
+  connection.provider === 'microsoft'
+    ? microsoftTokenEndpoint(connection.accountId)
+    : { url: 'https://oauth2.googleapis.com/token' };
 const failed = (reason: string): Access => ({ ok: false, reason });
 const access = (tokens: ConnectionTokens): Access => ({
   ok: true,
@@ -83,7 +88,7 @@ export function createGoogleTokenAccess(deps: {
     }
     return decision.result;
   };
-  const execute = (superpipe({})('google-connection-access') as PipelineAPI)
+  const execute = (superpipe({})('connection-access') as PipelineAPI)
     .input(['id', 'signal', 'force'])
     .pipe(
       async (id: string) => (await deps.read()).find((row) => row.id === id),
@@ -130,7 +135,13 @@ export function createGoogleTokenAccess(deps: {
     .pipe(
       (plan: Plan, signal: AbortSignal): Promise<RefreshOutcome> | RefreshOutcome =>
         plan.offline
-          ? refreshGoogleGrant(plan.offline, deps.fetchImpl ?? fetch, signal, now)
+          ? refreshGrant(
+              plan.offline,
+              endpoint(plan.connection),
+              deps.fetchImpl ?? fetch,
+              signal,
+              now
+            )
           : { ok: false, reason: 'reconnect_needed' },
       ['result', 'signal'],
       'outcome'

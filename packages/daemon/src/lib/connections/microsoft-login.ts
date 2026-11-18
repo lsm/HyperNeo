@@ -8,6 +8,10 @@ const authority = 'https://login.microsoftonline.com';
 const SCOPES = 'openid profile email offline_access Mail.ReadWrite Calendars.Read';
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 type Client = { clientId: string };
+export const microsoftTokenEndpoint = (accountId: string) => ({
+  url: `${authority}/${accountId.split('.')[0]}/oauth2/v2.0/token`,
+  form: { scope: SCOPES },
+});
 const tokenSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1).optional(),

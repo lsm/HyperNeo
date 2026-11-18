@@ -489,6 +489,13 @@ export function createCodingTodoPolicy(
           ? (place.todo ?? hinted() ?? place.ask)
           : repository(candidate, scope);
         if (
+          name &&
+          draft.check?.pack === 'core' &&
+          draft.check.kind === 'evidence' &&
+          JSON.stringify(draft.check) !== JSON.stringify(scope.todo?.check)
+        )
+          return 'coding_evidence_refused: use pr_merged, pr_approved, issue_closed, deployed, or human_confirmed.';
+        if (
           draft.check?.pack === 'coding' &&
           (draft.target?.verb === 'send' || draft.target?.verb === 'bind')
         ) {

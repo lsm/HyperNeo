@@ -27,6 +27,7 @@ describe('resolveSpeechPart', () => {
   test('a speech part on the key host gets the same key', async () => {
     expect(await resolveSpeechPart(voice('https://api.openai.com'), credentials)).toEqual({
       endpoint: 'https://api.openai.com',
+      provider: 'openai',
       model: 'gpt-4o-mini-tts',
       voice: 'alloy',
       key: 'sk-openai',
@@ -36,6 +37,7 @@ describe('resolveSpeechPart', () => {
   test('a speech part on another host gets no key', async () => {
     expect(await resolveSpeechPart(voice('https://tts.example.com'), credentials)).toEqual({
       endpoint: 'https://tts.example.com',
+      provider: 'openai',
       model: 'gpt-4o-mini-tts',
       voice: 'alloy',
       key: undefined,
