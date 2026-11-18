@@ -77,6 +77,64 @@ test('the snapshot and ask reads return each ask its derived topic and key', asy
   }
 });
 
+test('Claude senders inherit their project topic through either session alias', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'neo-ask-sender-topic-'));
+  const path = join(dir, 'synthetic.db');
+  const db = new Database(path);
+  const gateway = new DbGateway(path, db);
+  try {
+    db.exec('PRAGMA journal_mode=WAL');
+    runMigrations(db, () => {});
+    createTables(db);
+    bindGateway(db, gateway);
+    const projects = new NeoRepository(db);
+    const store = new NeoAskTodoRepository(db);
+    for (const [id, adapter, session] of [
+      ['desktop', 'claude-desktop', 'local_s1'],
+      ['cli', 'claude-code', 's2'],
+    ]) {
+      projects.saveProject({ id, title: id, summary: '', context: '' }, 0);
+      db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(
+        `work:${hostname()}\u0000${adapter}\u0000${session}`,
+        id
+      );
+      store.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: id,
+        topic: null,
+        request: '',
+        createdAt: 1,
+      });
+      store.addTodo(
+        `${id}-t`,
+        id,
+        {
+          title: 'Step',
+          doneWhen: 'Observed',
+          check: null,
+          instruction: null,
+          named: { requestFrom: `claude-code:${id === 'desktop' ? 's1' : 's2'}` },
+        },
+        1
+      );
+    }
+    const topics = Object.fromEntries(
+      (await store.read('snapshot', undefined, 10)).asks.map((ask) => [
+        ask.id,
+        [ask.topic, ask.topicKey],
+      ])
+    );
+    expect(topics).toEqual({ desktop: ['desktop', 'desktop'], cli: ['cli', 'cli'] });
+  } finally {
+    await gateway.close();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the plan read counts Neo's picks on asks opened in the last 30 days, open or settled", async () => {
   const dir = mkdtempSync(join(tmpdir(), 'neo-topic-list-'));
   const path = join(dir, 'synthetic.db');
