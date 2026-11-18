@@ -553,14 +553,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     );
   }
 
-  queueOn(todoId: string, ref: WorkRef, message: string): 'message' | 'instruction' | 'none' {
+  queueOn(
+    todoId: string,
+    ref: WorkRef,
+    message: string,
+    options?: { requeueDoing: boolean }
+  ): 'message' | 'instruction' | 'none' {
     const store = new NeoAskTodoRepository(this.db);
     const todo = store.getTodo(todoId);
     if (
       !todo ||
       !(
         (todo.state === 'todo' && todo.startedAt === null) ||
-        (todo.state === 'doing' && !this.readRef(todoId))
+        (options?.requeueDoing && todo.state === 'doing' && !this.readRef(todoId))
       )
     )
       return 'none';

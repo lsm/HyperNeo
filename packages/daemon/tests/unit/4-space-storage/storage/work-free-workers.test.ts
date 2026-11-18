@@ -95,9 +95,20 @@ describe('readFreeWorkers', () => {
     test('a started todo without a worker can wait for a busy worker', () => {
       liveTodo('next');
       store.updateTodo(store.getTodo('next')!, { state: 'doing', startedAt: 4 }, 4);
-      expect(sessions.queueOn('next', ref, 'Next step.')).toBe('instruction');
+      expect(sessions.queueOn('next', ref, 'Follow-up.')).toBe('none');
+      expect(store.getTodo('next')?.state).toBe('doing');
+      expect(sessions.queueOn('next', ref, 'Next step.', { requeueDoing: true })).toBe(
+        'instruction'
+      );
       expect(sessions.get('next')).toMatchObject({ verb: 'send', ref });
       expect(store.getTodo('next')?.state).toBe('todo');
+    });
+
+    test('a bound doing todo cannot be requeued onto a different worker', () => {
+      bind('bound', 'w-other', 'doing');
+      expect(sessions.queueOn('bound', ref, 'Next step.', { requeueDoing: true })).toBe('none');
+      expect(store.getTodo('bound')?.state).toBe('doing');
+      expect(sessions.readRef('bound')).toMatchObject(other);
     });
 
     test('a released worker is never offered again, also once its unusable mark expired', () => {
