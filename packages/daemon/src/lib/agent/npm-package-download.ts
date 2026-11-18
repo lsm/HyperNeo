@@ -28,6 +28,10 @@ const CURL_PATIENCE = [
 
 export const PACKAGE_DOWNLOAD_WAIT_MS = 45_000;
 
+export class PackageDownloadError extends Error {
+  override name = 'PackageDownloadError';
+}
+
 type CurlFailure = { code?: number | string; stderr: string; host?: string };
 
 type TarEntry = { path: string; mode: number; data: Buffer };
@@ -48,18 +52,20 @@ function registryUrl(): string {
 }
 
 function registryHost(): string {
-  return new URL(registryUrl()).hostname;
+  try {
+    return new URL(registryUrl()).hostname;
+  } catch {
+    return 'unknown registry';
+  }
 }
 
 export function describeCurlFailure(failure: CurlFailure, host: string): string {
-  const detail = failure.stderr.trim();
   if (failure.code === 'ENOENT') return 'curl is not installed or not on PATH';
-  if (failure.code === DISK_CURL_CODE) return `disk full or not writable: ${detail}`;
-  if (failure.code === 6) return `cannot reach npm (ENOTFOUND ${host}): ${detail}`;
-  if (failure.code === 7) return `cannot reach npm (ECONNREFUSED ${host}:443): ${detail}`;
+  if (failure.code === DISK_CURL_CODE) return 'Disk full or not writable.';
   if (typeof failure.code === 'number' && NETWORK_CURL_CODES.has(failure.code))
-    return `cannot reach npm (ETIMEDOUT ${host}:443): ${detail}`;
-  return `npm request failed: ${detail || `curl exited with ${failure.code}`}`;
+    return `Cannot reach npm registry at ${host}.`;
+  const detail = typeof failure.code === 'number' ? ` (curl exit ${failure.code})` : '';
+  return `npm request failed${detail}.`;
 }
 
 export function describeWriteFailure(err: unknown): string {
@@ -146,7 +152,7 @@ async function fetchVerifiedTarball(
 
 async function runPackageManager(command: string, args: string[]): Promise<string | null> {
   return new Promise((resolve, reject) => {
-    const fail = (err: { code?: number | string }, stderr = '') => {
+    const fail = (err: { code?: number | string }) => {
       if (err.code === 'ENOENT' || command === 'pnpm') return resolve(null);
       if (command === 'npm' && process.platform === 'win32' && err.code === 'EINVAL')
         return resolve(null);
@@ -156,14 +162,9 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
           const code = /^E[A-Z0-9_]{1,31}$/.test(err.code) ? ` (${err.code})` : '';
           return reject(new Error(`npm could not start${code}`));
         }
-        const code =
-          /^npm (?:ERR!|error) code (ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EAI_AGAIN|ECONNRESET|EPIPE)\s*$/m.exec(
-            stderr
-          )?.[1];
-        const network = code ? ` (${code})` : '';
         reject(
           new Error(
-            `npm could not download the package${detail}${network}; check your npm registry and login`
+            `npm could not download the package${detail}; check your npm registry and login`
           )
         );
         return;
@@ -171,8 +172,8 @@ async function runPackageManager(command: string, args: string[]): Promise<strin
       reject(new Error(`${command} failed while preparing the package download${detail}`));
     };
     try {
-      execFile(command, args, { encoding: 'utf-8' }, (err, stdout, stderr) => {
-        if (err) return fail(err, stderr);
+      execFile(command, args, { encoding: 'utf-8' }, (err, stdout) => {
+        if (err) return fail(err);
         resolve(String(stdout).trim());
       });
     } catch (error) {
@@ -221,19 +222,21 @@ export async function downloadVerifiedTarball(
         ? describeWriteFailure(err)
         : describeCurlFailure(err as CurlFailure, (err as CurlFailure).host ?? registryHost());
     logWarn(`[npm-package-download] ${packageName}@${version}: ${reason}`);
-    throw new Error(reason, { cause: err });
+    throw new PackageDownloadError(reason);
   }
 }
 
-export function waitForDownload<T>(download: Promise<T>, waitMs: number, name: string): Promise<T> {
+export function waitForDownload<T>(
+  download: Promise<T>,
+  waitMs: number,
+  name: string,
+  timeoutError = () => new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     download,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)),
-        waitMs
-      );
+      timer = setTimeout(() => reject(timeoutError()), waitMs);
     }),
   ]).finally(() => clearTimeout(timer));
 }

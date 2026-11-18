@@ -1,3 +1,4 @@
+import { PackageDownloadError } from './npm-package-download.ts';
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { hasExplicitAutoCompactChoice } from '../session/create-session-config.ts';
 import type {
@@ -1675,6 +1676,22 @@ export class QueryRunner {
         return;
       }
       this.ctx.attemptTokens.invalidate(attemptToken);
+      if (error instanceof PackageDownloadError && !cancelled && owns()) {
+        messageQueue.clear(error);
+        const owner = stateManager.idleOwnerForQuery(queryGeneration);
+        stateManager.beginTerminalIdle(owner);
+        await errorManager.handleError(
+          session.id,
+          error,
+          ErrorCategory.SESSION,
+          error.message,
+          stateManager.getState(),
+          { kind: 'package_download_failure' },
+          owns
+        );
+        await stateManager.setIdle({ owner });
+        return;
+      }
       const isQueryInterrupted =
         cancelled || this.ctx.queryAbortController?.signal.aborted === true;
       const isStartupTimeout = errorMessage.includes('SDK startup timeout');

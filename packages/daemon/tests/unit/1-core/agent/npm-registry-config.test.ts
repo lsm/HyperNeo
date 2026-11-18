@@ -3,10 +3,6 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { downloadVerifiedTarball } from '../../../../src/lib/agent/npm-package-download.ts';
-import {
-  isNetworkUnreachableError,
-  networkProbeHost,
-} from '../../../../src/lib/agent/network-outage-pause.ts';
 import { integrityOf, npmTarball } from '../../helpers/npm-tarball.ts';
 
 describe('configured package downloads', () => {
@@ -51,6 +47,7 @@ describe('configured package downloads', () => {
       await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
       throw new Error('expected failure');
     } catch (error) {
+      expect((error as Error).name).toBe('PackageDownloadError');
       expect((error as Error).message).toBe(
         'npm could not download the package (exit 7); check your npm registry and login'
       );
@@ -58,29 +55,6 @@ describe('configured package downloads', () => {
     }
     expect(existsSync(join(run, 'pnpm-called'))).toBe(false);
     expect(existsSync(join(run, 'curl-called'))).toBe(false);
-  });
-
-  it('preserves npm network failure classification without exposing stderr', async () => {
-    for (const code of [
-      'ETIMEDOUT',
-      'ECONNREFUSED',
-      'ENOTFOUND',
-      'EAI_AGAIN',
-      'ECONNRESET',
-      'EPIPE',
-    ]) {
-      script('npm', `printf 'npm error code ${code}\\nprivate-token-example\\n' >&2; exit 1`);
-      try {
-        await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
-        throw new Error('expected failure');
-      } catch (error) {
-        const message = (error as Error).message;
-        expect(message).toContain('(exit 1)');
-        expect(message).toContain(code);
-        expect(message).not.toContain('private-token-example');
-        expect(isNetworkUnreachableError(message)).toBe(true);
-      }
-    }
   });
 
   it('uses the pnpm registry when npm is absent', async () => {
@@ -105,8 +79,8 @@ describe('configured package downloads', () => {
       throw new Error('expected failure');
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toContain('ECONNREFUSED mirror.example.test:443');
-      expect(networkProbeHost(message)).toBe('mirror.example.test');
+      expect((error as Error).name).toBe('PackageDownloadError');
+      expect(message).toBe('Cannot reach npm registry at mirror.example.test.');
     }
   });
 
