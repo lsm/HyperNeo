@@ -12,7 +12,7 @@ vi.mock('node:child_process', async (original) => ({
 }));
 
 describe('Windows package downloads', () => {
-  it('uses pnpm when npm fails to spawn', async () => {
+  it.each([false, true])('uses pnpm when npm fails to spawn (throws: %s)', async (throws) => {
     const run = mkdtempSync(join(tmpdir(), 'windows-npm-'));
     const archive = npmTarball([{ path: 'package/claude', body: 'binary' }]);
     const platform = process.platform;
@@ -25,8 +25,11 @@ describe('Windows package downloads', () => {
         done: (error: Error | null, stdout: string, stderr: string) => void
       ) => {
         calls.push(command);
-        if (command === 'npm')
-          return done(Object.assign(new Error('spawn'), { code: 'EINVAL' }), '', '');
+        if (command === 'npm') {
+          const error = Object.assign(new Error('spawn'), { code: 'EINVAL' });
+          if (throws) throw error;
+          return done(error, '', '');
+        }
         if (command === 'pnpm') return done(null, 'https://mirror.example.test', '');
         if (args.includes('-o')) {
           writeFileSync(args[args.indexOf('-o') + 1], archive);
