@@ -223,7 +223,7 @@ describe('AgentSession.clearConversationContext', () => {
       const agent = createAgentSession(
         {
           sdkSessionId: 'native-thread-1',
-          config: { model: 'synthetic', harness: 'oxap-codex' },
+          config: { model: 'synthetic', harness: 'oxap-codex', provider: 'anthropic-codex' },
         } as Partial<Session>,
         makeEventBus(),
         proxy
@@ -249,6 +249,7 @@ describe('AgentSession.clearConversationContext', () => {
       );
       expect(error).toBeInstanceOf(ClearConversationUnsupportedError);
       expect((error as Error).message).toMatch(/could not clear/i);
+      if (failure === 'open') expect(client.request).toHaveBeenCalled();
       expect(agent.db.saveSDKMessage).toHaveBeenCalledTimes(1);
       expect(agent.messageHub.event).toHaveBeenCalledTimes(1);
       expect(agent.db.saveSDKMessage).toHaveBeenCalledWith(

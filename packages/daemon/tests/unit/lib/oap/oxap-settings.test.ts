@@ -99,6 +99,20 @@ describe('oxap.settings.save', () => {
     expect(h.restart).not.toHaveBeenCalled();
   });
 
+  it('refuses a provider whose stored config is unreadable, without writing or restarting', async () => {
+    const h = host();
+    h.records[0].configJson = '{';
+    expect(
+      await h.run({
+        providerId: 'anthropic-codex',
+        harness: 'oxap-codex',
+        settings: { executable: '/c' },
+      })
+    ).toEqual({ accepted: false, reason: 'anthropic-codex has an unreadable config' });
+    expect(h.records[0].configJson).toBe('{');
+    expect(h.restart).not.toHaveBeenCalled();
+  });
+
   it('refuses two providers whose harness reads one key variable with different keys', async () => {
     const h = host({ keys: { 'synthetic-memory': 'sk-a', 'synthetic-memory-2': 'sk-b' } });
     expect(await h.run({ providerId: 'synthetic-memory', harness: 'oxap-synthetic' })).toEqual({
