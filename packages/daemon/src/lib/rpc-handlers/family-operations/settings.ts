@@ -12,7 +12,7 @@ import {
 import { publishGlobalSettings } from '../settings-handlers.ts';
 import type { FamilyOperationContext } from './context.ts';
 import { usableModels } from '../../usable-models.ts';
-import { createOxapSettingsOperations } from '../../oap/oxap-settings.ts';
+import { createOxapSettingsOperations } from '../../oxap/oxap-settings.ts';
 
 export interface DefaultModelDeps {
   readonly read: () => Pick<GlobalSettings, 'model' | 'modelProvider'>;

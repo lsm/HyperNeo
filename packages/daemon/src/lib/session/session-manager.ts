@@ -120,7 +120,7 @@ export class SessionManager {
     private skillsManager?: SkillsManager,
     private appMcpServerRepo?: AppMcpServerRepository,
     private getGithubToken?: () => Promise<string | null>,
-    private oapRuntime?: (session: Session) => import('../agent/query-runner.ts').OapQueryRuntime
+    private oxapRuntime?: (session: Session) => import('../agent/query-runner.ts').OxapQueryRuntime
   ) {
     this.logger = new Logger('SessionManager');
     this.worktreeManager = new WorktreeManager();
@@ -178,7 +178,7 @@ export class SessionManager {
       session.config.toolGuards,
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
-        oap: this.oapRuntime?.(session),
+        oxap: this.oxapRuntime?.(session),
         loginRecovery: this.loginRecovery,
         ...runtimeOptions,
         getGithubToken: this.getGithubToken,

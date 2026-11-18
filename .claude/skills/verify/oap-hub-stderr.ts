@@ -4,10 +4,10 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { answerCodexProbeLocally, OXAP_CODEX_MODEL, oxapCodexProvider } from './oxap-codex-provider.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import type { OapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
-import { OapHubClient } from '../../../packages/daemon/src/lib/oap/oap-hub-client.ts';
+import type { OxapQueryRuntime } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
+import { OxapHubClient } from '../../../packages/daemon/src/lib/oxap/oxap-hub-client.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { createOapQueryHub } from '../../../packages/daemon/src/lib/oap/oap-query-hub.ts';
+import { createOxapQueryHub } from '../../../packages/daemon/src/lib/oxap/oxap-query-hub.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
@@ -24,7 +24,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',text=>
   if(r.op==='submit')return process.stderr.write('discarded-prefix'+'x'.repeat(100000)+'synthetic panic tail',()=>process.exit(7));
   reply(r.id,null);
 });`;
-const client = new OapHubClient({
+const client = new OxapHubClient({
   command: process.execPath,
   args: ['-e', script],
   cwd: run,
@@ -60,7 +60,7 @@ try {
   const { sessionId } = await rpc.request<{ sessionId: string }>('session.create', { workspacePath: join(run, 'workspace'), title: 'Synthetic busy recovery', config: { model: OXAP_CODEX_MODEL, provider: 'anthropic-codex' } });
   const agent = app.sessionManager.getSession(sessionId);
   assert(agent);
-  (agent as unknown as { runtimeOptions: { oap: OapQueryRuntime } }).runtimeOptions.oap = { openDirectorySupported: true, hub: createOapQueryHub(client) };
+  (agent as unknown as { runtimeOptions: { oxap: OxapQueryRuntime } }).runtimeOptions.oxap = { openDirectorySupported: true, hub: createOxapQueryHub(client) };
   await rpc.request('message.send', { sessionId, content: 'Synthetic crash request' });
   const deadline = Date.now() + 10_000;
   while (!errors.some((message) => message.includes('synthetic panic tail')) || agent.queryPromise || agent.messageQueue.isRunning()) {

@@ -16,9 +16,12 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { Database } from '../../../../src/storage/database.ts';
-import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-engine.ts';
-import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
-import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
+import type { OxapEngine, OxapEngineOptions } from '../../../../src/lib/oxap/oxap-engine.ts';
+import {
+  OxapHubRequestError,
+  type OxapHubClient,
+} from '../../../../src/lib/oxap/oxap-hub-client.ts';
+import { bindCodexRuntime as createOxapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
 
 function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -31,7 +34,7 @@ function makeEventBus(): InternalEventBus<DaemonInternalEventMap> {
 function createAgentSession(
   overrides: Partial<Session> = {},
   eventBus: InternalEventBus<DaemonInternalEventMap> = makeEventBus(),
-  oap?: import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+  oxap?: import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
 ): AgentSession {
   const mockSession: Session = {
     id: `test-session-${Math.random()}`,
@@ -75,7 +78,7 @@ function createAgentSession(
     undefined,
     undefined,
     undefined,
-    { oap }
+    { oxap }
   );
 }
 
@@ -132,7 +135,7 @@ describe('AgentSession.clearConversationContext', () => {
         agent.session.sdkSessionId = 'native-thread-2';
       });
       const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
-        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
       >;
       agent = createAgentSession(
         {
@@ -159,7 +162,7 @@ describe('AgentSession.clearConversationContext', () => {
       throw new Error('synthetic close failure');
     });
     const runtime = { openDirectorySupported: true, clear } as unknown as NonNullable<
-      import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+      import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
     >;
     const agent = createAgentSession(
       {
@@ -196,21 +199,21 @@ describe('AgentSession.clearConversationContext', () => {
               payload: { features: { 'session.open.reopen': { level: 'native' } } },
             };
           }
-          throw new OapHubRequestError('unknown_session', 'synthetic missing history');
+          throw new OxapHubRequestError('unknown_session', 'synthetic missing history');
         }),
-      } as unknown as OapHubClient;
+      } as unknown as OxapHubClient;
       const engine = {
         getHub: mock(async () => client),
         isCurrentHub: mock(() => true),
-      } as unknown as OapEngine;
-      const options: OapEngineOptions = {
-        binaryPath: '/synthetic/oapx',
+      } as unknown as OxapEngine;
+      const options: OxapEngineOptions = {
+        binaryPath: '/synthetic/oxap',
         identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
         stateDirectory: '/synthetic/state',
         hub: { adapters: {}, environment: {} },
       };
       type Runtime = NonNullable<
-        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oap']
+        import('../../../../src/lib/agent/agent-session.ts').AgentSessionRuntimeOptions['oxap']
       >;
       let runtime!: Runtime;
       const proxy: Runtime = {
@@ -228,7 +231,7 @@ describe('AgentSession.clearConversationContext', () => {
         makeEventBus(),
         proxy
       );
-      runtime = createOapRuntime(
+      runtime = createOxapRuntime(
         engine,
         options,
         agent.internalEventBus,

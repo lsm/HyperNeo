@@ -5,7 +5,7 @@ import type { NeoSessionKind } from './work-driver.ts';
 
 export const neoCardClass = 'neo-arrive rounded-2xl border border-line bg-surface p-4 shadow-sm';
 
-export const neoFooterClass = 'mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3';
+export const neoFooterClass = 'mt-2 flex flex-wrap items-center gap-2';
 
 export const neoSecondaryClass =
   'inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold text-fg hover:border-accent/40 hover:text-accent focus-visible:outline-accent';

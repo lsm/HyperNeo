@@ -8,7 +8,7 @@ A session explicitly selecting `harness: codex` uses native Codex app-server thr
 
 The existing `QueryLike` seam in `QueryRunner` is used instead of a second runner. Translate OAP events into SDK-shaped messages, including exactly one terminal `result`, so existing delivery, attempt and generation handling, `sdk_messages`, chat storage, web, iOS and Neo turn facts can continue to work.
 
-Engine integration belongs in daemon `lib/oap/` and `lib/agent/`. Neo core continues to know work adapters and stored messages, not OAP; the `drivers/hyperneo-adapter.ts` seam passes the harness and records provenance. The coding pack stays unchanged. A web harness selector is a later entry point, not a rewrite of the clients.
+Engine integration belongs in daemon `lib/oxap/` and `lib/agent/`. Neo core continues to know work adapters and stored messages, not OAP; the `drivers/hyperneo-adapter.ts` seam passes the harness and records provenance. The coding pack stays unchanged. A web harness selector is a later entry point, not a rewrite of the clients.
 
 ## Identity, recovery and limits
 

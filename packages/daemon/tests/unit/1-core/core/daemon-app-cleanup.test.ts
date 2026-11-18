@@ -161,7 +161,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     chmodSync(binaryPath, 0o700);
     let cleaned = false;
     try {
-      const hub = await daemonContext.oapEngine.getHub(async () => ({
+      const hub = await daemonContext.oxapEngine.getHub(async () => ({
         binaryPath,
         identity: { version: 'fixture', sha256: createHash('sha256').update(script).digest('hex') },
         stateDirectory: join(root, 'state'),
@@ -175,7 +175,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
       if (!cleaned) await daemonContext.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
-    await expect(daemonContext.oapEngine.getHub(async () => ({}) as never)).rejects.toThrow(
+    await expect(daemonContext.oxapEngine.getHub(async () => ({}) as never)).rejects.toThrow(
       'closed'
     );
   });

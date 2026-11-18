@@ -147,7 +147,7 @@ export interface RPCHandlerDependencies {
   oxapSettings?: OxapSettingsDeps;
 }
 
-import type { OxapSettingsDeps } from '../oap/oxap-settings.ts';
+import type { OxapSettingsDeps } from '../oxap/oxap-settings.ts';
 
 const log = new Logger('rpc-handlers');
 
