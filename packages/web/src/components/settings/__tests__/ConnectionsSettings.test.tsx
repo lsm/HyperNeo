@@ -67,9 +67,9 @@ beforeEach(() => {
     const { name } = data;
     if (data.input === undefined) throw new Error('Invalid input: expected object');
     if (name === 'connections.list') return { connections: accounts };
-    if (name === 'connections.google.login') return attempt;
-    if (name === 'connections.google.connect' || name === 'connections.google.disconnect')
-      return command(data);
+    if (name === 'connections.google.login' || name === 'connections.microsoft.login')
+      return attempt;
+    if (/^connections\.(google|microsoft)\.(connect|disconnect)$/.test(name)) return command(data);
     throw new Error(`Unexpected operation ${name}`);
   });
   navSectionSignal.value = 'settings';
@@ -88,6 +88,56 @@ it('offers Connect Google from the Connections settings route on an empty instan
   render(<MainContent />);
   expect(await screen.findByRole('button', { name: 'Connect Google' })).toBeTruthy();
   expect(screen.getByText('No accounts connected.')).toBeTruthy();
+});
+
+it('connects Microsoft with only an application client ID and polls its own sign-in', async () => {
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Microsoft' }));
+  const clientId = await screen.findByLabelText('Application (client) ID');
+  expect(screen.queryByLabelText('Client secret (optional)')).toBeNull();
+  fireEvent.input(clientId, { target: { value: 'synthetic-microsoft-client' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to Microsoft' }));
+  await waitFor(() => expect(popup.location.href).toBe(consentUrl));
+  expect(invocations('connections.microsoft.connect')[0].input).toEqual({
+    clientId: 'synthetic-microsoft-client',
+  });
+  expect(invocations('connections.google.connect')).toHaveLength(0);
+  expect(screen.getByRole('status').textContent).toContain('Finish signing in on Microsoft.');
+  await waitFor(() => expect(invocations('connections.microsoft.login').length).toBeGreaterThan(0));
+});
+
+it('reconnects and disconnects a Microsoft account through Microsoft operations', async () => {
+  accounts = [
+    {
+      ...account,
+      provider: 'microsoft',
+      scopes: ['Mail.ReadWrite', 'Calendars.Read'],
+      health: 'healthy',
+    },
+  ];
+  command = () => {
+    attempt = { state: 'failed', reason: 'account_mismatch' };
+    return attempt;
+  };
+  render(<MainContent />);
+  expect(await screen.findByText('Read Outlook mail and manage drafts')).toBeTruthy();
+  expect(screen.getByText('Read Outlook calendars')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+  expect((await screen.findByRole('alert')).textContent).toContain(
+    'Sign in with the same Microsoft account to reconnect.'
+  );
+  expect(invocations('connections.microsoft.connect')[0].input).toEqual({
+    connectionId: account.id,
+  });
+  command = () => ({ ok: true });
+  fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+  await waitFor(() =>
+    expect(invocations('connections.microsoft.disconnect')[0]?.input).toEqual({
+      connectionId: account.id,
+    })
+  );
+  expect(invocations('connections.google.connect')).toHaveLength(0);
+  expect(invocations('connections.google.disconnect')).toHaveLength(0);
 });
 
 it('shows account health and granted access with reconnect and disconnect actions', async () => {
