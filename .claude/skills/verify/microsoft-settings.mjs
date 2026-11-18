@@ -90,6 +90,23 @@ try {
   await page.getByText('one@example.test', { exact: true }).waitFor();
   await page.getByText('Disconnected', { exact: true }).waitFor();
   await shot('disconnected');
+  await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
+  await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
+  await page.getByLabel('Client secret (optional)', { exact: true }).fill('synthetic-secret');
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  const reconnectId = await page.getByLabel('Application (client) ID', { exact: true }).inputValue();
+  await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
+  await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
+  await page.evaluate(() => { window.open = () => null; });
+  await page.getByRole('button', { name: 'Continue to Google', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Finish signing in on Google.' }).waitFor();
+  await page.getByRole('link', { name: 'Continue to Google', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Connect Microsoft', exact: true }).click();
+  await page.getByLabel('Application (client) ID', { exact: true }).waitFor();
+  await page.waitForTimeout(1500);
+  const googlePending = await page.getByRole('status').filter({ hasText: 'Finish signing in on Google.' }).count();
+  const googleLink = await page.getByRole('link', { name: 'Continue to Google', exact: true }).count();
+  assert.deepEqual({ reconnectId, googlePending, googleLink }, { reconnectId: '', googlePending: 1, googleLink: 1 });
   assert.equal(authorizations.length, 2);
   await context.close();
 } catch (error) {

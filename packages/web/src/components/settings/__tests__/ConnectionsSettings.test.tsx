@@ -166,6 +166,47 @@ it('drops a Google client secret typed before switching to Connect Microsoft', a
   });
 });
 
+it('opens an empty Microsoft reconnect form after entering Google credentials', async () => {
+  accounts = [{ ...account, provider: 'microsoft' }];
+  command = () => ({ state: 'failed', reason: 'client_not_configured' });
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));
+  fireEvent.input(screen.getByLabelText('Desktop client ID'), {
+    target: { value: 'synthetic-google-client' },
+  });
+  fireEvent.input(screen.getByLabelText('Client secret (optional)'), {
+    target: { value: 'synthetic-secret' },
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+  expect(
+    ((await screen.findByLabelText('Application (client) ID')) as HTMLInputElement).value
+  ).toBe('');
+});
+
+it('keeps Google pending and its consent link while opening Microsoft setup', async () => {
+  vi.spyOn(window, 'open').mockReturnValue(null);
+  request.mockImplementation(async (_method, data: Invocation) => {
+    if (data.name === 'connections.list') return { connections: [] };
+    if (data.name === 'connections.google.login') return attempt;
+    if (data.name === 'connections.microsoft.login') return { state: 'missing' };
+    if (data.name === 'connections.google.connect') return pending();
+    throw new Error(`Unexpected operation ${data.name}`);
+  });
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));
+  submitClient();
+  expect((await screen.findByRole('status')).textContent).toContain('Finish signing in on Google.');
+  expect(screen.getByRole('link', { name: 'Continue to Google' })).toBeTruthy();
+  const connect = screen.getByRole('button', { name: 'Connect Microsoft' });
+  await waitFor(() => expect(connect.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(connect);
+  await screen.findByLabelText('Application (client) ID');
+  await waitFor(() =>
+    expect(screen.getByRole('status').textContent).toContain('Finish signing in on Google.')
+  );
+  expect(screen.getByRole('link', { name: 'Continue to Google' })).toBeTruthy();
+});
+
 it('keeps a Google secret out of a Microsoft reconnect that reuses the open form', async () => {
   accounts = [{ ...account, provider: 'microsoft' }];
   render(<MainContent />);

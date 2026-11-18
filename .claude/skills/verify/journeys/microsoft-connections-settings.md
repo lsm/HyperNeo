@@ -28,7 +28,10 @@ Microsoft pending status remains visible. Capture the pending status and the fak
 consent page, approve, and observe the account, Connected and the Outlook mail
 and calendar access. Reconnect reuses the saved client ID without the form.
 Capture the mobile width, disconnect, reload and confirm the disabled account
-stays listed.
+stays listed. Enter Google client details, reconnect the disconnected Microsoft
+account and confirm its setup starts empty. Begin Google sign-in with popups
+blocked, switch to Microsoft and confirm Google pending status and its Continue
+link remain visible.
 
 Screenshots and visible text land in the evidence directory; no token or code
 appears on the page. Real Microsoft consent and account interoperability remain
