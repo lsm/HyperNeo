@@ -27,7 +27,7 @@ type View = { accounts: Account[]; attempt: Attempt };
 const call = async <T,>(name: Parameters<typeof invokeOperation>[1], input: unknown = {}) =>
   invokeOperation<T>(await connectionManager.getHub(), name, input);
 
-const update = (superpipe({})('google-connection-settings') as PipelineAPI)
+const update = (superpipe({})('connection-settings') as PipelineAPI)
   .input(['provider', 'command'])
   .pipe(
     (command?: Command) =>
@@ -162,6 +162,7 @@ export function ConnectionsSettings() {
             disabled={busy}
             onClick={() => {
               setProvider(next);
+              setError('');
               setClientSecret('');
               setSetup({});
             }}
@@ -201,7 +202,11 @@ export function ConnectionsSettings() {
             void act({
               provider,
               action: 'connect',
-              input: { ...setup, clientId, ...(clientSecret ? { clientSecret } : {}) },
+              input: {
+                ...setup,
+                clientId,
+                ...(provider === 'google' && clientSecret ? { clientSecret } : {}),
+              },
             });
             setClientSecret('');
           }}

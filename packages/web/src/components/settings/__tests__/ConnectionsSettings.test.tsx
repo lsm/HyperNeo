@@ -123,6 +123,40 @@ it('drops a Google client secret typed before switching to Connect Microsoft', a
   });
 });
 
+it('keeps a Google secret out of a Microsoft reconnect that reuses the open form', async () => {
+  accounts = [{ ...account, provider: 'microsoft' }];
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Connect Google' }));
+  fireEvent.input(screen.getByLabelText('Client secret (optional)'), {
+    target: { value: 'synthetic-secret' },
+  });
+  command = () => ({ state: 'failed', reason: 'client_not_configured' });
+  fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+  const clientId = await screen.findByLabelText('Application (client) ID');
+  command = () => pending();
+  fireEvent.input(clientId, { target: { value: 'synthetic-microsoft-client' } });
+  const submit = screen.getByRole('button', { name: 'Continue to Microsoft' });
+  await waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(submit);
+  await waitFor(() => expect(invocations('connections.microsoft.connect')).toHaveLength(2));
+  expect(invocations('connections.microsoft.connect')[1].input).toEqual({
+    connectionId: account.id,
+    clientId: 'synthetic-microsoft-client',
+  });
+});
+
+it('clears a Google failure when the person switches to Connect Microsoft', async () => {
+  accounts = [account];
+  command = () => ({ state: 'failed', reason: 'account_mismatch' });
+  render(<MainContent />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Google connection failed');
+  const connect = screen.getByRole('button', { name: 'Connect Microsoft' });
+  await waitFor(() => expect(connect.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(connect);
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
 it('reconnects and disconnects a Microsoft account through Microsoft operations', async () => {
   accounts = [
     {
