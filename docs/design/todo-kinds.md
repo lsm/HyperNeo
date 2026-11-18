@@ -44,6 +44,7 @@ requirement or null. A fact step reads those; the function is the only rule. It 
 |---|---|
 | `planNeoQuestion` (a card on a plan) | a card that does not name the plan's steps, or a plan with no steps or no current check |
 | `planNeoTodoDone` and the `done` input of `planNeoTodoEdit` | a plan missing any of the three |
+| the runner's automatic done (`planNeoTodoCheck` and the pack judge in `todo-runner.ts`) | it does not mark such a plan done; the plan stays open with the unmet requirement as its reason, and Neo is woken |
 | the `neo.ask.settle` superpipe (`ask-record-operations.ts`) | an ask with a plan missing any of the three |
 | the automatic settle sweep (`service.ts`, which feeds `neo.ask.turned-settle`) and the follow-up wake (`neo-todo-session-repository.ts`) | the same: such an ask is not settled, and Neo is woken |
 | `planNeoTodoRemove` | removing a plan's last live step without `replacedBy` |
@@ -59,8 +60,9 @@ Steps wait without new code: they depend on the plan, so they start when it is d
   reviewer to compare them with the design's change plan; a missing, extra or misordered
   step is a finding. A passing `neo.coding.result` on a plan writes `checked` with those
   step ids.
-- A plan is always reviewed, even when the repository's `crossModelReview` is off
-  (`packs/coding/daemon-merge-gates.ts`).
+- A plan is always reviewed, even when the repository's `crossModelReview` is off, and
+  the daemon does not merge a plan's PR until `neoPlanRefusal` passes: steps, check and
+  sign-off come before the merge (`packs/coding/daemon-merge-gates.ts`).
 
 Other packs mark plans the same way when they need to.
 
@@ -84,6 +86,7 @@ Acceptance, one integration case per row:
 | check on the doer's model while another model is usable | not accepted |
 | check on the doer's model when it is the only usable model | accepted |
 | plan done | its steps start in order |
+| a design PR whose checks pass, before steps, check or sign-off | not merged, and the plan is not marked done |
 | the last live step removed without `replacedBy` | refused |
 | a repository with cross-model review off, a design PR | still reviewed and checked |
 | a todo that is not a plan | unchanged |
