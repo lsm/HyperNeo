@@ -53,8 +53,8 @@ five-minute timeout, code exchange only in the daemon.
 - Redirect: `http://localhost:<port>/oauth/microsoft/callback`, registered once
   as `http://localhost/oauth/microsoft/callback`. Entra ignores the port only
   for `localhost` redirects; other loopback URIs must match the port exactly
-  ([redirect rules][reply-url]). The listener binds `127.0.0.1`, as Google's
-  does, and checks the callback's `Host` is `localhost:<port>`.
+  ([redirect rules][reply-url]). The listener binds both `127.0.0.1` and `::1`
+  on the same port and checks the callback's `Host` is `localhost:<port>`.
 - `prompt=select_account`, so Reconnect lets the human pick the same account.
 - ID token: verify RS256 against the tenant-independent key set
   (`/common/discovery/v2.0/keys`); audience is the client ID and nonce matches.

@@ -10,7 +10,8 @@ function toRequest(
   port: number,
   clientSignal?: AbortSignal
 ): Request {
-  const url = `http://${hostname}:${port}${req.url ?? '/'}`;
+  const host = hostname.includes(':') ? `[${hostname}]` : hostname;
+  const url = `http://${host}:${port}${req.url ?? '/'}`;
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value === undefined) continue;
