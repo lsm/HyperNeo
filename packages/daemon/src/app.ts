@@ -1,5 +1,6 @@
 import type { NeoAttentionEvent } from './lib/neo/attention/decide.ts';
 import { NEO_FRONT_INFERENCE } from './lib/job-queue-constants.ts';
+import { NEO_DRIVER_REFRESH } from './lib/neo/driver-refresh.ts';
 import { createPeerPairRoute } from './routes/neo-peer.ts';
 import { collectDaemonScratch } from './lib/drivers/daemon-scratch.ts';
 import {
@@ -559,6 +560,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    const driverRefreshProcessor = new JobQueueProcessor(jobQueue, {
+      db: db.gateway,
+      pollIntervalMs: 1000,
+      maxConcurrent: 1,
+      staleThresholdMs: 5 * 60 * 1000,
+    });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
       db: db.gateway,
       pollIntervalMs: 1000,
@@ -577,6 +584,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       settlementGraceMs: 35_000,
     });
     jobProcessor.setChangeNotifier(() => {});
+    driverRefreshProcessor.setChangeNotifier(() => {});
     mailboxExpireProcessor.setChangeNotifier(() => {});
     messageDeliveryProcessor.setChangeNotifier((table, scope) => {
       reactiveDb.notifyChange(table, scope);
@@ -1216,6 +1224,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         : undefined
     );
     jobProcessor.register(NEO_FRONT_INFERENCE, rpcHandlers.frontInference);
+    driverRefreshProcessor.register(NEO_DRIVER_REFRESH, rpcHandlers.driverRefresh);
     void recoverRestartCutTurns(cutOffSessionIds, restartRecoveryDeps)
       .then((results) => {
         const acted = results.filter((result) => result.resumed).length;
@@ -1333,12 +1342,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         () => clientEventBridge.stop(),
         () => processWatchdog.stop(),
         () => jobProcessor.stopPolling(),
+        () => driverRefreshProcessor.stopPolling(),
         () => mailboxExpireProcessor.stopPolling(),
         () => messageDeliveryProcessor.stopPolling(),
         () => unsubscribeProviderFailureChanges?.(),
         () => oauthRefreshScheduler.stop(),
         () => googleRefresh.stop(),
         () => jobProcessor.stop(),
+        () => driverRefreshProcessor.stop(),
         () => mailboxExpireProcessor.stop(),
         () => taskAgentManager?.cleanupAll(),
         () => sessionManager?.cleanup(),
@@ -1674,6 +1685,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await extensions.start();
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
+    driverRefreshProcessor.start();
+    logInfo('[Daemon] Driver refresh job processor started');
     mailboxExpireProcessor.start();
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
@@ -1759,6 +1772,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Mailbox expiration job polling stopped');
         jobProcessor.stopPolling();
         logInfo('[Daemon] Job queue polling stopped');
+        driverRefreshProcessor.stopPolling();
+        logInfo('[Daemon] Driver refresh job polling stopped');
         try {
           const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
           if (requeued.length > 0) {
@@ -1772,6 +1787,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         } catch {}
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
+        await driverRefreshProcessor.stop();
+        logInfo('[Daemon] Driver refresh job processor stopped');
         await mailboxExpireProcessor.stop();
         logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager?.cleanupAll();

@@ -22,6 +22,8 @@ exit 0. The helper closes the daemon, SDK queries, provider bridges and HTTP
 fixture. This proves transport and tool behavior with scripted API responses.
 
 Run again with `--saturated` before the wrapper's run-directory argument. Five
-synthetic refresh handlers remain held until the front session consumes the human input. Require
-delivery within ten seconds while all five are held; retain the timing and held
-count in the evidence. This saturation case does not check the model reply. This exercises the real operation and front session.
+synthetic refresh jobs are queued; their work stays held until the front session
+consumes the human input. Require delivery within ten seconds with the refresh
+work still held and no event-loop stall of one second; retain the timing, lag
+samples and held count in the evidence. This case
+does not check the model reply.
