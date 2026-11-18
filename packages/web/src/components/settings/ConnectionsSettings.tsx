@@ -23,12 +23,12 @@ type Attempt = {
 };
 type Command = { provider: Provider; action: 'connect' | 'disconnect'; input: unknown };
 type Receipt = Partial<Attempt> & { ok?: boolean };
-type View = { accounts: Account[]; attempt: Attempt };
+type View = { accounts: Account[]; attempt: Attempt; provider: Provider };
 const call = async <T,>(name: Parameters<typeof invokeOperation>[1], input: unknown = {}) =>
   invokeOperation<T>(await connectionManager.getHub(), name, input);
 
 const update = (superpipe({})('connection-settings') as PipelineAPI)
-  .input(['provider', 'command'])
+  .input(['provider', 'command', 'watch'])
   .pipe(
     (command?: Command) =>
       command
@@ -38,15 +38,15 @@ const update = (superpipe({})('connection-settings') as PipelineAPI)
     'receipt'
   )
   .pipe(
-    (provider: Provider | null, _receipt: Receipt | null) =>
+    (_receipt: Receipt | null) =>
       Promise.all([
         call<{ connections: Account[] }>('connections.list'),
-        ...((provider ? [provider] : ['google', 'microsoft']) as Provider[]).map(async (name) => ({
+        ...(['google', 'microsoft'] as Provider[]).map(async (name) => ({
           provider: name,
           attempt: await call<Attempt>(`connections.${name}.login`),
         })),
       ]),
-    ['provider', 'receipt'],
+    'receipt',
     'snapshot'
   )
   .pipe(
@@ -55,22 +55,34 @@ const update = (superpipe({})('connection-settings') as PipelineAPI)
         { connections: Account[] },
         ...{ provider: Provider; attempt: Attempt }[],
       ],
-      receipt: Receipt | null
+      receipt: Receipt | null,
+      provider: Provider | null,
+      watch: Provider | null
     ) => {
+      const find = (name: Provider | null, state: Attempt['state']) =>
+        attempts.find((item) => item.provider === name && item.attempt.state === state);
       const selected =
+        find(watch, 'pending') ??
+        find(provider, 'pending') ??
         attempts.find(({ attempt }) => attempt.state === 'pending') ??
-        attempts.find(({ attempt }) => attempt.state === 'failed') ??
+        find(watch, 'failed') ??
+        find(provider, 'failed') ??
+        (provider === null
+          ? attempts.find(({ attempt }) => attempt.state === 'failed')
+          : undefined) ??
+        attempts.find((item) => item.provider === provider) ??
         attempts.find(({ attempt }) => attempt.state !== 'missing') ??
         attempts[0];
       return { accounts: rows.connections, ...selected, receipt };
     },
-    ['snapshot', 'receipt'],
+    ['snapshot', 'receipt', 'provider', 'watch'],
     'view'
   )
   .endAsync('view') as (
   provider: Provider | null,
-  command?: Command
-) => Promise<View & { provider: Provider; receipt: Receipt | null }>;
+  command?: Command,
+  watch?: Provider | null
+) => Promise<View & { receipt: Receipt | null }>;
 
 const scopeLabels: Record<string, MessageKey> = {
   openid: 'connections.identity',
@@ -107,7 +119,11 @@ const copy = {
 } satisfies Record<Provider, Record<string, MessageKey>>;
 
 export function ConnectionsSettings() {
-  const [view, setView] = useState<View>({ accounts: [], attempt: { state: 'missing' } });
+  const [view, setView] = useState<View>({
+    accounts: [],
+    attempt: { state: 'missing' },
+    provider: 'google',
+  });
   const [error, setError] = useState('');
   const [readError, setReadError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -117,8 +133,15 @@ export function ConnectionsSettings() {
   const [clientSecret, setClientSecret] = useState('');
   const [consentUrl, setConsentUrl] = useState('');
   const popup = useRef<Window | null>(null);
+  const watched = useRef<Provider | null>(null);
+  const [consentProvider, setConsentProvider] = useState<Provider | null>(null);
   const reload = useCallback(async (from: Provider | null, command?: Command) => {
-    const next = await update(from, command);
+    const next = await update(from, command, watched.current);
+    watched.current =
+      next.attempt.state === 'pending' ||
+      (next.attempt.state === 'failed' && watched.current === next.provider)
+        ? next.provider
+        : null;
     setReadError('');
     if (from === null) setProvider((current) => current ?? next.provider);
     setView(next);
@@ -133,6 +156,7 @@ export function ConnectionsSettings() {
     return () => clearInterval(timer);
   }, [reload, provider, view.attempt.state]);
   const text = copy[provider ?? 'google'];
+  const statusText = copy[view.provider];
   const act = async (command: Command) => {
     setBusy(true);
     setError('');
@@ -143,6 +167,8 @@ export function ConnectionsSettings() {
     try {
       const receipt = await reload(command.provider, command);
       if (receipt?.reason === 'client_not_configured') {
+        setClientId('');
+        setClientSecret('');
         setSetup(command.input as { connectionId?: string });
       } else if (receipt?.state === 'failed' || receipt?.ok === false) {
         setError(receipt.reason ?? t(copy[command.provider].failed));
@@ -150,6 +176,7 @@ export function ConnectionsSettings() {
         popup.current?.close();
         popup.current = window;
         setConsentUrl(receipt.authorizeUrl);
+        setConsentProvider(command.provider);
         if (window) window.location.href = receipt.authorizeUrl;
         setSetup(null);
         return;
@@ -187,7 +214,10 @@ export function ConnectionsSettings() {
       </div>
       {failure && (
         <p role="alert" class="text-sm text-danger">
-          {t(text.failed)}: {failure === 'account_mismatch' ? t(text.sameAccount) : failure}
+          {t(error || readError ? text.failed : statusText.failed)}:{' '}
+          {failure === 'account_mismatch'
+            ? t(error || readError ? text.sameAccount : statusText.sameAccount)
+            : failure}
         </p>
       )}
       {view.attempt.storage?.warning && (
@@ -195,15 +225,15 @@ export function ConnectionsSettings() {
       )}
       {view.attempt.state === 'pending' && (
         <p role="status" class="text-sm text-fg-soft">
-          {t(text.pending)}
-          {consentUrl && (
+          {t(statusText.pending)}
+          {consentUrl && consentProvider === view.provider && (
             <a
               class="ml-2 text-accent hover:underline"
               href={consentUrl}
               target="_blank"
               rel="noopener noreferrer"
             >
-              {t(text.continue)}
+              {t(statusText.continue)}
             </a>
           )}
         </p>

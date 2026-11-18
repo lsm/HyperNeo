@@ -178,9 +178,9 @@ it('opens an empty Microsoft reconnect form after entering Google credentials', 
     target: { value: 'synthetic-secret' },
   });
   fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
-  expect(
-    ((await screen.findByLabelText('Application (client) ID')) as HTMLInputElement).value
-  ).toBe('');
+  await waitFor(() =>
+    expect((screen.getByLabelText('Application (client) ID') as HTMLInputElement).value).toBe('')
+  );
 });
 
 it('keeps Google pending and its consent link while opening Microsoft setup', async () => {
@@ -205,6 +205,17 @@ it('keeps Google pending and its consent link while opening Microsoft setup', as
     expect(screen.getByRole('status').textContent).toContain('Finish signing in on Google.')
   );
   expect(screen.getByRole('link', { name: 'Continue to Google' })).toBeTruthy();
+  const previousPolls = invocations('connections.google.login').length;
+  attempt = { state: 'failed', reason: 'account_mismatch' };
+  expect((await screen.findByRole('alert', {}, { timeout: 2500 })).textContent).toContain(
+    'Sign in with the same Google account to reconnect.'
+  );
+  await waitFor(() =>
+    expect(invocations('connections.google.login').length).toBeGreaterThanOrEqual(previousPolls + 2)
+  );
+  expect(screen.getByRole('alert').textContent).toContain(
+    'Sign in with the same Google account to reconnect.'
+  );
 });
 
 it('keeps a Google secret out of a Microsoft reconnect that reuses the open form', async () => {
@@ -217,6 +228,11 @@ it('keeps a Google secret out of a Microsoft reconnect that reuses the open form
   command = () => ({ state: 'failed', reason: 'client_not_configured' });
   fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
   const clientId = await screen.findByLabelText('Application (client) ID');
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Continue to Microsoft' }).hasAttribute('disabled')
+    ).toBe(false)
+  );
   command = () => pending();
   fireEvent.input(clientId, { target: { value: 'synthetic-microsoft-client' } });
   const submit = screen.getByRole('button', { name: 'Continue to Microsoft' });

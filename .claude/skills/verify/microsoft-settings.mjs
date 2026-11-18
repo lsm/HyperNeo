@@ -94,6 +94,8 @@ try {
   await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
   await page.getByLabel('Client secret (optional)', { exact: true }).fill('synthetic-secret');
   await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue to Microsoft', exact: true }).waitFor({ state: 'visible' });
+  await page.waitForFunction(() => !document.querySelector('button:disabled'));
   const reconnectId = await page.getByLabel('Application (client) ID', { exact: true }).inputValue();
   await page.getByRole('button', { name: 'Connect Google', exact: true }).click();
   await page.getByLabel('Desktop client ID', { exact: true }).fill('synthetic-google-client');
