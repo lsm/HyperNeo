@@ -117,8 +117,10 @@ describe('neo.project.forget', () => {
     await db.createSession({
       ...createTestSession('session:hidden'),
       workspacePath: '/code/hidden',
-      type: 'space_task_agent',
     });
+    db.getDatabase()
+      .prepare("UPDATE sessions SET type = 'space_task_agent' WHERE id = ?")
+      .run('session:hidden');
     const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
     const result = await invokeOperation(
       registry,
