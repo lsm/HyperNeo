@@ -128,7 +128,17 @@ describe('OAP daemon runtime', () => {
     const [first, second] = await Promise.all([runtime.hub, runtime.hub]);
     expect(first).toBe(second);
     expect(host.createQueryHub).toHaveBeenCalledTimes(1);
-    expect(host.createQueryHub).toHaveBeenCalledWith(host.client);
+    const [client, model] = host.createQueryHub.mock.calls[0] as unknown as [
+      OapHubClient,
+      { adapter: string; id(): string | undefined },
+    ];
+    expect(client).toBe(host.client);
+    expect(model.adapter).toBe('anthropic-codex');
+    bind({
+      ...session('session-a', '/synthetic/workspace'),
+      config: { harness: 'oxap-codex', provider: 'anthropic-codex', model: 'codex-6-luna' },
+    } as Session);
+    expect(model.id()).toBe('gpt-6-luna');
     expect(host.getHub).toHaveBeenCalledTimes(1);
     expect(host.getHub).toHaveBeenCalledWith(readOptions);
     expect(host.operations.map(({ op }) => op)).toEqual(['work.status', 'open', 'work.status']);

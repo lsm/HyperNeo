@@ -119,8 +119,11 @@ export class OapEngine {
   private closed = false;
   private closing?: Promise<void>;
 
-  createQueryHub(client: OapHubClient): OapQueryHub {
-    return createOapQueryHub(client);
+  createQueryHub(
+    client: OapHubClient,
+    model?: Parameters<typeof createOapQueryHub>[1]
+  ): OapQueryHub {
+    return createOapQueryHub(client, model);
   }
 
   isCurrentHub(client: OapHubClient): boolean {
