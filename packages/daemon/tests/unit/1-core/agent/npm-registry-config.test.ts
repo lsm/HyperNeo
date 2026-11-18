@@ -39,13 +39,34 @@ describe('configured package downloads', () => {
     );
   });
 
-  it('reports npm failure without exposing its stderr or falling back', async () => {
+  it('falls back to the pnpm registry when npm fails', async () => {
+    const archive = npmTarball([{ path: 'package/claude', body: 'binary' }]);
+    writeFileSync(join(run, 'fixture.tgz'), archive);
     script('npm', "printf 'private-token-example' >&2; exit 7");
-    script('pnpm', `printf 'called' > '${run}/pnpm-called'`);
-    await expect(downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'))).rejects.toThrow(
-      'npm failed while preparing the package download (exit 7)'
+    script('pnpm', "printf 'https://mirror.example.test\\n'");
+    script(
+      'curl',
+      `case "$*" in *-fL*) while [ "$1" != '-o' ]; do shift; done; /bin/cp '${run}/fixture.tgz' "$2";; *) printf '%s' "$*" > '${run}/url'; printf '%s' '{"dist":{"tarball":"https://mirror.example.test/pkg.tgz","integrity":"${integrityOf(archive)}"}}';; esac`
     );
-    expect(() => readFileSync(join(run, 'pnpm-called'))).toThrow();
+    const dest = join(run, 'result.tgz');
+    await downloadVerifiedTarball('pkg', '1.0.0', dest);
+    expect(readFileSync(dest).toString('base64')).toBe(archive.toString('base64'));
+    expect(readFileSync(join(run, 'url'), 'utf8')).toContain('https://mirror.example.test/');
+  });
+
+  it('retains npm failure as a cause when the fallback fails', async () => {
+    script('npm', "printf 'private-token-example' >&2; exit 7");
+    script('curl', 'exit 7');
+    try {
+      await downloadVerifiedTarball('pkg', '1.0.0', join(run, 'result.tgz'));
+      throw new Error('expected failure');
+    } catch (error) {
+      const fallback = (error as Error).cause as Error;
+      const npmFailure = fallback.cause as Error & { stderr: string };
+      expect(npmFailure.message).toContain('exit 7');
+      expect(npmFailure.stderr).toBe('private-token-example');
+      expect(JSON.stringify(error)).not.toContain('private-token-example');
+    }
   });
 
   it('uses the pnpm registry when npm is absent', async () => {
