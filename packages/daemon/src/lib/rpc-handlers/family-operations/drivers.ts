@@ -38,6 +38,7 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { sessionReuseFacts, sessionReuseQuestion } from '../../neo/session-reuse.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -648,6 +649,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   context.workAdapters?.(currentAdapters);
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
+  const pendingReuseQuestions = new Map<string, Promise<void>>();
   const deps = {
     adapters: currentAdapters,
     health: health.read,
@@ -697,6 +699,38 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
+    reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
+      const facts =
+        todoId && caller.sessionId
+          ? sessionReuseFacts(db(), adapter, todoId, caller.sessionId)
+          : null;
+      if (!facts) return { mode: 'long_lived' as const, sameAsk: [] };
+      if (!facts.saved) {
+        const { prefix, ...question } = sessionReuseQuestion(facts);
+        const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {
+          const existing = db()
+            .prepare(`SELECT q.state FROM neo_pack_preference_proposals p
+            JOIN neo_questions q ON q.id = p.question_id
+            WHERE substr(p.request_id, 1, length(?)) = ?
+            ORDER BY q.created_at DESC, q.rowid DESC LIMIT 1`)
+            .get(prefix, prefix) as { state: string } | null;
+          if (!existing || existing.state === 'retired')
+            await invokeOperation(
+              context.deps.sessionManager.getOperationRegistry(),
+              'pack.preferences.ask',
+              question,
+              caller
+            );
+        });
+        pendingReuseQuestions.set(prefix, ask);
+        try {
+          await ask;
+        } finally {
+          if (pendingReuseQuestions.get(prefix) === ask) pendingReuseQuestions.delete(prefix);
+        }
+      }
+      return { mode: facts.mode, sameAsk: facts.sameAsk };
+    },
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     claimWorker: (ref: WorkRef, todoId?: string) =>
       new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),

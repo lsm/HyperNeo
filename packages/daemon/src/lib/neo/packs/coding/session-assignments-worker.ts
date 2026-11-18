@@ -3,11 +3,7 @@ import { WORK_START_EXCLUDE_REFS_MAX } from '../../../drivers/work-operations.ts
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { codingPrKey } from './pr-key.ts';
-import {
-  type CodingSessionStrategy,
-  codingSessionStrategyRequest,
-  savedCodingSessionStrategy,
-} from './session-strategy.ts';
+import { type CodingSessionStrategy, savedCodingSessionStrategy } from './session-strategy.ts';
 
 type Owner = { todoId: string; ref: WorkRef | null };
 type Holder = Owner & { assignedAt: number };
@@ -168,17 +164,6 @@ class CodingSessionAssignments {
     };
   }
 
-  strategyQuestions(repo: string) {
-    const questions = this.db
-      .prepare(
-        `SELECT q.id, q.state, p.values_json AS proposal FROM neo_pack_preference_proposals p
-         JOIN neo_questions q ON q.id = p.question_id
-         WHERE substr(p.request_id, 1, length(?1)) = ?1 ORDER BY q.created_at DESC, q.rowid DESC`
-      )
-      .all(codingSessionStrategyRequest(repo)) as { id: string; state: string; proposal: string }[];
-    return { saved: savedCodingSessionStrategy(this.db, repo) !== null, questions };
-  }
-
   private feature(repo: string, featureKey: string): Owner | null {
     const row = this.db
       .prepare(
@@ -224,7 +209,7 @@ export const codingSessionAssignmentReads = defineRepositoryOp(
   'coding.sessionAssignmentReads',
   'read',
   CodingSessionAssignments,
-  ['owner', 'dispatchFacts', 'strategyQuestions', 'actorRefs']
+  ['owner', 'dispatchFacts', 'actorRefs']
 );
 export const codingSessionAssignmentWrites = defineRepositoryOp(
   'coding.sessionAssignmentWrites',

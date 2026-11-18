@@ -10,7 +10,11 @@ const preference = (
   choices: Record<string, readonly [string, string]>
 ): NeoPackPreferenceDeclaration => ({
   label: { en, 'zh-Hans': zh },
+  question: { en, 'zh-Hans': zh },
   valueLabels: Object.fromEntries(
+    Object.entries(choices).map(([value, [en, zh]]) => [value, { en, 'zh-Hans': zh }])
+  ),
+  valueDescriptions: Object.fromEntries(
     Object.entries(choices).map(([value, [en, zh]]) => [value, { en, 'zh-Hans': zh }])
   ),
   scope: 'global',

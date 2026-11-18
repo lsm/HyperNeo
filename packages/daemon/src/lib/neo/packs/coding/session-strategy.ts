@@ -8,10 +8,19 @@ export type CodingSessionStrategy = (typeof STRATEGIES)[number];
 
 export const CODING_SESSION_STRATEGY_PREFERENCE: NeoPackPreferenceDeclaration = {
   label: { en: 'Session strategy', 'zh-Hans': '会话策略' },
+  question: { en: 'How should sessions be reused?', 'zh-Hans': '如何复用会话？' },
   valueLabels: {
     long_lived: { en: 'Long-lived work-type sessions', 'zh-Hans': '按工作类型长期复用会话' },
     per_task: { en: 'One session per task', 'zh-Hans': '每个任务一个会话' },
     per_pr: { en: 'One session per PR', 'zh-Hans': '每个 PR 一个会话' },
+  },
+  valueDescriptions: {
+    long_lived: {
+      en: 'Reuse work-type sessions across tasks.',
+      'zh-Hans': '按工作类型跨任务复用会话。',
+    },
+    per_task: { en: 'Start one session per task.', 'zh-Hans': '每个任务启动一个会话。' },
+    per_pr: { en: 'Start one session per pull request.', 'zh-Hans': '每个拉取请求启动一个会话。' },
   },
   scope: 'repo',
   type: { kind: 'enum', values: STRATEGIES },
@@ -32,39 +41,6 @@ export function savedCodingSessionStrategy(db: Database, repo: string) {
     ) ?? saved.find((row) => row.scope.kind === 'global')
   )?.value;
   return STRATEGIES.find((strategy) => strategy === value) ?? null;
-}
-
-export const codingSessionStrategyRequest = (repo: string) =>
-  `coding.sessionStrategy:${repo.toLowerCase()}:`;
-
-const strategyAlternatives = (repo: string) =>
-  STRATEGIES.map((value) => [
-    {
-      pack: 'coding',
-      scope: { kind: 'repo' as const, key: repo.toLowerCase() },
-      key: 'sessionStrategy',
-      value,
-    },
-  ]);
-
-export function planCodingStrategyQuestion(input: {
-  repo: string;
-  saved: boolean;
-  nonce: string;
-  questions: readonly { id: string; state: string; proposal: string }[];
-}) {
-  const alternatives = strategyAlternatives(input.repo);
-  const proposal = JSON.stringify({ alternatives, hold: false });
-  const [latest] = input.questions.filter((question) => question.proposal === proposal);
-  if (input.saved || latest?.state === 'answered') return null;
-  if (latest?.state === 'open') return { reuse: latest.id };
-  return {
-    ask: {
-      requestId: `${codingSessionStrategyRequest(input.repo)}${input.nonce}`,
-      hold: false as const,
-      alternatives,
-    },
-  };
 }
 
 type Session = { ref: WorkRef; name: string; state: 'available' | 'busy' | 'unknown' | 'archived' };

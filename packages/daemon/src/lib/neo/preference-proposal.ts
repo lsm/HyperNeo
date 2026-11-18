@@ -96,7 +96,8 @@ export function formatPreferenceProposal(
 export function formatPreferenceChoice(
   alternatives: readonly (readonly Input[])[],
   packs: readonly NeoPack[],
-  language: LanguageSetting | undefined
+  language: LanguageSetting | undefined,
+  saved = false
 ) {
   const locale = proposalLocale(language);
   const zh = locale === 'zh-Hans';
@@ -105,12 +106,33 @@ export function formatPreferenceChoice(
       .map((input) => valueLabel(input, packs, locale).label ?? JSON.stringify(input.value))
       .join('; ')
   );
-  const sections = alternatives.map((values, index) =>
-    [`## ${markdown(options[index])}`, ...proposalTables(values, packs, locale)].join('\n\n')
-  );
+  const keys = new Set(alternatives.flat().map(({ pack, key }) => `${pack}\0${key}`));
+  const first = valueLabel(alternatives[0][0], packs, locale).declaration;
+  const title =
+    keys.size === 1
+      ? (first.question?.[locale] ?? first.label[locale])
+      : zh
+        ? '选择一项设置？'
+        : 'Choose one of these settings?';
+  const lines = alternatives.map((values, index) => {
+    const descriptions = values.map((input) => {
+      const { declaration, label } = valueLabel(input, packs, locale);
+      const key = Array.isArray(input.value) ? JSON.stringify(input.value) : String(input.value);
+      const description =
+        declaration.valueDescriptions?.[key]?.[locale] ?? label ?? String(input.value);
+      return keys.size === 1 ? description : `${declaration.label[locale]}: ${description}`;
+    });
+    return `- ${markdown(options[index])}: ${markdown(descriptions.join('; '))}`;
+  });
   return {
-    text: [zh ? '选择一项设置？' : 'Choose one of these settings?', ...sections].join('\n\n'),
+    text: [title, lines.join('\n')].join('\n\n'),
     options,
-    keep: zh ? '保留当前设置' : 'Keep current settings',
+    keep: saved
+      ? zh
+        ? '保留当前设置'
+        : 'Keep current settings'
+      : zh
+        ? '暂时使用默认设置'
+        : 'Use the default for now',
   };
 }

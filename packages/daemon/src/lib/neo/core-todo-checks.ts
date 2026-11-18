@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { ArtifactFileReadRepository } from '../../storage/repositories/artifact-file-read-repository.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
+import { SESSION_REUSE_PREFERENCE } from './session-reuse.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 
@@ -172,6 +173,7 @@ export function createCoreTodoPack(db: Database, contains: Contains): NeoPack {
   return {
     id: 'core',
     describe: 'Shared completion checks',
+    preferences: { sessionReuse: SESSION_REUSE_PREFERENCE },
     instructions: () => null,
     readFacts: check,
     judge: (_todo, facts): NeoTodoJudgement => {

@@ -10,7 +10,7 @@ import {
   codingSessionAssignmentReads,
   codingSessionAssignmentWrites,
 } from './session-assignments-worker.ts';
-import { planCodingSessionDispatch, planCodingStrategyQuestion } from './session-strategy.ts';
+import { planCodingSessionDispatch } from './session-strategy.ts';
 import { codingStageTargetReads } from './stage-target-db.ts';
 import {
   type CodingLines,
@@ -106,34 +106,6 @@ const prUrl = (todo: NeoTodo) => {
     : undefined;
 };
 
-const strategyAsks = new Map<string, Promise<unknown>>();
-
-function askStrategyOnce(db: Database, repo: string, askSetting: AskSetting) {
-  const key = repo.toLowerCase();
-  const asked = (strategyAsks.get(key) ?? Promise.resolve()).then(async () => {
-    const plan = async () =>
-      planCodingStrategyQuestion({
-        repo,
-        nonce: crypto.randomUUID(),
-        ...(await gatewayFor(db).call(codingSessionAssignmentReads, 'strategyQuestions', repo)),
-      });
-    let outcome: Awaited<ReturnType<AskSetting>> | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const next = await plan();
-      if (!next?.ask) return next;
-      outcome = await askSetting(next.ask);
-      const reply = outcome.kind === 'completed' ? (outcome.value as { ok?: boolean }) : null;
-      if (reply?.ok) return next;
-    }
-    return { refused: outcome };
-  });
-  strategyAsks.set(
-    key,
-    asked.catch(() => null)
-  );
-  return asked;
-}
-
 const readFacts = (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
   gatewayFor(db).call(codingSessionAssignmentReads, 'dispatchFacts', {
     todoId: todo.id,
@@ -144,19 +116,7 @@ const readFacts = (db: Database, todo: NeoTodo, target: NeoTodoTarget) =>
 
 export const decideCodingSessionTarget = (superpipe({})('coding.session-target') as PipelineAPI)
   .input(['db', 'todo', 'target', 'status', 'askSetting', 'lines'])
-  .pipe(readFacts, ['db', 'todo', 'target'], 'asked')
-  .pipe(
-    (db: Database, asked: Facts, askSetting: AskSetting) =>
-      asked && !asked.strategySaved ? askStrategyOnce(db, asked.repo, askSetting) : null,
-    ['db', 'asked', 'askSetting'],
-    'strategyQuestion'
-  )
-  .pipe(
-    (db: Database, todo: NeoTodo, target: NeoTodoTarget, asked: Facts) =>
-      asked && !asked.strategySaved ? readFacts(db, todo, target) : asked,
-    ['db', 'todo', 'target', 'asked', 'strategyQuestion'],
-    'facts'
-  )
+  .pipe(readFacts, ['db', 'todo', 'target'], 'facts')
   .pipe(
     async (
       db: Database,

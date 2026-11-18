@@ -9,6 +9,7 @@ import { defineOperation } from '../operations/registry.ts';
 import { choiceCard, openHumanCard } from './human-card.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceChoice, formatPreferenceProposal } from './preference-proposal.ts';
+import { getNeoPackPreference } from './preferences.ts';
 import type { NeoPack } from './pack-contract.ts';
 
 const Values = z.array(PackPreferenceInput).min(1).max(20);
@@ -28,6 +29,17 @@ const Result = z.union([
 ]);
 const Apply = z.object({ questionId: z.string().min(1) }).strict();
 const fail = (reason: string) => ({ reason: { ok: false as const, reason } });
+
+function cardLanguage(db: Database, language: LanguageSetting | undefined): LanguageSetting {
+  if (language && language !== 'system') return language;
+  const row = db
+    .prepare(`SELECT payload_json AS payload FROM neo_conversation_asks
+    ORDER BY sequence DESC LIMIT 1`)
+    .get() as { payload: string } | null;
+  const content = row ? (JSON.parse(row.payload) as { content?: unknown }).content : '';
+  const text = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+  return /[\u3400-\u9fff]/u.test(text) ? 'zh-Hans' : 'en';
+}
 
 export function createPackPreferenceQuestions(
   db: Database,
@@ -82,7 +94,14 @@ export function createPackPreferenceQuestions(
           }
           const questionId = crypto.randomUUID();
           const card = input.alternatives
-            ? formatPreferenceChoice(input.alternatives, packs(), language())
+            ? formatPreferenceChoice(
+                input.alternatives,
+                packs(),
+                cardLanguage(db, language()),
+                input.alternatives
+                  .flat()
+                  .some((entry) => getNeoPackPreference(db, entry.pack, entry.scope, entry.key))
+              )
             : formatPreferenceProposal(input.values!, packs(), language());
           const options =
             'options' in card ? [...card.options, card.keep] : [card.apply, card.keep];
