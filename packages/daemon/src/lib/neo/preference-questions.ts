@@ -3,6 +3,8 @@ import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { neoAskInputReads } from '../../storage/repositories/neo-ask-input-worker.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../operations/registry.ts';
@@ -30,13 +32,12 @@ const Result = z.union([
 const Apply = z.object({ questionId: z.string().min(1) }).strict();
 const fail = (reason: string) => ({ reason: { ok: false as const, reason } });
 
-function cardLanguage(db: Database, language: LanguageSetting | undefined): LanguageSetting {
+function cardLanguage(
+  payload: string | null,
+  language: LanguageSetting | undefined
+): LanguageSetting {
   if (language && language !== 'system') return language;
-  const row = db
-    .prepare(`SELECT payload_json AS payload FROM neo_conversation_asks
-    ORDER BY sequence DESC LIMIT 1`)
-    .get() as { payload: string } | null;
-  const content = row ? (JSON.parse(row.payload) as { content?: unknown }).content : '';
+  const content = payload ? (JSON.parse(payload) as { content?: unknown }).content : '';
   const text = typeof content === 'string' ? content : JSON.stringify(content ?? '');
   return /[\u3400-\u9fff]/u.test(text) ? 'zh-Hans' : 'en';
 }
@@ -70,7 +71,19 @@ export function createPackPreferenceQuestions(
       'result:proposal'
     )
     .pipe(
-      (input: z.infer<typeof Ask>) =>
+      async (input: z.infer<typeof Ask>) => {
+        const selected = language();
+        const payload =
+          input.alternatives && (!selected || selected === 'system')
+            ? await gatewayFor(db).call(neoAskInputReads, 'latestHumanContent')
+            : null;
+        return cardLanguage(payload, selected);
+      },
+      'proposal',
+      'cardLanguage'
+    )
+    .pipe(
+      (input: z.infer<typeof Ask>, cardLocale: LanguageSetting) =>
         db.transaction(() => {
           const json = JSON.stringify(
             input.hold === false
@@ -97,7 +110,7 @@ export function createPackPreferenceQuestions(
             ? formatPreferenceChoice(
                 input.alternatives,
                 packs(),
-                cardLanguage(db, language()),
+                cardLocale,
                 input.alternatives
                   .flat()
                   .some((entry) => getNeoPackPreference(db, entry.pack, entry.scope, entry.key)),
@@ -121,7 +134,7 @@ export function createPackPreferenceQuestions(
         VALUES (?, ?, ?, ?)`).run(questionId, input.requestId, json, text);
           return { ok: true as const, questionId };
         }, 'immediate')(),
-      'proposal',
+      ['proposal', 'cardLanguage'],
       'proposal'
     )
     .endAsync('proposal');

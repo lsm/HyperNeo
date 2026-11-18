@@ -38,7 +38,9 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
-import { sessionReuseFacts, sessionReuseQuestion } from '../../neo/session-reuse.ts';
+import { sessionReuseQuestion } from '../../neo/session-reuse.ts';
+import { neoAskInputReads } from '../../../storage/repositories/neo-ask-input-worker.ts';
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -702,19 +704,24 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
       const facts =
         todoId && caller.sessionId
-          ? sessionReuseFacts(db(), adapter, todoId, caller.sessionId)
+          ? await gatewayFor(db()).call(
+              neoAskInputReads,
+              'sessionReuseFacts',
+              adapter,
+              todoId,
+              caller.sessionId
+            )
           : null;
       if (!facts) return { mode: 'long_lived' as const, sameAsk: [] };
       if (!facts.saved) {
         const { prefix, ...question } = sessionReuseQuestion(facts);
         const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {
-          const existing = db()
-            .prepare(`SELECT q.state FROM neo_pack_preference_proposals p
-            JOIN neo_questions q ON q.id = p.question_id
-            WHERE substr(p.request_id, 1, length(?)) = ?
-            ORDER BY q.created_at DESC, q.rowid DESC LIMIT 1`)
-            .get(prefix, prefix) as { state: string } | null;
-          if (!existing || existing.state === 'retired')
+          const existing = await gatewayFor(db()).call(
+            neoAskInputReads,
+            'sessionReuseQuestionState',
+            prefix
+          );
+          if (!existing || existing === 'retired')
             await invokeOperation(
               context.deps.sessionManager.getOperationRegistry(),
               'pack.preferences.ask',
