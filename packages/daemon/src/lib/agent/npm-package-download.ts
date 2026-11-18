@@ -28,6 +28,10 @@ const CURL_PATIENCE = [
 
 export const PACKAGE_DOWNLOAD_WAIT_MS = 45_000;
 
+export class PackageDownloadError extends Error {
+  override name = 'PackageDownloadError';
+}
+
 type CurlFailure = { code?: number | string; stderr: string };
 
 type TarEntry = { path: string; mode: number; data: Buffer };
@@ -146,19 +150,29 @@ export async function downloadVerifiedTarball(
         ? describeWriteFailure(err)
         : describeCurlFailure(err as CurlFailure, registryHost());
     logWarn(`[npm-package-download] ${packageName}@${version}: ${reason}`);
-    throw new Error(reason, { cause: err });
+    const message =
+      err instanceof SyntaxError
+        ? 'The npm registry did not return package metadata.'
+        : !(err instanceof Error) &&
+            typeof (err as CurlFailure).code === 'number' &&
+            NETWORK_CURL_CODES.has((err as CurlFailure).code as number)
+          ? 'Cannot reach the npm registry.'
+          : reason;
+    throw new PackageDownloadError(message, { cause: err });
   }
 }
 
-export function waitForDownload<T>(download: Promise<T>, waitMs: number, name: string): Promise<T> {
+export function waitForDownload<T>(
+  download: Promise<T>,
+  waitMs: number,
+  name: string,
+  timeoutError = () => new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     download,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${name} is still downloading (ETIMEDOUT ${registryHost()}:443)`)),
-        waitMs
-      );
+      timer = setTimeout(() => reject(timeoutError()), waitMs);
     }),
   ]).finally(() => clearTimeout(timer));
 }

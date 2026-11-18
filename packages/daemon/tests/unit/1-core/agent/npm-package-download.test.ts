@@ -129,7 +129,9 @@ describe('npm-package-download', () => {
     process.env.PATH = installFakeCurl(run, tarball, undefined, 18).path;
     const dest = join(run, 'out.tgz');
 
-    await expect(downloadVerifiedTarball('pkg', '1.0.0', dest)).rejects.toThrow('cannot reach npm');
+    await expect(downloadVerifiedTarball('pkg', '1.0.0', dest)).rejects.toThrow(
+      'Cannot reach the npm registry.'
+    );
 
     expect(existsSync(dest)).toBe(true);
   });
