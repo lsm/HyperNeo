@@ -1,8 +1,9 @@
 # Voice providers: pick a service, give it a key
 
-Status: proposal, 2026-11-16. Design only.
-Scope: the daemon's speech-to-text (recorded and live) and text-to-speech, and the web
-voice settings page. Paths without a prefix are under `packages/daemon/src/lib/`.
+Status: proposal, 2026-11-16; revised 2026-11-18 (cards instead of a settings page).
+Design only.
+Scope: the daemon's speech-to-text (recorded and live) and text-to-speech, and how the
+human chooses them. Paths without a prefix are under `packages/daemon/src/lib/`.
 
 ## Why
 
@@ -67,20 +68,24 @@ voices; Deepgram's from its model names; for a self-hosted server, its own
 `/v1/audio/voices` when it answers. The user can always type a name. The default voice comes
 from the preset, not from the code.
 
-**The settings page.** One "Voice" page with three blocks, one per part. Each block
-has a provider picker, an address (filled by the provider), a model or voice, and a "Test"
-button:
+**Choosing on a card, not a page.** The new UI has no settings page, so the human sets
+voice up by answering Neo:
 
-- Recorded voice: sends a short silent WAV, as today's test does (`voice.testConnection`).
-- Live voice: opens the stream, sends one second of silence, closes it.
-- Speech: synthesizes one short sentence and plays it.
-
-Keys are entered once per host, in the block where that host first appears, and shown as
-saved in the other blocks.
-
-Presets fill all three blocks at once: **OpenAI**, **Deepgram**, and **My own server**
-(OpenAI-shaped recorded and speech addresses plus a Deepgram-shaped live address on one
-base URL). After a preset the user only adds the key.
+- **Provider: a card.** Neo asks once, when voice first matters, through
+  `pack.preferences.ask`: **OpenAI**, **Deepgram** or **My own server**. A choice fills all
+  three parts with that preset (addresses, models, default voice); "My own server" is
+  followed by a reply card for the base URL. Changing it later is the same card again.
+- **Keys: the existing key field, never a card.** A key is a secret and must not pass
+  through chat, a card answer or Neo's context. It is entered in the web voice settings'
+  password field, the same place every other provider key is entered today, extended to
+  one field per host the chosen parts use. The card that picks a provider ends with which
+  host still needs a key and links to that field.
+- **Tests: Neo runs them.** Three daemon operations Neo can call and report in plain
+  words: `voice.testConnection` (recorded, as today), `voice.testLive` (opens the stream
+  with streaming forced, sends one second of silence, closes it, and returns the service's
+  error instead of falling back to batch) and `voice.testSpeech` (synthesizes one short
+  sentence and returns whether audio came back). After a provider choice or a key save,
+  Neo runs the three and says which part works.
 
 **Upgrade.** Existing settings map without loss: the batch endpoint and model become the
 recorded part (`openai`), the live endpoint becomes the live part (`deepgram`, or its saved
@@ -110,7 +115,13 @@ to 200 production lines, failing tests first.
 3. **Deepgram recorded voice and Deepgram speech.** Two adapters.
 4. **OpenAI Realtime live voice.** One adapter, with 16 to 24 kHz resampling, and the
    end-of-utterance hook in the live relay.
-5. **The settings page.** Three blocks, presets, the three tests.
+5. **Keys per host.** Store one key per host (today one key, `voice-transcription`,
+   bound to one host in `resolveVoiceKey`, `voice/voice-parts.ts`), look a part's key up by
+   its own host, keep a legacy key as today, and one password field per needed host in the
+   web voice settings.
+6. **Tests Neo can run.** `voice.testLive` and `voice.testSpeech` as above.
+7. **The provider card.** The preset preference, asked on a card, and the follow-up that
+   names the hosts still missing a key and runs the three tests.
 
 Acceptance, as tests against local fake servers, one per row:
 
@@ -123,7 +134,10 @@ Acceptance, as tests against local fake servers, one per row:
 | Each provider of each part | the request shape and auth header that service documents |
 | One key, three OpenAI parts | the key is sent to all three; never to a part on another host |
 | Speech part empty, `HYPERNEO_SPEECH_URL` set | speech works as today |
-| Each Test button against a fake that succeeds, then one that fails | passes, then shows the service's error |
+| Each test operation against a fake that succeeds, then one that fails | passes, then returns the service's error; the live test never falls back to batch |
+| OpenAI recorded and Deepgram live, a key saved for each host | each part gets its own host's key |
+| A provider chosen on the card | all three parts filled from the preset; the card names the hosts still missing a key |
+| A key | never appears in a card, an answer or a Neo message |
 
 ## Out of scope
 
