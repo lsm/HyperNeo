@@ -1,21 +1,11 @@
 import { createServer } from 'node:http';
 
 const MARKER = 'verify-cross-repo';
-const pr = (repo: string, number: number) => ({ after: [],
-  title: `Attach lsm/${repo}#${number}`,
-  doneWhen: `lsm/${repo}#${number} merged`,
-  check: {
-    pack: 'coding',
-    kind: 'pr_merged',
-    params: { urls: [`https://github.com/lsm/${repo}/pull/${number}`] },
-  },
-});
 const ASK = {
   name: 'neo.ask.open',
   input: {
     title: 'Attach open PRs',
     request: 'Attach the open PRs to their sessions',
-    todos: [pr('HyperNeo', 101), pr('open-agent-protocol', 202), pr('HyperNeo', 103)],
   },
 };
 
@@ -47,8 +37,7 @@ createServer(async (req, res) => {
   const goalId = /verify-goal-ask:([a-zA-Z0-9-]+)/.exec(last)?.[1];
   const ask = goalId ? {
     name: 'neo.ask.open',
-    input: { title: 'Ship the goal guide', request: 'Publish the adapter guide', goalId,
-      todos: [{ after: [], title: 'Publish guide', doneWhen: 'Guide published', check: { pack: 'core', kind: 'evidence', params: {} } }] },
+    input: { title: 'Publish guide', request: 'Publish the adapter guide because the goal calls for it', goalId },
   } : ASK;
   const block =
     invoke && (goalId || last.includes(MARKER)) && !toolResult

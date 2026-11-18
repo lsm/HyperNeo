@@ -232,6 +232,8 @@ describe('Claude Desktop mods driver wiring', () => {
       createWorkVerbOperations({
         adapters: () => [adapter],
         isOpenTodo: (id) => id === 'open-todo',
+        acceptedTodo: () => true,
+        noticeReply: () => true,
         daemonName: 'test',
         remote: {
           list: () => [],

@@ -106,6 +106,23 @@ function setup(overrides: Partial<Pick<NeoTodoControls, 'resolveTarget' | 'advan
     }
   );
   const call = async (name: string, input: unknown) => {
+    const draft = input as { title?: string; request?: string };
+    if (
+      name === 'neo.ask.open' &&
+      draft.title &&
+      draft.request &&
+      ['Recorded worker', 'Canonical target batch'].includes(draft.title) &&
+      !store.findAsk('neo', null, draft.title)
+    )
+      store.openAsk({
+        id: crypto.randomUUID(),
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: draft.title,
+        request: draft.request,
+        createdAt: 1,
+      });
     const reply = await handler({ name, input });
     if (reply.isError) throw new Error(reply.content[0].text);
     return JSON.parse(reply.content[0].text);
@@ -241,7 +258,10 @@ describe('todo and ask bookkeeping records through MCP', () => {
           request: 'Track batch',
           todos,
         });
-        expect(result).toEqual({ ok: false, reason: 'target_not_found: missing' });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining('proposal_todos:'),
+        });
         expect(h.store.listAsks(null, 100)).toEqual(before);
         expect(starts).toEqual([]);
         expect(h.calls).toEqual([]);

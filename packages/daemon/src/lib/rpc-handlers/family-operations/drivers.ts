@@ -1,3 +1,6 @@
+import { renderRemoteAddress } from '../../mailbox/address.ts';
+import { proposalQuestionId, requireAcceptedAsk } from '../../neo/proposal.ts';
+import { NeoSessionMessageRepository } from '../../../storage/repositories/neo-session-message-repository.ts';
 import { NeoTodoSessionRepository } from '../../../storage/repositories/neo-todo-session-repository.ts';
 import {
   createWorkerInputDelivery,
@@ -659,6 +662,39 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       workspaceRoot: context.deps.config.workspaceRoot,
       policy: createCodingStartPlacePolicy(db()),
     }),
+    acceptedTodo: (todoId: string) => {
+      const store = new NeoAskTodoRepository(db());
+      const todo = store.getTodo(todoId);
+      const ask = todo ? store.getAsk(todo.askId) : null;
+      if (
+        !todo ||
+        !ask ||
+        ask.status !== 'open' ||
+        !['todo', 'doing', 'blocked'].includes(todo.state)
+      )
+        return false;
+      const questions = store.listQuestions(ask.id);
+      return (
+        'value' in
+        requireAcceptedAsk(
+          ask,
+          questions.find((question) => question.id === proposalQuestionId(ask.id)) ?? null,
+          questions,
+          store.listTodos(ask.id)
+        )
+      );
+    },
+    noticeReply: (ref: WorkRef, sessionId: string) => {
+      const localSender = ref.adapter === 'hyperneo' ? ref.id : `${ref.adapter}:${ref.id}`;
+      const sender = ref.daemon
+        ? renderRemoteAddress({
+            kind: 'remote-session',
+            daemonId: ref.daemon,
+            sessionId: localSender,
+          })
+        : localSender;
+      return new NeoSessionMessageRepository(db()).sentTo(sender, sessionId);
+    },
     isOpenTodo: (todoId: string, sessionId: string) => {
       const store = new NeoAskTodoRepository(db());
       const todo = store.getTodo(todoId);

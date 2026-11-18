@@ -1,3 +1,4 @@
+import { proposalQuestionId } from '../../lib/neo/proposal.ts';
 import { queueNeoRequestReply, queueNeoRequestSettledReply } from '../../lib/neo/request-todo.ts';
 import type {
   NeoAnswerProvenance,
@@ -1114,7 +1115,7 @@ export class NeoAskTodoRepository {
         draft.cause ?? null,
         now
       );
-    this.touchAsk(askId, now);
+    this.touchAsk(askId, now, true, draft.cause === 'relay-session-proposal');
     return this.getQuestion(id)!;
   }
 
@@ -1141,6 +1142,11 @@ export class NeoAskTodoRepository {
         'open'
       );
       if (answered) {
+        if (question.id === proposalQuestionId(question.askId) && answer === 'no') {
+          const ask = this.getAsk(question.askId);
+          if (ask?.status === 'open')
+            this.settleAsk(ask, 'dropped', 'The human declined the proposal.', now);
+        }
         this.pruneQuestions(question.askId, now);
         for (const { todo, patch } of effects) this.writeTodo(todo, patch, now, false, false);
         const preferences = applyPackPreferenceAnswer(this.db, question.id);
@@ -1301,8 +1307,12 @@ export class NeoAskTodoRepository {
       .run(...Object.values(patch), id, ...(state ? [state] : [])).changes;
   }
 
-  private touchAsk(askId: string, now: number, notify = true): void {
-    this.db.prepare('UPDATE neo_asks SET updated_at = ? WHERE id = ?').run(now, askId);
+  private touchAsk(askId: string, now: number, notify = true, relayCreated = false): void {
+    this.db
+      .prepare(`UPDATE neo_asks SET updated_at = ?, origin_message_id = CASE
+      WHEN ? AND origin_message_id LIKE '%:relay-pending' THEN substr(origin_message_id, 1, length(origin_message_id) - 14)
+      ELSE origin_message_id END WHERE id = ?`)
+      .run(now, relayCreated ? 1 : 0, askId);
     if (notify) this.changed();
   }
 }

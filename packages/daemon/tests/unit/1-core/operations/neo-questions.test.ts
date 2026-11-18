@@ -18,6 +18,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, chmodSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
+import { proposalQuestionId } from '../../../../src/lib/neo/proposal.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -743,6 +744,49 @@ describe('neoQuestionAnsweredNote', () => {
 });
 
 describe('neo.question.retire and replaces', () => {
+  test.each(['proposal', 'relay'] as const)(
+    'the human can still answer a %s work decision after Neo tries to retire or replace it',
+    async (kind) => {
+      const { db, store, call } = setup();
+      try {
+        const card = store.askQuestion(
+          kind === 'proposal' ? proposalQuestionId('ask') : 'relay-card',
+          'ask',
+          {
+            text: 'Proceed?',
+            kind: 'yesno',
+            options: null,
+            multiple: false,
+            noLabel: 'No',
+            yesLabel: 'Yes',
+            ...(kind === 'relay' ? { cause: 'relay-session-proposal' } : {}),
+          },
+          1
+        );
+        const refused = { ok: false, reason: expect.stringContaining('human_decision_required:') };
+        expect(
+          await call('neo.question.ask', {
+            askId: 'ask',
+            kind: 'reply',
+            text: 'Replace?',
+            replaces: card.id,
+          })
+        ).toMatchObject(refused);
+        expect(
+          await call('neo.question.retire', { questionId: card.id, reason: 'No longer needed' })
+        ).toMatchObject(refused);
+        expect(store.getQuestion(card.id)?.state).toBe('open');
+        expect(
+          await call('neo.question.answer', { questionId: card.id, answer: 'yes' }, human)
+        ).toMatchObject({
+          ok: true,
+          question: { state: 'answered', answer: 'yes', answeredBy: 'button' },
+        });
+      } finally {
+        db.close();
+      }
+    }
+  );
   test('a card on a todo waiting for the human closes only with its todo', async () => {
     const { store, call, asked, fix: todo } = setup();
     const card = await asked({ kind: 'reply', text: 'Approve the merge?', todoId: todo.id });

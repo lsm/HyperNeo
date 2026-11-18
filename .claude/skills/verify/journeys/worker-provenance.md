@@ -47,3 +47,6 @@ and an explicit identityObservation with no fields clears both to unknown.
 The unit follow-up regression checks the delivered Codex Agent line as well.
 Codex status does not yet observe model/effort changes; the brief labels retained
 values as last observed, rather than asserting they are newly confirmed.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

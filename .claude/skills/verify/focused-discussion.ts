@@ -1,3 +1,5 @@
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 process.env.HYPERNEO_SPACE ??= 'on';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -97,6 +99,7 @@ try {
   const found = await call('work.find', { text: 'Discussion context project' });
   const place = found.places.find((group: { place: { folder?: string } }) => group.place.folder === join(run, 'workspace'))?.place;
   assert(place, JSON.stringify(found));
+  seedHistoricalAsk(new NeoAskTodoRepository(app.db.getDatabase()), root.sessionId, { title: 'Fictional seed library positioning', request: humanWords });
   const opened = await call('neo.ask.open', { title: 'Fictional seed library positioning', request: humanWords });
   assert(opened.ok, JSON.stringify(opened));
   const added = await call('neo.todo.add', { after: [], askId: opened.ask.id, title: 'Focused positioning discussion', doneWhen: 'Prepared options discussed with the human', instruction: seed, target: { verb: 'start', adapter: 'hyperneo', place } });

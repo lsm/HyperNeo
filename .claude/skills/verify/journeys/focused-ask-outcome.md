@@ -43,3 +43,6 @@ This scripts the explicit settled report and Neo's recording choice; it does not
 claim a spontaneous model correctly judges human settlement. Native Desktop is
 not driven. Run neo-ask-record, neo-prompt, neo, neo-todo-runner, neo-questions and
 neo-ask-entries contracts, NeoAskTodos web tests, and bun run check.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

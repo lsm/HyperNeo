@@ -1,3 +1,4 @@
+import { seedHistoricalAsk } from './accepted-ask-fixtures.ts';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -73,6 +74,8 @@ try{
  result.contention={affectedMs,targetMs:250,targetMet:affectedMs<250,healthMs,maxLagMs};assert(affectedMs>=1200);assert(healthMs<250);assert(maxLagMs<1000);
  record=true;const raced=await Promise.all([add(input('one')),add(input('two'))]);record=false;assert(raced.every(item=>item.ok));const after=await visible();assert.equal(after.entry.todos.length,4);assert.equal(after.entry.questions.length,0);result.concurrentAddsNoCard=true;
  const prior=await visible(),count=notices;failNext=true;record=true;await assert.rejects(add(input('failed writer')),/synthetic writer failure/);record=false;assert.deepEqual(await visible(),prior);assert.equal(notices,count);result.noMainFallback=true;
+ seedHistoricalAsk(store,root,{title:'MCP creation',request:'Add through the same writer'});
+ seedHistoricalAsk(store,root,{title:'Multi-repo work',request:'Keep work'});
  const atCommands=commands;const opened=await mcp({name:'neo.ask.open',input:{title:'MCP creation',request:'Add through the same writer',todos:[{...input('MCP todo'),askId:undefined}]}});assert(!opened.isError,JSON.stringify(opened));const openedBody=JSON.parse(opened.content[0].text) as Receipt;assert(openedBody.ok,JSON.stringify(openedBody));assert(commands>atCommands,'Ask open must use the same add writer');assert.equal(openedBody.todos[0].state,'todo');result.askOpenUsesWriter=true;
  const codingDraft=(title:string,repo:string)=>({...input(title),check:{pack:'coding',kind:'pr_merged',params:{urls:[`https://github.com/synthetic/${repo}/pull/1`]}}});
  const openCall=async(title:string,todos:unknown[])=>{const reply=await mcp({name:'neo.ask.open',input:{title,request:'Keep work',todos}});assert(!reply.isError,JSON.stringify(reply));return JSON.parse(reply.content[0].text) as Receipt & {ask:NeoAsk};};

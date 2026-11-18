@@ -31,3 +31,6 @@ The helper closes both daemon instances in finally and retains
 Run focused `neo-todo-bind`, `neo-todos`, `neo-ask-record`, `neo-todo-runner`
 and `neo.test` contracts too; the latter pins the public operation list. No GUI claim or completed-worker output claim is made; binding
 records already running work without assuming delivery of a new instruction.
+
+The helper seeds an accepted historical ask for its unrelated work fixture.
+Use new-work-source.md for the real proposal and human-approval path.

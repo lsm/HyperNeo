@@ -80,6 +80,8 @@ async function call(
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
       isOpenTodo: (todoId) => todoId === 'open-todo',
+      acceptedTodo: (todoId) => todoId === 'open-todo',
+      noticeReply: () => true,
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -369,6 +371,8 @@ describe('work verb operations', () => {
       createWorkVerbOperations({
         adapters: () => [adapter],
         isOpenTodo: (id) => id === 'open-todo',
+        acceptedTodo: (id) => id === 'open-todo',
+        noticeReply: () => true,
         daemonName: 'imac',
         remote: { list: () => [], invoke: async () => ({}) },
       })
@@ -815,7 +819,7 @@ describe('work verb operations', () => {
     expect(
       await call(
         'work.send',
-        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi' },
+        { ref: { adapter: 'hyperneo', id: 's1' }, message: 'hi', todoId: 'open-todo' },
         undefined,
         { source: 'mcp', sessionId: 'neo:root' }
       )
@@ -854,7 +858,7 @@ describe('work verb operations', () => {
       value: { delivered: true },
     });
     expect(
-      await call('work.send', { ...relayed, from: 'chat' }, undefined, {
+      await call('work.send', { ...relayed, from: 'chat', todoId: 'open-todo' }, undefined, {
         source: 'mcp',
         sessionId: 'agent-1',
       })

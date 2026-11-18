@@ -11,11 +11,7 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import {
-  createTodoCheckPacks,
-  existingTodoTarget,
-  pendingTodoCheck,
-} from '../../helpers/todo-check-packs.ts';
+import { createTodoCheckPacks, existingTodoTarget } from '../../helpers/todo-check-packs.ts';
 
 type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
 
@@ -160,17 +156,9 @@ describe('neo.ask.open', () => {
 
   test('two asks for the same pull request opened at once leave one open ask', async () => {
     const { call, store } = setup();
-    const step = {
-      after: [],
-      title: 'Review it',
-      doneWhen: 'Reviewed',
-      check: pendingTodoCheck,
-      instruction: 'Review the pull request.',
-      target: { verb: 'send', ref: { adapter: 'hyperneo', id: 'dev-1' } },
-    };
     const both = await Promise.all(
       ['Review the fix', 'Deploy the fix'].map((title) =>
-        call('neo.ask.open', { title, request: `Handle ${pull}`, todos: [step] })
+        call('neo.ask.open', { title, request: `Handle ${pull}` })
       )
     );
     const [opened] = store.listOpenAsks();

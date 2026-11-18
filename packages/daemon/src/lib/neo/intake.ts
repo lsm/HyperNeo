@@ -2,6 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import { snapshotNeoCardQuote } from './card-quote.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
+import { isHumanWorkDecision } from './proposal.ts';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { neoChoiceByLetter, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
@@ -335,6 +336,7 @@ export function recordNeoReplyAnswer(
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
+    !isHumanWorkDecision(reply.question) &&
     reply.ask?.sessionId === sessionId
   ) {
     const answer = neoChoiceByLetter(words, reply.question) ?? words;
