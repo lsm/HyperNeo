@@ -70,6 +70,22 @@ try {
   assert(afterCardError.ok, JSON.stringify(afterCardError));
   todos.bind('todo-card-error', afterCardError.value.ref, Date.now());
   store.updateTodo(store.getTodo('todo-card-error')!, { state: 'doing' }, 2);
+  db.prepare("INSERT INTO neo_session_bindings (session_id, kind) VALUES (?, 'neo')").run(neo.sessionId);
+  store.addTodo('todo-card-refused', 'synthetic-ask', { title: 'Card refused', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
+  let cardRefused;
+  try {
+    app.sessionManager.getOperationRegistry = () => createOperationRegistry(registry.entries.filter((entry) => entry.name !== 'pack.preferences.ask'));
+    cardRefused = await invokeOperation(registry, 'work.start', input('card-refused', 'todo-card-refused'), neo);
+  } finally {
+    app.sessionManager.getOperationRegistry = getRegistry;
+  }
+  assert.equal(cardRefused.kind, 'completed');
+  const afterCardRefused = (cardRefused as { value: Result<WorkStarted> }).value;
+  assert(afterCardRefused.ok, JSON.stringify(afterCardRefused));
+  const note = db.prepare("SELECT payload FROM job_queue WHERE queue = 'neo_notes' AND payload LIKE '%settings question%'").get();
+  assert(note, 'a refused question must leave a note for Neo');
+  todos.bind('todo-card-refused', afterCardRefused.value.ref, Date.now());
+  store.updateTodo(store.getTodo('todo-card-refused')!, { state: 'doing' }, 2);
   const first = await start('first', neo);
   const questions = db.prepare("SELECT count(*) AS n FROM neo_pack_preference_proposals WHERE request_id LIKE 'core.sessionReuse:%'").get() as { n: number };
   assert.equal(questions.n, 1, 'the first eligible start opens a reuse question');
