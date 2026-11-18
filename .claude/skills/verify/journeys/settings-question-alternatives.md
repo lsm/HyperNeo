@@ -11,7 +11,7 @@ The helper uses the real daemon registry's MCP door for Neo and the WebSocket
 operation door for the human, like `immutable-settings-proposal-answers.md`.
 Neo asks `pack.preferences.ask` with three `sessionStrategy` alternatives for one
 synthetic repo. The daemon's question must be a single choice with one labelled
-option per alternative, then Keep current settings. Before the human answers,
+option per alternative, then Use the default for now. Before the human answers,
 nothing is saved, and Neo can neither answer the question nor apply it. The
 human picks One session per PR; only `per_pr` is saved, with human provenance.
 After a daemon restart the value and consent remain, a retry with the same

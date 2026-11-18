@@ -41,7 +41,12 @@ export const CODING_STAGE_PREFERENCES: Record<string, NeoPackPreferenceDeclarati
             en: `${stage[0].toUpperCase() + stage.slice(1)}: preferred ${field}`,
             'zh-Hans': `${{ write: '编写', review: '审查', verify: '验证' }[stage]}：优先${{ harness: '工具', model: '模型', effort: '思考等级' }[field]}`,
           },
+          question: {
+            en: `Which ${field} should ${stage} prefer?`,
+            'zh-Hans': `${{ write: '编写', review: '审查', verify: '验证' }[stage]}优先使用哪个${{ harness: '工具', model: '模型', effort: '思考等级' }[field]}？`,
+          },
           valueLabels: { '': { en: 'Default', 'zh-Hans': '默认' } },
+          valueDescriptions: { '': { en: 'Use the default.', 'zh-Hans': '使用默认设置。' } },
           scope: 'repo',
           type: { kind: 'text' },
           default: '',

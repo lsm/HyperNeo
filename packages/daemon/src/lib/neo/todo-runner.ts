@@ -527,6 +527,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ? names.withStart(target.adapter, target.place, deliver)
       : deliver());
     const result = readDriverOutcome(target, outcome);
+    if (!('ref' in result) && result.reason === 'worker_busy') {
+      const waiting = store.getTodo(todo.id);
+      if (waiting?.state === 'todo' && sessions.get(todo.id)?.verb === 'send') {
+        deps.changed();
+        return { ok: true as const, todo: waiting };
+      }
+    }
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
     if (!('ref' in result) && result.reason !== 'needs_you')
       return startFailed(todo, ask, result.failure);

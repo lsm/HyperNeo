@@ -24,6 +24,7 @@ export interface SessionSpacePort {
 }
 
 export interface FamilyOperationContext {
+  readonly neoAttention?: (event: NeoAttentionEvent) => Promise<NeoAttentionOutcome>;
   readonly workCleanupAttention?: (event: NeoAttentionEvent) => Promise<NeoAttentionOutcome>;
   readonly workerNameSource?: (read: NeoWorkerNameSource) => void;
   readonly workAdapters?: (read: () => readonly WorkAdapter[]) => void;

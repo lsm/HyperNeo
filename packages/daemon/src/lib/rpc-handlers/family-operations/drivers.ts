@@ -41,6 +41,10 @@ import {
 import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/packs/coding/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
+import { sessionReuseQuestion } from '../../neo/session-reuse.ts';
+import { neoAskInputReads } from '../../../storage/repositories/neo-ask-input-worker.ts';
+import { gatewayFor } from '../../../storage/db-gateway/db-gateway.ts';
+import { Logger } from '../../logger.ts';
 import { WorkDeliveryInputRepository } from '../../../storage/repositories/work-delivery-input-repository.ts';
 import { readDriverOutcome } from '../../neo/driver-work.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
@@ -123,6 +127,7 @@ import { usableModels } from '../../usable-models.ts';
 import { planWorkPlacement, type GitCheckout } from '../../drivers/work-placement.ts';
 
 const WORK_CHAT_LIMIT = 200;
+const log = new Logger('work-operations');
 const SEARCH_REUSE_MS = 2_000;
 
 export function newestAvailableModel(models: readonly ModelInfo[]): ModelInfo | null {
@@ -651,6 +656,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   context.workAdapters?.(currentAdapters);
   const health = createDriverHealthRuntime(context, currentAdapters);
   startWorkSessionSync(context.deps.db.gateway, context.deps.jobProcessor, currentAdapters);
+  const pendingReuseQuestions = new Map<string, Promise<void>>();
   const deps = {
     adapters: currentAdapters,
     health: health.read,
@@ -709,7 +715,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     todoWorker: {
       on: (todoId, ref) => new NeoTodoSessionRepository(db()).sendsNow(todoId, ref),
       wait: (todoId, ref, message) =>
-        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message),
+        new NeoTodoSessionRepository(db()).write('queueOn', todoId, ref, message, {
+          requeueDoing: true,
+        }),
     } satisfies WorkVerbDeps['todoWorker'],
     workInputs: {
       accept: (todoId, from, target, message) =>
@@ -733,6 +741,63 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     freeWorkers: (adapter: string, todoId?: string, sessionId?: string) =>
       readReusableWorkers(db(), adapter, todoId, sessionId),
+    reusePolicy: async (adapter: string, todoId: string | undefined, caller: OperationCaller) => {
+      const facts =
+        todoId && caller.sessionId
+          ? await gatewayFor(db()).call(
+              neoAskInputReads,
+              'sessionReuseFacts',
+              adapter,
+              todoId,
+              caller.sessionId
+            )
+          : null;
+      if (!facts) return { mode: 'per_todo' as const, sameAsk: [] };
+      if (!facts.saved) {
+        const noteFailure = async (detail: unknown) => {
+          log.warn('Session reuse question could not be opened', { todoId, detail });
+          if (todoId)
+            await context
+              .neoAttention?.({
+                kind: 'todo.unworked',
+                subject: { type: 'todo', id: todoId },
+                since: Date.now(),
+                facts: {
+                  reason: 'settings_question',
+                  text: 'A settings question for this todo could not be opened; the work continues without it.',
+                },
+              })
+              .catch((error) => log.warn('Settings question note pending', { todoId }, error));
+        };
+        const { prefix, ...question } = sessionReuseQuestion(facts);
+        const ask = (pendingReuseQuestions.get(prefix) ?? Promise.resolve()).then(async () => {
+          const existing = await gatewayFor(db()).call(
+            neoAskInputReads,
+            'sessionReuseQuestionState',
+            prefix
+          );
+          if (!existing || existing === 'retired') {
+            const outcome = await invokeOperation(
+              context.deps.sessionManager.getOperationRegistry(),
+              'pack.preferences.ask',
+              question,
+              caller
+            );
+            if (outcome.kind !== 'completed' || !(outcome.value as { ok?: boolean })?.ok)
+              await noteFailure(outcome);
+          }
+        });
+        pendingReuseQuestions.set(prefix, ask);
+        try {
+          await ask;
+        } catch (error) {
+          await noteFailure(error);
+        } finally {
+          if (pendingReuseQuestions.get(prefix) === ask) pendingReuseQuestions.delete(prefix);
+        }
+      }
+      return { mode: facts.mode, sameAsk: facts.sameAsk };
+    },
     markUnusable: (ref: StartedWork) => markWorkUnusable(db(), ref),
     claimWorker: (ref: WorkRef, todoId?: string) =>
       new NeoTodoSessionRepository(db()).write('claimWorker', ref, todoId ?? null),

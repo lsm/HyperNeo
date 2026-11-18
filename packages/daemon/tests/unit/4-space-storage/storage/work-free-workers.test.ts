@@ -92,6 +92,25 @@ describe('readFreeWorkers', () => {
       if (withRow) sessions.create(todoId, { verb: 'start', adapter: 'claude-desktop' });
     };
 
+    test('a started todo without a worker can wait for a busy worker', () => {
+      liveTodo('next');
+      store.updateTodo(store.getTodo('next')!, { state: 'doing', startedAt: 4 }, 4);
+      expect(sessions.queueOn('next', ref, 'Follow-up.')).toBe('none');
+      expect(store.getTodo('next')?.state).toBe('doing');
+      expect(sessions.queueOn('next', ref, 'Next step.', { requeueDoing: true })).toBe(
+        'instruction'
+      );
+      expect(sessions.get('next')).toMatchObject({ verb: 'send', ref });
+      expect(store.getTodo('next')?.state).toBe('todo');
+    });
+
+    test('a bound doing todo cannot be requeued onto a different worker', () => {
+      bind('bound', 'w-other', 'doing');
+      expect(sessions.queueOn('bound', ref, 'Next step.', { requeueDoing: true })).toBe('none');
+      expect(store.getTodo('bound')?.state).toBe('doing');
+      expect(sessions.readRef('bound')).toMatchObject(other);
+    });
+
     test('a released worker is never offered again, also once its unusable mark expired', () => {
       bind('finished', 'w-done', 'done');
       recordStartedWork(db, ref, Date.now() - 61 * 60_000, true);
@@ -244,5 +263,76 @@ describe('readFreeWorkers', () => {
       store.settleAsk(store.getAsk('ask')!, 'done', 'Observed', 300);
       expect(readReusableWorkers(db, 'claude-desktop').get('shared')?.settledAt).toBe(300);
     });
+  });
+});
+
+describe('session reuse preference migration', () => {
+  test('a global coding preference does not become a global core preference', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1);
+      DELETE FROM migration_markers WHERE key = 'migration_525'`);
+    runMigrations(db, () => {});
+    expect(
+      db
+        .prepare(
+          "SELECT value_json FROM neo_pack_preferences WHERE pack = 'core' AND scope_kind = 'global' AND key = 'sessionReuse'"
+        )
+        .get()
+    ).toBeNull();
+    expect(
+      db
+        .prepare(
+          "SELECT value_json AS value FROM neo_pack_preferences WHERE pack = 'coding' AND scope_kind = 'global' AND key = 'sessionStrategy'"
+        )
+        .get()
+    ).toEqual({ value: '"per_pr"' });
+    db.close();
+  });
+
+  test.each([
+    ['example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
+    ['github.com/example/project', 'repository:github.com/example/project', 'per_pr', 'per_todo'],
+    ['github.com/example/project', 'repo:example/project\u0000host', 'per_task', 'per_todo'],
+    [
+      'github.com/example/project',
+      'repository:github.com/example/project',
+      'long_lived',
+      'long_lived',
+    ],
+  ])('copies %s using %s and preserves the original', (repo, alias, strategy, expected) => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at)
+      VALUES ('project', 'Project', '', '', 1, 1, 1)`);
+    db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(
+      alias,
+      'project'
+    );
+    db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', ?, 'sessionStrategy', ?, 'human', 1)`).run(
+      repo,
+      JSON.stringify(strategy)
+    );
+    db.exec("DELETE FROM migration_markers WHERE key = 'migration_525'");
+    runMigrations(db, () => {});
+    expect(
+      db
+        .prepare(`SELECT value_json AS value FROM neo_pack_preferences
+      WHERE pack = 'core' AND scope_kind = 'project' AND scope_key = 'project'
+      AND key = 'sessionReuse'`)
+        .get()
+    ).toEqual({ value: JSON.stringify(expected) });
+    expect(
+      db
+        .prepare(`SELECT value_json AS value FROM neo_pack_preferences
+      WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ?
+      AND key = 'sessionStrategy'`)
+        .get(repo)
+    ).toEqual({ value: JSON.stringify(strategy) });
+    db.close();
   });
 });
