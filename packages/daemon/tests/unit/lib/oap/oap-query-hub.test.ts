@@ -681,7 +681,10 @@ describe('OAP query hub transport', () => {
         new AbortController().signal
       ))
         if (event.type === 'run.completed') break;
-      await hub.submit('synthetic-session', { ...prompt, uuid: '00000000-0000-4000-8000-000000000002' });
+      await hub.submit('synthetic-session', {
+        ...prompt,
+        uuid: '00000000-0000-4000-8000-000000000002',
+      });
       expect(capabilities).toEqual([{ adapter: 'anthropic-codex' }]);
       expect(submitted.map((payload) => payload.model_id)).toEqual([sent, sent]);
     });
