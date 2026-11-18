@@ -38,6 +38,17 @@ describe('AuthStatusCard', () => {
   });
 
   describe('Output Messages', () => {
+    it('makes the device sign-in address clickable', () => {
+      const { getByRole } = render(
+        <AuthStatusCard
+          isAuthenticating={true}
+          output={['Open https://auth.openai.com/codex/device', 'Enter code ABCD']}
+        />
+      );
+      expect(
+        getByRole('link', { name: 'https://auth.openai.com/codex/device' }).getAttribute('href')
+      ).toBe('https://auth.openai.com/codex/device');
+    });
     it('should display output messages', () => {
       const { container } = render(
         <AuthStatusCard isAuthenticating={false} output={['Login successful', 'Session created']} />
