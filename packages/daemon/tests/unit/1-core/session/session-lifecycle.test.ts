@@ -18,7 +18,7 @@ import {
 } from '../../../../src/lib/drivers/worker-sandbox';
 import { withSdkTeardownGateway } from '../../../helpers/mock-sdk-teardown-gateway';
 import { writeThroughRepo } from '../../../helpers/sdk-message-writes';
-import { workerWorkLocations } from '../../../../src/lib/work-locations';
+import { workerWorkKey, workerWorkLocations } from '../../../../src/lib/work-locations';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
@@ -205,7 +205,10 @@ afterEach(() => {
 
 function sessionWithRemovableWorktree(id: string) {
   const worktreePath = mkdtempSync(join(tmpdir(), 'worker-session-tree-'));
-  const places = workerWorkLocations(worktreePath);
+  const places = {
+    ...workerWorkLocations(worktreePath),
+    evidence: join(workerDataDir, 'work', 'evidence', workerWorkKey(worktreePath)),
+  };
   for (const place of [places.builds, places.scratch, places.ghConfig, places.evidence]) {
     mkdirSync(place, { recursive: true });
     writeFileSync(join(place, 'synthetic'), 'synthetic');
@@ -222,7 +225,9 @@ function sessionWithRemovableWorktree(id: string) {
   };
 }
 
-function expectWorkFoldersReleased(places: ReturnType<typeof workerWorkLocations>) {
+function expectWorkFoldersReleased(
+  places: ReturnType<typeof workerWorkLocations> & { evidence: string }
+) {
   expect(existsSync(places.builds)).toBe(false);
   expect(existsSync(places.scratch)).toBe(false);
   expect(existsSync(places.ghConfig)).toBe(false);

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { todoEvidenceFile, workerWorkLocations } from '../../../packages/daemon/src/lib/work-locations.ts';
+import { todoEvidenceFile, workerWorkKey } from '../../../packages/daemon/src/lib/work-locations.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
@@ -61,7 +61,7 @@ try {
   raw.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id: todoWorker }), todo.id);
   todos.updateTodo(todo, { state: 'done', finishedAt: Date.now() }, Date.now());
   const retainedEvidence = [
-    join(workerWorkLocations(trees.todo).evidence, 'result.md'), todoEvidenceFile(todo.id),
+    join(run, 'data/work/evidence', workerWorkKey(trees.todo), 'result.md'), todoEvidenceFile(todo.id),
   ];
   for (const file of retainedEvidence) {
     mkdirSync(dirname(file), { recursive: true });

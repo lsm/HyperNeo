@@ -37,14 +37,13 @@ export function workerSandboxOn(requested?: boolean) {
 
 export function workerWritableRoots(root: string) {
   const locations = workerWorkLocations(root);
-  return [locations.evidence, locations.builds, locations.scratch, locations.cache];
+  return [locations.builds, locations.scratch, locations.cache];
 }
 
 export function workerSandboxPaths(root: string) {
   const locations = workerWorkLocations(root);
   return {
     HYPERNEO_WORKTREES: locations.worktrees,
-    HYPERNEO_EVIDENCE: locations.evidence,
     HYPERNEO_BUILDS: locations.builds,
     TMPDIR: locations.scratch,
     TMP: locations.scratch,

@@ -98,31 +98,6 @@ export function neoEvidencePathRefusal(
     : `evidence_in_data_dir: ${path} is inside the daemon data directory. Use a persistent location visible to the human.`;
 }
 
-/** @public */
-export const withAssignedEvidence = <T extends NeoTodoCheck | null | undefined>(
-  check: T,
-  file: string
-): T | NeoTodoCheck =>
-  isEvidence(check) && !Object.keys(check.params).length
-    ? { ...check, params: { path: file } }
-    : check;
-
-/** @public */
-export function neoEvidenceRefusal(
-  check: NeoTodoCheck | null | undefined,
-  repo: string | null | undefined,
-  userFolder: string,
-  previous?: NeoTodoCheck | null
-): string | null {
-  const path = isEvidence(check) ? check.params.path : null;
-  if (!repo || typeof path !== 'string' || JSON.stringify(check) === JSON.stringify(previous))
-    return null;
-  const inside = relative(userFolder.toLowerCase(), path.toLowerCase());
-  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)
-    ? null
-    : `evidence_in_user_folder: ${path} is in the human's folder, which holds only results they should see. Omit params.path; the daemon assigns one and gives it to the worker.`;
-}
-
 export const coreTodoPolicy = {
   doneWhen,
   refuse: (draft: CheckDraft, peers: readonly NeoTodo[] = []) => admit(draft, peers).refusal,

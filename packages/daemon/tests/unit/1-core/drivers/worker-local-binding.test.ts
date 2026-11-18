@@ -75,7 +75,7 @@ test('installed Claude worker settings export the data-root work locations', asy
   await installClaudeNativeWrites(root, [join(root, 'source')]);
   const env = settings().env as Record<string, string>;
   expect(env.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
-  expect(env.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(env.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(env.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(env.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
 });
@@ -87,10 +87,10 @@ test('the Codex worker sandbox keeps the shared worktrees root read-only', () =>
     policy.config.permissions as Record<string, { filesystem: Record<string, string> }>
   )['hyperneo-worker'].filesystem;
   expect(set.HYPERNEO_WORKTREES).toBe(join(dataDir, 'worktrees'));
-  expect(set.HYPERNEO_EVIDENCE.startsWith(join(dataDir, 'work', 'evidence'))).toBe(true);
+  expect(set.HYPERNEO_EVIDENCE).toBeUndefined();
   expect(set.HYPERNEO_BUILDS.startsWith(join(dataDir, 'work', 'builds'))).toBe(true);
   expect(set.TMPDIR.startsWith(join(dataDir, 'work', 'scratch'))).toBe(true);
-  for (const path of [set.HYPERNEO_EVIDENCE, set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
+  for (const path of [set.HYPERNEO_BUILDS, set.TMPDIR, set.XDG_CACHE_HOME]) {
     expect(profile[path]).toBe('write');
   }
   expect(profile[set.HYPERNEO_WORKTREES]).not.toBe('write');
@@ -167,7 +167,6 @@ test('disabled persisted sandbox does not prepare or recreate its runtime', asyn
   const current = workerSandboxPaths(root);
   expect(resumed?.env).toEqual({
     HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
-    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
     HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
   });
   expect(settings().env).toEqual(resumed?.env);
@@ -206,9 +205,9 @@ test('disabled sparse settings normalize SDK fields and remove obsolete runtime 
   expect(result?.env).toEqual({
     CUSTOM_WORKER_VALUE: 'retain',
     HYPERNEO_WORKTREES: current.HYPERNEO_WORKTREES,
-    HYPERNEO_EVIDENCE: current.HYPERNEO_EVIDENCE,
     HYPERNEO_BUILDS: current.HYPERNEO_BUILDS,
   });
+  expect(settings().env).not.toHaveProperty('HYPERNEO_EVIDENCE');
   expect(result?.permissions.disableBypassPermissionsMode).toBe('disable');
   expect(result?.sandbox.filesystem.allowWrite).toContain(root);
   expect(settings()).toEqual(result);
