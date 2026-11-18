@@ -11,7 +11,7 @@ import { connectionStatus } from './status.ts';
 import type { createConnectionLifecycle } from './lifecycle.ts';
 
 type Service = ReturnType<typeof createConnectionLifecycle>;
-type Operation = 'outlook.search' | 'outlook.read_thread';
+type Operation = 'outlook.search' | 'outlook.read_thread' | 'outlook.calendar_list';
 const failure = z.object({ ok: z.literal(false), reason: z.string() });
 const denied = (reason: string) => ({ ok: false as const, reason });
 const scope = 'Mail.ReadWrite';
@@ -40,14 +40,25 @@ const threadInput = z
 const cursorSchema = z
   .object({
     connectionId: id,
-    operation: z.enum(['outlook.search', 'outlook.read_thread']),
+    operation: z.enum(['outlook.search', 'outlook.read_thread', 'outlook.calendar_list']),
     key: z.string().length(64),
     query: z.string().max(1500),
     sig: z.string().length(64),
   })
   .strict();
 const secret = randomBytes(32);
-const options = new Set(['$search', '$filter', '$top', '$select', '$skiptoken', '$skip', '$count']);
+const options = new Set([
+  '$search',
+  '$filter',
+  '$top',
+  '$select',
+  '$skiptoken',
+  '$skip',
+  '$count',
+  '$orderby',
+  'startdatetime',
+  'enddatetime',
+]);
 const sign = (fields: { connectionId: string; operation: string; key: string; query: string }) =>
   createHmac('sha256', secret)
     .update(JSON.stringify([fields.connectionId, fields.operation, fields.key, fields.query]))
@@ -55,7 +66,7 @@ const sign = (fields: { connectionId: string; operation: string; key: string; qu
 const plain = (search: string) =>
   search.startsWith('?') &&
   !search.includes('#') &&
-  [...new URLSearchParams(search).keys()].every((name) => options.has(name));
+  [...new URLSearchParams(search).keys()].every((name) => options.has(name.toLowerCase()));
 const address = z
   .object({ emailAddress: z.object({ name: z.string().default(''), address: z.string() }) })
   .nullish();
@@ -113,7 +124,7 @@ function project(message: z.infer<typeof graphMessage>): Item {
   };
 }
 
-function readCursor(input: Paging, operation: Operation, key: string) {
+export function readCursor(input: Paging, operation: Operation, key: string) {
   if (!input.cursor) return { value: null };
   try {
     const cursor = cursorSchema.parse(
@@ -131,10 +142,20 @@ function readCursor(input: Paging, operation: Operation, key: string) {
   }
 }
 
-function writeCursor(link: string | undefined, input: Paging, operation: Operation, key: string) {
+export function writeCursor(
+  link: string | undefined,
+  input: Paging,
+  operation: Operation,
+  key: string,
+  path = collection
+) {
   if (!link) return { value: undefined };
   const url = URL.canParse(link) ? new URL(link) : null;
-  if (url?.origin !== origin || url.pathname !== collection || !plain(url.search))
+  if (
+    url?.origin !== origin ||
+    url.pathname.toLowerCase() !== path.toLowerCase() ||
+    !plain(url.search)
+  )
     return { reason: denied('invalid_response') };
   const fields = {
     connectionId: input.connectionId,
