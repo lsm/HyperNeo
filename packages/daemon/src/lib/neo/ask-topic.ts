@@ -27,9 +27,17 @@ export type NeoAskTopic = { topic: string; topicKey: string };
 const workAlias = (machine: string, adapter: string, id: string) =>
   `work:${machine}\u0000${adapter}\u0000${id}`;
 
-function senderAlias(machine: string, sender: string): string | null {
+function senderAlias(machine: string, sender: string): string[] {
   const ref = sessionWorkerRef(sender, false);
-  return ref.daemon ? null : workAlias(machine, ref.adapter, ref.id);
+  if (ref.daemon) return [];
+  if (ref.adapter === 'claude-code' || ref.adapter === 'claude-desktop') {
+    const id = ref.adapter === 'claude-desktop' ? ref.id.replace(/^local_/, '') : ref.id;
+    return [
+      workAlias(machine, 'claude-code', id),
+      workAlias(machine, 'claude-desktop', `local_${id}`),
+    ];
+  }
+  return [workAlias(machine, ref.adapter, ref.id)];
 }
 
 const targetAliases = (todo: NeoAskTopicTodo, machine: string) => [
@@ -38,8 +46,8 @@ const targetAliases = (todo: NeoAskTopicTodo, machine: string) => [
 ];
 
 export function neoAskTopicAliases(todo: NeoAskTopicTodo, machine: string): string[] {
-  const sender = todo.requestFrom ? senderAlias(machine, todo.requestFrom) : null;
-  return [...targetAliases(todo, machine), ...(sender ? [sender] : [])];
+  const sender = todo.requestFrom ? senderAlias(machine, todo.requestFrom) : [];
+  return [...targetAliases(todo, machine), ...sender];
 }
 
 function project(facts: NeoAskTopicFacts, id: string | null | undefined): Project | null {
@@ -89,7 +97,13 @@ export function neoAskTopic(facts: NeoAskTopicFacts): NeoAskTopic {
       ? (fromProject(ownProject(facts, facts.parent.ask, facts.parent.todos)) ??
         stored(facts.parent.ask))
       : null) ??
-    fromProject(sender ? aliasProject(facts, senderAlias(facts.machine, sender)) : null) ??
+    fromProject(
+      sender
+        ? (senderAlias(facts.machine, sender)
+            .map((alias) => aliasProject(facts, alias))
+            .find(Boolean) ?? null)
+        : null
+    ) ??
     stored(facts.ask) ??
     pick(NEO_OTHER_TOPIC)
   );

@@ -89,9 +89,11 @@ test('Claude senders inherit their project topic through either session alias', 
     bindGateway(db, gateway);
     const projects = new NeoRepository(db);
     const store = new NeoAskTodoRepository(db);
-    for (const [id, adapter, session] of [
-      ['desktop', 'claude-desktop', 'local_s1'],
-      ['cli', 'claude-code', 's2'],
+    for (const [id, adapter, session, sender] of [
+      ['desktop', 'claude-desktop', 'local_s1', 'claude-code:s1'],
+      ['cli', 'claude-code', 's2', 'claude-code:s2'],
+      ['desktop-sender', 'claude-code', 's3', 'claude-desktop:local_s3'],
+      ['desktop-pair', 'claude-desktop', 'local_s4', 'claude-desktop:local_s4'],
     ]) {
       projects.saveProject({ id, title: id, summary: '', context: '' }, 0);
       db.prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)').run(
@@ -116,7 +118,7 @@ test('Claude senders inherit their project topic through either session alias', 
           doneWhen: 'Observed',
           check: null,
           instruction: null,
-          named: { requestFrom: `claude-code:${id === 'desktop' ? 's1' : 's2'}` },
+          named: { requestFrom: sender },
         },
         1
       );
@@ -127,7 +129,12 @@ test('Claude senders inherit their project topic through either session alias', 
         [ask.topic, ask.topicKey],
       ])
     );
-    expect(topics).toEqual({ desktop: ['desktop', 'desktop'], cli: ['cli', 'cli'] });
+    expect(topics).toEqual({
+      desktop: ['desktop', 'desktop'],
+      cli: ['cli', 'cli'],
+      'desktop-sender': ['desktop-sender', 'desktop-sender'],
+      'desktop-pair': ['desktop-pair', 'desktop-pair'],
+    });
   } finally {
     await gateway.close();
     db.close();
