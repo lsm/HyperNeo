@@ -30,19 +30,32 @@ copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
 const peer = join(run, 'synthetic-codex');
 writeFileSync(peer, `#!/usr/bin/python3
-import json,os,sys,time
+import json,os,sys,time,threading
 log=os.path.join(os.environ['CODEX_HOME'],'calls.jsonl')
 marker=os.path.join(os.environ['CODEX_HOME'],'fail-first')
 if os.path.exists(marker):
  os.unlink(marker)
  sys.exit(23)
 def emit(value): print(json.dumps(value),flush=True)
+def crash_login():
+ while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'crash-login')): time.sleep(0.01)
+ os._exit(23)
+def finish_login():
+ while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'finish-login')): time.sleep(0.01)
+ emit({'method':'account/login/completed','params':{'loginId':'wrong-login','success':True,'error':None}})
+ open(os.path.join(os.environ['CODEX_HOME'],'signed-in'),'w').close()
+ emit({'method':'account/login/completed','params':{'loginId':'synthetic-login','success':True,'error':None}})
 for line in sys.stdin:
  request=json.loads(line)
- with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'request':request})+'\\n')
+ with open(log,'a') as output: output.write(json.dumps({'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME'),'pid':os.getpid(),'request':request})+'\\n')
  method=request.get('method')
  if 'id' not in request or not method: continue
+ if method=='account/login/start' and ${mode === 'login-start-failure' ? 'True' : 'False'}:
+  emit({'id':request['id'],'error':{'code':-32601,'message':'Device login unavailable'}})
+  continue
  if method=='initialize': result={'userAgent':'synthetic','codexHome':'synthetic','platformFamily':'unix','platformOs':'synthetic'}
+ elif method=='account/read': result={'account':None if ${['login-device', 'login-crash', 'login-start-failure'].includes(mode) ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'signed-in')) else {'type':'chatgpt'},'requiresOpenaiAuth':True}
+ elif method=='account/login/start': result={'type':'chatgptDeviceCode','loginId':'synthetic-login','verificationUrl':'https://example.com/device','userCode':'SYNTHETIC'}
  elif method in ['thread/start','thread/resume']:
   name=os.path.basename(os.getcwd())
   countfile=os.path.join(os.environ['CODEX_HOME'],'thread-count-'+name)
@@ -59,6 +72,11 @@ for line in sys.stdin:
   while not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'admission-release')): time.sleep(0.01)
  if method=='turn/start' and 'Synthetic crash during admission' in json.dumps(request): sys.exit(23)
  emit({'id':request['id'],'result':result})
+ if method=='account/login/start':
+  if ${mode === 'login-crash' ? 'True' : 'False'} and not os.path.exists(os.path.join(os.environ['CODEX_HOME'],'crashed')):
+   open(os.path.join(os.environ['CODEX_HOME'],'crashed'),'w').close()
+   threading.Thread(target=crash_login,daemon=True).start()
+  else: threading.Thread(target=finish_login,daemon=True).start()
  if method=='turn/start':
   if 'Synthetic native crash' in json.dumps(request): sys.exit(23)
   if 'Synthetic gated admission' in json.dumps(request):
@@ -75,10 +93,12 @@ for line in sys.stdin:
   emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
  if method=='turn/interrupt':
   emit({'method':'turn/completed','params':{'threadId':request['params']['threadId'],'turn':{'id':request['params']['turnId'],'status':'interrupted'}}})
+open(os.path.join(os.environ['CODEX_HOME'],'closed-'+str(os.getpid())),'w').close()
 `);
 chmodSync(peer, 0o700);
 if (mode === 'retry') writeFileSync(join(run, 'codex-home/fail-first'), 'synthetic');
 process.env.CODEX_HOME = join(run, 'codex-home');
+process.env.CODEX_CLI_PATH = mode === 'login-device' ? join(run, 'missing-codex') : peer;
 assert.equal(version, releaseName(), 'supply the pinned OXAP release binary for this platform');
 const stateDirectory = join(run, 'data', 'oap');
 let releaseRequests: string[] = [];
@@ -89,7 +109,7 @@ let transport: WebSocketClientTransport | undefined;
 let releaseResult: (() => void) | undefined;
 const evidence: Record<string, unknown> = { synthetic: true, mode, binaryVersion: version, binarySha256: sha256 };
 const calls = () => existsSync(join(run, 'codex-home/calls.jsonl'))
-  ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
+  ? readFileSync(join(run, 'codex-home/calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { cwd: string; codexHome?: string; pid: number; request: { method?: string; params?: { cwd?: string; approvalPolicy?: string; sandbox?: string; developerInstructions?: string; capabilities?: { experimentalApi?: boolean } } } })
   : [];
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 20000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -189,7 +209,57 @@ try {
   const { sessionId: firstId } = await makeSession('workspace-a');
   const first = app.sessionManager.getSession(firstId);
   assert(first);
-  if (mode === 'settings-restart') {
+  if (mode === 'login-device') {
+    const { sessionId: secondId } = await makeSession('workspace-b');
+    await Promise.all([
+      hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in' }),
+      hub.request('message.send', { sessionId: secondId, content: 'Synthetic concurrent sign in' }),
+    ]);
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in card');
+    const messages = app.db.getSDKMessages(firstId, 1000).messages;
+    const card = messages.find((row) => row.type === 'auth_status' && row.isAuthenticating);
+    assert(card && card.type === 'auth_status');
+    assert.deepEqual(card.output, ['Open https://example.com/device', 'Enter code SYNTHETIC']);
+    await waitFor(() => app!.db.getSDKMessages(secondId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'second device sign-in card');
+    const secondCard = app.db.getSDKMessages(secondId, 1000).messages.find((row) => row.type === 'auth_status' && row.isAuthenticating);
+    assert(secondCard && secondCard.type === 'auth_status');
+    assert.deepEqual(secondCard.output, card.output);
+    assert.equal(calls().filter((call) => call.request.method === 'account/read').length, 2);
+    assert.equal(calls().filter((call) => call.request.method === 'account/login/start').length, 1);
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
+    const owner = calls().find((call) => call.request.method === 'account/login/start')!.pid;
+    const joining = calls().find((call) => call.request.method === 'account/read' && call.pid !== owner);
+    assert(joining);
+    await waitFor(() => existsSync(join(run, `codex-home/closed-${joining.pid}`)), 'joining app-server closes while login is pending');
+    assert(!existsSync(join(run, `codex-home/closed-${owner}`)));
+    writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating), 'device sign-in completion');
+    await waitFor(() => calls().filter((call) => call.request.method === 'thread/start').length === 2, 'both threads open after sign-in');
+    for (const sessionId of [firstId, secondId]) {
+      const cards = app.db.getSDKMessages(sessionId, 1000).messages.filter((row) => row.type === 'auth_status');
+      assert.equal(cards.length, 1);
+      assert(cards[0] && cards[0].type === 'auth_status' && !cards[0].isAuthenticating);
+    }
+    Object.assign(evidence, { deviceCodeShown: true, threadNotOpened: true, loginCompleted: true, pass: true });
+  } else if (mode === 'login-start-failure') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in failure' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating && row.error?.includes('Device login unavailable')), 'device sign-in start failure card');
+    await waitFor(() => errors.includes('Codex is not signed in. Sign in, then send again.'), 'device sign-in start failure');
+    assert.equal(calls().filter((call) => call.request.method === 'thread/start').length, 0);
+    Object.assign(evidence, { failureCard: true, openRefused: true, pass: true });
+  } else if (mode === 'login-crash') {
+    await hub.request('message.send', { sessionId: firstId, content: 'Synthetic sign in before crash' });
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'device sign-in before crash');
+    writeFileSync(join(run, 'codex-home/crash-login'), 'synthetic');
+    await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.some((row) => row.type === 'auth_status' && !row.isAuthenticating && row.error), 'device sign-in failure after crash');
+    const { sessionId: secondId } = await makeSession('workspace-b');
+    await hub.request('message.send', { sessionId: secondId, content: 'Synthetic sign in after crash' });
+    await waitFor(() => calls().filter((call) => call.request.method === 'account/login/start').length === 2, 'new login after crash');
+    await waitFor(() => app!.db.getSDKMessages(secondId, 1000).messages.some((row) => row.type === 'auth_status' && row.isAuthenticating), 'new device sign-in card');
+    writeFileSync(join(run, 'codex-home/finish-login'), 'synthetic');
+    await waitFor(() => calls().some((call) => call.request.method === 'thread/start'), 'thread opens after retry');
+    Object.assign(evidence, { crashReported: true, retryOpened: true, pass: true });
+  } else if (mode === 'settings-restart') {
     const turn = async (content: string, count: number) => {
       await hub.request('message.send', { sessionId: firstId, content });
       await waitFor(() => app!.db.getSDKMessages(firstId, 1000).messages.filter((row) => row.type === 'result').length === count && !first.queryPromise, content);
@@ -699,9 +769,16 @@ try {
       assert.equal(start?.request.params?.sandbox, 'workspace-write');
       assert.equal(start?.request.params?.developerInstructions, undefined);
     }
-    assert(allCalls.every((call) => [join(run, 'workspace-a'), join(run, 'workspace-b')].includes(call.cwd)));
+    const accountReads = allCalls.filter((call) => call.request.method === 'account/read');
+    assert.equal(accountReads.length, 2);
+    const bootstrapPids = new Set(accountReads.map((call) => call.pid));
+    assert.equal(bootstrapPids.size, 2);
+    const bootstrapCalls = allCalls.filter((call) => bootstrapPids.has(call.pid));
+    const adapterCalls = allCalls.filter((call) => !bootstrapPids.has(call.pid));
+    assert(adapterCalls.every((call) => [join(run, 'workspace-a'), join(run, 'workspace-b')].includes(call.cwd)));
     assert(allCalls.every((call) => call.codexHome === join(run, 'codex-home')));
-    assert(allCalls.filter((call) => call.request.method === 'initialize').every((call) => call.request.params?.capabilities?.experimentalApi !== true));
+    assert.equal(bootstrapCalls.filter((call) => call.request.method === 'initialize' && call.request.params?.capabilities?.experimentalApi === true).length, 2);
+    assert(adapterCalls.filter((call) => call.request.method === 'initialize').every((call) => call.request.params?.capabilities?.experimentalApi !== true));
     assert.equal(firstResults, 3);
     assert.equal(secondResults, 1);
     assert.equal(errors.length, 0, JSON.stringify(errors));

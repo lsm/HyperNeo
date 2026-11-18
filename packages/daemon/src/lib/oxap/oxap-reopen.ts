@@ -24,6 +24,7 @@ export type OxapReopenStore = Pick<
   | 'getSDKMessages'
   | 'getUserMessagesByStatus'
   | 'saveSDKMessage'
+  | 'updateAuthStatusMessage'
   | 'getSDKMessageRepo'
 >;
 export type OxapReopenEvents = Pick<MessageHub, 'event'>;
