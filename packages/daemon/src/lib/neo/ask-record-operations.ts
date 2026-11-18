@@ -251,9 +251,7 @@ export function createNeoAskRecordOperations(
         const refused = input.todos
           .filter((todo) => !recordedRow(todo))
           .map((todo) => {
-            const reason =
-              neoTodoPlaceRefusal(todo, policies, readScope) ??
-              neoEvidencePathRefusal(todo.check, null, getDataDir());
+            const reason = neoEvidencePathRefusal(todo.check, null, getDataDir());
             return reason
               ? { reason: { ok: false as const, reason } }
               : planNeoTodoDraft(todo, policies);
@@ -285,6 +283,11 @@ export function createNeoAskRecordOperations(
           }
           const resolved = await resolveNeoTodoDraft(todo, controls.resolveTarget);
           if ('reason' in resolved) return resolved.reason;
+          const placeRefusal = neoTodoPlaceRefusal(resolved.value, policies, {
+            ...readScope,
+            workerRemotes: resolved.value.workerRemotes,
+          });
+          if (placeRefusal) return { ok: false, reason: placeRefusal };
           drafts.push(resolved.value);
         }
         const current = priorAsk
