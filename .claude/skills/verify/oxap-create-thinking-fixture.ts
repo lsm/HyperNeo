@@ -2,11 +2,19 @@ import { existsSync } from 'node:fs';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
-import { answerCodexProbeLocally, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
+import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 const run = process.env.HYPERNEO_DATA_DIR!.replace(/\/data$/, '');
 answerCodexProbeLocally();
+serveLocalRelease('/usr/bin/true', releaseName(), `${run}/release`);
+const releaseFetch = globalThis.fetch;
+globalThis.fetch = Object.assign(async (...args: Parameters<typeof fetch>) => {
+  const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+  if (url.endsWith('/SHA256SUMS.txt')) await new Promise((resolve) => setTimeout(resolve, 11_000));
+  return releaseFetch(...args);
+}, { preconnect: releaseFetch.preconnect }) as typeof fetch;
 const app = await createDaemonApp({
   config: {
     ...getConfig({

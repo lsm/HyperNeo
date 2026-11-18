@@ -109,6 +109,20 @@ try {
       await page.getByRole('alert').waitFor({ state: 'detached' });
       await page.screenshot({ path: `${output}/sdk-provider-retry.png`, animations: 'disabled' });
       console.log('SDK picker kept its model after lookup failure and recovered on retry');
+      await page.goto(`${base}/settings?tab=providers`);
+      await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+      await page.getByLabel('Harness', { exact: true }).selectOption('oxap-codex');
+      await page.getByLabel('Harness executable').fill('/synthetic/codex');
+      await page.getByRole('button', { name: 'Save harness' }).click();
+      await page.waitForTimeout(10_500);
+      assert.equal(await page.getByRole('button', { name: 'Save harness' }).isDisabled(), true);
+      assert.equal(await page.getByText(/Request timeout/).count(), 0);
+      await page.getByText('Harness saved').waitFor({ timeout: 15000 });
+      await page.reload();
+      await page.getByText('Synthetic OXAP Codex', { exact: true }).first().click();
+      assert.equal(await page.getByLabel('Harness', { exact: true }).inputValue(), 'oxap-codex');
+      assert.notEqual(await page.getByLabel('Hub binary').inputValue(), 'Installed automatically on save');
+      console.log('Delayed first install saved and the installed hub persisted');
     }
     await context.close();
   }

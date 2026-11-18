@@ -17,3 +17,7 @@ Code persists after a reload, without downloading or starting a hub.
 It injects a controlled provider lookup failure for an SDK chat, checks that its
 current provider's model stays visible and the retry control clears the error,
 then retains `sdk-provider-retry.png`.
+
+It also saves OXAP after an 11-second synthetic release download. The real
+installer validates and installs a local fixture archive; the UI stays pending
+beyond the default timeout, then shows success and the saved hub after reload.

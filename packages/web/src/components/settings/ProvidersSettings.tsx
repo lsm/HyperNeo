@@ -813,11 +813,16 @@ export function ProvidersSettings() {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Not connected');
       requireAccepted(
-        await invokeOperation(hub, 'oxap.settings.save', {
-          providerId: provider.providerId,
-          harness: draft.harness,
-          settings: draft.harness === 'sdk' ? {} : { executable: draft.executable },
-        })
+        await invokeOperation(
+          hub,
+          'oxap.settings.save',
+          {
+            providerId: provider.providerId,
+            harness: draft.harness,
+            settings: draft.harness === 'sdk' ? {} : { executable: draft.executable },
+          },
+          { timeout: 300_000 }
+        )
       );
       await loadProviders(false);
       try {
