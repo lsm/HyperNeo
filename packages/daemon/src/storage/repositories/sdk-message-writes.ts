@@ -13,6 +13,7 @@ import { type SdkMessageChanges, SDKMessageRepository } from './sdk-message-repo
 
 const SDK_MESSAGE_WRITE_METHODS = [
   'saveSDKMessage',
+  'updateAuthStatusMessage',
   'saveUserMessage',
   'saveHyperNeoActionMessage',
   'updateHyperNeoActionMessage',
@@ -66,6 +67,7 @@ const ANNOUNCED_SCOPES: Partial<
     ...sdkMessageScope(scopeDatabase(db), args[0]),
     messageSubtype: sdkMessageSubtype(args[1]),
   }),
+  updateAuthStatusMessage: (db, args) => sdkMessageScope(scopeDatabase(db), args[0]),
   saveUserMessage: (db, args) => sdkMessageScope(scopeDatabase(db), args[0]),
   updateMessageStatus: (db, args) => messageIdsScope(scopeDatabase(db), args[0]),
   updateMessageTimestamp: (db, args) => messageIdScope(scopeDatabase(db), args[0]),
