@@ -4,7 +4,6 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoTodoTarget } from '../../../../src/lib/neo/driver-work.ts';
 import type { NeoPack, NeoWorkerTargetDecision } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
-import { codingSessionAssignmentWrites } from '../../../../src/lib/neo/packs/coding/session-assignments-worker.ts';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
 import {
   CodingTodoPrRepository,
@@ -80,10 +79,8 @@ function world(coding = false) {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
-    workerTarget: (todo, target, status) => decideCodingSessionTarget(db, todo, target, status),
+    workerTarget: (todo, target) => decideCodingSessionTarget(db, todo, target),
     workerStartExclusions: () => (failing.refuse ? { reason: failing.refuse } : { value: [] }),
-    workerTargetRefused: (todo) =>
-      gatewayFor(db).call(codingSessionAssignmentWrites, 'releaseFeature', { todoId: todo.id }),
   } satisfies NeoPack;
   const runner = createNeoTodoRunner({
     write: gatewayFor(db).run.bind(gatewayFor(db)),
@@ -406,64 +403,4 @@ describe('createNeoTodoRunner asks the todo pack for its worker target', () => {
       expect(w.store.getTodo(second)?.state).toBe('doing');
     }
   );
-
-  test('a claim refused after the coding hook reserved a new start releases the feature', async () => {
-    const w = (current = world(true));
-    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
-    const running = w.add(check, 'running');
-    const first = w.add(check, 'first');
-    const second = w.add(check, 'second', [first]);
-    for (const id of [running, first, second])
-      w.db
-        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
-        .run(id, 'synthetic/repo');
-    w.store.updateTodo(w.store.getTodo(running)!, { state: 'doing', startedAt: 1 }, 1);
-    w.db
-      .prepare('UPDATE neo_todo_sessions SET ref = ?2 WHERE todo_id = ?1')
-      .run(running, JSON.stringify(backend));
-    w.store.updateTodo(w.store.getTodo(first)!, { state: 'done', finishedAt: 1 }, 1);
-    w.failing.status = () => {
-      const prerequisite = w.store.getTodo(first)!;
-      if (prerequisite.state === 'done')
-        w.store.updateTodo(prerequisite, { state: 'todo', finishedAt: null }, 1);
-      return {
-        ref: backend,
-        title: 'busy',
-        place: start.place,
-        status: 'running',
-        lastActivityAt: 1,
-      };
-    };
-    await w.runner.start(second);
-    expect(w.store.getTodo(second)).toMatchObject({ state: 'todo', startedAt: null });
-    expect(w.dispatched()).toEqual([]);
-    expect(w.db.prepare('SELECT todo_id FROM pack_coding_feature_sessions').all()).toEqual([]);
-    await w.runner.start(first);
-    expect(w.store.getTodo(first)?.reason ?? '').not.toContain('session_unknown');
-    expect(w.dispatched().map((call) => call.name)).toEqual(['work.start']);
-    expect(w.store.getTodo(first)?.state).toBe('doing');
-  });
-
-  test('an interrupted start keeps the coding feature after recovery, so the next todo waits', async () => {
-    const w = (current = world(true));
-    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
-    const first = w.add(check, 'first');
-    const second = w.add(check, 'second');
-    for (const id of [first, second])
-      w.db
-        .prepare('UPDATE pack_coding_todos SET repo = ?2 WHERE todo_id = ?1')
-        .run(id, 'synthetic/repo');
-    w.db
-      .prepare(
-        "INSERT INTO pack_coding_feature_sessions (repo, feature_key, todo_id, reserved_at) VALUES ('synthetic/repo', 'ask', ?, 1)"
-      )
-      .run(first);
-    w.store.updateTodo(w.store.getTodo(first)!, { state: 'doing', startedAt: 1 }, 1);
-    await w.runner.refresh(() => {});
-    expect(w.store.getTodo(first)?.state).toBe('blocked');
-    expect(w.sessions.readStartInterrupted(first)).toBeTruthy();
-    await w.runner.start(second);
-    expect(w.store.getTodo(second)?.reason ?? '').toContain('session_unknown');
-    expect(w.dispatched()).toEqual([]);
-  });
 });

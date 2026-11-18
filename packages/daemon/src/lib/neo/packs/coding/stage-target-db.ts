@@ -7,6 +7,16 @@ import { codingStagePreference } from './stage-preferences.ts';
 class CodingStageTargetQueries {
   constructor(private readonly db: Database) {}
 
+  repo(todoId: string) {
+    return (
+      (
+        this.db.prepare('SELECT repo FROM pack_coding_todos WHERE todo_id = ?').get(todoId) as {
+          repo: string | null;
+        } | null
+      )?.repo ?? null
+    );
+  }
+
   planTarget(input: Parameters<CodingAssignmentsRepository['planTarget']>[0]) {
     return new CodingAssignmentsRepository(this.db).planTarget(input);
   }
@@ -24,5 +34,5 @@ export const codingStageTargetReads = defineRepositoryOp(
   'coding.stageTarget.reads',
   'read',
   CodingStageTargetQueries,
-  ['planTarget', 'stagePreference', 'lineScope']
+  ['planTarget', 'stagePreference', 'lineScope', 'repo']
 );
