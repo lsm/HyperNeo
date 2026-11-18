@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -75,6 +76,20 @@ test('Codex named profile enables network access for local servers', () => {
 test('checking a markerless folder does not create worker settings', async () => {
   expect(await readClaudeWorkerSandbox(root)).toBeNull();
   expect(existsSync(join(root, '.claude'))).toBe(false);
+});
+
+test('resuming with unwritable legacy settings reports the failed cleanup', async () => {
+  const folder = join(root, '.claude');
+  mkdirSync(folder);
+  const path = join(folder, 'settings.local.json');
+  writeFileSync(path, JSON.stringify({ env: { HYPERNEO_EVIDENCE: '/synthetic/old' } }));
+  chmodSync(folder, 0o500);
+  try {
+    await expect(readClaudeWorkerSandbox(root)).rejects.toThrow();
+    expect(settings().env.HYPERNEO_EVIDENCE).toBe('/synthetic/old');
+  } finally {
+    chmodSync(folder, 0o700);
+  }
 });
 
 test('resuming markerless worker settings removes the legacy evidence hint', async () => {
