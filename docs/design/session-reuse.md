@@ -104,7 +104,15 @@ which free worker another todo may reuse (step B of PR 4's decision):
   moved. `long_lived` → `long_lived`, `per_task` → `per_todo`, `per_pr` → `per_todo` (a
   PR is one todo). The old rows stay until PR 2, which removes the pack's read of them in
   the same change, so no repository falls back to `long_lived` in between. The coding pack
-  stops asking its own question in this PR.
+  stops asking its own question in this PR. Between PR 1 and PR 2 the card's answer
+  already applies to every non-coding start, while coding starts still follow the copied
+  old values through the pack's own target; it applies to coding from PR 2 on.
+- **A known race, accepted.** Two todos of one ask that start at the same moment under
+  `per_ask` can each find no worker of the ask and each start one. Nothing reserves a
+  session before the driver call; today's core rule has the same race, and the deleted
+  feature reservation (PR 2) only covered coding. It costs one extra session, never a
+  wrong one: later todos of the ask reuse either of the two. The per-role claim in PR 4
+  does not cover it, because it is per todo, not per ask.
 
 **PR 2: the coding pack stops picking sessions.** Mostly deletions.
 
