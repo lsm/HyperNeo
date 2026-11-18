@@ -1230,37 +1230,36 @@ a:focus-visible {
   display: none;
 }
 
-@media (min-width: 768px) {
-  html.tauri-desktop .desktop-window-shell {
-    padding-top: 0;
-  }
+html.tauri-desktop body {
+  --safe-height: calc(100dvh - 52px);
+  padding-top: 52px;
+}
 
-  html.tauri-desktop .desktop-titlebar-row {
-    display: flex;
-    height: 52px;
-    flex: 0 0 52px;
-    align-items: center;
-    gap: 8px;
-    padding: 0 12px 0 0;
-  }
+html.tauri-desktop .desktop-drag-strip {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  height: 52px;
+  background: var(--bg);
+}
 
-  html.tauri-desktop .desktop-traffic-light-space {
-    width: 82px;
-    flex: 0 0 82px;
-    align-self: stretch;
-  }
+html.tauri-desktop
+  :is(
+    .neo-session-pane,
+    .neo-drawer-layer,
+    .neo-scene-list.neo-scene-sheet,
+    .fixed.inset-0,
+    .fixed.top-0.left-0.right-0
+  ) {
+  top: 52px;
+}
 
-  html.tauri-desktop .desktop-standard-switcher {
-    display: none;
-  }
+html.tauri-desktop .fixed.top-4 {
+  top: 68px;
+}
 
-  html.tauri-desktop .desktop-empty-drag-strip {
-    position: absolute;
-    inset: 0 0 auto;
-    z-index: 20;
-    display: block;
-    height: 52px;
-  }
+html.tauri-desktop #root > main {
+  min-height: var(--safe-height);
 }
 
 /*

@@ -45092,6 +45092,72 @@
     {
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "harness": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "providerId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "providerId",
+          "harness"
+        ],
+        "type": "object"
+      },
+      "name": "oxap.settings.save",
+      "resultSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "accepted"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    {
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "questionId": {

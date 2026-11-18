@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { revealAsk } from './queue-ask.mjs';
 
 const [port, run] = process.argv.slice(2);
 assert.notEqual(port, '8399');
@@ -15,7 +16,7 @@ try {
     const input = page.locator('textarea#neo-thought');
     await input.fill('Keep my draft');
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = page.locator('[data-ask="a-api"]:visible');
+    const card = await revealAsk(page, 'a-api');
     await card.getByRole('button', { name: 'Ask actions' }).click();
     await page.getByRole('menuitem', { name: 'Reply', exact: true }).waitFor();
     await page.waitForFunction(() => {

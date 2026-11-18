@@ -105,6 +105,8 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 
 ## Session strategy
 
+Being replaced by `session-reuse.md` (proposal, 2026-11-17).
+
 Approved by the human in question `9bec1d4c-bf30-44d6-84c1-d179fcd0c572`
 (`yes`, "加进设计，默认长周期"). This is a repo-scoped coding setting,
 independent of merge policy; selecting a session never grants permission to merge.

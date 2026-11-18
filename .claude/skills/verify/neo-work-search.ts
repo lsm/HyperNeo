@@ -8,6 +8,7 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { createLocalSocket, readLocalCredential } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 
 const [phase,readyPath,directory]=process.argv.slice(2),run=resolve(directory);
 assert(['before','after','global'].includes(phase));assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
@@ -15,7 +16,7 @@ for(const path of ['workspace','bin','evidence'])mkdirSync(join(run,path),{recur
 writeFileSync(join(run,'bin/gh'),'#!/bin/sh\nexit 1\n',{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('External HTTP disabled');}) as typeof fetch;
 const app=await createDaemonApp({config:{...getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),disableWorktrees:true,disableGoalProcessing:true},verbose:false});assert.notEqual(app.server.port,8399);
-const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
+const hub=new MessageHub({defaultSessionId:'global'}),transport=new WebSocketClientTransport({createSocket:createLocalSocket,url:`ws://127.0.0.1:${app.server.port}/ws`});hub.registerTransport(transport);
 let front:ReturnType<typeof Bun.serve>|undefined;
 const evidence:Record<string,unknown>={phase,passed:false,syntheticOnly:true};
 try{
@@ -52,7 +53,7 @@ try{
   if(path==='/__verify-search-failure'){rejectSearch=target.searchParams.get('enabled')==='1';return Response.json({syntheticOnly:true,rejectSearch});}
   if(path==='/__verify-refresh'){if(target.searchParams.get('changed')==='1')store.updateTodo(store.getTodo('report-match-todo')!,{report:`Needle microcipher731 refreshedsigil737 ${++refreshSerial}`},Date.now());await app.messageHub.event('neo.changed',{});return Response.json({syntheticOnly:true});}
   if(path==='/ws'){if(server.upgrade(request,{data:{connectionSessionId:'global',device:await app.authenticateUpgrade(request,'127.0.0.1')}}))return;return new Response('Upgrade failed',{status:500});}
-  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));return await file.exists()?new Response(file):new Response('Not found',{status:404});
+  const file=Bun.file(join(dist,path==='/neo'?'neo/index.html':path));if(!await file.exists())return new Response('Not found',{status:404});return path==='/neo'?new Response(file,{headers:{'Set-Cookie':`hyperneo_device=${readLocalCredential()}; Path=/; HttpOnly; SameSite=Strict`}}):new Response(file);
  },websocket:{...sockets,open(ws){const send=ws.send.bind(ws);ws.send=(raw,...args)=>{const reply=JSON.parse(String(raw));if(pending.delete(reply.requestId))stats.active--;return send(raw,...args);};sockets.open(ws);},message(ws,raw){const call=JSON.parse(String(raw));if(call.type==='REQ'&&call.data?.name==='neo.ask.search')stats.search.push(call.data.input);if(call.type==='REQ'&&call.data?.name==='neo.ask.read'&&(call.data.input?.askId==='old-unloaded'||(/^recent-/.test(call.data.input?.askId)&&Number(call.data.input.askId.slice(7))<=50))){const id=call.data.input.askId;stats.reads[id]=(stats.reads[id]??0)+1;pending.add(call.id);stats.active++;stats.max=Math.max(stats.max,stats.active);}if(rejectSearch&&call.type==='REQ'&&call.data?.name==='neo.ask.search'){ws.send(JSON.stringify({...call,id:crypto.randomUUID(),requestId:call.id,type:'RSP',data:undefined,error:{code:'SYNTHETIC_UNAVAILABLE',message:'Synthetic search unavailable'}}));return;}return sockets.message(ws,raw);}}});assert.notEqual(front.port,8399);
  writeFileSync(readyPath,JSON.stringify({phase,port:front.port,url:`http://127.0.0.1:${front.port}/neo`,run,pid:process.pid,cases},null,2));
  console.log(`Ready for attended browser: http://127.0.0.1:${front.port}/neo`);

@@ -6,7 +6,7 @@ export async function verifyUnloadedWorkSearch(tab, evidence, label) {
   const sheet = ui.getByRole('button', { name: /^Your work/ });
   if (await sheet.count()) await sheet.click();
   await tab.getAXState({ emit: false });
-  await ui.locator('[data-ask="ask-match"]').waitFor({ state: 'visible' });
+  await ui.locator('[data-ask="ask-match"]:visible, [data-human-queue]:visible').first().waitFor({ state: 'visible' });
   const old = ui.locator('[data-ask="old-unloaded"]');
   assert.equal(await old.count(), 0);
   await ui.getByRole('button', { name: 'Search work', exact: true }).click();

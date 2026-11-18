@@ -11,10 +11,11 @@ const bindOapRuntime = (
   query as unknown as {
     createOapRuntime(
       engine: OapEngine,
-      options?: OapEngineOptions,
+      options?: { installed: () => boolean; read: () => Promise<OapEngineOptions> },
       events?: ReturnType<typeof createDaemonInternalEventBus>,
       db?: unknown,
-      messageHub?: unknown
+      messageHub?: unknown,
+      providerRecord?: (providerId: string) => { providerId: string; configJson: string } | null
     ): (session: Session) => OapQueryRuntime;
   }
 ).createOapRuntime;
@@ -34,22 +35,30 @@ function createOapRuntime(
     getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
     saveSDKMessage: mock(async () => true),
   };
-  return bindOapRuntime(engine, options, events, db, { event: mock(() => {}) });
+  return bindOapRuntime(
+    engine,
+    options ? { installed: () => true, read: readOptions } : undefined,
+    events,
+    db,
+    { event: mock(() => {}) },
+    (providerId) => (providerId === codexRecord.providerId ? codexRecord : null)
+  );
 }
 
 const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
-  codexExecutable: '/synthetic/codex',
-  codexHome: '/synthetic/codex-home',
+  hub: { adapters: {}, environment: {} },
 };
+const readOptions = async () => options;
+const codexRecord = { providerId: 'anthropic-codex', configJson: '{"harness":"oxap-codex"}' };
 
 function session(id: string, workspace: string): Session {
   return {
     id,
     workspacePath: workspace,
-    config: { harness: 'oxap-codex' },
+    config: { harness: 'oxap-codex', provider: 'anthropic-codex' },
   } as Session;
 }
 
@@ -64,7 +73,7 @@ function fixture(status?: { directory: string }) {
       const directory = opened.get(id);
       if (directory)
         return {
-          ref: { adapter: 'codex', session_id: id },
+          ref: { adapter: 'anthropic-codex', session_id: id },
           directory,
           link: `codex://threads/native-${id}`,
           status: 'done',
@@ -72,7 +81,7 @@ function fixture(status?: { directory: string }) {
       const prior = recorded.get(id) ?? status?.directory;
       if (prior)
         return {
-          ref: { adapter: 'codex', session_id: id },
+          ref: { adapter: 'anthropic-codex', session_id: id },
           directory: prior,
           held: false,
           state: 'live',
@@ -119,12 +128,22 @@ describe('OAP daemon runtime', () => {
     const [first, second] = await Promise.all([runtime.hub, runtime.hub]);
     expect(first).toBe(second);
     expect(host.createQueryHub).toHaveBeenCalledTimes(1);
-    expect(host.createQueryHub).toHaveBeenCalledWith(host.client);
+    const [client, model] = host.createQueryHub.mock.calls[0] as unknown as [
+      OapHubClient,
+      { adapter: string; id(): string | undefined },
+    ];
+    expect(client).toBe(host.client);
+    expect(model.adapter).toBe('anthropic-codex');
+    bind({
+      ...session('session-a', '/synthetic/workspace'),
+      config: { harness: 'oxap-codex', provider: 'anthropic-codex', model: 'codex-6-luna' },
+    } as Session);
+    expect(model.id()).toBe('gpt-6-luna');
     expect(host.getHub).toHaveBeenCalledTimes(1);
-    expect(host.getHub).toHaveBeenCalledWith(options);
+    expect(host.getHub).toHaveBeenCalledWith(readOptions);
     expect(host.operations.map(({ op }) => op)).toEqual(['work.status', 'open', 'work.status']);
     expect(host.operations[1].parameters).toMatchObject({
-      adapter: 'codex',
+      adapter: 'anthropic-codex',
       directory: '/synthetic/workspace',
       request: {
         protocol: 'open-agent-protocol',
@@ -272,7 +291,7 @@ describe('OAP daemon runtime', () => {
       if (op === 'work.status') {
         if (!created) throw new OapHubRequestError('unknown_session', 'no session');
         return {
-          ref: { adapter: 'codex', session_id: 'session-a' },
+          ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
           directory: '/synthetic/workspace',
           link: 'codex://threads/native-session-a',
           status: 'done',
@@ -431,11 +450,20 @@ describe('OAP daemon runtime', () => {
     await expect(runtime.hub).rejects.toThrow(/open-directory|workspace/i);
   });
 
-  test('refuses a missing configuration or nonabsolute workspace before launching a hub', async () => {
+  test('refuses an uninstalled hub or nonabsolute workspace before launching a hub', async () => {
     const host = fixture();
     await expect(
       createOapRuntime(host.engine)(session('a', '/synthetic/workspace')).hub
-    ).rejects.toThrow(/config/i);
+    ).rejects.toThrow('OXAP hub is not installed');
+    await expect(
+      bindOapRuntime(
+        host.engine,
+        { installed: () => false, read: readOptions },
+        undefined,
+        {},
+        {}
+      )(session('a', '/synthetic/workspace')).hub
+    ).rejects.toThrow('OXAP hub is not installed');
     await expect(
       createOapRuntime(host.engine, options)(session('a', 'relative')).hub
     ).rejects.toThrow(/absolute/i);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { leaveSession, sessionTitle } from './session-pane-web.mjs';
+import { revealAsk } from './queue-ask.mjs';
 
 export async function verifyOpenControls(page, fixture, { theme, touch = false, evidence }) {
   const use = control => touch ? control.tap() : control.click();
@@ -18,7 +19,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   };
   const observed=[];
   for(const source of fixture.sessions) {
-    const card=page.locator(`[data-ask="open-${source.id}"]:visible`);
+    const card=await revealAsk(page, `open-${source.id}`);
     const question=card.locator('[data-question-source] button');
     const todo=card.locator('[data-ask-todo] button[aria-label^="Open "]');
     await question.locator('svg').waitFor();
@@ -38,7 +39,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   }
   const focusedCases=[];
   for(const id of ['retired-focus']) {
-  const retired=page.locator(`[data-ask="${id}"]:visible`);
+  const retired=await revealAsk(page, id);
   const retainedOpen=retired.getByRole('button',{name:'Open session: Local worker',exact:true});
   await retainedOpen.waitFor();
   assert.equal(await retired.locator('[data-ask-focused-session] button').count(),0);
@@ -62,7 +63,7 @@ export async function verifyOpenControls(page, fixture, { theme, touch = false, 
   await retainedOpen.waitFor();
   focusedCases.push({id,navigation:true,allDialog:true,...retiredColors});
   }
-  const local=page.locator('[data-ask="open-local-worker"]:visible');
+  const local=await revealAsk(page, 'open-local-worker');
   for(const control of [local.locator('[data-question-source] button'),local.locator('[data-ask-todo] button[aria-label^="Open "]')]) {
     await use(control);
     const pane=page.locator('.neo-session-pane');

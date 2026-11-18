@@ -6,7 +6,7 @@ import type { OapEngine, OapEngineOptions } from '../../../../src/lib/oap/oap-en
 import { OapHubRequestError, type OapHubClient } from '../../../../src/lib/oap/oap-hub-client.ts';
 import { OapQuery, type OapQueryHub } from '../../../../src/lib/oap/oap-query.ts';
 import type { OapReopenEvents, OapReopenStore } from '../../../../src/lib/oap/oap-reopen.ts';
-import { createOapRuntime } from '../../../../src/lib/oap/oap-runtime.ts';
+import { bindCodexRuntime as createOapRuntime } from '../../../helpers/oxap-codex-runtime.ts';
 import { planMailboxAdmission } from '../../../../src/lib/mailbox/admission-plan.ts';
 import { DEFAULT_MAILBOX_ENTRY_POLICY } from '../../../../src/lib/mailbox/entry.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
@@ -19,8 +19,7 @@ const options: OapEngineOptions = {
   binaryPath: '/synthetic/oapx',
   identity: { version: 'synthetic', sha256: 'a'.repeat(64) },
   stateDirectory: '/synthetic/state',
-  codexExecutable: '/synthetic/codex',
-  codexHome: '/synthetic/home',
+  hub: { adapters: {}, environment: {} },
 };
 
 const recovery = (): Recovery => ({
@@ -42,7 +41,7 @@ function fixture(initial?: Recovery) {
     id: 'session-a',
     workspacePath: '/synthetic/workspace',
     sdkSessionId: 'native-thread-a',
-    config: { harness: 'oxap-codex' },
+    config: { harness: 'oxap-codex', provider: 'anthropic-codex' },
     metadata: { messageCount: 2, ...(initial ? { oapRecovery: initial } : {}) },
   } as TestSession;
   let stored = structuredClone(current);
@@ -55,13 +54,13 @@ function fixture(initial?: Recovery) {
       if (op === 'work.status')
         return held
           ? {
-              ref: { adapter: 'codex', session_id: 'session-a' },
+              ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
               directory: current.workspacePath,
               link: `codex://threads/${nativeId}`,
               status: 'done',
             }
           : {
-              ref: { adapter: 'codex', session_id: 'session-a' },
+              ref: { adapter: 'anthropic-codex', session_id: 'session-a' },
               directory: current.workspacePath,
               held: false,
             };
@@ -547,7 +546,7 @@ describe('OAP recovery claim transport', () => {
         ...base,
         workspacePath: '/synthetic/workspace',
         sdkSessionId: 'native-thread-a',
-        config: { ...base.config, harness: 'oxap-codex' },
+        config: { ...base.config, harness: 'oxap-codex', provider: 'anthropic-codex' },
         metadata: { ...base.metadata, oapRecovery: recovery() },
       };
       await db.createSession(session);

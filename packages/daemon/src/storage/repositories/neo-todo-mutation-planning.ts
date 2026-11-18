@@ -185,11 +185,8 @@ class NeoTodoMutationPlanner {
         'result:outcome'
       )
       .pipe(
-        (plan: Plan, input: Input) =>
-          input.kind === 'done'
-            ? { value: plan }
-            : requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
-        ['outcome', 'input'],
+        (plan: Plan) => requireNeoTodoCardsAnswered(plan, todos.listQuestions(plan.todo.askId)),
+        'outcome',
         'result:outcome'
       )
       .pipe((plan: Plan) => ({ ok: true as const, ...plan }), 'outcome', 'outcome')

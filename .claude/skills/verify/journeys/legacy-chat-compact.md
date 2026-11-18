@@ -21,11 +21,7 @@ cover their previous disclosure behavior. SDK result/step controls are outside
 this rollback and retain their shared control. Do not run the superseded explicit
 more/less helpers as current legacy acceptance checks.
 
-For Neo, stop this isolated run before starting another (mock port 8000 is shared).
-Follow `todo-row-alignment.md` with a fresh run and its seed, then run its `after`
-checks at both widths. Inspect collapsed and expanded PNGs: quiet trailing arrows,
-row alignment, keyboard focus, individual and bulk expansion must remain intact.
-`git diff origin/dev -- packages/web/src/neo packages/web/src/components/ui/ContentDisclosureControl.tsx packages/web/src/components/ui/NativeContentDisclosure.tsx`
+`git diff origin/dev -- packages/web/src/components/ui/ContentDisclosureControl.tsx packages/web/src/components/ui/NativeContentDisclosure.tsx`
 must be empty. Native iOS, real providers and other legacy surfaces are not claimed
 as browser-tested by this journey. Keep doctor, JSON, screenshots and test output
 in the PR. Close the browser and stop only owned runs with stop.sh.

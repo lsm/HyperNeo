@@ -18,7 +18,7 @@ before they save, leaving the stored config byte-identical: an SDK chat moving
 to the OXAP provider, the OXAP chat moving to `anthropic`, `permissionMode:
 plan`, a thinking level through `session.update` and `session.thinking.set`,
 `session.sandbox.switch` on, and `session.coordinator.switch` on. A message produces a visible refusal
-about the incomplete OAP configuration without entering the SDK startup gate
+saying the OXAP hub is not installed, without entering the SDK startup gate
 or tracking an SDK child. A second session injects a synthetic OAP hub into its
 runtime and sends two turns through the daemon; each must persist a text result
 and release the query and queue without cancelling its completed run. It then

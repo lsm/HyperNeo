@@ -71,7 +71,7 @@ function rejected(error: unknown): Rejected {
   return { kind: 'rejected', reason: error instanceof Error ? error.message : String(error) };
 }
 
-const publishArtifact = (superpipe({})('publish-worker-handoff') as PipelineAPI)
+const publishArtifact = (superpipe({})('handoff.publish') as PipelineAPI)
   .input(['caller', 'status', 'name'])
   .pipe(requirePublisher, ['caller', 'status'], 'result:outcome')
   .pipe(publish, ['outcome', 'name'], 'outcome')
@@ -81,7 +81,7 @@ const publishArtifact = (superpipe({})('publish-worker-handoff') as PipelineAPI)
   name: string
 ) => Promise<unknown>;
 
-const readArtifact = (superpipe({})('read-worker-handoff') as PipelineAPI)
+const readArtifact = (superpipe({})('handoff.read') as PipelineAPI)
   .input(['ref', 'caller', 'offset', 'length'])
   .pipe(requireReader, ['ref', 'caller'], 'result:outcome')
   .pipe(read, ['outcome', 'offset', 'length'], 'outcome')

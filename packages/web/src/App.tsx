@@ -31,15 +31,6 @@ export function App() {
   useGlobalShortcuts();
 
   useEffect(() => {
-    const isTauriRuntime = '__TAURI_INTERNALS__' in window || 'isTauri' in window;
-    document.documentElement.classList.toggle('tauri-desktop', isTauriRuntime);
-
-    return () => {
-      document.documentElement.classList.remove('tauri-desktop');
-    };
-  }, []);
-
-  useEffect(() => {
     const initialSessionId = initializeRouter();
     let disposed = false;
     let disposeSelection: (() => void) | undefined;
