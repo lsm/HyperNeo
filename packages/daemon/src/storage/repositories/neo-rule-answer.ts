@@ -4,7 +4,7 @@ import { neoStandingRules } from '@hyperneo/shared/types/settings';
 import { SettingsRepository } from './settings-repository.ts';
 import { planNeoRuleEdit, planNeoRuleSources } from '../../lib/neo/saved-rules.ts';
 import { humanPickedApply } from '../../lib/neo/human-card.ts';
-import { neoChoiceByLetter, type NeoQuestionKind } from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByNumber, type NeoQuestionKind } from '@hyperneo/shared/types/neo-ask';
 
 function readNeoRuleProposal(db: Database, questionId: string) {
   const row = db
@@ -95,7 +95,7 @@ export function readNeoRuleApproval(
     !applied(proposal) ||
     proposal.answered_by !== 'chat' ||
     JSON.stringify(
-      neoChoiceByLetter(words, {
+      neoChoiceByNumber(words, {
         ...proposal,
         kind: proposal.kind as NeoQuestionKind,
         multiple: false,

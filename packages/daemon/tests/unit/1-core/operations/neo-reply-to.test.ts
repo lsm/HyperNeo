@@ -337,7 +337,7 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a letter reply to a removed-prerequisite card applies its decision', async () => {
+  test('a number reply to a removed-prerequisite card applies its decision', async () => {
     const draft = { doneWhen: 'Observed', check: null, instruction: null, named: null };
     const gone = store.addTodo('gone', 'ask', { ...draft, title: 'Gone', dependsOn: [] }, 1);
     store.addTodo('next', 'ask', { ...draft, title: 'Next', dependsOn: ['gone'] }, 1);
@@ -357,12 +357,12 @@ describe('neo.message.send replyTo', () => {
       },
       1
     );
-    await send(crypto.randomUUID(), 'B', { kind: 'question', id: 'removed' });
+    await send(crypto.randomUUID(), '2', { kind: 'question', id: 'removed' });
     expect(store.getQuestion('removed')).toMatchObject({ answer: ['Remove these'] });
     expect(store.getTodo('next')?.state).toBe('removed');
   });
 
-  test('a letter reply to a choice question answers with that option, like a tap', async () => {
+  test('a number reply to a choice question answers with that option, like a tap', async () => {
     const choice = (id: string, multiple: boolean) =>
       store.askQuestion(
         id,
@@ -378,11 +378,11 @@ describe('neo.message.send replyTo', () => {
         1
       );
     const replies: [string, string[]][] = [
-      ['A', ['保留旧的列表布局，只调整间距']],
-      ['选A', ['保留旧的列表布局，只调整间距']],
-      ['B吧', ['Cards']],
-      ['option C', ['Use the compact table everywhere']],
-      ['c.', ['Use the compact table everywhere']],
+      ['1', ['保留旧的列表布局，只调整间距']],
+      ['选一', ['保留旧的列表布局，只调整间距']],
+      ['第二个吧', ['Cards']],
+      ['option 3', ['Use the compact table everywhere']],
+      ['the third one.', ['Use the compact table everywhere']],
     ];
     for (const [index, [words, answer]] of replies.entries()) {
       choice(`c${index}`, false);
@@ -392,18 +392,18 @@ describe('neo.message.send replyTo', () => {
       expect(prompt(id).reference).toBe('Which layout?');
     }
     choice('many', true);
-    await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
+    await send(crypto.randomUUID(), '1、3', { kind: 'question', id: 'many' });
     expect(store.getQuestion('many')?.answer).toEqual([
       '保留旧的列表布局，只调整间距',
       'Use the compact table everywhere',
     ]);
     choice('both', true);
-    await send(crypto.randomUUID(), 'a and b', { kind: 'question', id: 'both' });
+    await send(crypto.randomUUID(), 'one and two', { kind: 'question', id: 'both' });
     expect(store.getQuestion('both')?.answer).toEqual(['保留旧的列表布局，只调整间距', 'Cards']);
     choice('glued', true);
-    await send(crypto.randomUUID(), 'banda', { kind: 'question', id: 'glued' });
-    expect(store.getQuestion('glued')?.answer).toBe('banda');
-    for (const [index, words] of ['A、C', 'bad', 'D', 'a bit of both'].entries()) {
+    await send(crypto.randomUUID(), '第二天出发', { kind: 'question', id: 'glued' });
+    expect(store.getQuestion('glued')?.answer).toBe('第二天出发');
+    for (const [index, words] of ['1、3', 'A', '4', 'a bit of both'].entries()) {
       choice(`raw${index}`, false);
       await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
       expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);

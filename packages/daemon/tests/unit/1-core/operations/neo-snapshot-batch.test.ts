@@ -85,7 +85,7 @@ test('Work snapshots carry complete open questions without per-card reads', asyn
     .run();
   const value = read(await snapshot());
   const entry = value.todoAsks.find((entry) => entry.ask.id === 'ask-18')!;
-  expect(entry.questions).toEqual([{ ...opened, optionLabels: ['A', 'B'] }]);
+  expect(entry.questions).toEqual([{ ...opened, optionLabels: ['1', '2'] }]);
   expect(entry.summary).toMatchObject({ questionCount: 3, openQuestionCount: 1 });
   expect(value.todoAsks.flatMap((entry) => entry.questions)).toHaveLength(1);
   expect(entry.todos.every((todo) => todo.instruction === null && todo.report === null)).toBe(true);

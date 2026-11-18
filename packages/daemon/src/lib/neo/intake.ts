@@ -5,7 +5,7 @@ import type { Session } from '@hyperneo/shared';
 import { isHumanWorkDecision } from './proposal.ts';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { neoChoiceByLetter, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
+import { neoChoiceByNumber, neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPreviewReference } from '@hyperneo/shared/types/neo-preview-context';
@@ -345,7 +345,7 @@ export function recordNeoReplyAnswer(
     !isHumanWorkDecision(reply.question) &&
     reply.ask?.sessionId === sessionId
   ) {
-    const answer = neoChoiceByLetter(words, reply.question) ?? words;
+    const answer = neoChoiceByNumber(words, reply.question) ?? words;
     const now = Date.now();
     store.answerQuestion(
       reply.question,

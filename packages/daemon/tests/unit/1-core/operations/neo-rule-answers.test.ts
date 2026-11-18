@@ -84,7 +84,7 @@ describe('human-approved standing rules', () => {
       {
         sessionId: agent.sessionId,
         requestId: messageId,
-        content: 'A',
+        content: '1',
         replyTo: { kind: 'question', id: questionId },
       },
       human
@@ -159,7 +159,7 @@ describe('human-approved standing rules', () => {
         {
           sessionId: agent.sessionId,
           requestId: messageId,
-          content: 'A',
+          content: '1',
           replyTo: { kind: 'question', id: questionId },
         },
         human
@@ -273,7 +273,7 @@ describe('human-approved standing rules', () => {
               {
                 sessionId: 'neo:10000000-0000-4000-8000-000000000002',
                 requestId: crypto.randomUUID(),
-                content: 'A',
+                content: '1',
                 replyTo: { kind: 'question', id },
               },
               human
@@ -483,7 +483,7 @@ describe('human-approved standing rules', () => {
     const input = {
       sessionId: 'neo:10000000-0000-4000-8000-000000000002',
       requestId,
-      content: 'A',
+      content: '1',
       replyTo: { kind: 'question', id: second },
     };
     const send = () =>

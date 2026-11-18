@@ -345,7 +345,7 @@ describe('projectNeoAskEntries', () => {
     expect(entry.questions).toMatchObject([
       {
         id: 'r1',
-        optionLabels: ['A', 'B'],
+        optionLabels: ['1', '2'],
         textCodes: [
           { code: 'question.removedOneOne', params: { removed: '"Build"', steps: '"Deploy"' } },
         ],

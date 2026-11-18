@@ -224,7 +224,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     recordNeoReplyAnswer(
       { ok: true, requestId: 'input', messageId: 'input', created: true },
       readNeoReply(replyTo, store),
-      { sessionId: 'neo-a', requestId: 'input', content: 'A', replyTo },
+      { sessionId: 'neo-a', requestId: 'input', content: '1', replyTo },
       store,
       'neo-a'
     );

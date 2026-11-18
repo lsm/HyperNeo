@@ -257,7 +257,7 @@ export function projectNeoAskEntries(
         if (question.kind === 'choice' && question.options)
           return {
             ...question,
-            optionLabels: neoOptionLabels(question.options, question.labels),
+            optionLabels: neoOptionLabels(question.options),
             ...neoRemovedPrerequisiteCodes(question, allTodos),
             ...neoDaemonCardCodes(question, allTodos),
           };
