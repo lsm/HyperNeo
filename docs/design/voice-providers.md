@@ -105,18 +105,18 @@ speaking without any change. Nothing else reads that variable.
 
 ## Change plan
 
-Each slice is one PR from `dev` (the repository's default and target branch), about 100
-to 200 production lines, failing tests first.
+Slices 1–4 have merged. Each remaining slice is one PR from `dev` (the repository's
+default and target branch), about 100 to 200 production lines, failing tests first.
 
-1. **Settings shape and keys by host.** The three parts in `VoiceSettings`, the upgrade
+1. **Settings shape and keys by host — merged (#10845).** The three parts in `VoiceSettings`, the upgrade
    mapping, and key lookup by host. No new providers yet; behaviour is unchanged except that the live
    stream is sent a key only when its host matches the key's host.
-2. **Speech from settings.** Text to speech reads the speech part (OpenAI shape, with
+2. **Speech from settings — merged (#10864).** Text to speech reads the speech part (OpenAI shape, with
    key), the environment variable becomes the fallback, the voice list comes from the
    adapter, and the `speech_backend_not_configured` refusal points to the voice settings
    instead of the variable.
-3. **Deepgram recorded voice and Deepgram speech.** Two adapters.
-4. **OpenAI Realtime live voice.** One adapter, with 16 to 24 kHz resampling, and the
+3. **Deepgram recorded voice and Deepgram speech — merged (#10885).** Two adapters.
+4. **OpenAI Realtime live voice — merged (#10887).** One adapter, with 16 to 24 kHz resampling, and the
    end-of-utterance hook in the live relay.
 5. **Keys per host.** Store one key per host (today one key, `voice-transcription`,
    bound to one host in `resolveVoiceKey`, `voice/voice-parts.ts`), look a part's key up by
