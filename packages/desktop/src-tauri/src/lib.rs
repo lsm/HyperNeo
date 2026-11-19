@@ -2,6 +2,7 @@ mod desktop_permissions;
 #[cfg(target_os = "macos")]
 mod desktop_drivers;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -144,19 +145,133 @@ fn kill_sidecar<R: Runtime>(app: &tauri::AppHandle<R>) {
 	}
 }
 
-// A running daemon advertises where it listens in <data-dir>/runtime.json so the
-// desktop app can attach instead of spawning a second daemon onto the same
-// SQLite file (whose PID lock would reject it).
-fn runtime_descriptor_path() -> Option<PathBuf> {
-	let base = match std::env::var("HYPERNEO_DATA_DIR") {
-		Ok(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
-		_ => dirs::home_dir()?.join(".hyperneo"),
-	};
-	Some(base.join("runtime.json"))
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct DesktopSettingsFile {
+	data_dir: Option<PathBuf>,
+	port: Option<u16>,
+	workspace: Option<PathBuf>,
+	daemon_env: BTreeMap<String, String>,
 }
 
-fn read_runtime_descriptor() -> Option<RuntimeDescriptor> {
-	let path = runtime_descriptor_path()?;
+struct DesktopSettings {
+	data_dir: PathBuf,
+	port: u16,
+	workspace: PathBuf,
+	daemon_env: BTreeMap<String, String>,
+}
+
+impl DesktopSettings {
+	fn load() -> Result<Self, Box<dyn std::error::Error>> {
+		let home = dirs::home_dir().ok_or("Could not find home directory")?;
+		let settings_path = dirs::config_dir()
+			.ok_or("Could not find configuration directory")?
+			.join("io.hyperneo.app/settings.json");
+		let file: DesktopSettingsFile = match std::fs::read_to_string(settings_path) {
+			Ok(raw) => serde_json::from_str(&raw)?,
+			Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+				DesktopSettingsFile::default()
+			}
+			Err(error) => return Err(error.into()),
+		};
+		let data_dir = std::env::var_os("HYPERNEO_DATA_DIR")
+			.filter(|value| !value.is_empty())
+			.map(PathBuf::from)
+			.or(file.data_dir)
+			.unwrap_or_else(|| home.join(".hyperneo"));
+		let port = match std::env::var("HYPERNEO_DESKTOP_PORT") {
+			Ok(value) if !value.is_empty() => value.parse()?,
+			_ => file.port.unwrap_or(DAEMON_PORT),
+		};
+		let workspace = std::env::var_os("HYPERNEO_DESKTOP_WORKSPACE")
+			.filter(|value| !value.is_empty())
+			.map(PathBuf::from)
+			.or(file.workspace)
+			.unwrap_or_else(|| home.join(".hyperneo/workspace"));
+		if !data_dir.is_absolute() || !workspace.is_absolute() || port == 0 {
+			return Err("Desktop data directory and workspace must be absolute, and port must be nonzero".into());
+		}
+		Ok(Self {
+			data_dir,
+			port,
+			workspace,
+			daemon_env: file.daemon_env,
+		})
+	}
+
+	fn runtime_descriptor_path(&self) -> PathBuf {
+		self.data_dir.join("runtime.json")
+	}
+
+	fn sidecar_args(&self) -> [String; 4] {
+		[
+			"--port".into(),
+			self.port.to_string(),
+			"--workspace".into(),
+			self.workspace.to_string_lossy().into_owned(),
+		]
+	}
+
+	fn sidecar_env(&self) -> BTreeMap<String, String> {
+		let mut env = self.daemon_env.clone();
+		env.insert(
+			"HYPERNEO_DATA_DIR".into(),
+			self.data_dir.to_string_lossy().into_owned(),
+		);
+		env
+	}
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod startup_config_tests {
+	use super::*;
+
+	#[test]
+	fn attach_uses_configured_data_directory() {
+		if std::env::var_os("HYPERNEO_CONFIG_TEST_CHILD").is_none() {
+			let result = std::process::Command::new(std::env::current_exe().unwrap())
+				.args(["--exact", "startup_config_tests::attach_uses_configured_data_directory"])
+				.env_clear()
+				.env("HYPERNEO_CONFIG_TEST_CHILD", "1")
+				.output()
+				.unwrap();
+			assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+			return;
+		}
+		let home = tempfile::tempdir().unwrap();
+		let settings_dir = home.path().join("Library/Application Support/io.hyperneo.app");
+		std::fs::create_dir_all(&settings_dir).unwrap();
+		let data_dir = home.path().join("custom-data");
+		let workspace = home.path().join("custom-workspace");
+		std::fs::write(
+			settings_dir.join("settings.json"),
+			serde_json::json!({"dataDir": data_dir, "port": 9461, "workspace": workspace, "daemonEnv": {"DESKTOP_TEST_MARKER": "configured"}}).to_string(),
+		)
+		.unwrap();
+		std::env::set_var("HOME", home.path());
+		let settings = DesktopSettings::load().unwrap();
+		assert_eq!(settings.runtime_descriptor_path(), data_dir.join("runtime.json"));
+		std::fs::create_dir_all(&data_dir).unwrap();
+		std::fs::write(data_dir.join("runtime.json"), r#"{"pid":1,"port":9461}"#).unwrap();
+		assert_eq!(read_runtime_descriptor(&settings).unwrap().port, 9461);
+		assert_eq!(daemon_url(settings.port), "http://127.0.0.1:9461");
+		let output = std::process::Command::new("/bin/sh")
+			.args(["-c", "printf '%s\\n' \"$@\" \"$HYPERNEO_DATA_DIR\" \"$DESKTOP_TEST_MARKER\"", "sidecar"])
+			.args(settings.sidecar_args())
+			.envs(settings.sidecar_env())
+			.output()
+			.unwrap();
+		assert!(output.status.success());
+		assert_eq!(String::from_utf8(output.stdout).unwrap(), format!("--port\n9461\n--workspace\n{}\n{}\nconfigured\n", workspace.display(), data_dir.display()));
+		std::env::set_var("HYPERNEO_DESKTOP_PORT", "");
+		assert_eq!(DesktopSettings::load().unwrap().port, 9461);
+		std::fs::write(settings_dir.join("settings.json"), "{").unwrap();
+		assert!(DesktopSettings::load().is_err());
+	}
+}
+
+fn read_runtime_descriptor(settings: &DesktopSettings) -> Option<RuntimeDescriptor> {
+	let path = settings.runtime_descriptor_path();
 	let raw = std::fs::read_to_string(path).ok()?;
 	serde_json::from_str(&raw).ok()
 }
@@ -268,14 +383,17 @@ pub fn run() {
 					.build(),
 			)?;
 
+			let settings = DesktopSettings::load();
 			#[cfg(target_os = "macos")]
-			if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
-				runtime_descriptor_path().and_then(|path| path.parent().map(PathBuf::from)),
-				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
-				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
-				app.state::<SidecarState>().child.clone(),
-			)) {
-				app.manage(control);
+			if let Ok(settings) = &settings {
+				if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
+					Some(settings.data_dir.clone()),
+					std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
+					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+					app.state::<SidecarState>().child.clone(),
+				)) {
+					app.manage(control);
+				}
 			}
 
 			// System tray menu.
@@ -347,13 +465,26 @@ pub fn run() {
 
 			log::info!("Global shortcut registered: Cmd/Ctrl+Shift+K to toggle window");
 
+			let settings = match settings {
+				Ok(settings) => settings,
+				Err(error) => {
+					let window = app.get_webview_window("main").expect("Main window not found");
+					fail_startup(
+						app.handle(),
+						&window,
+						&format!("Invalid desktop startup settings: {error}"),
+						&app.state::<StartupState>(),
+					);
+					return Ok(());
+				}
+			};
+
 			// In release mode the desktop app owns the daemon lifecycle: it first
 			// attaches to a daemon that is already running (advertised in
 			// <data-dir>/runtime.json), and otherwise spawns the bundled sidecar.
-			// The sidecar inherits the default data dir, so attach-first is what
-			// keeps it off a CLI or launchd daemon's SQLite PID lock; a stale or
-			// absent advert leaves the sidecar to fail there, and that failure is
-			// reported in the window rather than hidden.
+			// Attach-first keeps the configured data dir off a running daemon's
+			// SQLite PID lock; a stale or absent advert leaves the sidecar to fail
+			// there, and that failure is reported in the window.
 			// In debug mode the developer runs `make dev` separately and the webview
 			// points straight at devUrl, so there's nothing to spawn.
 			#[cfg(not(debug_assertions))]
@@ -372,7 +503,7 @@ pub fn run() {
 
 					// 1. Prefer a daemon that is already running, so the desktop app
 					// shares one dataset with a CLI or launchd daemon.
-					if let Some(descriptor) = read_runtime_descriptor() {
+					if let Some(descriptor) = read_runtime_descriptor(&settings) {
 						let url = descriptor
 							.url
 							.clone()
@@ -391,18 +522,14 @@ pub fn run() {
 					}
 
 					// 2. Spawn the bundled `hyperneo` sidecar.
-					let workspace = dirs::home_dir()
-						.expect("Could not find home directory")
-						.join(".hyperneo")
-						.join("workspace");
-					let workspace_str = workspace.to_string_lossy().to_string();
-
 					let sidecar_command =
 						match app_handle
 							.shell()
 							.sidecar("hyperneo")
 							.map(|command| {
-								command.args(["--port", "9283", "--workspace", &workspace_str])
+								command
+									.args(settings.sidecar_args())
+									.envs(settings.sidecar_env())
 							}) {
 							Ok(command) => command,
 							Err(error) => {
@@ -499,7 +626,7 @@ pub fn run() {
 					log::info!("HyperNeo desktop app spawned the hyperneo daemon");
 
 					// 3. Wait for the daemon, then move the webview off the splash.
-					let url = daemon_url(DAEMON_PORT);
+					let url = daemon_url(settings.port);
 					if probe_daemon(&client, &url, 30, Duration::from_millis(500)).await {
 						navigate(&window, &url, &startup);
 					} else {
