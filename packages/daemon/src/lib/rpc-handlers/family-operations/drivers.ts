@@ -369,6 +369,7 @@ function claudeCodeAdapters(
     createClaudeCodeAdapter({
       sendInbox: inbox?.send,
       desktopSend: desktop?.send,
+      desktopStatus: desktop?.status,
       desktopRecords: async () =>
         existsSync(CLAUDE_DESKTOP_SESSIONS)
           ? readClaudeDesktopRecords(CLAUDE_DESKTOP_SESSIONS, cache)
