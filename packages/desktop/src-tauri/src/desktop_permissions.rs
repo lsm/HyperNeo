@@ -1,8 +1,8 @@
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopPermissionStatus {
-    accessibility: bool,
-    screen_recording: bool,
+    pub(crate) accessibility: bool,
+    pub(crate) screen_recording: bool,
 }
 
 #[tauri::command]
@@ -48,5 +48,27 @@ mod macos {
             accessibility: unsafe { AXIsProcessTrusted() != 0 },
             screen_recording: screen_recording(),
         }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pane = match permission {
+            "accessibility" => "Privacy_Accessibility",
+            "screenRecording" => "Privacy_ScreenCapture",
+            _ => return Err("Unknown permission".into()),
+        };
+        std::process::Command::new("/usr/bin/open")
+            .arg(format!("x-apple.systempreferences:com.apple.preference.security?{pane}"))
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = permission;
+        Err("Desktop permissions are only available on macOS".into())
     }
 }

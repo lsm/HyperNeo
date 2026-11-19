@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop permissions</title>
+  <style>
+    body { margin: 0; background: #111; color: #f5f5f5; font: 15px -apple-system, sans-serif; }
+    main { max-width: 480px; margin: 60px auto; padding: 0 28px; }
+    h1 { font-size: 25px; margin-bottom: 12px; }
+    p { color: #bbb; line-height: 1.5; }
+    section { border-top: 1px solid #333; padding: 18px 0; }
+    h2 { font-size: 16px; margin: 0 0 6px; }
+    section p { margin: 0 0 12px; }
+    button { border: 1px solid #555; border-radius: 7px; padding: 8px 12px; background: #292929; color: white; cursor: pointer; }
+    button:hover { background: #393939; }
+    #message { min-height: 22px; }
+  </style>
+  <script src="permissions.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Set up desktop control</h1>
+    <p>Allow these permissions in System Settings so workers can see and control your screen when you enable desktop control.</p>
+    <section>
+      <h2>Accessibility</h2>
+      <p id="accessibility-status">Checking…</p>
+      <button id="open-accessibility" type="button">Open Accessibility settings</button>
+    </section>
+    <section>
+      <h2>Screen Recording</h2>
+      <p id="screen-recording-status">Checking…</p>
+      <button id="open-screen-recording" type="button">Open Screen Recording settings</button>
+    </section>
+    <button id="check-again" type="button">Check again</button>
+    <p id="message" role="status"></p>
+  </main>
+</body>
+</html>

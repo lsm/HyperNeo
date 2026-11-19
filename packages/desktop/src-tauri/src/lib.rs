@@ -1,5 +1,7 @@
 mod desktop_permissions;
 #[cfg(target_os = "macos")]
+mod permissions_page;
+#[cfg(target_os = "macos")]
 mod desktop_drivers;
 
 use std::collections::BTreeMap;
@@ -362,7 +364,10 @@ fn fail_startup<R: Runtime>(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let app = tauri::Builder::default()
-		.invoke_handler(tauri::generate_handler![desktop_permissions::desktop_permission_status])
+		.invoke_handler(tauri::generate_handler![
+			desktop_permissions::desktop_permission_status,
+			desktop_permissions::open_desktop_permission_settings
+		])
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_notification::init())
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -384,6 +389,9 @@ pub fn run() {
 			)?;
 
 			let settings = DesktopSettings::load();
+			#[cfg(target_os = "macos")]
+			permissions_page::show_if_needed(app.handle())?;
+
 			#[cfg(target_os = "macos")]
 			if let Ok(settings) = &settings {
 				if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
