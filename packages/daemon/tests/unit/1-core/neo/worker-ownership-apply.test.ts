@@ -3,7 +3,7 @@ import { reviewedWorkerOwnership } from '../../../../src/lib/neo/worker-ownershi
 
 describe('reviewedWorkerOwnership', () => {
   test('only selects reviewed, unclaimed start bindings without protected uses', () => {
-    const ids = ['start', 'weak', 'claimed', 'send', 'adopt', 'bind', 'named', 'released'];
+    const ids = ['start', 'weak', 'claimed', 'live', 'send', 'adopt', 'bind', 'named', 'released'];
     const rows = ids.map((id) => ({
       adapter: 'hyperneo',
       id,
@@ -19,6 +19,7 @@ describe('reviewedWorkerOwnership', () => {
         id,
         verb: ['send', 'adopt', 'bind'].includes(id) ? id : 'start',
         humanNamed: id === 'named',
+        live: id === 'live',
       }));
     const reviewed = ids.map((id) => ({ adapter: 'hyperneo', id }));
     expect(reviewedWorkerOwnership(rows, touches, reviewed)).toEqual({
@@ -26,6 +27,7 @@ describe('reviewedWorkerOwnership', () => {
       skipped: [
         { adapter: 'hyperneo', id: 'weak', reason: 'weak' },
         { adapter: 'hyperneo', id: 'claimed', reason: 'claimed' },
+        { adapter: 'hyperneo', id: 'live', reason: 'live' },
       ],
       invalid: ['send', 'adopt', 'bind', 'named', 'released'].map((id) => ({
         adapter: 'hyperneo',
