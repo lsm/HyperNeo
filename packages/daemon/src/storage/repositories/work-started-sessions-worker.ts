@@ -157,8 +157,10 @@ export function readStartedWork(
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
        FROM (
          SELECT adapter, id FROM work_started_sessions
-         WHERE kind = 'worker'
+         WHERE (?1 IS NULL OR kind = 'worker')
            AND (?5 IS NULL OR (adapter = ?5 AND id = ?6 AND kind = 'worker'))
+         UNION SELECT json_extract(ref, '$.adapter'), json_extract(ref, '$.id') FROM neo_todo_sessions
+         WHERE ?1 IS NULL AND ?5 IS NULL AND ref IS NOT NULL AND json_extract(ref, '$.daemon') IS NULL
        ) worker
        WHERE ?1 IS NULL OR (worker.adapter = ?1
          AND NOT EXISTS (SELECT 1 FROM work_started_sessions marked
