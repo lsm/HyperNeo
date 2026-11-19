@@ -1,3 +1,4 @@
+import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
@@ -95,7 +96,55 @@ export interface HyperneoSessionRow {
   queryFailureError?: string | null;
 }
 
+export async function compactHyperneoWorker(
+  session: Pick<AgentSession, 'getProcessingState' | 'messageQueue' | 'ensureQueryStarted'>,
+  onCompacted: (listener: () => void) => () => void
+): Promise<Result<{ compacted: boolean }>> {
+  const queue = session.messageQueue;
+  const idle = () =>
+    session.getProcessingState().status === 'idle' &&
+    queue.size() === 0 &&
+    !queue.hasOutstandingInternalCompaction();
+  if (!idle()) return reject('busy', 'The HyperNeo session still has work to process.');
+
+  const completed = Promise.withResolvers<Result<{ compacted: boolean }>>();
+  const startup = new AbortController();
+  const id = crypto.randomUUID();
+  let enqueued = false;
+  const unconfirmed = () =>
+    completed.resolve(reject('not_delivered', 'The HyperNeo session did not confirm compaction.'));
+  const unsubscribe = onCompacted(() => {
+    if (enqueued) completed.resolve({ ok: true, value: { compacted: true } });
+  });
+  const timeout = setTimeout(() => {
+    startup.abort();
+    unconfirmed();
+  }, 60_000);
+  try {
+    const enqueue = async () => {
+      if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
+      if (startup.signal.aborted) return;
+      if (!idle()) {
+        completed.resolve(reject('busy', 'The HyperNeo session still has work to process.'));
+        return;
+      }
+      if (!queue.isRunning()) return unconfirmed();
+      enqueued = true;
+      await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
+    };
+    void enqueue().catch(() => {
+      if (!queue.hasOutstandingInternalCompaction()) unconfirmed();
+    });
+    return await completed.promise;
+  } finally {
+    clearTimeout(timeout);
+    unsubscribe();
+    queue.remove(id);
+  }
+}
+
 export interface HyperneoSessionControl {
+  compact?: WorkAdapter['compact'];
   rename?: WorkAdapter['rename'];
   archive?: WorkAdapter['archive'];
   withdraw?: (
@@ -837,6 +886,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'stop',
       ...(deps.sessions.withdraw ? ['withdraw' as const] : []),
       ...(deps.sessions.rename ? ['rename' as const] : []),
+      ...(deps.sessions.compact ? ['compact' as const] : []),
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>
@@ -871,6 +921,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       : undefined,
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
+    compact: deps.sessions.compact,
     archive: async (ref, admit) => {
       const check = () => {
         const found = requireHyperneoSession(ref, deps);

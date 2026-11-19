@@ -1261,8 +1261,8 @@ export class AgentSession
     return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
   }
 
-  async ensureQueryStarted(): Promise<void> {
-    await this.lifecycleManager.ensureQueryStarted();
+  async ensureQueryStarted(signal?: AbortSignal): Promise<void> {
+    await this.lifecycleManager.ensureQueryStarted(signal);
   }
 
   async startQueryAndEnqueue(

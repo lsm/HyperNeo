@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import {
@@ -73,6 +74,11 @@ function setup() {
     createdAt: 1,
   });
   const archived: unknown[] = [];
+  const compacted: string[] = [];
+  let compact: WorkAdapter['compact'] = async (ref) => {
+    compacted.push(ref.id);
+    return { ok: true, value: { compacted: true } };
+  };
   const notices: string[] = [];
   let archive: (caller: OperationCaller) => unknown = () => ({
     ok: true,
@@ -123,6 +129,7 @@ function setup() {
     store,
     sessions,
     invoke,
+    workerCompact: () => compact,
     packs: () => [],
     tell: async (_ask, _todo, note) => {
       notices.push(note);
@@ -164,6 +171,10 @@ function setup() {
     finishTodo,
     refresh,
     archived,
+    compacted,
+    setCompact: (next: WorkAdapter['compact']) => {
+      compact = next;
+    },
     notices,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
@@ -679,6 +690,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(kept(h)).toEqual([]);
+      expect(h.compacted).toEqual([]);
     } finally {
       h.db.close();
     }
@@ -697,6 +709,224 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('compacts a kept worker once per free period', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id]);
+
+      const next = h.add(started);
+      await h.finishTodo(next);
+      h.db
+        .prepare('UPDATE neo_todos SET finished_at = ? WHERE id = ?')
+        .run(Date.now() + 1, next.id);
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id, worker.id]);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('backs off after an unconfirmed compaction and then retries the kept worker', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const attempts: string[] = [];
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      const runRelease = (now: number) =>
+        releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          () => {},
+          now,
+          undefined,
+          () => async (target) => {
+            attempts.push(target.id);
+            return attempts.length > 1
+              ? { ok: true, value: { compacted: true } }
+              : { ok: false, reason: 'not_delivered', detail: 'Compaction was not confirmed.' };
+          }
+        );
+
+      await runRelease(Date.now());
+      await runRelease(Date.now());
+      expect(attempts).toEqual([ref.id]);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+
+      const later = Date.now() + 5 * 60_000;
+      await runRelease(later);
+      await runRelease(later);
+      expect(attempts).toEqual([ref.id, ref.id]);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('skips busy and unavailable workers without using the compaction attempt budget', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const warnings: string[] = [];
+    const attempts = [false, 'busy', 'not_open', 'not_found', 'unreachable', true] as const;
+    let index = 0;
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      for (const _attempt of attempts) {
+        await releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          (message) => warnings.push(message),
+          Date.now(),
+          undefined,
+          () => async () => {
+            const outcome = attempts[index++];
+            return typeof outcome === 'boolean'
+              ? { ok: true, value: { compacted: outcome } }
+              : { ok: false, reason: outcome, detail: 'Synthetic skip' };
+          }
+        );
+      }
+      expect(index).toBe(attempts.length);
+      expect(warnings).toEqual([]);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeGreaterThan(0);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('caps failed attempts until the worker finishes another todo', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      const runRelease = (now: number) =>
+        releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          (message, error) => {
+            warnings.push(message);
+            errors.push((error as Error).message);
+          },
+          now,
+          undefined,
+          () => async () => ({
+            ok: false,
+            reason: 'not_delivered',
+            detail: 'Synthetic compaction refusal',
+          })
+        );
+
+      for (let sweep = 0; sweep < 5; sweep++) await runRelease(Date.now() + sweep * 6 * 60_000);
+      expect(warnings).toHaveLength(3);
+      expect(warnings[2]).toContain('3/3');
+      expect(errors[2]).toBe('not_delivered: Synthetic compaction refusal');
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.failure?.count).toBe(3);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
+
+      const next = h.add(started);
+      await h.finishTodo(next);
+      await runRelease(Date.now());
+      expect(warnings).toHaveLength(4);
+      expect(warnings[3]).toContain('1/3');
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('honors an exhausted retry budget already stored in the database', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      const todo = h.add(started);
+      await h.finishTodo(todo);
+      const at = Date.now();
+      await h.sessions.write('recordCompactionFailure', todo.id, ref, {
+        count: 3,
+        attemptedAt: at,
+        retryAt: at,
+      });
+      await h.refresh();
+      expect(h.compacted).toEqual([]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('returns from the release sweep while a kept worker is still compacting', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const pending = Promise.withResolvers<{ ok: true; value: { compacted: boolean } }>();
+    const startedCompaction: string[] = [];
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      h.setCompact((target) => {
+        startedCompaction.push(target.id);
+        return pending.promise;
+      });
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      await h.refresh();
+      expect(startedCompaction).toEqual([ref.id]);
+      expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
+      expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();
+    } finally {
+      pending.resolve({ ok: true, value: { compacted: false } });
+      h.db.close();
+    }
+  });
+
+  test('releases workers whose adapter cannot compact', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCompact(undefined);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(kept(h)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('skips a worker claimed during the release sweep', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      h.setOnStatus(() => {
+        h.setOnStatus(() => {});
+        h.sessions.recordRef(h.add(started).id, worker);
+      });
+      await h.refresh();
+      expect(h.compacted).toEqual([]);
+      expect(h.archived).toEqual([]);
     } finally {
       h.db.close();
     }

@@ -32,7 +32,7 @@ export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-r
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { gitWorktreeProject } from './worktree-project.ts';
-import { type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
+import { compactCodexThread, type CodexAppServer, CodexRequestError } from './codex-app-server.ts';
 import { type CodexSendGate, steerCodexDesktopTurn } from './codex-desktop-handoff.ts';
 import { selectCodexConfiguration } from './codex-start-configuration.ts';
 import { workExecutionLocation } from './execution-location.ts';
@@ -1431,6 +1431,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       'status',
       'turns',
       'stop',
+      'compact',
       'archive',
     ],
     find: async (query) =>
@@ -1477,6 +1478,23 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
     turns: (ref, cursor, limit) => runCodexTurns(ref, cursor, limit, deps),
     stop: (ref) => runCodexStop(ref, deps),
+    compact: async (ref) => {
+      const found = requireCodexThread(ref, deps);
+      if ('reason' in found) return found.reason;
+      const open = requireOpenCodexThread(found.value);
+      if ('reason' in open) return open.reason;
+      if (await readActiveCodexTurn(open.value.thread.rolloutPath))
+        return reject('busy', 'The Codex thread still has a live turn.');
+      return withCodexAppServer(deps, async (server) => {
+        try {
+          return (await compactCodexThread(server, ref.id))
+            ? { ok: true, value: { compacted: true } }
+            : reject('not_delivered', 'The Codex app-server did not confirm compaction.');
+        } catch (error) {
+          return reject('not_delivered', error instanceof Error ? error.message : String(error));
+        }
+      });
+    },
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
       if ('reason' in found) return found.reason;

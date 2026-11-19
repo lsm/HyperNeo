@@ -1224,6 +1224,46 @@ describe('codex-desktop adapter status and send', () => {
     expect(desktop).not.toHaveBeenCalled();
   });
 
+  test.each(['thread/compacted', 'item/completed'])(
+    'compact waits for the idle thread confirmation via %s',
+    async (method) => {
+      let notify: (message: { method: string; params: unknown }) => void = () => {};
+      const unsubscribe = vi.fn();
+      const call = vi.fn(async (request: string) => {
+        if (request === 'thread/resume') return {};
+        notify({ method, params: { threadId: 'busy', item: { type: 'contextCompaction' } } });
+        notify({
+          method: 'item/completed',
+          params: { threadId: 'idle', item: { type: 'agentMessage' } },
+        });
+        notify({ method, params: { threadId: 'idle', item: { type: 'contextCompaction' } } });
+        return {};
+      });
+      const connect = vi.fn(
+        async (): Promise<CodexAppServer> => ({
+          call,
+          close: () => {},
+          onNotification: (listener) => {
+            notify = (message) => listener({ jsonrpc: '2.0', ...message });
+            return unsubscribe;
+          },
+        })
+      );
+      const driver = adapter(0, '', connect);
+      expect(driver.capabilities).toContain('compact');
+      expect(await driver.compact!(ref('busy'), user)).toMatchObject({ ok: false, reason: 'busy' });
+      expect(connect).not.toHaveBeenCalled();
+      expect(await driver.compact!(ref('idle'), user)).toEqual({
+        ok: true,
+        value: { compacted: true },
+      });
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(call).toHaveBeenNthCalledWith(1, 'thread/resume', { threadId: 'idle' });
+      expect(call).toHaveBeenNthCalledWith(2, 'thread/compact/start', { threadId: 'idle' });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    }
+  );
+
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
     const calls: unknown[] = [];
     const server: () => Promise<CodexAppServer> = async () => ({
