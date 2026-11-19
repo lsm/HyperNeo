@@ -69,8 +69,8 @@ try {
   assert.equal(value.candidates[1].evidence.strength, 'inferred, weak');
   assert.deepEqual(applied, { accepted: true, applied: [ref('created')], skipped: [{ ...ref('changed'), reason: 'claimed' }, { ...ref('claimed'), reason: 'claimed' }, { ...ref('live'), reason: 'live' }, { ...ref('live-todo'), reason: 'live' }, { ...ref('live-doing'), reason: 'live' }] });
   assert.equal((again as {accepted: boolean}).accepted, false);
-  const after = raw.prepare('SELECT id, role FROM work_started_sessions ORDER BY id').all() as { id: string; role: string | null }[];
-  assert.deepEqual(after.filter(row => row.role === 'worker').map(row => row.id), ['created']);
+  const after = raw.prepare('SELECT id, kind FROM work_started_sessions ORDER BY id').all() as { id: string; kind: string | null }[];
+  assert.deepEqual(after.filter(row => row.kind === 'worker').map(row => row.id), ['created']);
   assert.equal(before.length, after.length);
   writeFileSync(join(run, 'evidence/worker-ownership.json'), JSON.stringify({ list, refused, empty, mismatch, invalid, applied, again, after }, null, 2));
   console.log(`PASS candidates=${value.candidates.length} applied=1 repeated=refused protected=10`);

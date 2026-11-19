@@ -282,7 +282,8 @@ export function createWorkCleanupRuntime(context: FamilyOperationContext) {
               neoTodoSessionWrites,
               'fenceWorkerRelease',
               ref,
-              Date.now()
+              Date.now(),
+              'work folder cleanup'
             );
             return result === 'not_started_by_us' ? result : result === 'fenced';
           },
