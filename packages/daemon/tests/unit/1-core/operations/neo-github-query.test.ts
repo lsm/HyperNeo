@@ -115,6 +115,13 @@ describe('pack-owned Neo operation registration', () => {
         },
       ];
       db.updateGlobalSettings({ neo: { packs: ['synthetic-pack'] } });
+      const pack = service.filePacks[0];
+      const invalid = { ...pack.operations![0], pipelineRunner: async () => ({ ok: true }) };
+      service.filePacks = [{ ...pack, operations: [invalid] }];
+      expect(() => createNeoOperations(service)).toThrow(
+        'Invalid pack pipeline runner for verify.pack.echo'
+      );
+      service.filePacks = [pack];
       const registry = createOperationRegistry(createNeoOperations(service));
       expect(registry.get('verify.pack.echo')).toBeDefined();
       const direct = registry.get('verify.pack.echo');
