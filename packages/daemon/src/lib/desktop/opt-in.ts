@@ -27,7 +27,9 @@ export function readDesktopTodos(db: Pick<Database, 'prepare'>, worker?: string)
 export function desktopOptIn(rows: readonly DesktopTodoRow[], worker: string) {
   const own = rows.filter((row) => row.worker === worker && row.active);
   const doing = own.filter((row) => row.doing);
-  const candidates = doing.length ? doing : own;
+  const candidates = doing.length
+    ? doing
+    : own.filter((row) => JSON.parse(row.named ?? '{}').desktopControl === true);
   return candidates.length === 1 && JSON.parse(candidates[0].named ?? '{}').desktopControl === true
     ? candidates[0]
     : null;
