@@ -1,14 +1,10 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { homedir } from 'node:os';
-import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
-import {
-  defineOperation,
-  type OperationCaller,
-  type OperationDefinition,
-} from '../../../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import { getDataDir } from '../../../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from '../../../artifacts/file-contracts.ts';
 import { boundPrSummaryReader } from '../../../artifacts/pr-summary.ts';
@@ -103,7 +99,7 @@ export function createCodingPrFileOperation(
       ['outcome', 'input', 'caller'],
       'outcome'
     )
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<unknown>;
+    .endAsync('outcome');
   return {
     ...defineOperation({
       name: 'neo.coding.pr.file',
@@ -122,6 +118,6 @@ export function createCodingPrFileOperation(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: capture,
     }),
-    pipelineRunner: capture as unknown as OperationDefinition['execute'] & DescribedRunner,
+    pipelineRunner: capture,
   };
 }
