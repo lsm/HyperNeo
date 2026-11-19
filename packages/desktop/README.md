@@ -15,6 +15,14 @@ would reject it. When neither an advertised daemon nor a freshly spawned sidecar
 comes up, the shell reports the failure inside the window instead of leaving the
 splash spinning.
 
+Desktop startup settings are read from `io.hyperneo.app/settings.json` in the
+user's platform configuration directory (Application Support on macOS). The
+optional JSON fields are `dataDir`, `port`, `workspace`, and `daemonEnv` (an
+object of additional environment variables). Paths must be absolute. The
+environment variables `HYPERNEO_DATA_DIR`, `HYPERNEO_DESKTOP_PORT`, and
+`HYPERNEO_DESKTOP_WORKSPACE` override their respective settings. If omitted,
+the app retains its default data directory, port 9283, and workspace.
+
 ```
 ┌─────────────────────────────────────┐
 │  Tauri webview                      │
