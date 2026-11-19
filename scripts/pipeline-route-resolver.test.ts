@@ -75,3 +75,30 @@ test('reuses one resolver across multiple operations without leaking resolution 
   expect(resolve('demo.missing')).toEqual({ kind: 'unknown' });
   expect(resolve('demo.first')).toEqual({ kind: 'named', name: 'demo.read' });
 });
+
+test('resolves a literal name passed to a local pipeline factory', () => {
+  const source = `${imports}
+    const make = (label, action) => superpipe({})(label).input('input').pipe(action, 'input', 'output').end('output');
+    defineOperation({ name: 'demo.read', execute: make('demo.read', run) });
+    defineOperation({ name: 'demo.other', execute: make('demo.read', run) });
+  `;
+  const resolve = createLocalPipelineResolver(source);
+  expect(resolve('demo.read')).toEqual({ kind: 'named', name: 'demo.read' });
+  expect(resolve('demo.other')).toEqual({ kind: 'named', name: 'demo.read' });
+});
+
+test.each([
+  ['const make = (label) => superpipe({})(label).end();', 'make(name)'],
+  ['let make = (label) => superpipe({})(label).end();', "make('demo.read')"],
+  ['const make = (label = "demo.read") => superpipe({})(label).end();', 'make()'],
+  [
+    'const make = (label) => { sideEffect(); return superpipe({})(label).end(); };',
+    "make('demo.read')",
+  ],
+  ['const make = (label) => superpipe({})(other).end();', "make('demo.read')"],
+  ['const make = (label) => superpipe({ x: label = "other" })(label).end();', "make('demo.read')"],
+  ['const make = async (label) => superpipe({})(label).end();', "make('demo.read')"],
+])('leaves unproven factory routes unknown through %s', (declarations, execute) => {
+  const source = `${imports} ${declarations} defineOperation({ name: 'demo.read', execute: ${execute} });`;
+  expect(resolveLocalPipeline(source, 'demo.read')).toEqual({ kind: 'unknown' });
+});
