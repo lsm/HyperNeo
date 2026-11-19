@@ -1,7 +1,7 @@
 import { neoToolDescription } from '@hyperneo/prompts';
 import { homedir } from 'node:os';
 import { z } from 'zod';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
@@ -42,13 +42,17 @@ export const createCodingHumanMergeOperation = (
   const run = (superpipe({})('neo.coding.merge.human') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(update, ['input', 'caller'], 'result')
-    .endAsync('result') as typeof update;
-  return defineOperation({
-    name: 'neo.coding.merge.human',
-    description: neoToolDescription('neo.coding.merge.human'),
-    inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
-    resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: run,
-  });
+    .endAsync('result');
+  const description: DescribedRunner = run;
+  return {
+    ...defineOperation({
+      name: 'neo.coding.merge.human',
+      description: neoToolDescription('neo.coding.merge.human'),
+      inputSchema: z.object({ url: z.string().url(), enabled: z.boolean() }).strict(),
+      resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: run,
+    }),
+    pipelineRunner: description,
+  };
 };
