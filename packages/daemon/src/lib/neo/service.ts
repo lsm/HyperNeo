@@ -148,7 +148,7 @@ import { findNeoSessionNotice } from './session-track.ts';
 import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
-import { resolveSpeechPart } from '../voice/voice-parts.ts';
+import { resolveSpeechPart, savedVoiceKeys } from '../voice/voice-parts.ts';
 
 const MODEL_CHANGE_SOURCES = new Set([
   'model-switch',
@@ -331,20 +331,7 @@ export class NeoService {
       },
       () => this.db.getGlobalSettings().neo?.front?.enabled === true,
       () => resolveSpeechPart(this.db.getGlobalSettings().voice, voiceCredentialManager()),
-      async () => {
-        const manager = voiceCredentialManager();
-        const ids = await manager.listCredentialProviderIds();
-        const credentials = await Promise.all(
-          ids
-            .filter((id) => id === 'voice-transcription' || id.startsWith('voice-transcription:'))
-            .map((id) => manager.getCredentials(id))
-        );
-        const inline = this.db.getGlobalSettings().voice?.apiKey;
-        return [
-          inline,
-          ...credentials.map((item) => (item?.type === 'api_key' ? item.apiKey : undefined)),
-        ].filter((key): key is string => !!key);
-      }
+      () => savedVoiceKeys(this.db.getGlobalSettings().voice, voiceCredentialManager())
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
