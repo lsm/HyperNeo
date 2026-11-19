@@ -48,6 +48,7 @@ describe('coding PR complete-file attachment', () => {
   test('only the context owner Neo can look up the PR', async () => {
     const f = setup();
     try {
+      expect(f.op.pipelineRunner.pipeline.name).toBe(f.op.name);
       for (const caller of [
         { ...neo, sessionId: 'other' },
         { source: 'rpc' as const, principal: 'local' as const },

@@ -99,22 +99,25 @@ export function createCodingPrFileOperation(
       ['outcome', 'input', 'caller'],
       'outcome'
     )
-    .endAsync('outcome') as (input: Input, caller: OperationCaller) => Promise<unknown>;
-  return defineOperation({
-    name: 'neo.coding.pr.file',
-    description: neoToolDescription('neo.coding.pr.file'),
-    inputSchema,
-    resultSchema: z.union([
-      ArtifactRefusalSchema,
-      z.strictObject({
-        accepted: z.literal(false),
-        reason: z.literal('size_limit'),
-        actualBytes: z.number().int().nonnegative(),
-        limitBytes: z.number().int().positive(),
-      }),
-      z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
-    ]),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: capture,
-  });
+    .endAsync('outcome');
+  return {
+    ...defineOperation({
+      name: 'neo.coding.pr.file',
+      description: neoToolDescription('neo.coding.pr.file'),
+      inputSchema,
+      resultSchema: z.union([
+        ArtifactRefusalSchema,
+        z.strictObject({
+          accepted: z.literal(false),
+          reason: z.literal('size_limit'),
+          actualBytes: z.number().int().nonnegative(),
+          limitBytes: z.number().int().positive(),
+        }),
+        z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
+      ]),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: capture,
+    }),
+    pipelineRunner: capture,
+  };
 }
