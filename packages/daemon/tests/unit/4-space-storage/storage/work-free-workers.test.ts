@@ -274,6 +274,7 @@ describe('retired session strategy migration', () => {
     db.exec(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
       VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1),
       ('coding', 'repo', 'example/repo', 'sessionStrategy', '"per_task"', 'human', 1),
+      ('coding', 'project', 'orphan', 'sessionStrategy', '"long_lived"', 'human', 1),
       ('coding', 'global', '', 'watchedRepos', '[]', 'human', 1),
       ('core', 'project', 'project', 'sessionReuse', '"per_todo"', 'human', 1),
       ('other', 'global', '', 'sessionStrategy', '"other"', 'human', 1);
