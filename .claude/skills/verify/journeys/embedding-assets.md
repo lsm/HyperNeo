@@ -1,6 +1,6 @@
 # Missing embedding assets recover for this platform
 
-Use the shared in-process setup in SKILL.md, with pinned Bun 1.4.2 and
+Use the shared in-process setup in SKILL.md, with pinned Bun 1.4.4 and
 `PROOF=.claude/skills/verify/embedding-assets.ts`. No provider, model API mock or
 GUI is needed; this journey downloads public embedding assets. Use a fresh
 synthetic HOME/data directory on each supported test machine, never a live DB

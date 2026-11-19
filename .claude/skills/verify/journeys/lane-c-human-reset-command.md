@@ -3,7 +3,7 @@
 The wrapper supplies disposable HOME, data, credentials-free environment and ephemeral
 listeners, then saves evidence and removes temporary daemon data. Reuse dependencies; no
 live daemon, real key file, busy port, port 8399 or external network is involved. Record
-actual versions: local Bun 1.4.3 is not proof of the pinned Bun 1.4.2 native runtime.
+actual versions: local Bun 1.4.3 is not proof of the pinned Bun 1.4.4 native runtime.
 
 This construction registers a data-only reset command. Its input is one numeric
 time; its receipt contains only reset/conversation IDs, time and cleared device

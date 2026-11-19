@@ -1,6 +1,6 @@
 # Task and inactivity operation pipeline names
 
-Run on base and changed tree with Bun 1.4.2:
+Run on base and changed tree with Bun 1.4.4:
 
 ```bash
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" .claude/skills/verify/task-inactivity-pipeline-names.ts verify

@@ -1,7 +1,7 @@
 # Pipeline ratchet
 
 The user surface is the CI quality command. Run from the checkout root after
-`bun install --frozen-lockfile`, with Bun 1.4.2:
+`bun install --frozen-lockfile`, with Bun 1.4.4:
 
 ```bash
 bun run check:pipeline-ratchet

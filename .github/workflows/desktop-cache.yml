@@ -34,7 +34,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Install Linux desktop dependencies

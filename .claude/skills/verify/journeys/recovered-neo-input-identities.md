@@ -1,7 +1,7 @@
 # Recovered Neo inputs use fresh SDK attempt identities (#8068)
 
 Follow SKILL.md isolation and run `spent-admission-restart.sh "$RUN"` with a fresh
-absolute run directory. Use the release-pinned Bun 1.4.2 first on PATH. The helper
+absolute run directory. Use the release-pinned Bun 1.4.4 first on PATH. The helper
 owns loopback model and daemon listeners, fresh HOME/data/DB, a GitHub stub and
 synthetic DB-only provider credentials. It uses the installed Claude Agent SDK,
 not the unit SDK mock. No real keys, daemon/DB, GUI or port 8399 are involved.

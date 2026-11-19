@@ -3,7 +3,7 @@
 The wrapper supplies fresh HOME/data and removes all temporary daemon data after saving
 JSON. No credentials, provider request, live daemon, busy listener or port 8399 is used.
 Record actual runtime versions; local Bun 1.4.3 is a deviation from the repository's
-pinned 1.4.2 and does not establish pinned native-daemon coverage.
+pinned 1.4.4 and does not establish pinned native-daemon coverage.
 
 Commit the failing real WebSocket regression before the fix. Self-check the guard
 against cached reads and new updates, then deny active-device and revocation SQL

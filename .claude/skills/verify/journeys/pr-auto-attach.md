@@ -1,6 +1,6 @@
 # An unclaimed worker PR attaches to its sole active coding todo
 
-Run the shared isolated daemon wrapper with Bun 1.4.2:
+Run the shared isolated daemon wrapper with Bun 1.4.4:
 
 ```sh
 TMPDIR=/private/tmp bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/pr-auto-attach.ts
