@@ -10,7 +10,7 @@ import { invokeOperation } from '../../../packages/daemon/src/lib/operations/inv
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drivers/work-operations.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
-import { readReusableWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { readReusableWorkers } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 

@@ -10,7 +10,11 @@ import {
   type FollowThroughIncident,
 } from '../../lib/work-queue/follow-through.ts';
 import { gatewayFor } from '../db-gateway/db-gateway.ts';
-import { markWorkUnusable, readStartedWork, recordStartedWork } from '../work-started-sessions.ts';
+import {
+  markWorkUnusable,
+  readStartedWork,
+  recordStartedWork,
+} from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';

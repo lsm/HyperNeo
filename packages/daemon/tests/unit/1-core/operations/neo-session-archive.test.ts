@@ -8,7 +8,7 @@ import {
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { ArchiveAdmission, WorkRef } from '../../../../src/lib/drivers/types.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { NEO_WORK_CLOSED_DONE_PREFIX } from '@hyperneo/shared/types/neo-snapshot';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -128,10 +128,11 @@ describe('neo.session.archive', () => {
   test("checks Neo's started-session record through the database gateway", async () => {
     const raw = db.getDatabase();
     const prepare = raw.prepare.bind(raw);
+    const inGateway = () => (raw as unknown as { inTransaction: boolean }).inTransaction;
     const direct: string[] = [];
     const watched = async (call: () => Promise<unknown>) => {
       raw.prepare = ((sql: string) => {
-        if (sql.includes('work_started_sessions') && !raw.inTransaction) direct.push(sql);
+        if (sql.includes('work_started_sessions') && !inGateway()) direct.push(sql);
         return prepare(sql);
       }) as typeof raw.prepare;
       try {

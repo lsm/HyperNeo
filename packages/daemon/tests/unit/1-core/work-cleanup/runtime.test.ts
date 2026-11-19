@@ -25,7 +25,7 @@ import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { workCleanupReads } from '../../../../src/storage/repositories/work-cleanup-worker.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { recordWorkerStarted } from '../../../../src/storage/work-started-sessions.ts';
+import { recordWorkerStarted } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 
 test.each(
   process.env.HYPERNEO_CLEANUP_FIXTURE
