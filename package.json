@@ -57,7 +57,7 @@
     "check:get-database": "bun scripts/check-get-database.ts",
     "test:get-database": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-get-database.test.ts",
     "check:pipeline-ratchet": "bun scripts/check-pipeline-ratchet.ts",
-    "test:pipeline-ratchet": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-pipeline-ratchet.test.ts",
+    "test:pipeline-ratchet": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-pipeline-ratchet.test.ts scripts/pipeline-route-resolver.test.ts",
     "test:test-types": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-test-types.test.ts",
     "api:surface": "bun scripts/api-surface.ts",
     "check:api-surface": "bun scripts/api-surface.ts --check",
