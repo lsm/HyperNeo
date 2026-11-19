@@ -110,7 +110,9 @@ voice up by answering Neo:
   `set_at` — one card commit. That rejects a URL row left over from an earlier
   selection (the away-and-back case: the provider card re-records its row alone, so the
   pair no longer matches), rows written outside a card, and a provider change that
-  lands between the operation's first row read and its transaction. After a refusal the
+  lands between the operation's first row read and its transaction. The check runs only
+  when the provider row says `custom`, like its two sibling URL refusals; a leftover URL
+  row from an old custom choice never blocks OpenAI or Deepgram. After a refusal the
   path is the same: a fresh URL card, which re-displays the literal URL.
   Two refusals guard what a blind write would break. A legacy inline key
   (`voice.apiKey`) is bound to whatever host the current recorded endpoint has
@@ -140,8 +142,8 @@ voice up by answering Neo:
   whole `voice` object, so preserved fields must come from that read — and writes, all
   inside one immediate transaction, publishing the update only after the commit. The
   write goes through the same path the web form uses — the settings manager into
-  `storage/repositories/global-settings-writes.ts` (`apply`) and
-  `storage/repositories/settings-repository.ts`, whose write notifies `global_settings`
+  `packages/daemon/src/storage/repositories/global-settings-writes.ts` (`apply`) and
+  `packages/daemon/src/storage/repositories/settings-repository.ts`, whose write notifies `global_settings`
   subscribers as part of the write — so the apply must not bypass it, or the form would
   miss the notification it refreshes from.
   A web edit that commits while the apply runs either lands first, and the transaction
@@ -233,7 +235,7 @@ default and target branch), near the repository's 300-line budget, failing tests
      (`neo/packs/delegation/pack.ts`, 89 lines) for the pack, the three test operations
      (`voice/test-operations.ts`, 164 lines) as the floor for one operation with row
      reads, five refusals and a transactional write, and the settings repository's merge
-     path (`storage/repositories/settings-repository.ts`, 146 lines) for the write. That
+     path (`packages/daemon/src/storage/repositories/settings-repository.ts`, 146 lines) for the write. That
      is over the 300-line budget; if it lands there in code, the slice splits in two —
      the pack and its two cards first, the preset table and the operation second — with
      no other change to this design.
@@ -249,7 +251,7 @@ default and target branch), near the repository's 300-line budget, failing tests
        with no input — read the recorded rows (refuse `provider_not_chosen` without the
        provider), map the preset (refuse `base_url_required` and `base_url_insecure` for
        `custom`), then one immediate transaction that re-reads the preference rows and
-       the settings, re-runs the `base_url_stale` pair check, the
+       the settings, re-runs the `base_url_stale` pair check (for `custom` only), the
        `legacy_key_host_changed` and `settings_changed_since_answer` guards and the
        part-equality check against those reads, merges the parts and writes through the
        settings gateway, publishing the update after the commit; registered in
