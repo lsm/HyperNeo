@@ -71,29 +71,32 @@ voice up by answering Neo:
   `pack.preferences.ask`: **OpenAI**, **Deepgram** or **My own server**. A choice, applied by
   `voice.applyProviderPreset` (next paragraph), fills all three parts with that preset
   (addresses, models, default voice); "My own server" uses OpenAI-shaped recorded and speech
-  addresses plus a Deepgram-shaped live address on one base URL, and is followed by a reply
-  card for that base URL. Changing it later is the same card again.
+  addresses plus a Deepgram-shaped live address on one base URL, and is followed by a second
+  card for that base URL (below). Changing it later is the same card again.
 - **Applying a card answer.** A preference card answer commits only preference rows, in the
   card machinery's own transaction (`applyPackPreferenceAnswer`,
-  `storage/repositories/pack-preference-answer.ts`); that transaction cannot also write the
-  voice settings, and the storage layer must not know voice. So applying the preset is a
-  second, explicit step: after the answer commits, Neo invokes one daemon operation,
-  `voice.applyProviderPreset`, which reads the recorded `voice:provider` preference row — a
-  row only a human answer writes (`set_by: 'human'`), never Neo — maps it through the preset
-  table, and writes the three parts to the same settings store the web form uses, preserving
-  every other voice field (keys, `enabled`, mode, TLS switches) and publishing the settings
-  update so the form reflects it. The operation takes no provider argument: Neo cannot apply
-  anything the human did not choose. For "My own server" it takes the base URL from the
-  human's reply and refuses it unless it is a valid `https://` URL.
+  `packages/daemon/src/storage/repositories/pack-preference-answer.ts`); that transaction
+  cannot also write the voice settings, and the storage layer must not know voice. So
+  applying the preset is a second, explicit step: after the answer commits, Neo invokes one
+  daemon operation, `voice.applyProviderPreset`, which takes no arguments. It reads the
+  recorded preference rows — written only by a human answer (`set_by: 'human'`), never by
+  Neo — maps the provider through the preset table, and writes the three parts to the same
+  settings store the web form uses, preserving every other voice field (keys, `enabled`,
+  mode, TLS switches) and publishing the settings update so the form reflects it. Neo
+  cannot apply anything the human did not see and approve on a card.
+  For "My own server" the base URL is itself a pack preference (`baseUrl`, text), asked on
+  its own proposal card that shows the literal URL the human typed in chat before it is
+  saved; the apply reads that row like the provider row and refuses a URL that is not a
+  valid `https://` address. No URL travels as an operation argument.
   The two commits are deliberately not atomic. The human's answer lands first and is never
   rolled back; the apply is idempotent and re-runnable, and a failure leaves the previous
-  settings working with the choice recorded. The preference row never gates what the daemon
-  dials — the settings are the only source of truth for behavior; the row only stops the
+  settings working with the choice recorded. The preference rows never gate what the daemon
+  dials — the settings are the only source of truth for behavior; a row only stops the
   question being asked again and labels the choice on later cards.
   Layering: the preset table and the operation live with the other voice mechanics in
   `lib/voice/`, registered beside the three test operations; a minimal always-enabled
-  `voice` pack (one brief, one preference declaration, instructions — the shape of the
-  delegation pack) owns the human-facing question, because only a pack can declare a
+  `voice` pack (one brief, the two preference declarations, instructions — the shape of the
+  delegation pack) owns the human-facing questions, because only a pack can declare a
   preference. Core (`lib/neo/`) is unchanged.
 - **Keys: the existing key field, never a card.** A key is a secret and must not pass
   through chat, a card answer or Neo's context. It is entered in the web voice settings'
@@ -147,26 +150,25 @@ default and target branch), about 100 to 200 production lines, failing tests fir
    its own host, keep a legacy key as today, and one password field per needed host in the
    web voice settings, plus fields for each part's provider and the speech address, model
    and voice.
-6. **Tests Neo can run.** `voice.testLive` and `voice.testSpeech` as above, and
-   `voice.testConnection` registered as an operation too (today it is only a web RPC,
-   `rpc-handlers/voice-handlers.ts`), so Neo can call all three. Saving a key wakes Neo with
-   an attention event naming the host (never the key), so it runs them.
+6. **Tests Neo can run — merged (#11177).** All three test operations, and saving a key
+   wakes Neo with an attention event naming the host (never the key).
 7. **The provider card, re-cut.** The choice is recorded by the existing card machinery and
    applied by the operation above; core is unchanged.
    - **7a. The provider preference and its apply operation** — about 250 production lines,
      160 test lines:
-     - `neo/packs/voice/pack.ts` (new): always-enabled pack with one global enum preference
-       `provider` (`openai`, `deepgram`, `custom`) and instructions telling Neo to ask once
-       when voice first matters, apply the answer, then run the three tests and name the
-       hosts still missing a key; registered in `neo/packs/index.ts` and constructed with the
-       database in `neo/packs/runtime.ts`, like the delegation pack.
+     - `neo/packs/voice/pack.ts` (new): always-enabled pack with two global preferences —
+       the enum `provider` (`openai`, `deepgram`, `custom`) and the text `baseUrl` for
+       `custom` — and instructions telling Neo to ask once when voice first matters, apply
+       the answer, then run the three tests and name the hosts still missing a key;
+       registered in `neo/packs/index.ts` and constructed with the database in
+       `neo/packs/runtime.ts`, like the delegation pack.
      - `voice/provider-presets.ts` (new): the preset table — the three parts for each
        provider, `custom` composed from one base URL.
-     - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline —
-       read the recorded preference (refuse `provider_not_chosen` without it), map the preset
-       (refuse `base_url_required` and `base_url_insecure` for `custom`), write the parts
-       through the settings manager, publish the update; registered in
-       `rpc-handlers/index.ts` beside the test operations, name added to
+     - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline
+       with no input — read the recorded rows (refuse `provider_not_chosen` without the
+       provider), map the preset (refuse `base_url_required` and `base_url_insecure` for
+       `custom`), write the parts through the settings manager, publish the update;
+       registered in `rpc-handlers/index.ts` beside the test operations, name added to
        `shared/src/types/operation-names/neo.ts`, tool description in
        `packages/prompts/src/neo/tools/voice.applyProviderPreset.md`.
    - **7b. On-request part, model and voice changes:** `voice.setPart` on the same write
@@ -191,9 +193,10 @@ daemon integration cases for cards and Neo messages:
 | A fake server whose 401 body echoes the key | the test returns `[key]` in its place |
 | `voice.applyProviderPreset` with no recorded `voice:provider` row | refused `provider_not_chosen`; settings unchanged |
 | OpenAI chosen on the card, then applied | the three parts are filled from the preset, every key field (`apiKey`, `hasApiKey`, `apiKeyEndpoint`) and stored host key is unchanged, and the web form shows the new parts |
-| "My own server" with an `http://` base URL | refused `base_url_insecure`; parts unchanged |
+| "My own server", the base URL card answered, then applied with the URL row deleted before the apply | refused `base_url_required`; parts unchanged |
+| A recorded `baseUrl` that is not a valid `https://` URL | refused `base_url_insecure`; parts unchanged |
 | The apply run twice | the same settings; nothing duplicated anywhere |
-| Parts edited on the web after an apply | behavior follows the settings; the preference row is not consulted |
+| Parts edited on the web after an apply | behavior follows the settings; the preference rows are not consulted |
 
 ## Out of scope
 
