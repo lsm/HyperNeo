@@ -6,7 +6,6 @@ import { defineOperation, type OperationCaller } from '../../../operations/regis
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import type { NeoPackOperation } from '../../pack-contract.ts';
 
 export const createCodingHumanMergeOperation = (
   spawn: SpawnFn = spawnProcess,
@@ -43,7 +42,7 @@ export const createCodingHumanMergeOperation = (
   const run = (superpipe({})('neo.coding.merge.human') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(update, ['input', 'caller'], 'result')
-    .endAsync('result') as typeof update;
+    .endAsync('result');
   return {
     ...defineOperation({
       name: 'neo.coding.merge.human',
@@ -53,6 +52,6 @@ export const createCodingHumanMergeOperation = (
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: run,
     }),
-    pipelineRunner: run as unknown as NonNullable<NeoPackOperation['pipelineRunner']>,
+    pipelineRunner: run,
   };
 };
