@@ -24,12 +24,14 @@ Open a PR: `release/vX.Y.Z` → `dev`
 
 ### 2) Tag after merge to `dev`
 
-Once the version bump PR is merged to `dev`:
+Once the version bump PR is merged to `dev`, choose the exact commit whose
+latest `dev` push CI run has completed successfully. A missing, running, failed,
+or cancelled run blocks publication. Run the release proofs for that same commit:
 
 ```bash
 git checkout dev
 git pull --ff-only origin dev
-git tag vX.Y.Z
+git tag vX.Y.Z <verified-commit>
 git push origin vX.Y.Z
 ```
 
@@ -37,7 +39,8 @@ git push origin vX.Y.Z
 
 - Tagged commit is on `dev`
 - Package versions match the tag version
-- CI passed for the tagged commit
+- The latest `dev` push CI run for the tagged commit succeeded
+- The tag's ratchets pass against the tagged commit's first parent
 
 ### 3) GitHub Release
 
@@ -130,4 +133,4 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
 
 ## Dry runs (workflow_dispatch)
 
-`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. The dev-branch and CI-wait gates apply to tag pushes only. With `publish` on, the dispatch must run from the commit carrying the `v<version>` tag (the release-retry path); dispatching publish from an untagged ref fails in `wait-for-ci` so an existing release's assets can never be clobbered from a branch build.
+`release.yml` can also be dispatched manually from any ref. With the `publish` input off (the default) it runs the build, desktop, and package jobs only — the way to validate new targets (e.g. the Windows legs) without touching npm or creating a GitHub Release. With `publish` on, the dispatch must run from the commit carrying the `v<version>` tag and requires the same successful exact-commit dev CI and tag ratchets as a tag push. Dispatching publish from an untagged ref fails so an existing release's assets cannot be clobbered from a branch build.
