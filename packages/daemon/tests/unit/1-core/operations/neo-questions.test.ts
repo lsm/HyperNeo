@@ -99,6 +99,32 @@ function setup(
 }
 
 describe('neo.question operations', () => {
+  test('creates a desktop control card for a todo and named app', async () => {
+    const h = setup();
+    try {
+      const receipt = await h.call('neo.question.ask', {
+        askId: 'ask',
+        todoId: h.fix.id,
+        kind: 'desktop_control',
+        app: 'Calendar',
+        text: 'Allow desktop control for Calendar?',
+      });
+      expect(receipt).toMatchObject({
+        ok: true,
+        question: { kind: 'desktop_control', todoId: h.fix.id, app: 'Calendar' },
+      });
+      if (!receipt.ok) throw new Error(receipt.reason);
+      expect(h.store.getQuestion(receipt.question.id)).toMatchObject({
+        kind: 'desktop_control',
+        todoId: h.fix.id,
+        app: 'Calendar',
+      });
+      expect(h.store.getTodo(h.fix.id)?.named?.desktopControl).not.toBe(true);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('retains an owner-verified HTML handoff and refuses altered references without replacing the card', async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'question-handoff-')));
     const previous = process.env.HYPERNEO_DATA_DIR;
