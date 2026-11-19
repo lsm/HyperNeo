@@ -68,6 +68,7 @@ describe('readFreeWorkers', () => {
     const trusted = readStartedWork(db).map((worker) => worker.id);
     expect(trusted).toContain('legacy-worker');
     expect(trusted).not.toContain('legacy-claim');
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['legacy-worker']);
     expect(sessions.fenceWorkerRelease({ adapter: 'claude-desktop', id: 'legacy-claim' }, 3)).toBe(
       'not_started_by_us'
     );
