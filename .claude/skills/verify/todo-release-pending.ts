@@ -59,6 +59,10 @@ try {
   service.todoSessions.create(todo.id, { verb: 'start', adapter: 'hyperneo' });
   db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id: worker }), todo.id);
   service.todos.updateTodo(todo, { state: 'done', finishedAt: start }, start);
+  const sibling = service.todos.addTodo('pending-sibling', ask.id, { title: 'Same worker', doneWhen: 'Done', instruction: null, named: null, check: null }, start);
+  service.todoSessions.create(sibling.id, { verb: 'start', adapter: 'hyperneo' });
+  db.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'hyperneo', id: worker }), sibling.id);
+  service.todos.updateTodo(sibling, { state: 'done', finishedAt: start }, start);
   const reusedRef = { adapter: 'hyperneo', id: reused };
   recordWorkerStarted(db, reusedRef);
   const initial = service.todos.addTodo('initial-todo', ask.id, { title: 'Initial', doneWhen: 'Done', instruction: null, named: null, check: null }, start);

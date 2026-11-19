@@ -10,7 +10,10 @@ import {
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import {
+  neoWorkerKey,
+  type NeoTodoSessionRepository,
+} from '../../storage/repositories/neo-todo-session-repository.ts';
 
 type FinishedWorker = ReturnType<NeoTodoSessionRepository['finishedWorkers']>[number];
 type Invoke = (
@@ -178,7 +181,11 @@ export async function releaseNeoTodoWorkers(
   now = Date.now(),
   wake?: (row: FinishedWorker, reason: string) => Promise<void>
 ): Promise<void> {
-  for (const row of await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS)) {
+  const rows = await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS);
+  const notified = new Set(
+    rows.filter((row) => row.pending?.notified).map((row) => neoWorkerKey(row.ref))
+  );
+  for (const row of rows) {
     try {
       const outcome = await releaseWorker(row, invoke, sessions).catch(
         (error: unknown): Pending => ({
@@ -198,9 +205,14 @@ export async function releaseNeoTodoWorkers(
         if (row.pending?.code !== pending.code)
           warn(`Finished todo ${row.todoId} worker archive pending`, pending.reason);
         await sessions.write('recordReleasePending', row.todoId, pending);
-        if (wake && !pending.notified && now - pending.since >= 24 * 60 * 60 * 1000) {
+        if (
+          wake &&
+          !notified.has(neoWorkerKey(row.ref)) &&
+          now - pending.since >= 24 * 60 * 60 * 1000
+        ) {
           try {
             await wake(row, pending.reason);
+            notified.add(neoWorkerKey(row.ref));
             await sessions.write('recordReleasePending', row.todoId, {
               ...pending,
               notified: true,

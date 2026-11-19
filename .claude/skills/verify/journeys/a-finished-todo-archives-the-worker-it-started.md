@@ -31,14 +31,14 @@ EVIDENCE=/absolute/fresh/evidence-directory
 bash .claude/skills/verify/proof-run.sh "$EVIDENCE" \
   .claude/skills/verify/todo-release-pending.ts verify && \
 count=$(grep -c 'worker archive pending.*unpushed commits' "$EVIDENCE/proof.log") && \
-printf 'unpushed warning count: %s\n' "$count" && test "$count" -eq 1
+printf 'unpushed warning count: %s\n' "$count" && test "$count" -eq 2
 ```
 
 The helper advances a synthetic clock through repeated daemon refreshes and
-checks that a dirty worker produces one Neo mailbox event after 24 hours,
+checks that two finished todos on a dirty worker produce one Neo mailbox event after 24 hours,
 with the todo, worker and reason. It also checks that a daemon-started worker
 stays active without a release fact while a follow-up is live, and is archived
 after the follow-up finishes. Retain `todo-release-pending.json` and `proof.log`.
 The helper changes the unpushed commit count between sweeps; the log must have
-one warning for that pending reason. It also injects a synthetic database write
+one warning per todo for that pending reason. It also injects a synthetic database write
 failure and checks that the next worker is settled in the same refresh.
