@@ -423,6 +423,7 @@ describe('Neo MVP', () => {
       'neo.peer.list',
       'neo.peer.remove',
       'neo.peer.send',
+      'voice.testSpeech',
       'neo.speech.say',
       'neo.project.forget',
       'neo.projects.reorganize',
