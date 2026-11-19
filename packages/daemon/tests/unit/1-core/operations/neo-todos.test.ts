@@ -82,7 +82,7 @@ describe('neo.todo operations', () => {
       () => [],
       () => null
     ).find((op) => op.name === 'neo.todo.add')!;
-    expect(add.description).toContain('core.evidence {path: absolute file path}');
+    expect(add.description).toContain('core.evidence {path: absolute path}');
     expect(add.description).not.toContain('core.evidence {artifact:');
   });
   test('adds todos in order and marks the ones added after work started', async () => {
@@ -127,7 +127,7 @@ describe('neo.todo operations', () => {
     ).find((op) => op.name === 'neo.todo.add')!;
     expect(add.description).toContain('project and a number');
     expect(add.description).not.toContain('neo-ios dev 1');
-    expect(add.description).toContain('never a task title');
+    expect(add.description).toContain('never for a task');
   });
 
   test('accepts only start and send targets', () => {

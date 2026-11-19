@@ -10,8 +10,9 @@ NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-quest
 
 Set VERIFY_BROWSER to an installed Chromium executable if needed. The helper
 records the assembled Neo prompt and the daemon's actual neo.question.ask tool
-description. It seeds only a synthetic ask, creates the shared bullet/table
-fixtures through neo.question.ask RPC, then drives the real built /neo page at
+description. It seeds a synthetic ask per fixture, creates the shared bullet/table
+fixtures through neo.question.ask RPC, then pairs a browser to the isolated
+daemon and drives the real built /neo page at
 1280 and 390 pixels. Each card must show its short title, emphasized choice,
 expected bullets or table rows, and usable answer buttons within the viewport.
 It waits for the mobile sheet to settle. Both screenshots precede any answer.

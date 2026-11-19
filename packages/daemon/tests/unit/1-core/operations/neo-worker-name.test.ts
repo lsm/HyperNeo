@@ -262,7 +262,7 @@ test.each([undefined, 'Codex remote 7'])(
       expect(reads).toBe(0);
       expect(lane).not.toHaveBeenCalled();
       expect(world.operations.find((op) => op.name === 'neo.todo.add')!.description).toContain(
-        'local starts'
+        "New local workers default to '<engine> <project> <n>'"
       );
     } finally {
       lane.mockRestore();
