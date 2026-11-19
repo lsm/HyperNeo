@@ -39,7 +39,7 @@ all edits on infrastructure failure. A stale proposal (a missing removal) record
 remain accepted and notify Neo; `neo.rule.applyAnswer` returns the typed refusal.
 The real helper exercises a stale chat `1` through `neo.message.send`, and the
 unit journey checks notification and retry idempotency for stale removals.
-A synthetic pre-upgrade letter approval is replayed as a historical receipt and cannot authorize a different edit. Only synthetic fixtures are used. This journey
+Synthetic pre-upgrade letter approvals authorize their exact unapplied edit or replay an applied receipt, and cannot authorize a different edit. Only synthetic fixtures are used. This journey
 proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.

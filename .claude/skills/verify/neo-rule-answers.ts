@@ -133,6 +133,18 @@ for (const phase of ['initial', 'restart']) {
     }
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRuleSources?.[edit.add[0]], { sessionId: 'neo:10000000-0000-4000-8000-000000000002', messageId: approvalId });
     if (phase === 'initial') {
+      const pendingRule = 'Previously approved synthetic rule.';
+      const pending = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'historical-pending', add: [pendingRule] });
+      assert.equal(pending.ok, true);
+      const pendingMessage = crypto.randomUUID();
+      const pendingSession = 'neo:10000000-0000-4000-8000-000000000002';
+      await rpc('neo.message.send', { sessionId: pendingSession, requestId: pendingMessage, content: 'A', replyTo: { kind: 'question', id: pending.questionId } });
+      app.db.getSDKMessageRepo().markDeliveryConsumedByUuid(pendingSession, pendingMessage);
+      app.db.getDatabase().prepare('UPDATE neo_questions SET answer=? WHERE id=?').run(JSON.stringify(['Apply these rule changes']), pending.questionId);
+      assert.equal((await mcp('neo.rule.save', { add: ['Different rule.'], messageId: pendingMessage })).ok, false);
+      assert.equal((await mcp('neo.rule.save', { add: [pendingRule], messageId: pendingMessage })).ok, true, 'unapplied historical approval authorizes its exact edit');
+      assert((await rpc('neo.snapshot', {})).standingRules.includes(pendingRule), 'approved rule is saved');
+      await rpc('neo.rule.save', { remove: [pendingRule] });
       const historical = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'historical-letter', add: ['Historical synthetic rule.'] });
       assert.equal(historical.ok, true);
       const messageId = crypto.randomUUID();
