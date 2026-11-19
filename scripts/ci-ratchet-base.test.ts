@@ -64,7 +64,8 @@ test('a tag uses its own baseline even when dev has since lowered it', () => {
     JSON.stringify({ missing: 0, misnamed: 0, dynamic: 0, unreadable: 1 })
   );
   git('add', '.');
-  const tag = git('commit-tree', git('write-tree'), '-m', 'tag');
+  const parent = git('commit-tree', git('write-tree'), '-m', 'parent');
+  const tag = git('commit-tree', git('write-tree'), '-p', parent, '-m', 'tag');
   git('update-ref', 'HEAD', tag);
   git('tag', 'v0.60.1', tag);
   put('packages/demo/src/main.ts', 'export const value = 1;\n');
@@ -85,8 +86,20 @@ test('a tag uses its own baseline even when dev has since lowered it', () => {
   expect(againstDev.exitCode).toBe(1);
   expect(againstDev.stderr.toString()).toContain('baseline may only decrease');
   const selected = selectBase('push', 'refs/tags/v0.60.1', tag, '0'.repeat(40));
-  expect(selected).toMatchObject({ code: 0, value: tag });
+  expect(selected).toMatchObject({ code: 0, value: `${tag}^1` });
   expect(check(selected.value).exitCode).toBe(0);
+
+  put(
+    'scripts/pipeline-ratchet-baseline.json',
+    JSON.stringify({ missing: 0, misnamed: 0, dynamic: 0, unreadable: 2 })
+  );
+  git('add', '.');
+  const raised = git('commit-tree', git('write-tree'), '-p', tag, '-m', 'raised baseline');
+  git('read-tree', '--reset', '-u', raised);
+  const raisedBase = selectBase('push', 'refs/tags/v0.60.2', raised, '0'.repeat(40));
+  const raisedCheck = check(raisedBase.value);
+  expect(raisedCheck.exitCode).toBe(1);
+  expect(raisedCheck.stderr.toString()).toContain('baseline may only decrease');
 });
 
 test('dev pushes compare with their previous tip and PRs compare with dev', () => {
