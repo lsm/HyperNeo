@@ -1,5 +1,4 @@
 import {
-  DESKTOP_CONTROL_QUESTION_ID,
   desktopControlPreference,
   planDesktopControl,
 } from '../../lib/neo/desktop-control-preference.ts';
@@ -774,14 +773,8 @@ export class NeoAskTodoRepository {
     return desktopControlPreference(this.db);
   }
 
-  desktopControlQuestionState(): { id: string; state: string } | null {
-    const key = DESKTOP_CONTROL_QUESTION_ID;
-    return this.db
-      .prepare(`SELECT q.id, q.state FROM neo_pack_preference_proposals p
-        JOIN neo_questions q ON q.id = p.question_id
-        WHERE p.request_id = ? OR substr(p.request_id, 1, length(?)) = ?
-        ORDER BY p.rowid DESC LIMIT 1`)
-      .get(key, `${key}:`, `${key}:`) as { id: string; state: string } | null;
+  desktopControlQuestionState(): Promise<{ id: string; state: string } | null> {
+    return gatewayFor(this.db).call(neoAskInputReads, 'desktopControlQuestionState');
   }
 
   addTodo(...args: Parameters<NeoTodoInsert>): NeoTodo {
@@ -1372,7 +1365,6 @@ export const neoTodoReads = defineRepositoryOp(
     'doneTodoFacts',
     'askFacts',
     'desktopControlPreference',
-    'desktopControlQuestionState',
     'listCheckable',
     'listAwaitingNeoDecision',
     'listOpenAsks',

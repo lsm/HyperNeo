@@ -33,7 +33,7 @@ export async function preflightTodoDesktopControl(
     role === 'neo' ? planDesktopControl(true, await store.read('desktopControlPreference')) : 'off';
   if (decision === 'allow') return { value: true };
   if (decision === 'ask' && askDesktopControl) {
-    const question = desktopControlQuestion(askId, await store.read('desktopControlQuestionState'));
+    const question = desktopControlQuestion(askId, await store.desktopControlQuestionState());
     if (question) await askDesktopControl(question);
   }
   return {
