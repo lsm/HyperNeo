@@ -111,12 +111,15 @@ try {
   const ambiguous = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(ambiguous.reason, 'todo_ambiguous');
   assert.equal(ambiguous.dispatched, false);
+  sql.prepare("UPDATE neo_todos SET state='todo', named='{}' WHERE id='older'").run();
+  const blockedWithQueued = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(blockedWithQueued.dispatched, true, JSON.stringify(blockedWithQueued));
   sql.prepare("UPDATE neo_todos SET state='done' WHERE id='older'").run();
   sql.prepare("UPDATE neo_todos SET state='done' WHERE id='todo'").run();
   const finished = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(finished.reason, 'todo_not_active');
   assert.equal(finished.dispatched, false);
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 6);
   writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, blockedAllowed: true, pendingAllowed: true, currentPreferred: true, ambiguousRefused: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
   console.log(`desktop.call journey PASS host_requests=5 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
