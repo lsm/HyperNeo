@@ -2,12 +2,19 @@ import { readFileSync } from 'node:fs';
 
 const verdicts = ['named', 'missing', 'misnamed', 'dynamic', 'unreadable'] as const;
 type Verdict = (typeof verdicts)[number];
-type Route = { file: string; name: string; verdict: Verdict };
-type Change = { file: string; name: string; before: Verdict | null; after: Verdict | null };
+type Route = { file: string; name: string; variant?: string; verdict: Verdict };
+type Change = {
+  file: string;
+  name: string;
+  variant?: string;
+  before: Verdict | null;
+  after: Verdict | null;
+};
 
 function routes(input: unknown): Map<string, Route> {
   if (!Array.isArray(input)) throw new Error('Expected an array of pipeline verdicts');
   const result = new Map<string, Route>();
+  const families = new Map<string, boolean>();
   for (const item of input) {
     if (
       !item ||
@@ -16,12 +23,22 @@ function routes(input: unknown): Map<string, Route> {
       !item.file ||
       typeof item.name !== 'string' ||
       !item.name ||
+      (item.variant !== undefined && (typeof item.variant !== 'string' || !item.variant)) ||
       !verdicts.includes(item.verdict)
     )
       throw new Error('Invalid pipeline verdict');
-    const route: Route = { file: item.file, name: item.name, verdict: item.verdict };
-    const key = JSON.stringify([route.file, route.name]);
+    const route: Route = {
+      file: item.file,
+      name: item.name,
+      ...(item.variant === undefined ? {} : { variant: item.variant }),
+      verdict: item.verdict,
+    };
+    const key = JSON.stringify([route.file, route.name, route.variant ?? null]);
     if (result.has(key)) throw new Error(`Duplicate pipeline verdict: ${route.name}`);
+    const family = JSON.stringify([route.file, route.name]);
+    if (families.has(family) && (families.get(family) || route.variant === undefined))
+      throw new Error(`Ambiguous pipeline verdict variants: ${route.name}`);
+    families.set(family, route.variant === undefined);
     result.set(key, route);
   }
   return result;
@@ -40,11 +57,17 @@ export function comparePipelineVerdicts(baseInput: unknown, headInput: unknown) 
     changes.push({
       file: route.file,
       name: route.name,
+      ...(route.variant === undefined ? {} : { variant: route.variant }),
       before: oldRoute?.verdict ?? null,
       after: newRoute?.verdict ?? null,
     });
   }
-  changes.sort((a, b) => a.file.localeCompare(b.file) || a.name.localeCompare(b.name));
+  changes.sort(
+    (a, b) =>
+      a.file.localeCompare(b.file) ||
+      a.name.localeCompare(b.name) ||
+      (a.variant ?? '').localeCompare(b.variant ?? '')
+  );
   return { changes, regressions: changes.filter((change) => change.after !== 'named') };
 }
 
