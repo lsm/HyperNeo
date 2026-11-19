@@ -1,7 +1,7 @@
 ---
 id: neo.todo.add
 ---
-Add a titled todo to an open ask you own. Use the root's human-input routing and add every step with after: [] for parallel work, or the exact prerequisite IDs. Missing after is refused. A chain waits on the previous step.
+Add a titled todo to an open ask you own. Use the root's human-input routing and add every step with after: [] for parallel work, or the exact prerequisite IDs. Missing after is refused. A chain waits on the previous step. For multi-PR work, use one PR per todo with a merge check, chain the todos with after, and pin each opened PR with neo.todo.edit addUrls.
 
 Pass check {pack,kind,params}. The daemon generates doneWhen; do not supply it. Use an installed pack's supported check, such as core.human_confirmed {questionId}, core.evidence {path: absolute path}, or core.deployed {repo,sha: full commit}. Coding uses pr_merged, pr_approved, issue_closed, deployed or human_confirmed. Checks can refuse or return bookkeeping records. Prefer the existing live todo if a PR is already tracked; duplicate claims are recorded without blocking.
 
