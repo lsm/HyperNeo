@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { subscribeToStructuredLogs } from '../../../../src/lib/logger.ts';
 import { createNeoSessionArchiveOperation } from '../../../../src/lib/neo/session-archive-operation.ts';
 import {
   createOperationRegistry,
@@ -70,6 +71,23 @@ describe('neo.session.archive', () => {
     remote.invoke.mockClear();
   });
   afterEach(() => db.close());
+
+  test('reports the completed archive when its provenance write fails', async () => {
+    recordWorkerStarted(db.getDatabase(), ref);
+    db.getDatabase().exec(`CREATE TRIGGER archive_record_fault BEFORE UPDATE OF archived_at ON work_started_sessions
+      BEGIN SELECT RAISE(FAIL, 'synthetic provenance failure'); END`);
+    const messages: string[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => messages.push(event.message));
+    try {
+      expect(await invoke(ref, caller)).toMatchObject({
+        value: { ok: true, value: { archived: true } },
+      });
+      expect(archive).toHaveBeenCalledTimes(1);
+      expect(messages).toContain('Archive provenance write failed');
+    } finally {
+      unsubscribe();
+    }
+  });
 
   test('preserves the retained worktree receipt through operation validation', async () => {
     const worktree = {
