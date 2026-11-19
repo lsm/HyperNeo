@@ -4,6 +4,13 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.60.3] - 2026-11-19
+
+- Let people allow desktop control from a todo card and wait for app-wide desktop approval (#11168, #11165).
+- Restore the desktop control migration for existing installations (#11273).
+- Improve desktop permission guidance and worker reuse (#11256, #11258, #11260, #11262, #11268).
+- Reuse exact-commit CI for release builds (#11281).
+
 ## [0.60.2] - 2026-11-19
 
 - Connect Microsoft accounts for Outlook mail and calendar, and add Deepgram recorded voice and speech (#11077, #11099, #11103, #11106, #10885).
