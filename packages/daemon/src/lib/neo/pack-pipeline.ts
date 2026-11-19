@@ -1,8 +1,6 @@
 import type { AsyncPipelineRunner } from 'superpipe';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 
-const runners = new WeakMap<OperationDefinition, AsyncPipelineRunner>();
-
 export function retainPackPipeline(
   operation: OperationDefinition,
   runner: AsyncPipelineRunner
@@ -14,6 +12,5 @@ export function retainPackPipeline(
     execute: (input: unknown, caller: OperationCaller) => runner(input, caller),
   };
   Reflect.deleteProperty(retained, 'pipelineRunner');
-  runners.set(retained, runner);
   return retained;
 }
