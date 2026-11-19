@@ -147,6 +147,17 @@ describe('pack settings operations', () => {
       value: { preferences: [watch] },
     });
   });
+  test('retired settings are absent from the Neo prompt and human snapshot', async () => {
+    db.getDatabase()
+      .prepare(`INSERT INTO neo_pack_preferences
+        (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+        VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1)`)
+      .run();
+    expect(service.packPreferences()).toEqual([watch]);
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: { packPreferences: [watch] },
+    });
+  });
   test('the MCP snapshot has no packPreferences', async () => {
     expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
     const snapshot = await invoke(
