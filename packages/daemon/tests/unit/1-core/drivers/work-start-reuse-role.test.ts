@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import {
+  createWorkVerbOperations,
+  StartWorkInputSchema,
+} from '../../../../src/lib/drivers/work-operations';
 import type { WorkAdapter } from '../../../../src/lib/drivers/types';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -126,4 +129,11 @@ describe('work.start reuses only sessions the daemon started', () => {
     expect(await h.start('build')).toBe(worker);
     expect(h.sent).toEqual([worker]);
   });
+});
+
+test('work.start accepts the supported roles and rejects unbounded role names', () => {
+  const input = { adapter: 'claude-desktop', title: 'Work', message: 'Go' };
+  for (const role of ['do', 'review', 'verify', 'check'])
+    expect(StartWorkInputSchema.safeParse({ ...input, role }).success).toBe(true);
+  expect(StartWorkInputSchema.safeParse({ ...input, role: 'custom' }).success).toBe(false);
 });
