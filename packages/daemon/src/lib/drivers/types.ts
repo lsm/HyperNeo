@@ -414,5 +414,6 @@ export interface WorkAdapter {
     ref: WorkRef,
     context: WorkCallContext
   ) => Promise<Result<{ compacted: boolean }>>;
+  readonly cacheUntil?: (ref: WorkRef) => Promise<number | null>;
   readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }

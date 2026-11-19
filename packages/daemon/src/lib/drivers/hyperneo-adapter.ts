@@ -51,6 +51,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
+import { readWorkerLastTurn } from '../../storage/repositories/work-started-sessions-worker.ts';
 
 const OPEN = `status IN ('active', 'paused', 'pending_worktree_choice')`;
 const OWN_SESSIONS = `space_id IS NULL AND room_id IS NULL AND id NOT LIKE 'neo:%' AND type IN ('worker', 'general')`;
@@ -203,6 +204,15 @@ export interface HyperneoLastResult {
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
+
+export function hyperneoCacheUntil(
+  turn: { at: number; oneHourCache: boolean } | null,
+  provider: string | null | undefined
+): number | null {
+  if (!turn) return null;
+  const claude = (provider ?? 'anthropic') === 'anthropic';
+  return turn.at + (claude && !turn.oneHourCache ? 5 * 60_000 : 60 * 60_000);
+}
 
 export function hyperneoWorkStatus(status: string, processing: string | null): WorkStatus {
   if (status === 'archived' || status === 'ended' || processing === 'interrupted') return 'stopped';
@@ -922,6 +932,8 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
     compact: deps.sessions.compact,
+    cacheUntil: async (ref) =>
+      hyperneoCacheUntil(readWorkerLastTurn(deps.db(), ref.id), deps.sessions.provider?.(ref.id)),
     archive: async (ref, admit) => {
       const check = () => {
         const found = requireHyperneoSession(ref, deps);

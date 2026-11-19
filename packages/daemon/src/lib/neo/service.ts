@@ -362,7 +362,7 @@ export class NeoService {
           { source: 'internal', role: 'neo', sessionId: origin }
         ),
       workerNames: () => this.workerNames ?? fallbackWorkerNames,
-      workerCompact: (id) => this.workAdapters?.().find((adapter) => adapter.id === id)?.compact,
+      workerCompact: (id) => this.workAdapters?.().find((adapter) => adapter.id === id),
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),

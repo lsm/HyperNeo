@@ -245,6 +245,36 @@ describe('hyperneo adapter send and status', () => {
     });
   }
 
+  test('reports the prompt cache window from the last main-thread turn', async () => {
+    const assistant = db.prepare(
+      `INSERT INTO sdk_messages (session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
+        VALUES (?, 'assistant', ?, ?, ?)`
+    );
+    const usage = (oneHour: number) =>
+      JSON.stringify({
+        type: 'assistant',
+        message: { usage: { cache_creation: { ephemeral_1h_input_tokens: oneHour } } },
+      });
+    assistant.run('idle', usage(0), '2026-10-04T09:30:00.000Z', null);
+    assistant.run('idle', usage(0), '2026-10-04T10:00:00.000Z', null);
+    assistant.run('idle', usage(900), '2026-10-04T11:00:00.000Z', 'tool-1');
+    assistant.run('busy', usage(900), '2026-10-04T10:00:00.000Z', null);
+    assistant.run(
+      'space',
+      JSON.stringify({ type: 'assistant', message: {} }),
+      '2026-10-04T10:00:00.000Z',
+      null
+    );
+    const at = Date.parse('2026-10-04T10:00:00.000Z');
+    const claude = adapter();
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'idle' })).toBe(at + 5 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'busy' })).toBe(at + 60 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'space' })).toBe(at + 5 * 60_000);
+    expect(await claude.cacheUntil!({ adapter: 'hyperneo', id: 'gone' })).toBeNull();
+    const glm = adapter(undefined, undefined, () => 'glm');
+    expect(await glm.cacheUntil!({ adapter: 'hyperneo', id: 'idle' })).toBe(at + 60 * 60_000);
+  });
+
   test('status preserves the session provider through operation result validation', async () => {
     const driver = adapter(undefined, undefined, () => 'selected-provider');
     const registry = createOperationRegistry(

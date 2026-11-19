@@ -78,6 +78,7 @@ import { type GitCheckout, prepareWorkerFolder, cleanupOwnedWorktree } from './w
 
 const THREADS_PER_PLACE = 20;
 const RECENT_MS = 2 * 60_000;
+const CODEX_CACHE_MS = 30 * 60_000;
 const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
 const QUEUE_TIMEOUT_MS = 30_000;
 const START_RECEIPT_TRIES = 10;
@@ -1494,6 +1495,11 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
           return reject('not_delivered', error instanceof Error ? error.message : String(error));
         }
       });
+    },
+    cacheUntil: async (ref) => {
+      const found = requireCodexThread(ref, deps);
+      const at = 'reason' in found ? 0 : found.value.thread.updatedAt;
+      return at ? at + CODEX_CACHE_MS : null;
     },
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
