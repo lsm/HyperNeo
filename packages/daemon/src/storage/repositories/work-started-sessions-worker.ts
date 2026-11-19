@@ -185,6 +185,17 @@ export function readStartedWork(
     ) as (StartedWorkFacts & Partial<WorkerReuseFacts>)[];
 }
 
+export function readTrustedWorkers(db: BunDatabase, refs: readonly StartedWork[]): Set<string> {
+  const rows = db
+    .prepare(`SELECT DISTINCT own.adapter, own.id FROM json_each(?) AS requested
+    JOIN work_started_sessions AS own
+      ON own.adapter = json_extract(requested.value, '$.adapter')
+      AND own.id = json_extract(requested.value, '$.id')
+    WHERE own.kind = 'worker'`)
+    .all(JSON.stringify(refs)) as StartedWork[];
+  return new Set(rows.map((ref) => JSON.stringify([ref.adapter, ref.id])));
+}
+
 export function readFreeWorkers(db: BunDatabase, adapter: string): Set<string> {
   return new Set(readStartedWork(db, adapter).map((worker) => worker.id));
 }

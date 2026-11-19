@@ -13,6 +13,7 @@ import { gatewayFor } from '../db-gateway/db-gateway.ts';
 import {
   markWorkUnusable,
   readStartedWork,
+  readTrustedWorkers,
   recordStartedWork,
   recordWorkRelease,
 } from './work-started-sessions-worker.ts';
@@ -734,7 +735,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   }[] {
     const match = (column: string, key: string) =>
       `COALESCE(json_extract(o.ref, '$.${key}'), json_extract(o.target, '$.ref.${key}')) ${column} json_extract(s.ref, '$.${key}')`;
-    return (
+    const rows = (
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
@@ -770,14 +771,19 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         releasedBy: string | null;
         pending: string | null;
       }[]
-    ).map((row) => ({
+    ).map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
+    const owned = readTrustedWorkers(
+      this.db,
+      rows.map((row) => row.ref)
+    );
+    return rows.map((row) => ({
       todoId: row.todoId,
       target: JSON.parse(row.target) as NeoDriverTarget,
-      ref: JSON.parse(row.ref) as WorkRef,
+      ref: row.ref,
       shared: row.shared === 1,
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
-      owned: readStartedWork(this.db, null, undefined, JSON.parse(row.ref) as WorkRef).length > 0,
+      owned: owned.has(JSON.stringify([row.ref.adapter, row.ref.id])),
       pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
