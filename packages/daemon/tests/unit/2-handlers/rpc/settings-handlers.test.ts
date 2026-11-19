@@ -805,6 +805,28 @@ describe('Settings RPC Handlers', () => {
       expect(credentialManager.storeApiKey).not.toHaveBeenCalled();
     });
 
+    it('preserves unrelated voice credentials when an exa write fails', async () => {
+      const credentials = createMockCredentialManager();
+      credentials.storeApiKey.mockImplementation(async () => {
+        throw new Error('store failed');
+      });
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentials.manager
+      );
+      await expect(
+        hubData.handlers.get('settings.global.update')!(
+          { updates: { exa: { enabled: true, apiKey: 'synthetic-key' } } },
+          {}
+        )
+      ).rejects.toThrow('store failed');
+      expect(credentials.removeCredentials).not.toHaveBeenCalledWith('voice-transcription');
+    });
+
     it('restores the prior credential when a new key write partially fails', async () => {
       const credentialManager = createMockCredentialManager();
       credentialManager.getCredentials.mockImplementation(async () => ({
