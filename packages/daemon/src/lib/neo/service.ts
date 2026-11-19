@@ -251,6 +251,7 @@ export class NeoService {
       notifyChanged: () => this.notifyChanged(),
     });
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
+    const voiceCredentialManager = () => ProviderCredentialManager.create(db.getDatabase());
     this.speech = new NeoSpeech(
       hub,
       this.runDbOp,
@@ -329,13 +330,9 @@ export class NeoService {
         return conversation && id === frontSessionId(conversation) ? `neo:${conversation}` : id;
       },
       () => this.db.getGlobalSettings().neo?.front?.enabled === true,
-      () =>
-        resolveSpeechPart(
-          this.db.getGlobalSettings().voice,
-          ProviderCredentialManager.create(this.db.getDatabase())
-        ),
+      () => resolveSpeechPart(this.db.getGlobalSettings().voice, voiceCredentialManager()),
       async () => {
-        const manager = ProviderCredentialManager.create(this.db.getDatabase());
+        const manager = voiceCredentialManager();
         const ids = await manager.listCredentialProviderIds();
         const credentials = await Promise.all(
           ids
