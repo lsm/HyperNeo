@@ -126,12 +126,10 @@ jobs:
     if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
 
     steps:
-      # Shallow checkout: nothing in this job walks history except the
-      # space-task handler gate, which diffs HEAD against a fetched base tip
-      # (tree diff — no merge-base walk), so depth 1 suffices.
+      # Tag ratchets compare with the tagged commit's first parent.
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: ${{ github.ref_type == 'tag' && 2 || 1 }}
 
       # Give the handler gate its comparison tip. On pull_request the checkout
       # only fetches refs/pull/N/merge; on workflow_dispatch it only fetches the
@@ -162,6 +160,9 @@ jobs:
 
       - name: Test pipeline ratchet CLI
         run: bun run test:pipeline-ratchet
+
+      - name: Test CI ratchet base
+        run: HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-ratchet-base.test.ts
 
       - name: Test test-type ratchet CLI
         run: bun run test:test-types
@@ -241,8 +242,8 @@ jobs:
       # (index-only), so the shallow checkout is fine.
       - name: Run make check
         env:
-          DB_RATCHET_BASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && github.event.before || 'origin/dev' }}
-        run: make check
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: DB_RATCHET_BASE="$(bash scripts/ci-ratchet-base.sh)" make check
 
       - name: Verify exact version pins
         run: |

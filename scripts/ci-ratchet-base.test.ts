@@ -27,7 +27,7 @@ function selectBase(event: string, ref: string, sha: string, before: string) {
   };
 }
 
-test('a tag uses its own baseline even when dev has since lowered it', () => {
+test('a tag uses its parent baseline even when dev has since lowered it', () => {
   const root = mkdtempSync(join(tmpdir(), 'tag-ratchet-'));
   roots.push(root);
   const put = (path: string, content: string) => {
