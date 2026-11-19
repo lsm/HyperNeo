@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
+import { retainPackPipeline } from '../../pack-pipeline.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
@@ -81,16 +82,16 @@ export function createCodingRetryMergeOperation(
       'result',
       'result'
     )
-    .endAsync('result') as (
-    input: Input,
-    caller: OperationCaller
-  ) => Promise<{ accepted: boolean; reason?: string }>;
-  return defineOperation({
-    name: 'neo.coding.merge.retry',
-    description: neoToolDescription('neo.coding.merge.retry'),
-    inputSchema: Input,
-    resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: retry,
-  });
+    .endAsync('result');
+  return retainPackPipeline(
+    defineOperation({
+      name: 'neo.coding.merge.retry',
+      description: neoToolDescription('neo.coding.merge.retry'),
+      inputSchema: Input,
+      resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: retry,
+    }),
+    retry
+  );
 }
