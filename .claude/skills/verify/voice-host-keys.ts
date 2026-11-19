@@ -93,6 +93,15 @@ try {
     assert.equal((response as { text: string }).text, 'host proof');
   }
   assert.deepEqual(received, ['Bearer synthetic-first', 'Bearer synthetic-second']);
+  await assert.rejects(call('settings.global.update', { updates: { voice: {
+    ...settings, endpoint: endpoints[0], hostKey: { host: new URL(endpoints[0]).host, apiKey: ' ' },
+  } } }), /blank/);
+  const afterBlank = await call('voice.transcribe', {
+    audioBase64: Buffer.from(pcm16Wav(new Uint8Array(3200))).toString('base64'),
+    mimeType: 'audio/wav',
+  });
+  assert.equal((afterBlank as { text: string }).text, 'host proof');
+  assert.equal(received[2], 'Bearer synthetic-second');
   await call('settings.global.update', { updates: { voice: {
     ...settings, endpoint: endpoints[1], hostKey: { host: new URL(endpoints[0]).host },
   } } });
@@ -101,8 +110,8 @@ try {
     audioBase64: Buffer.from(pcm16Wav(new Uint8Array(3200))).toString('base64'),
     mimeType: 'audio/wav',
   });
-  assert.equal(received[2], null);
-  console.log(JSON.stringify({ providerNamespaceReserved: true, settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true, removedHostKeyAbsent: true }));
+  assert.equal(received[3], null);
+  console.log(JSON.stringify({ providerNamespaceReserved: true, settingsRepliesRedacted: true, hostRequests: received.length, correctKeys: true, blankKeyRefused: true, removedHostKeyAbsent: true }));
   }
 } finally {
   socket.close();

@@ -327,6 +327,7 @@ async function prepareGlobalSettingsUpdate(
       }
     });
     const key = hostKey.apiKey?.trim();
+    if (hostKey.apiKey !== undefined && !key) throw new Error('Voice key cannot be blank');
     if (key && !validHost) throw new Error('Voice key host requires a configured secure endpoint');
     const hostUrl = `https://${hostKey.host}`;
     if (!URL.canParse(hostUrl) || new URL(hostUrl).host !== hostKey.host) {
