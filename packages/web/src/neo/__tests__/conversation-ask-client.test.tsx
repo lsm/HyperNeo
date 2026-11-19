@@ -116,6 +116,20 @@ describe('durable conversation ask client', () => {
     });
   });
 
+  it('retains a failed turn reason and its retry link', () => {
+    const failed = {
+      ...ask(),
+      delivery: {
+        state: 'failed',
+        reason: 'Provider refused',
+        supersededBy: '20000000-0000-4000-8000-000000000002',
+      },
+    };
+    expect(presentConversationAskPage(response([failed]), page)).toEqual({
+      value: { state: 'ready', items: [failed], nextAfter: 1 },
+    });
+  });
+
   it('keeps a question or todo reference and drops a malformed one', () => {
     const replied = { ...ask(), replyTo: { kind: 'question', id: 'q1' } };
     const odd = { ...ask(2), replyTo: { kind: 'card', id: 'w' } };

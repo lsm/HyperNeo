@@ -1006,6 +1006,38 @@ export function NeoLive() {
                 muted: new Set(view?.mutedSessions ?? []),
                 onMute: (key, muted) => void neo.muteSession(key, muted),
               }}
+              onRetryUndelivered={async (ask) => {
+                try {
+                  const hub = await connectionManager.getHub();
+                  const result = await invokeOperation<
+                    { accepted: true; requestId: string } | { accepted: false; reason: string }
+                  >(hub, 'neo.message.retry', {
+                    conversationId: ask.conversationId,
+                    requestId: ask.requestId,
+                  });
+                  if (!result.accepted) {
+                    const reason = result.reason;
+                    neo.setError(
+                      reason === 'already_retried'
+                        ? t('live.retryAlreadySent')
+                        : reason === 'not_failed'
+                          ? t('live.retryUnavailable')
+                          : reason === 'session_unavailable'
+                            ? t('live.retrySessionUnavailable')
+                            : reason === 'conversation_not_found'
+                              ? t('live.retryConversationUnavailable')
+                              : reason === 'human_only'
+                                ? t('live.retryHumanOnly')
+                                : t('live.retryFailed')
+                    );
+                    return false;
+                  }
+                  return true;
+                } catch (error) {
+                  neo.setError(error instanceof Error ? error.message : String(error));
+                  return false;
+                }
+              }}
               onEditUndelivered={async (ask) => {
                 const sessionId = neo.sessionId;
                 if (!sessionId) return false;

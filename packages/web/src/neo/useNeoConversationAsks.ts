@@ -75,7 +75,9 @@ export function syncAskDelivery(state: NeoAskState, response: ConversationAskRea
     return (
       current &&
       (current.messageStatus !== item.messageStatus ||
-        (current.delivery?.state === 'failed') !== (item.delivery?.state === 'failed'))
+        (current.delivery?.state === 'failed') !== (item.delivery?.state === 'failed') ||
+        current.delivery?.reason !== item.delivery?.reason ||
+        current.delivery?.supersededBy !== item.delivery?.supersededBy)
     );
   };
   if (!state.items.some(stale)) return state;
