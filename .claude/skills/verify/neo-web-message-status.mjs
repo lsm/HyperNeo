@@ -50,13 +50,23 @@ assert.deepEqual(projected(askPage.items), expected);
 assert.deepEqual(projected(conversation.items.filter((item) => item.role === 'human').map((item) => item.ask)), expected);
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
+const paired = rpc('device.pair.create', { kind: 'human', name: 'Synthetic status browser' });
+assert(paired.ok);
+const pairing = await browser.newContext();
+const pairedResponse = await pairing.request.post(`http://127.0.0.1:${port}/pair`, {
+  headers: { origin: `http://127.0.0.1:${port}` },
+  data: { code: paired.code, name: 'Synthetic status browser' },
+});
+assert.equal(pairedResponse.status(), 200);
+const storageState = await pairing.storageState();
+await pairing.close();
 const pages = [];
 const observed = { askPage, conversation, widths: [], inputsBefore: states.length };
 const save = () => writeFileSync(`${run}/evidence/neo-web-message-status.json`, JSON.stringify(observed, null, 2));
 const article = (page, state) => page.locator('article').filter({ hasText: `SERVER ${state.toUpperCase()} synthetic input` });
 try {
   for (const width of [1280, 390]) {
-    const page = await browser.newPage({ viewport: { width, height: 1000 } });
+    const page = await browser.newPage({ viewport: { width, height: 1000 }, storageState });
     pages.push({ page, width });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     await article(page, 'read').waitFor();

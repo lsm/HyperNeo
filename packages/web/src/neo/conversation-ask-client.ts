@@ -140,6 +140,7 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
   const messageStatus = NEO_MESSAGE_STATUSES.find((status) => status === row.messageStatus);
   if (row.messageStatus !== undefined && !messageStatus) return null;
   const replyTo = object(row.replyTo);
+  const delivery = object(row.delivery);
   const previewContext = readNeoPreviewReference(row.previewContext);
   if (row.previewContext !== undefined && !previewContext) return null;
   return {
@@ -157,7 +158,20 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     content,
     ...(previewContext ? { previewContext } : {}),
     ...(messageStatus ? { messageStatus } : {}),
-    ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
+    ...(delivery?.state === 'failed'
+      ? {
+          delivery: {
+            state: 'failed' as const,
+            ...(typeof delivery.reason === 'string' && delivery.reason
+              ? { reason: delivery.reason }
+              : {}),
+            ...(typeof delivery.supersededBy === 'string' && uuid.test(delivery.supersededBy)
+              ? { supersededBy: delivery.supersededBy }
+              : {}),
+          },
+        }
+      : {}),
+    ...(typeof row.retryOf === 'string' && uuid.test(row.retryOf) ? { retryOf: row.retryOf } : {}),
     ...(replyTo &&
     (replyTo.kind === 'ask' ||
       replyTo.kind === 'question' ||

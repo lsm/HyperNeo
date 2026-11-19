@@ -7,6 +7,7 @@ import type { NeoPendingAsk, NeoQuote } from './neo-intake.ts';
 import { projectNeoMessageStatuses } from './message-status.ts';
 import {
   type NeoEditUndelivered,
+  type NeoRetryUndelivered,
   NeoPublicConversation,
   type NeoSessionMute,
   PendingAsk,
@@ -27,6 +28,7 @@ export function NeoConversation({
   onRetryAsk,
   onEditAsk,
   onEditUndelivered,
+  onRetryUndelivered,
   mute,
   onQuote,
   onOpenWork,
@@ -38,6 +40,7 @@ export function NeoConversation({
   onOpenSession?: (link: string, label: string) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
+  onRetryUndelivered?: NeoRetryUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
   onRetryAsk?: (requestId: string) => void;
   onEditAsk?: (requestId: string) => void;
@@ -93,6 +96,7 @@ export function NeoConversation({
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
             onEditUndelivered={onEditUndelivered}
+            onRetryUndelivered={onRetryUndelivered}
             mute={mute}
             onQuote={onQuote}
             onOpenWork={onOpenWork}
