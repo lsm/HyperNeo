@@ -14,10 +14,14 @@ running daemon. The release asset check can run without a display:
 cargo test --release --manifest-path packages/desktop/src-tauri/Cargo.toml \
   --lib --features tauri/custom-protocol \
   permissions_page::tests::release_bundle_contains_the_permissions_page_at_its_window_url
+cargo test --release --manifest-path packages/desktop/src-tauri/Cargo.toml \
+  --lib --features tauri/custom-protocol \
+  desktop_permissions::tests::settings_opener_is_reaped_after_exit
 ```
 
 It checks the embedded page and script at the window URL and rejects the extra
-`loading/` prefix. This does not prove that a webview renders.
+`loading/` prefix. The second test checks that the settings opener is reaped.
+These checks do not prove that a webview renders.
 
 On a test account with either permission absent, confirm no desktop permissions
 window appears at startup. Approve a todo with desktop control and invoke

@@ -89,18 +89,20 @@ fn open_desktop_permission_settings_with(
     open(pane)
 }
 
+#[cfg(target_os = "macos")]
+fn run_settings_command(command: &mut std::process::Command) -> std::io::Result<()> {
+    command.status().map(|_| ())
+}
+
 #[tauri::command]
 pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         open_desktop_permission_settings_with(permission, macos::request, |pane| {
-            std::process::Command::new("/usr/bin/open")
-                .arg(format!(
-                    "x-apple.systempreferences:com.apple.preference.security?{pane}"
-                ))
-                .spawn()
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            run_settings_command(std::process::Command::new("/usr/bin/open").arg(format!(
+                "x-apple.systempreferences:com.apple.preference.security?{pane}"
+            )))
+            .map_err(|error| error.to_string())
         })
     }
     #[cfg(not(target_os = "macos"))]
