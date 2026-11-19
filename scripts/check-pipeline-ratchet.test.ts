@@ -216,6 +216,40 @@ test('a binding in a sibling block does not shadow an outer pipeline', () => {
   expect(f.run().code).toBe(0);
 });
 
+test.each([
+  `const alias = run; defineOperation({ name: 'demo.local', execute: alias });`,
+  `const helper = () => run(); defineOperation({ name: 'demo.local', execute: () => helper() });`,
+])('a proven local alias or helper reaches the named pipeline: %s', (operation) => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.local').end();
+    ${operation}
+  `
+  );
+  expect(f.run().code).toBe(0);
+});
+
+test('a local alias to a differently named pipeline stays unreadable', () => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `
+    import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.other').end();
+    const alias = run;
+    defineOperation({ name: 'demo.local', execute: alias });
+  `
+  );
+  const result = f.run();
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('unreadable: 1 (baseline 0)');
+});
+
 test('a forwarded name is unreadable rather than a constructed name', () => {
   const f = fixture();
   f.put(
