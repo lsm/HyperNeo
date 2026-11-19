@@ -4,10 +4,11 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
-## [0.60.1] - 2026-11-18
+## [0.60.1] - 2026-11-19
 
 - Store voice provider credentials per host (#11126).
 - Give Neo resident tools their full action descriptions (#11147).
+- Keep desktop control available for blocked workers (#11134).
 - Repair the SDK download smoke check used by release builds (#11136).
 - Upgrade the pinned Bun runtime to 1.4.4 (#11141).
 
