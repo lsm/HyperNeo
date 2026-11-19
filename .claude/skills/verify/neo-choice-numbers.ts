@@ -74,7 +74,7 @@ db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at
   VALUES ('${neo}','Synthetic Neo','/tmp','2026-10-21T00:00:00Z','2026-10-21T00:00:00Z','active','{"queryMode":"manual"}','{}')`);
 new NeoRepository(db).reserveBinding({ sessionId: neo, kind: 'neo', projectId: null });
 const asks = new NeoAskTodoRepository(db);
-for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-detailed', 'synthetic-ask-bad', 'synthetic-ask-raw', 'synthetic-ask-invalid'])
+for (const id of ['synthetic-ask', 'synthetic-ask-many', 'synthetic-ask-detailed', 'synthetic-ask-bad', 'synthetic-ask-raw', 'synthetic-ask-invalid', 'synthetic-ask-numeric', 'synthetic-ask-ambiguous'])
   asks.openAsk({
     id,
     projectId: null,
@@ -106,6 +106,8 @@ const detailed = await ask('synthetic-ask-detailed', {
 });
 const raw = await ask('synthetic-ask-raw', { text: 'Which hotel?', options: hotels });
 const invalid = await ask('synthetic-ask-invalid', { text: 'Which hotel?', options: hotels, multiple: true });
+const numeric = await ask('synthetic-ask-numeric', { text: 'How many days?', options: ['7', '30', '90'] });
+const ambiguous = await ask('synthetic-ask-ambiguous', { text: 'How many days?', options: ['30', '1', '90'] });
 const snapshot = (await rpc('neo.snapshot', {})).todoAsks;
 for (const entry of snapshot)
   for (const question of entry.questions ?? []) {
@@ -138,6 +140,10 @@ for (const words of ['7', '0', '七', 'seventh', '1 和 7', '第十个', '十二
   assert.equal(asks.getQuestion(invalid)?.state, 'open', `${words} must not close the card`);
 }
 assert.throws(() => db.prepare('UPDATE neo_questions SET option_details_json=? WHERE id=?').run('{', detailed), 'invalid details JSON must be refused');
+await reply(numeric, '30');
+assert.deepEqual(asks.getQuestion(numeric)?.answer, ['30'], 'exact numeric option text answers the card');
+await reply(ambiguous, '1');
+assert.deepEqual(asks.getQuestion(ambiguous)?.answer, ['30'], 'a visible option number takes precedence');
 const requestId = await reply(single, '第二个吧');
 await reply(many, '选1、3');
 await reply(detailed, '选二');

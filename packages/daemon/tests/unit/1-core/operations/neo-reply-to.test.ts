@@ -393,6 +393,36 @@ describe('neo.message.send replyTo', () => {
       expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
       expect(prompt(id).reference).toBe('Which layout?');
     }
+    store.askQuestion(
+      'numeric-option',
+      'ask',
+      {
+        text: 'How many days?',
+        kind: 'choice',
+        options: ['7', '30', '90'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      1
+    );
+    await send(crypto.randomUUID(), '30', { kind: 'question', id: 'numeric-option' });
+    expect(store.getQuestion('numeric-option')?.answer).toEqual(['30']);
+    store.askQuestion(
+      'numeric-ambiguous',
+      'ask',
+      {
+        text: 'How many days?',
+        kind: 'choice',
+        options: ['30', '1', '90'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      1
+    );
+    await send(crypto.randomUUID(), '1', { kind: 'question', id: 'numeric-ambiguous' });
+    expect(store.getQuestion('numeric-ambiguous')?.answer).toEqual(['30']);
     choice('many', true);
     await send(crypto.randomUUID(), '1、3', { kind: 'question', id: 'many' });
     expect(store.getQuestion('many')?.answer).toEqual([
