@@ -603,7 +603,10 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
             ((body.length === 1 && body[0] === pipeline.variable) ||
               body.some(
                 (token, index) =>
-                  token === pipeline.variable && body[index - 1] !== '.' && body[index + 1] === '('
+                  token === pipeline.variable &&
+                  (body[index - 1] !== '.' ||
+                    (body[index - 2] === '.' && body[index - 3] === '.')) &&
+                  body[index + 1] === '('
               )))
       );
       if (reached.length === 0) {
