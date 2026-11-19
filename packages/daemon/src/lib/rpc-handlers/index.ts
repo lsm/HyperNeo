@@ -88,6 +88,7 @@ import { registerMcpHandlers } from './mcp-handlers.ts';
 import { publishGlobalSettings, registerSettingsHandlers } from './settings-handlers.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
+import { createVoiceTestOperations } from '../voice/test-operations.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { setupRewindHandlers } from './rewind-handlers.ts';
@@ -290,7 +291,16 @@ export async function setupRPCHandlers<SpaceServices = never>(
     deps.internalEventBus,
     deps.db,
     deps.credentialManager,
-    () => neoService.installedPacks()
+    () => neoService.installedPacks(),
+    async (host) => {
+      await neoService.openDefault();
+      return neoService.attend({
+        kind: 'voice.key.saved',
+        subject: { type: 'voice-host', id: host },
+        since: Date.now(),
+        facts: {},
+      });
+    }
   );
   registerCustomEndpointHandlers(
     deps.messageHub,
@@ -489,6 +499,7 @@ export async function setupRPCHandlers<SpaceServices = never>(
     ...deps.extensions.operations(),
     createDaemonExtensionsOperation(deps.extensions),
     ...createNeoOperations(neoService, codingProjectIdentity, readCodingTodoWorker),
+    ...createVoiceTestOperations(deps.settingsManager, providerCredentialManager),
     ...createNeoHomeOperations(neoService, neoHome),
     createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),

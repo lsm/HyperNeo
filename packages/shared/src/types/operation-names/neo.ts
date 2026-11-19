@@ -77,5 +77,7 @@ export const NEO_OPERATION_NAMES = [
   'pack.preferences.get',
   'pack.preferences.list',
   'pack.preferences.set',
+  'voice.testConnection',
+  'voice.testLive',
   'voice.testSpeech',
 ] as const;

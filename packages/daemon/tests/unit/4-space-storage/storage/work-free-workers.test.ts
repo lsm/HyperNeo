@@ -7,6 +7,7 @@ import {
   markWorkUnusable,
   readFreeWorkers,
   readReusableWorkers,
+  readStartedWork,
   recordStartedWork,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
@@ -58,6 +59,22 @@ describe('readFreeWorkers', () => {
     markWorkUnusable(db, { adapter: 'claude-desktop', id: 'w-bad' });
 
     expect([...readFreeWorkers(db, 'claude-desktop')].sort()).toEqual(['w-done', 'w-new']);
+  });
+
+  test('does not trust a legacy claim without a worker marker', () => {
+    db.prepare(`INSERT INTO work_started_sessions (adapter, id, started_at, claimed_by, kind)
+      VALUES ('claude-desktop', 'legacy-claim', 1, 'todo', NULL),
+             ('claude-desktop', 'legacy-worker', 1, NULL, 'worker')`).run();
+    const visible = readStartedWork(db).map((worker) => worker.id);
+    expect(visible).toContain('legacy-worker');
+    expect(visible).toContain('legacy-claim');
+    expect(
+      readStartedWork(db, null, undefined, { adapter: 'claude-desktop', id: 'legacy-claim' })
+    ).toEqual([]);
+    expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['legacy-worker']);
+    expect(sessions.fenceWorkerRelease({ adapter: 'claude-desktop', id: 'legacy-claim' }, 3)).toBe(
+      'not_started_by_us'
+    );
   });
 
   test('an unusable mark expires after an hour', () => {
@@ -199,6 +216,40 @@ describe('readFreeWorkers', () => {
       expect(sessions.claimWorker(ref, 'closed')).toBe(false);
       expect(sessions.claimWorker(ref, 'missing')).toBe(false);
       expect(sessions.fenceRelease(ref, Date.now())).toBe(true);
+    });
+
+    test('reads ownership once for multiple finished workers', () => {
+      bind('finished-a', 'worker-a', 'done');
+      bind('finished-b', 'worker-b', 'done');
+      store.addTodo(
+        'finished-foreign',
+        'ask',
+        { title: 'Foreign', doneWhen: 'Observed', check: null, instruction: 'Go', named: null },
+        1
+      );
+      sessions.create('finished-foreign', { verb: 'start', adapter: 'claude-desktop' });
+      sessions.recordRef('finished-foreign', { adapter: 'claude-desktop', id: 'foreign' });
+      const now = Date.now();
+      for (const id of ['finished-a', 'finished-b', 'finished-foreign'])
+        store.updateTodo(store.getTodo(id)!, { state: 'done', finishedAt: now }, now);
+      expect([...readFreeWorkers(db, 'claude-desktop')].sort()).toEqual(['worker-a', 'worker-b']);
+      const prepare = db.prepare;
+      let ownershipQueries = 0;
+      db.prepare = ((sql: string) => {
+        if (sql.includes('work_started_sessions')) ownershipQueries++;
+        return prepare.call(db, sql);
+      }) as typeof db.prepare;
+      try {
+        const rows = sessions.finishedWorkers(now - 1);
+        expect(rows.map((row) => [row.todoId, row.owned]).sort()).toEqual([
+          ['finished-a', true],
+          ['finished-b', true],
+          ['finished-foreign', false],
+        ]);
+        expect(ownershipQueries).toBe(1);
+      } finally {
+        db.prepare = prepare;
+      }
     });
 
     test('a todo removed today releases its worker even if it finished eight days ago', () => {

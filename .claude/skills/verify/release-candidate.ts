@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { MODEL_ID, DIMENSIONS } from '../../../packages/daemon/src/storage/repositories/agent-memory-transformers.ts';
 
 const [source, directory, expectedCommit] = process.argv.slice(2);
 const expectedVersion = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version as string;
@@ -153,6 +154,16 @@ try {
     const rows = db.prepare("SELECT id,title,workspace_path FROM sessions WHERE id != ?").all(opened.sessionId);
     steps.lifeAdmin = { pass: true, sessions: rows, assistantObserved: true }; save();
   } finally { db.close(); }
+  const searchDb = new Database(join(run, 'data/daemon.db'));
+  try {
+    const content = searchDb.prepare('INSERT INTO message_search_content (kind, source_id, message_id, session_id, message_type, title, body, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('message', 'embedding-proof-source', 'embedding-proof-message', opened.sessionId, 'user', 'Synthetic search', 'orbital geology', Date.now());
+    const vector = new Float32Array(DIMENSIONS);
+    vector[0] = 1;
+    searchDb.prepare('INSERT OR REPLACE INTO message_search_vectors (content_id, model, dimensions, embedding, embedded_at) VALUES (?, ?, ?, ?, ?)').run(Number(content.lastInsertRowid), MODEL_ID, DIMENSIONS, new Uint8Array(vector.buffer), Date.now());
+  } finally { searchDb.close(); }
+  const search = await op('work.find', { text: 'release candidate semantic search', adapters: ['hyperneo'], localOnly: true });
+  assert(Array.isArray(search.places), 'semantic search did not return places');
+  steps.embeddingSearch = { pass: true }; save();
   await wait('embedding worker load', () => logs.includes('Embeddings ready'), 360000);
   steps.embeddings = { pass: true, excerpts: logs.split('\n').filter(line => line.includes('Embeddings ready') || line.includes('Embedding asset checksum verified')) }; save();
   if (process.env.VERIFY_NODE) {

@@ -27,6 +27,7 @@ does, binds it to a finished review todo, and calls `work.start` as Neo for a bu
 todo. No model turn or provider key is needed.
 
 End state, from `evidence/work-start-reuse.json`:
+- `first.record` records the starter, ask, todo, machine, folder and harness for the new worker.
 - `humanStart.newSession` is true.
 - `neoSecond.reused` is true; its ref is an existing worker, and the session count is unchanged.
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.

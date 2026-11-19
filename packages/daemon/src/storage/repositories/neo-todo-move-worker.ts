@@ -102,7 +102,7 @@ class NeoTodoMoves {
   reopen(move: NeoTodoMove): boolean {
     if (!this.active(move)) return false;
     const store = new NeoAskTodoRepository(this.db);
-    markWorkUnusable(this.db, move.fromRef);
+    markWorkUnusable(this.db, move.fromRef, 'todo moved');
     store.updateTodo(
       store.getTodo(move.todoId)!,
       { state: 'todo', startedAt: null, finishedAt: null },

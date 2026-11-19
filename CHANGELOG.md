@@ -14,7 +14,7 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### API compatibility
 
-Compared with v0.60.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe methods. No API surface changes were detected.
+Compared with v0.60.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe methods. The API adds three safe operations: `voice.testConnection`, `voice.testLive`, and `voice.testSpeech`.
 
 ## [0.60.0] - 2026-11-18
 

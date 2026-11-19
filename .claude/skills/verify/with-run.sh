@@ -10,7 +10,8 @@
 set -euo pipefail
 [ $# -gt 0 ] || { echo "usage: with-run.sh <command> [args...]" >&2; exit 64; }
 KEEP=${VERIFY_KEEP_RUN:-0}
-RUN=$(mktemp -d "${TMPDIR:-/tmp}/hyperneo-verify.XXXXXX")
+RUN_ROOT=${TMPDIR:-/tmp}
+RUN=$(mktemp -d "${RUN_ROOT%/}/hyperneo-verify.XXXXXX")
 child=""
 
 cleanup() {

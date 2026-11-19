@@ -97,7 +97,7 @@ export function pcm16Wav(pcm: Uint8Array): Uint8Array {
   return wav;
 }
 
-async function buildAsrRelayOpen(
+export async function buildAsrRelayOpen(
   streamId: string,
   voice: VoiceSettings,
   url: URL,

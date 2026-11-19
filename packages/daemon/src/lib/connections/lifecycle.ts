@@ -23,6 +23,19 @@ type Flow = {
 type Admitted = { flow: Flow; outcome: Extract<Outcome, { ok: true }> };
 type Read = () => Promise<ConnectionStatus[]>;
 type Save = (connection: ConnectionStatus) => Promise<void>;
+type LoginStatusFacts = {
+  current: { id: string; view: View } | undefined;
+  storage: ReturnType<ConnectionVault['storageStatus']>;
+};
+
+export function selectLoginStatus(facts: LoginStatusFacts, input: { loginId?: string }): View {
+  return {
+    ...(facts.current && (!input.loginId || facts.current.id === input.loginId)
+      ? facts.current.view
+      : { state: 'missing' }),
+    storage: facts.storage,
+  };
+}
 
 function admit(
   outcome: Outcome,
@@ -146,71 +159,75 @@ export function createConnectionLifecycle(deps: {
     }
   };
   deps.closed.addEventListener('abort', cancel, { once: true });
+  const statusFacts = (): LoginStatusFacts => ({
+    current: current ? { id: current.id, view: current.view } : undefined,
+    storage: deps.vault.storageStatus(),
+  });
+  const startConnection = async (
+    input: Partial<Client> & { connectionId?: string }
+  ): Promise<View> => {
+    if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
+    const account = (await deps.read()).find((record) => record.id === input.connectionId);
+    if (input.connectionId && !account) return { state: 'failed', reason: 'unknown_connection' };
+    const client = input.clientId
+      ? { clientId: input.clientId, clientSecret: input.clientSecret }
+      : account
+        ? (await deps.vault.read(account))?.client
+        : undefined;
+    if (!client) return { state: 'failed', reason: 'client_not_configured' };
+    cancel();
+    const login = await deps.startLogin(client);
+    if (deps.closed.aborted) {
+      login.cancel();
+      return { state: 'failed', reason: 'cancelled' };
+    }
+    const id = randomUUID();
+    const flow: Flow = {
+      id,
+      connectionId: account?.id ?? randomUUID(),
+      accountId: account?.accountId,
+      client,
+      login,
+      cancelled: false,
+      deniedAccounts: new Set(),
+      view: { state: 'pending', loginId: id },
+    };
+    current = flow;
+    void login.result
+      .then((outcome) =>
+        serial(() =>
+          completeLogin(
+            outcome,
+            flow,
+            current,
+            deps.closed.aborted,
+            deps.read,
+            deps.save,
+            deps.vault,
+            deps.provider
+          )
+        )
+      )
+      .then(
+        (view) => {
+          flow.view = view;
+          flow.login = undefined;
+          if (view.state === 'complete' && view.connectionId) access.resume(view.connectionId);
+        },
+        () => {
+          flow.view = { state: 'failed', reason: 'storage_failed' };
+          flow.login = undefined;
+        }
+      );
+    return { ...flow.view, authorizeUrl: login.authorizeUrl };
+  };
   return {
     token: access.token,
     http,
     connect: (input: Partial<Client> & { connectionId?: string }) =>
-      serial<View>(async () => {
-        if (deps.closed.aborted) return { state: 'failed', reason: 'cancelled' };
-        const account = (await deps.read()).find((record) => record.id === input.connectionId);
-        if (input.connectionId && !account)
-          return { state: 'failed', reason: 'unknown_connection' };
-        const client = input.clientId
-          ? { clientId: input.clientId, clientSecret: input.clientSecret }
-          : account
-            ? (await deps.vault.read(account))?.client
-            : undefined;
-        if (!client) return { state: 'failed', reason: 'client_not_configured' };
-        cancel();
-        const login = await deps.startLogin(client);
-        if (deps.closed.aborted) {
-          login.cancel();
-          return { state: 'failed', reason: 'cancelled' };
-        }
-        const id = randomUUID();
-        const flow: Flow = {
-          id,
-          connectionId: account?.id ?? randomUUID(),
-          accountId: account?.accountId,
-          client,
-          login,
-          cancelled: false,
-          deniedAccounts: new Set(),
-          view: { state: 'pending', loginId: id },
-        };
-        current = flow;
-        void login.result
-          .then((outcome) =>
-            serial(() =>
-              completeLogin(
-                outcome,
-                flow,
-                current,
-                deps.closed.aborted,
-                deps.read,
-                deps.save,
-                deps.vault,
-                deps.provider
-              )
-            )
-          )
-          .then(
-            (view) => {
-              flow.view = view;
-              flow.login = undefined;
-              if (view.state === 'complete' && view.connectionId) access.resume(view.connectionId);
-            },
-            () => {
-              flow.view = { state: 'failed', reason: 'storage_failed' };
-              flow.login = undefined;
-            }
-          );
-        return { ...flow.view, authorizeUrl: login.authorizeUrl };
-      }),
-    status: (loginId?: string): View => ({
-      ...(current && (!loginId || current.id === loginId) ? current.view : { state: 'missing' }),
-      storage: deps.vault.storageStatus(),
-    }),
+      serial(() => startConnection(input)),
+    statusFacts,
+    status: (loginId?: string): View => selectLoginStatus(statusFacts(), { loginId }),
     disconnect: async (connectionId: string) => {
       if (!(await deps.read()).some((record) => record.id === connectionId))
         return { ok: false, reason: 'unknown_connection' };
