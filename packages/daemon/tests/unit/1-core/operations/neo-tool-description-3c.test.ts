@@ -77,7 +77,7 @@ const moved = [
   {
     file: 'todo-operations.ts',
     name: 'neo.todo.hold',
-    text: "Hold a todo that is waiting to start, or pause one that is running, to ask the human whether it goes ahead. reason is the card's whole text: your question to the human in their language, naming what waits, why it needs them, and that Start or Resume goes ahead and Remove drops it. The daemon stops a running todo's worker and opens that card with Start or Resume and Remove; the card is the hold, and the human's answer releases it. reason null releases a todo held by an older start answer. Hold only what the human said must wait. Never hold a todo to wait for something else (a PR, a sign-off, another card or step): that is not the human's decision, and the card goes stale when that thing changes. A step of the same ask waits with after; otherwise keep the todo yourself and act when that thing changes.",
+    text: 'Hold a todo that must wait: give the reason, and the daemon stops a running worker without asking the human again. Pass reason null to release it. After releasing a started todo, use neo.todo.continue to resume its worker. To ask the human to start, resume or remove it, pass decision true and make reason the question in their language; the daemon opens a decision card instead. Never hold a todo to wait for another step of the same ask: use after.',
   },
   {
     file: 'todo-operations.ts',
@@ -124,5 +124,5 @@ test('todo tools no longer promise cards the daemon stopped writing', () => {
   expect(described('neo.todo.remove')).not.toContain('the daemon then asks them');
   expect(described('neo.todo.remove')).toContain('deciding is your next step');
   expect(described('neo.todo.hold')).not.toContain('Why it must wait');
-  expect(described('neo.todo.hold')).toContain('The card’s whole text: your question to the human');
+  expect(described('neo.todo.hold')).toContain('Why this step waits; null releases it.');
 });

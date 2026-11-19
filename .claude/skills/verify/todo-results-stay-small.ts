@@ -51,7 +51,7 @@ try {
   assert.deepEqual(store.todoCards(store.getTodo(ids[0])!), []);
   const edited = await agent('neo.todo.edit', { todoId: ids[1], title: 'Step 1 renamed' });
   const others = (result: unknown, own: number) => ids.filter((_, n) => n !== own && JSON.stringify(result).includes(`Instruction ${n}:`));
-  assert.equal(held.todo.id, ids[0]); assert(held.records.some((record: string) => record.startsWith('held:'))); assert(!('todos' in held));
+  assert.equal(held.todo.id, ids[0]); assert(!('todos' in held));
   assert.deepEqual(others(held, 0), []);
   assert.equal(edited.todo.title, 'Step 1 renamed'); assert(!('todos' in edited));
   assert.deepEqual(others(edited, 1), []);
@@ -64,8 +64,14 @@ try {
   assert.deepEqual(others(detail, 3), []);
   const human = await invokeOperation(registry, 'neo.ask.read', { askId: opened.ask.id }, { source: 'rpc', principal: LOCAL_RPC_PRINCIPAL });
   assert.equal(human.kind, 'completed');
-  const card = (human as { value: { entry: { todos: { instruction: string | null }[] } } }).value;
+  const card = (human as { value: { entry: { state: string; questions: { state: string }[]; todos: { id: string; instruction: string | null; statusCodes?: { code: string }[] }[] } } }).value;
+  assert.equal(card.entry.state, 'waiting');
+  assert(card.entry.todos.find((todo) => todo.id === ids[0])?.statusCodes?.some((status) => status.code === 'todo.held'));
+  assert.equal(card.entry.questions.filter((question) => question.state === 'open').length, 0);
   assert.equal(card.entry.todos.filter((todo) => todo.instruction?.startsWith('Instruction ')).length, 11);
+  const released = await agent('neo.todo.hold', { todoId: ids[0], reason: null });
+  assert.equal(released.todo.state, 'todo');
+  assert.equal(released.todo.blockedBy, null);
   const sizes = { fullTodoList: fullList, hold: bytes(held), edit: bytes(edited), agentAskRead: bytes(entry), todoRead: bytes(detail), humanAskRead: bytes(card) };
   writeFileSync(join(run, 'evidence/sizes.json'), `${JSON.stringify(sizes, null, 2)}\n`);
   writeFileSync(join(run, 'evidence/agent-ask-read.json'), `${JSON.stringify(entry, null, 2)}\n`);

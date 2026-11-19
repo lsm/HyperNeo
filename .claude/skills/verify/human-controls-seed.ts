@@ -38,6 +38,7 @@ try {
   });
   const steps = [
     ['controls-hold', 'Write the release notes', 'high'],
+    ['controls-passive', 'Wait for a prerequisite', 'normal'],
     ['controls-pause', 'Run the data migration', 'normal'],
     ['controls-done', 'Update the changelog', 'normal'],
     ['controls-cancel', 'Draft the blog post', 'normal'],

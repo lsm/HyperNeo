@@ -133,7 +133,9 @@ export function wireNeoTodoMutations(
     )
     .pipe(
       async (plan: Plan, input: Input) => {
-        const failure = input.kind === 'edit' ? null : await deps.stop(plan.todo);
+        const shouldStop =
+          input.kind !== 'edit' || (input.hold != null && plan.todo.startedAt !== null);
+        const failure = shouldStop ? await deps.stop(plan.todo) : null;
         return failure
           ? {
               reason: {
@@ -203,7 +205,9 @@ export function wireNeoTodoMutations(
       ? {
           ...entry,
           execute: (input, caller) =>
-            entry.name === 'neo.todo.hold' && (input as { reason: unknown }).reason !== null
+            entry.name === 'neo.todo.hold' &&
+            (input as { reason: unknown; decision?: boolean }).reason !== null &&
+            (input as { decision?: boolean }).decision === true
               ? entry.execute(input, caller)
               : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
         }

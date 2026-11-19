@@ -328,9 +328,8 @@ type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
 
 const Hold = z.object({
   todoId: Text,
-  reason: Text.nullable().describe(
-    'The card’s whole text: your question to the human; null releases it.'
-  ),
+  reason: Text.nullable().describe('Why this step waits; null releases it.'),
+  decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
 });
 
 const Remove = z.object({
@@ -430,9 +429,9 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
     );
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
-  if (input.hold && !isNeoTodoStartable(todo) && !held)
+  if (input.hold && !isNeoTodoStartable(todo) && todo.state !== 'doing' && !held)
     return fail(
-      `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
+      `not_holdable: only a waiting or running todo can be held; this one is ${todo.state}.`
     );
   if (input.hold === null && !held) return fail('not_held: this todo is not held.');
   return {
@@ -452,10 +451,19 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
               state: 'blocked',
               blockedBy: 'held',
               blockedReason: input.hold,
-              nextAction: 'The human releases it.',
+              nextAction: 'Release it when ready.',
             }
           : {}),
-        ...(input.hold === null ? { state: 'todo' } : {}),
+        ...(input.hold === null
+          ? todo.startedAt === null
+            ? { state: 'todo' }
+            : {
+                state: 'blocked',
+                blockedBy: 'worker',
+                blockedReason: 'The hold was released.',
+                nextAction: 'Continue the worker.',
+              }
+          : {}),
         ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
