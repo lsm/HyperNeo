@@ -71,7 +71,8 @@ export function neoTodoStatusLine(
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.removed');
   }
   const held = neoTodoHeldBy(todo, cards);
-  if (held) return coded(held === 'hold' ? 'todo.held' : 'todo.paused');
+  if (held || (todo.state === 'blocked' && todo.blockedBy === 'held'))
+    return coded((held ? held === 'hold' : todo.startedAt === null) ? 'todo.held' : 'todo.paused');
   if (todo.state === 'blocked' && todo.blockedBy === 'check') return coded('todo.waitingResult');
   if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;

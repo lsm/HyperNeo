@@ -41,6 +41,7 @@ import {
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
+import { neoTodoCovered } from './todo-state.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -328,10 +329,12 @@ type EditPlan = Omit<z.infer<typeof Edit>, 'hold'> & { hold?: string | null };
 
 const Hold = z.object({
   todoId: Text,
-  reason: Text.nullable().describe(
-    'The card’s whole text: your question to the human; null releases it.'
-  ),
+  reason: Text.nullable().describe('Why this step waits; null releases it.'),
+  decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
 });
+
+export const neoHoldNeedsDecision = (input: { reason: string | null; decision?: boolean }) =>
+  input.reason !== null && input.decision === true;
 
 const Remove = z.object({
   todoId: Text,
@@ -408,6 +411,16 @@ export function requireNeoOpenTodo(todo: NeoTodo | null, ask: NeoAsk | null): Ga
   return 'reason' in open ? open : { value: todo };
 }
 
+export function requireNeoHoldCardClear(
+  todo: NeoTodo,
+  input: { hold?: string | null },
+  cards: readonly NeoQuestion[]
+): Gate<NeoTodo> {
+  return input.hold != null && neoTodoCovered(todo, cards)
+    ? fail('already_waiting: this todo already waits on an open card; answer that one.')
+    : { value: todo };
+}
+
 export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
@@ -430,9 +443,9 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
     );
   if (input.hold !== undefined && (input.done || input.artifacts))
     return fail('hold_with_done: hold or release a todo separately from ticking it done.');
-  if (input.hold && !isNeoTodoStartable(todo) && !held)
+  if (input.hold && !isNeoTodoStartable(todo) && todo.state !== 'doing' && !held)
     return fail(
-      `not_holdable: only a todo that has not started can be held; this one is ${todo.state}.`
+      `not_holdable: only a waiting or running todo can be held; this one is ${todo.state}.`
     );
   if (input.hold === null && !held) return fail('not_held: this todo is not held.');
   return {
@@ -452,10 +465,19 @@ export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()
               state: 'blocked',
               blockedBy: 'held',
               blockedReason: input.hold,
-              nextAction: 'The human releases it.',
+              nextAction: 'Release it when ready.',
             }
           : {}),
-        ...(input.hold === null ? { state: 'todo' } : {}),
+        ...(input.hold === null
+          ? todo.startedAt === null
+            ? { state: 'todo' }
+            : {
+                state: 'blocked',
+                blockedBy: 'worker',
+                blockedReason: 'The hold was released.',
+                nextAction: 'Continue the worker.',
+              }
+          : {}),
         ...(input.after ? { dependsOn: input.after } : {}),
       },
     },
@@ -604,6 +626,14 @@ export function createNeoTodoOperations(
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
+      const clear = requireNeoHoldCardClear(
+        latest.value,
+        input,
+        input.hold != null ? todos.todoCards(latest.value) : []
+      );
+      if ('reason' in clear) return clear.reason;
+      if (input.hold != null && checked.startedAt !== latest.value.startedAt)
+        return { ok: false, reason: 'todo_changed: the worker changed; retry the hold.' };
       const edited = planNeoTodoEdit(latest.value, input);
       if ('reason' in edited) return edited.reason;
       const rebased = withCheck(edited.value, input);
@@ -688,6 +718,12 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: EditPlan) =>
+        requireNeoHoldCardClear(todo, input, input.hold != null ? todos.todoCards(todo) : []),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
@@ -699,6 +735,17 @@ export function createNeoTodoOperations(
     .pipe(withCheck, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
+    .pipe(
+      async (plan: TodoPlan, input: EditPlan): Promise<Gate<TodoPlan>> => {
+        const failed =
+          input.hold && plan.todo.startedAt !== null ? await controls.stop(plan.todo) : null;
+        return failed
+          ? fail(`${failed}; the todo is unchanged, its session may still run.`)
+          : { value: plan };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: EditPlan,
@@ -829,9 +876,9 @@ export function createNeoTodoOperations(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) =>
         present(
-          input.reason === null
-            ? await edit({ todoId: input.todoId, hold: null }, caller)
-            : await holdCard({ todoId: input.todoId, reason: input.reason }, caller)
+          neoHoldNeedsDecision(input)
+            ? await holdCard({ todoId: input.todoId, reason: input.reason! }, caller)
+            : await edit({ todoId: input.todoId, hold: input.reason }, caller)
         ),
     }),
     defineOperation({

@@ -25,7 +25,7 @@ export const neoTodoHoldable = (
 export function neoTodoControlCall(
   todo: Pick<NeoTodo, 'id' | 'startedAt'>,
   control: NeoTodoControl
-): { name: OperationName; input: Record<string, string> } {
+): { name: OperationName; input: Record<string, string | boolean> } {
   const todoId = todo.id;
   if (control.kind === 'done')
     return { name: 'neo.todo.done', input: { todoId, reason: 'The human marked it done.' } };
@@ -36,6 +36,7 @@ export function neoTodoControlCall(
       name: 'neo.todo.hold',
       input: {
         todoId,
+        decision: true,
         reason: t(todo.startedAt === null ? 'todo.holdQuestion' : 'todo.pauseQuestion'),
       },
     };

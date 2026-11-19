@@ -14,6 +14,7 @@ import {
   planNeoTodoDone,
   planNeoTodoRemove,
   requireNeoOpenTodo,
+  requireNeoHoldCardClear,
   requireNeoTodoArtifacts,
   requireNeoTodoCardsAnswered,
   type NeoTodoPolicy,
@@ -115,6 +116,14 @@ class NeoTodoMutationPlanner {
             : requireNeoOpenTodo(todo, ask);
         },
         'current',
+        'result:outcome'
+      )
+      .pipe(
+        (todo: NeoTodo, input: Input) =>
+          input.kind === 'edit' && input.hold != null
+            ? requireNeoHoldCardClear(todo, input, todos.todoCards(todo))
+            : { value: todo },
+        ['outcome', 'input'],
         'result:outcome'
       )
       .pipe(

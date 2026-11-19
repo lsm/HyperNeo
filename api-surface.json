@@ -43594,6 +43594,10 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "decision": {
+            "description": "Ask the human to start, resume or remove this step.",
+            "type": "boolean"
+          },
           "reason": {
             "anyOf": [
               {
@@ -43604,7 +43608,7 @@
                 "type": "null"
               }
             ],
-            "description": "The card’s whole text: your question to the human; null releases it."
+            "description": "Why this step waits; null releases it."
           },
           "todoId": {
             "minLength": 1,

@@ -23,6 +23,7 @@ describe('Writer-backed todo operation activation', () => {
   let order: string[];
   let stopFailure: string | null;
   let duringStop: (() => void) | null;
+  let beforeWrite: (() => void) | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
   let advance: () => Promise<unknown>;
@@ -36,6 +37,7 @@ describe('Writer-backed todo operation activation', () => {
     order = [];
     stopFailure = null;
     duringStop = null;
+    beforeWrite = null;
     checkDone = true;
     workerRemotes = undefined;
     gateway.onChanges = () => {
@@ -100,7 +102,10 @@ describe('Writer-backed todo operation activation', () => {
     const registry = createOperationRegistry(
       wireNeoTodoMutations(legacy, {
         gateway,
-        write: gateway.run.bind(gateway),
+        write: (...args) => {
+          beforeWrite?.();
+          return gateway.run(...args);
+        },
         packs: () => packs,
         artifact: () => null,
         stop,
@@ -201,14 +206,17 @@ describe('Writer-backed todo operation activation', () => {
 
   test('a todo change returns only the changed todo', async () => {
     const result = await call('neo.todo.hold', { todoId: 'first', reason: 'Human said wait.' });
-    expect(result).toMatchObject({ ok: true, todo: { id: 'first', state: 'todo' } });
+    expect(result).toMatchObject({
+      ok: true,
+      todo: { id: 'first', state: 'blocked', blockedBy: 'held' },
+    });
     expect(JSON.stringify(result)).not.toContain('Next task');
     expect('todos' in result).toBe(false);
   });
 
   test('hold opens a hold card; pausing a running todo stops its worker first', async () => {
     expect(
-      await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.' })
+      await call('neo.todo.hold', { todoId: 'peer', reason: 'Human said wait.', decision: true })
     ).toMatchObject({ ok: true, todo: { id: 'peer', state: 'todo' } });
     expect(store.todoCards(store.getTodo('peer')!)).toMatchObject([
       {
@@ -220,7 +228,9 @@ describe('Writer-backed todo operation activation', () => {
     expect(order).toEqual([]);
     store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
     stopFailure = 'stop_failed: the driver refused';
-    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.' })).toMatchObject({
+    expect(
+      await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.', decision: true })
+    ).toMatchObject({
       ok: false,
       reason: expect.stringContaining('stop_failed'),
     });
@@ -228,7 +238,9 @@ describe('Writer-backed todo operation activation', () => {
       store.todoCards(store.getTodo('first')!).filter((card) => card.todos.includes('first'));
     expect(firstCards()).toEqual([]);
     stopFailure = null;
-    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.' })).toMatchObject({
+    expect(
+      await call('neo.todo.hold', { todoId: 'first', reason: 'Pause it.', decision: true })
+    ).toMatchObject({
       ok: true,
       todo: { id: 'first', state: 'doing' },
     });
@@ -236,6 +248,78 @@ describe('Writer-backed todo operation activation', () => {
       { state: 'open', cause: 'pause', options: ['Resume', 'Remove'] },
     ]);
     expect(order).toEqual(['stop', 'stop']);
+  });
+
+  test('passive hold stops a running worker without asking a question, and releases explicitly', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+    stopFailure = 'stop_failed';
+    expect(
+      await call('neo.todo.hold', { todoId: 'first', reason: 'Wait for a prerequisite.' })
+    ).toMatchObject({ ok: false });
+    expect(store.getTodo('first')?.state).toBe('doing');
+    stopFailure = null;
+    expect(
+      await call('neo.todo.hold', { todoId: 'first', reason: 'Wait for a prerequisite.' })
+    ).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'held' },
+    });
+    expect(store.todoCards(store.getTodo('first')!)).toEqual([]);
+    expect(await call('neo.todo.hold', { todoId: 'first', reason: null })).toMatchObject({
+      ok: true,
+      todo: { state: 'blocked', blockedBy: 'worker' },
+    });
+  });
+
+  test.each([false, true])(
+    'passive hold refuses an open card, including one opened during stop: %s',
+    async (late) => {
+      store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+      const open = () =>
+        store.askQuestion(
+          'decision',
+          'ask',
+          {
+            kind: 'reply',
+            text: 'Answer first',
+            todoId: 'first',
+            options: null,
+            multiple: false,
+            yesLabel: null,
+            noLabel: null,
+          },
+          4
+        );
+      if (late) duringStop = open;
+      else open();
+      expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Wait.' })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('already_waiting'),
+      });
+      expect(store.getTodo('first')?.state).toBe('doing');
+      expect(store.getQuestion('decision')?.state).toBe('open');
+      expect(order).toEqual(late ? ['stop'] : []);
+    }
+  );
+
+  test('a passive hold refuses a worker started after planning', async () => {
+    beforeWrite = () =>
+      store.updateTodo(store.getTodo('peer')!, { state: 'doing', startedAt: 4 }, 4);
+    expect(await call('neo.todo.hold', { todoId: 'peer', reason: 'Wait.' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todo_changed'),
+    });
+    expect(store.getTodo('peer')).toMatchObject({ state: 'doing', startedAt: 4 });
+  });
+
+  test('a passive hold refuses a worker that changed while stopping', async () => {
+    store.updateTodo(store.getTodo('first')!, { state: 'doing', startedAt: 3 }, 3);
+    duringStop = () => store.updateTodo(store.getTodo('first')!, { startedAt: 4 }, 4);
+    expect(await call('neo.todo.hold', { todoId: 'first', reason: 'Wait.' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todo_changed'),
+    });
+    expect(store.getTodo('first')).toMatchObject({ state: 'doing', startedAt: 4 });
   });
 
   test('releasing a todo an older start answer held still runs through the atomic command', async () => {

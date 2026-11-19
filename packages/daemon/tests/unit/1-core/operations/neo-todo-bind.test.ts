@@ -178,6 +178,32 @@ describe('bind an already running worker without dispatch', () => {
     }
   });
 
+  test('a passive hold through the base operation opens no decision card', async () => {
+    const { db, store, invoke } = setup();
+    try {
+      const opened = await invoke('neo.ask.open', {
+        title: 'Synthetic work',
+        request: 'Track work',
+        todos: [
+          {
+            after: [],
+            check: pendingTodoCheck,
+            title: 'Waiting step',
+            doneWhen: 'Result verified',
+          },
+        ],
+      });
+      const todo = opened.todos[0];
+      expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Wait.' })).toMatchObject({
+        ok: true,
+        todo: { state: 'blocked', blockedBy: 'held' },
+      });
+      expect(store.todoCards(store.getTodo(todo.id)!)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('hold is its own operation: neo.todo.hold opens a hold card, edit refuses hold', async () => {
     const { db, store, calls, invoke } = setup();
     try {
@@ -201,6 +227,7 @@ describe('bind an already running worker without dispatch', () => {
       const held = await invoke('neo.todo.hold', {
         todoId: todo.id,
         reason: 'The human said wait.',
+        decision: true,
       });
       expect(held.ok).toBe(true);
       expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
@@ -212,7 +239,9 @@ describe('bind an already running worker without dispatch', () => {
           text: 'The human said wait.',
         },
       ]);
-      expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.' })).toMatchObject({
+      expect(
+        await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.', decision: true })
+      ).toMatchObject({
         ok: false,
         reason: expect.stringContaining('already_waiting'),
       });

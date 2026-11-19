@@ -15,7 +15,7 @@ import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { getDataDir } from '../data-dir.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
-import type { NeoTodoControls } from './todo-operations.ts';
+import { neoHoldNeedsDecision, type NeoTodoControls } from './todo-operations.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -133,7 +133,9 @@ export function wireNeoTodoMutations(
     )
     .pipe(
       async (plan: Plan, input: Input) => {
-        const failure = input.kind === 'edit' ? null : await deps.stop(plan.todo);
+        const shouldStop =
+          input.kind !== 'edit' || (input.hold != null && plan.todo.startedAt !== null);
+        const failure = shouldStop ? await deps.stop(plan.todo) : null;
         return failure
           ? {
               reason: {
@@ -156,6 +158,8 @@ export function wireNeoTodoMutations(
         deps.write(neoTodoMutations, {
           input,
           checked: { check: plan.todo.check, result: completion },
+          holdStartedAt:
+            input.kind === 'edit' && input.hold != null ? plan.todo.startedAt : undefined,
           now: Date.now(),
           registered,
         }),
@@ -203,7 +207,8 @@ export function wireNeoTodoMutations(
       ? {
           ...entry,
           execute: (input, caller) =>
-            entry.name === 'neo.todo.hold' && (input as { reason: unknown }).reason !== null
+            entry.name === 'neo.todo.hold' &&
+            neoHoldNeedsDecision(input as { reason: string | null; decision?: boolean })
               ? entry.execute(input, caller)
               : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
         }

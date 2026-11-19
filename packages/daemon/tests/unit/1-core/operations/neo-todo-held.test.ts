@@ -113,12 +113,12 @@ describe('a held todo', () => {
     expect(w.started).toEqual([first, second]);
   });
 
-  test('cannot be a todo that already started', async () => {
+  test('can hold a todo that already started', async () => {
     const w = (current = world());
     const id = w.add('first');
     await w.runner.start(id);
-    expect(await w.edit(id, 'Wait.')).toMatchObject({ ok: false });
-    expect(w.todo(id).state).toBe('doing');
+    await w.edit(id, 'Wait.');
+    expect(w.todo(id)).toMatchObject({ state: 'blocked', blockedBy: 'held' });
   });
 
   test('keeps its hold through a failing or blocking check, and still finishes when the work is done', async () => {

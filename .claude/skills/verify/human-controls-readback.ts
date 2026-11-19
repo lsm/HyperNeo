@@ -23,6 +23,7 @@ try {
   assert.equal(state['controls-priority'].priority, 'urgent');
   assert.equal(state['controls-pause'].state, 'doing');
   assert.equal(state['controls-hold'].state, 'todo');
+  assert.equal(state['controls-passive'].state, 'blocked');
   const neo = JSON.parse(settings.settings).neo;
   assert.equal(neo.maxRunningTodos, 4);
   assert.equal(neo.maxRunningTodosPerProject, 2);

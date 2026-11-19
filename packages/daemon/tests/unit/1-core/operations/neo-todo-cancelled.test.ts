@@ -241,7 +241,11 @@ describe('cancelled prerequisites', () => {
           Date.now()
         );
       if (mode === 'held')
-        await invoke('neo.todo.hold', { todoId: dependent.id, reason: 'Human said wait.' });
+        await invoke('neo.todo.hold', {
+          todoId: dependent.id,
+          reason: 'Human said wait.',
+          decision: true,
+        });
       expect(
         await invoke('neo.todo.remove', {
           todoId: cancelled.id,
