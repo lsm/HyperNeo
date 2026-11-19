@@ -12,6 +12,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_B
 const base = `http://127.0.0.1:${port}`;
 const contexts = [];
 let currentPage;
+let chinesePage;
 try {
   for (const [name, width, height, dark] of [['wide-light', 1280, 800, false], ['wide-dark', 1280, 800, true], ['phone-light', 390, 844, false], ['wide-zh', 1280, 800, false], ['phone-dark', 390, 844, true]]) {
     const touch = width === 390;
@@ -20,6 +21,7 @@ try {
     await context.route('**/*', (route) => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
     const page = await context.newPage();
     currentPage = page;
+    if (name === 'wide-zh') chinesePage = page;
     const result = JSON.parse(execSync(`env -i HOME="${run}/home" PATH="${process.env.PATH}" NODE_ENV=test HYPERNEO_DATA_DIR="${run}/data" VERIFY_PORT=${port} bun .claude/skills/verify/rpc.ts device.pair.create '{"kind":"human","name":"Card proof"}'`, { encoding: 'utf8' })).reply;
     assert(result.ok);
     await page.goto(`${base}/pair#${result.code}`);
@@ -54,6 +56,15 @@ try {
     if (name === 'phone-dark') {
       await card.getByRole('button', { name: 'Allow' }).tap();
       await card.waitFor({ state: 'hidden' });
+      assert(chinesePage);
+      await chinesePage.reload();
+      const ask = await revealAsk(chinesePage, 'desktop-ask');
+      await ask.locator('[data-ask-details-toggle]').first().click();
+      const questionId = JSON.parse(readFileSync(join(out, 'card.json'), 'utf8')).reply.question.id;
+      const answered = chinesePage.locator(`#neo-ref-question-${questionId} [data-question-answer]`).first();
+      await answered.waitFor();
+      await chinesePage.screenshot({ path: join(out, 'answered-zh.png') });
+      assert.match(await answered.innerText(), /\u5141\u8bb8/, 'the answered card action must use Chinese');
     }
   }
   console.log('PASS: four views named the todo and app; Allow closed the card');

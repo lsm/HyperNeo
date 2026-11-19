@@ -1388,6 +1388,22 @@ describe('NeoAskTodos', () => {
 });
 
 describe('neoQuestionAnswerLabel', () => {
+  it('localizes the desktop control button answer', () => {
+    expect(
+      neoQuestionAnswerLabel(
+        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('\u5141\u8bb8');
+    locale.value = 'en';
+    expect(
+      neoQuestionAnswerLabel(
+        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('Allow');
+  });
+
   it('says chat answers in the human words and an empty multiple choice as none', () => {
     expect(
       neoQuestionAnswerLabel(
