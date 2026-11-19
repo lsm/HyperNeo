@@ -47,14 +47,19 @@ export function createOperationMcpServer(
           ? z.object({ input: z.looseObject({}), action: z.never().optional() })
           : z.object({ action: z.enum(family.actions), input: z.looseObject({}) });
       tools.push(
-        tool(family.name, residentToolDescription(family, operations), schema.shape, async (args) => {
-          const input = schema.parse(args);
-          const action =
-            'action' in input && typeof input.action === 'string'
-              ? input.action
-              : family.actions[0];
-          return invoke({ name: residentOperation(family, action), input: input.input });
-        })
+        tool(
+          family.name,
+          residentToolDescription(family, operations),
+          schema.shape,
+          async (args) => {
+            const input = schema.parse(args);
+            const action =
+              'action' in input && typeof input.action === 'string'
+                ? input.action
+                : family.actions[0];
+            return invoke({ name: residentOperation(family, action), input: input.input });
+          }
+        )
       );
     }
   }
