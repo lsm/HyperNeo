@@ -930,7 +930,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     const h = setup();
     try {
       h.reuse('long_lived');
-      h.setCacheUntil(async () => Date.now() - 1);
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
       await h.finishTodo(h.add(started));
       await h.refresh();
       expect(h.compacted).toEqual([]);
@@ -956,7 +956,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       expect((await h.sessions.read('workerCompactionFacts', worker))?.compactedAt).toBeGreaterThan(
         0
       );
-      h.setCacheUntil(async () => Date.now() - 1);
+      h.setCacheUntil(async () => Date.now() - 60 * 60_000);
       await h.refresh();
       expect(h.compacted).toEqual([worker.id]);
       expect(h.archived).toEqual([]);
