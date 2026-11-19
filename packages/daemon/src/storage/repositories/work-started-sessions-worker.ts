@@ -42,6 +42,25 @@ export function recordStartedWork(
   );
 }
 
+export type WorkCompactionFailure = { count: number; attemptedAt: number; retryAt: number };
+
+export function readWorkCompaction(db: BunDatabase, ref: StartedWork) {
+  const row = db
+    .prepare(
+      `SELECT compacted_at AS at, (
+         SELECT value_json FROM pack_facts WHERE pack = 'core' AND key = 'compaction_failure'
+           AND json_extract(value_json, '$.worker.adapter') = ?1
+           AND json_extract(value_json, '$.worker.id') = ?2
+         ORDER BY json_extract(value_json, '$.attemptedAt') DESC, todo_id DESC LIMIT 1
+       ) AS failure FROM work_started_sessions WHERE adapter = ?1 AND id = ?2`
+    )
+    .get(ref.adapter, ref.id) as { at: number | null; failure: string | null } | null;
+  return {
+    compactedAt: row?.at ?? null,
+    failure: row?.failure ? (JSON.parse(row.failure) as WorkCompactionFailure) : null,
+  };
+}
+
 export function recordWorkerStarted(
   db: BunDatabase,
   ref: StartedWork,
@@ -246,6 +265,16 @@ class WorkStartedSessionWrites {
     if (directory) forgetWorkGone(this.db, directory);
   }
 
+  recordCompacted(ref: StartedWork, at: number): void {
+    this.db
+      .prepare(
+        `UPDATE work_started_sessions SET compacted_at = ?1
+       WHERE adapter = ?2 AND id = ?3 AND kind = 'worker'
+         AND (compacted_at IS NULL OR compacted_at < ?1)`
+      )
+      .run(at, ref.adapter, ref.id);
+  }
+
   markUnusable(ref: StartedWork, reason?: string): void {
     markWorkUnusable(this.db, ref, reason);
   }
@@ -266,7 +295,7 @@ export const workStartedSessionWrites = defineRepositoryOp(
   'work.startedSessionWrites',
   'write',
   WorkStartedSessionWrites,
-  ['recordStarted', 'markUnusable', 'recordArchived']
+  ['recordStarted', 'markUnusable', 'recordArchived', 'recordCompacted']
 );
 
 export function readReleaseReuseRow(db: BunDatabase, todoId: string) {

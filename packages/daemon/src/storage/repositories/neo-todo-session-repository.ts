@@ -14,8 +14,11 @@ import {
   markWorkUnusable,
   readStartedWork,
   readTrustedWorkers,
+  readWorkCompaction,
   recordStartedWork,
   recordWorkRelease,
+  type WorkCompactionFailure,
+  workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -102,6 +105,10 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'finishedWorkers',
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(
+    method: 'workerCompactionFacts',
+    ref: WorkRef
+  ): Promise<ReturnType<NeoTodoSessionRepository['workerCompactionFacts']>>;
   read(
     method: 'reuseFacts',
     todoId: string
@@ -727,6 +734,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     todoId: string;
     target: NeoDriverTarget;
     ref: WorkRef;
+    lastUse: number;
     shared: boolean;
     humanNamed: boolean;
     releasedBy: string | null;
@@ -739,6 +747,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
+              COALESCE(t.finished_at, t.started_at, t.created_at) AS lastUse,
               (SELECT value_json FROM pack_facts WHERE todo_id = s.todo_id AND pack = 'core' AND key = 'release_pending') AS pending,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
                 WHERE json_extract(ot.named, '$.session') IS NOT NULL
@@ -769,6 +778,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         shared: number;
         humanNamed: number;
         releasedBy: string | null;
+        lastUse: number;
         pending: string | null;
       }[]
     ).map((row) => ({ ...row, ref: JSON.parse(row.ref) as WorkRef }));
@@ -784,6 +794,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
       owned: owned.has(JSON.stringify([row.ref.adapter, row.ref.id])),
+      lastUse: row.lastUse,
       pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
@@ -842,6 +853,26 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
+  workerCompactionFacts(ref: WorkRef) {
+    const own = readStartedWork(this.db, null, undefined, ref)[0];
+    if (
+      !own ||
+      own.releasedAt !== null ||
+      this.liveTodo(own.claimedBy) ||
+      this.doingTodoOn(ref, null, LIVE_TODO_STATES)
+    )
+      return undefined;
+    return readWorkCompaction(this.db, ref);
+  }
+
+  recordWorkerCompacted(ref: WorkRef, at: number): Promise<void> {
+    return gatewayFor(this.db).call(workStartedSessionWrites, 'recordCompacted', ref, at);
+  }
+
+  recordCompactionFailure(todoId: string, worker: WorkRef, failure: WorkCompactionFailure): void {
+    this.writeCoreFact(todoId, 'compaction_failure', { worker, ...failure });
+  }
+
   recordReleaseKept(todoId: string, kept: unknown): void {
     this.writeCoreFact(todoId, 'release_kept', kept);
   }
@@ -883,6 +914,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'syncedLive',
     'finishedWorkers',
     'reuseFacts',
+    'workerCompactionFacts',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -908,6 +940,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'unclaimWorker',
     'recordReleased',
     'recordReleaseKept',
+    'recordCompactionFailure',
     'recordReleasePending',
   ]
 );

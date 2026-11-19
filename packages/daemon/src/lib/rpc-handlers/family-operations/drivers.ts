@@ -89,6 +89,7 @@ import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createReadWorkOperation } from '../../drivers/read-operation.ts';
 import {
   createHyperneoAdapter,
+  compactHyperneoWorker,
   type HyperneoSessionControl,
 } from '../../drivers/hyperneo-adapter.ts';
 import type { PlaceGroup, WorkAdapter, WorkRef } from '../../drivers/types.ts';
@@ -213,6 +214,17 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus, db } = context.deps;
   return {
+    compact: async (ref) => {
+      const session = await sessionManager.getSessionForControl(ref.id);
+      if (!session || session.getSessionData().status === 'archived')
+        return { ok: true, value: { compacted: false } };
+      return compactHyperneoWorker(session, (complete) =>
+        internalEventBus.subscribe('session.compacted', complete, {
+          sessionId: ref.id,
+          subscriberName: 'work.compact',
+        })
+      );
+    },
     rename: async (ref, title) => {
       const session = sessionManager.getSessionFromDB(ref.id);
       if (!session) return reject('not_found', 'The session is gone.');

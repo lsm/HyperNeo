@@ -334,7 +334,8 @@ describe('work verb operations', () => {
   test('operation discovery omits unrouted or unimplemented driver capabilities', async () => {
     const adapter: WorkAdapter = {
       ...desktop,
-      capabilities: ['find', 'send', 'steer', 'queue', 'withdraw'],
+      capabilities: ['find', 'send', 'steer', 'queue', 'withdraw', 'compact'],
+      compact: async () => ({ ok: true, value: { compacted: true } }),
     };
     expect(
       await call('work.adapters', {}, undefined, { source: 'rpc', principal: 'local' }, [adapter])

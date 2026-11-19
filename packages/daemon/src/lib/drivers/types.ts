@@ -299,6 +299,7 @@ export type WorkVerb =
   | 'status'
   | 'turns'
   | 'stop'
+  | 'compact'
   | 'archive';
 export type WorkTurnFact = z.infer<typeof WorkTurnFactSchema>;
 export type WorkWithdrawal = {
@@ -409,5 +410,9 @@ export interface WorkAdapter {
     receipt?: WorkDelivery['receipt']
   ) => Promise<Result<WorkDetail>>;
   readonly stop?: (ref: WorkRef, context: WorkCallContext) => Promise<Result<{ stopped: boolean }>>;
+  readonly compact?: (
+    ref: WorkRef,
+    context: WorkCallContext
+  ) => Promise<Result<{ compacted: boolean }>>;
   readonly archive?: (ref: WorkRef, admit: ArchiveAdmission) => Promise<Result<WorkArchived>>;
 }
