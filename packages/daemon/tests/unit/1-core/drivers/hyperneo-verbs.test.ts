@@ -902,6 +902,17 @@ describe('hyperneo adapter start and stop', () => {
     ...(folder ? { folder } : {}),
   });
 
+  test('advertises compact only when the session controller implements it', () => {
+    expect(adapter().capabilities).not.toContain('compact');
+    const compact: NonNullable<HyperneoSessionControl['compact']> = async () => ({
+      ok: true,
+      value: { compacted: true },
+    });
+    const driver = adapter({ compact });
+    expect(driver.capabilities).toContain('compact');
+    expect(driver.compact).toBe(compact);
+  });
+
   test('start opens a session in a git folder on its own worktree and sends the message', async () => {
     const result = await adapter().start?.(
       { place: place('/focus/repo'), title: 'font size', message: 'make it larger' },

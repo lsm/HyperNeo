@@ -1249,6 +1249,7 @@ describe('codex-desktop adapter status and send', () => {
         })
       );
       const driver = adapter(0, '', connect);
+      expect(driver.capabilities).toContain('compact');
       expect(await driver.compact!(ref('busy'), user)).toMatchObject({ ok: false, reason: 'busy' });
       expect(connect).not.toHaveBeenCalled();
       expect(await driver.compact!(ref('idle'), user)).toEqual({

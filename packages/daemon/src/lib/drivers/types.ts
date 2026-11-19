@@ -299,6 +299,7 @@ export type WorkVerb =
   | 'status'
   | 'turns'
   | 'stop'
+  | 'compact'
   | 'archive';
 export type WorkTurnFact = z.infer<typeof WorkTurnFactSchema>;
 export type WorkWithdrawal = {

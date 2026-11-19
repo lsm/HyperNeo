@@ -886,6 +886,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'stop',
       ...(deps.sessions.withdraw ? ['withdraw' as const] : []),
       ...(deps.sessions.rename ? ['rename' as const] : []),
+      ...(deps.sessions.compact ? ['compact' as const] : []),
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>

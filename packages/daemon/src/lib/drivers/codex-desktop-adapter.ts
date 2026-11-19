@@ -1431,6 +1431,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       'status',
       'turns',
       'stop',
+      'compact',
       'archive',
     ],
     find: async (query) =>
