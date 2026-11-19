@@ -6,6 +6,7 @@ import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-to
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { OperationCaller, OperationDefinition } from '../operations/registry.ts';
 import { neoUserFolder } from './folder.ts';
+import { planDesktopControl } from './desktop-control-preference.ts';
 import { type NeoInputReads, resolveNeoInputAsk } from './input-ask.ts';
 import type { NeoPack } from './pack-contract.ts';
 import type {
@@ -23,12 +24,27 @@ type Result = { ok: false; reason: string } | { ok: true; todo?: NeoTodo; record
 export async function recordNeoTodoAdmission(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: Pick<NeoTodoControls, 'advance' | 'userFolder' | 'refreshIdentity'>,
+  controls: Pick<
+    NeoTodoControls,
+    'advance' | 'userFolder' | 'refreshIdentity' | 'askDesktopControl'
+  >,
   ask: NeoAsk,
   draft: ResolvedNeoTodoDraft,
   packs: readonly NeoPack[]
 ): Promise<Result> {
-  const result = await admitNeoTodo(store, sessions, controls, ask, draft, packs);
+  let admitted = draft;
+  if (draft.named?.desktopControl === true) {
+    const decision = planDesktopControl(true, await store.read('desktopControlPreference'));
+    if (decision === 'ask') await controls.askDesktopControl?.(ask.id);
+    if (decision !== 'allow')
+      return {
+        ok: false,
+        reason:
+          'desktop_control_requires_permission: The human can turn desktop control on from the todo on the Neo page. Leave desktopControl out to add the todo with it off.',
+      };
+    admitted = { ...draft, desktopControlApproved: true };
+  }
+  const result = await admitNeoTodo(store, sessions, controls, ask, admitted, packs);
   if (result.ok && result.todo && draft.target?.verb === 'bind')
     await controls.refreshIdentity?.(result.todo.id);
   return result;

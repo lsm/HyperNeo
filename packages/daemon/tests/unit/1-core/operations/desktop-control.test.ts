@@ -6,6 +6,8 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { desktopControlQuestion } from '../../../../src/lib/neo/desktop-control-preference.ts';
+import { createPackPreferenceQuestions } from '../../../../src/lib/neo/preference-questions.ts';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
@@ -115,6 +117,9 @@ function neoOperations() {
   const sessions = new NeoTodoSessionRepository(db);
   const controls = {
     resolveTarget: existingTodoTarget,
+    askDesktopControl: async (askId: string) => {
+      await invokeOperation(registry, 'pack.preferences.ask', desktopControlQuestion(askId), neo);
+    },
     recompute: async (todo: Parameters<typeof store.updateTodo>[0], patch: object) =>
       store.updateTodo(todo, patch, Date.now()),
     advance: async () => {},
@@ -122,7 +127,14 @@ function neoOperations() {
     retry: async () => ({ ok: false as const, reason: 'no' }),
     stop: async () => null,
   };
-  return createOperationRegistry([
+  const registry = createOperationRegistry([
+    ...createPackPreferenceQuestions(
+      db,
+      store,
+      () => createTodoCheckPacks(db),
+      () => 'en',
+      async () => {}
+    ),
     ...createNeoTodoOperations(
       store,
       sessions,
@@ -143,6 +155,7 @@ function neoOperations() {
       { gateway: gatewayFor(db), changed: () => {} }
     ),
   ]);
+  return registry;
 }
 const neo: OperationCaller = { source: 'mcp', sessionId: 'neo', role: 'neo' };
 const draft = {
@@ -172,6 +185,39 @@ test('Neo cannot turn desktop control on when it adds or opens a todo', async ()
     )
   ).not.toMatchObject({ kind: 'completed', value: { ok: true } });
   expect(storedOptIns()).toBe(0);
+});
+
+test('Neo requests one human card and can opt a needed todo in after the human allows it', async () => {
+  const registry = neoOperations();
+  const add = () => invokeOperation(registry, 'neo.todo.add', { askId: 'ask', ...draft }, neo);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect(await add()).toMatchObject({ kind: 'completed', value: { ok: false } });
+  }
+  expect(storedOptIns()).toBe(0);
+  const store = new NeoAskTodoRepository(db);
+  const questions = store.listQuestions('ask');
+  expect(questions).toHaveLength(1);
+  const [question] = questions;
+  expect(question.text).toContain('When a task needs your computer, may workers use it?');
+  store.answerQuestion(question, question.options![0], 'button', Date.now());
+
+  expect(await add()).toMatchObject({
+    kind: 'completed',
+    value: { ok: true, todo: { named: { desktopControl: true } } },
+  });
+  expect(storedOptIns()).toBe(1);
+});
+
+test('a declined desktop preference keeps approval manual', async () => {
+  const registry = neoOperations();
+  const add = () => invokeOperation(registry, 'neo.todo.add', { askId: 'ask', ...draft }, neo);
+  await add();
+  const store = new NeoAskTodoRepository(db);
+  const [question] = store.listQuestions('ask');
+  store.answerQuestion(question, question.options![1], 'button', Date.now());
+  expect(await add()).toMatchObject({ kind: 'completed', value: { ok: false } });
+  expect(storedOptIns()).toBe(0);
+  expect(store.listQuestions('ask')).toHaveLength(1);
 });
 
 test('Neo cannot turn desktop control on by editing a todo', async () => {
