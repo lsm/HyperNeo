@@ -4,13 +4,13 @@ import { codingNoChecksNeedsHuman } from './daemon-merge-gates.ts';
 import { homedir } from 'node:os';
 import { codingHumanSignoff } from './human-signoff.ts';
 import { isDeepStrictEqual } from 'node:util';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
-import { defineOperation } from '../../../operations/registry.ts';
+import { defineOperation, type OperationDefinition } from '../../../operations/registry.ts';
 import { codingCrossModelReviewed, codingReviewerPolicy } from './stage-facts.ts';
 import { codingReviewerProvenance } from './pr-ledger.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
@@ -256,22 +256,25 @@ export function createCodingMergeOperation(deps: Deps) {
       'result'
     )
     .endAsync('result') as (input: Input) => Promise<Result>;
-  return defineOperation({
-    name: 'neo.coding.merge.prepare',
-    description: neoToolDescription('neo.coding.merge.prepare'),
-    inputSchema: Input,
-    resultSchema: z.union([
-      z.object({
-        accepted: z.literal(true),
-        head: z.string(),
-        command: z.array(z.string()),
-        reminder: z.string().optional(),
-      }),
-      z.object({ accepted: z.literal(false), reason: z.string() }),
-    ]),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input) => prepare(input),
-  });
+  return {
+    ...defineOperation({
+      name: 'neo.coding.merge.prepare',
+      description: neoToolDescription('neo.coding.merge.prepare'),
+      inputSchema: Input,
+      resultSchema: z.union([
+        z.object({
+          accepted: z.literal(true),
+          head: z.string(),
+          command: z.array(z.string()),
+          reminder: z.string().optional(),
+        }),
+        z.object({ accepted: z.literal(false), reason: z.string() }),
+      ]),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input) => prepare(input),
+    }),
+    pipelineRunner: prepare as unknown as OperationDefinition['execute'] & DescribedRunner,
+  };
 }
 
 export const codingMergeGithubSchemas = { Head, Pr, Reviews, Checks, Threads };
