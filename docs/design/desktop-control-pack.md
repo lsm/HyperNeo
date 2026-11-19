@@ -17,7 +17,7 @@
 1. **A `desktop` pack holds the Neo guidance.**
    - Core keeps the operations, the opt-in rule and the preference.
    - The pack's `instructions()` read facts each turn, as delegation does:
-     - whether the desktop app is connected (`desktop.status`);
+     - whether the desktop app is connected (see "App connected" below);
      - the preference value;
      - whether `work.adapters` lists a Codex Desktop or Claude Desktop adapter.
    - When the desktop app is not connected and neither adapter is listed, the pack adds nothing. People who never use the computer see no extra prompt.
@@ -36,12 +36,19 @@
    - Turning it on when the app reports `desktop_permissions_required` opens the macOS Accessibility and Screen Recording prompts through the desktop app.
 3. **Refusals say what to do.**
    - A non-worker caller gets `desktop_worker_only` (#11286).
-   - The `neo.todo.add` refusal names the panel switch and the todo's "Allow this computer" menu item, not "the Neo page".
+   - The `neo.todo.add` refusal names the panel switch and the todo's "Let it use this computer" menu item, not "the Neo page".
 
 4. **Life-admin drops its Chrome DevTools route.**
    - Its instructions point to the desktop pack instead of `chrome-devtools-user`.
    - Chrome DevTools reaches page content only. It cannot click extension popups such as a password manager, or browser dialogs, so tasks stall there.
    - One route means one set of grants and one way to stop and take over.
+
+## App connected
+
+- No operation reports this today. `desktop.status` lists only opted-in workers, and it probes `desktop/control.sock` only for them.
+- The daemon probes `desktop/control.sock` with the existing `appListening` check every 30 seconds, and caches the result in memory.
+- `desktop.status` returns that value as a top-level `app` field, which the panel reads.
+- The pack's synchronous `instructions()` reads the cached value.
 
 ## Not in scope
 
