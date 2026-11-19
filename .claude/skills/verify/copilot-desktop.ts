@@ -52,6 +52,8 @@ if (desktop) {
   }
   const events = [
     { type: 'session.start', data: { context: { cwd: copilotFolder } } },
+    { type: 'user.message', data: { messageId: 'zero', interactionId: 'other', content: 'Other input' } },
+    { type: 'assistant.message', data: { messageId: 'other-reply', interactionId: 'other', content: 'Other reply' } },
     { type: 'user.message', data: { messageId: 'one', interactionId: 'turn', content: 'MARKER\nInput' } },
     { type: 'assistant.message', data: { messageId: 'two', interactionId: 'turn', content: 'Reply' } },
     { type: 'session.idle', data: {} },
@@ -119,8 +121,17 @@ try {
       sessionId: session.ref.id, input: { adapter, marker: 'MARKER' },
     });
     assert(marker.ok && marker.value.turns[0].messageId === 'user:one');
-    const turns = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', { ref: session.ref });
+    const turns = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', { ref: session.ref, limit: 1 });
     assert(turns.ok && turns.value.turns[0].id === 'one' && turns.value.turns[0].complete);
+    if (mode === 'desktop') {
+      const older = turns.value.turns[0];
+      const next = await rpc<Result<{ turns: WorkTurnFact[] }>>('work.turns', {
+        ref: session.ref, cursor: older.cursor, limit: 1,
+      });
+      assert(next.ok, JSON.stringify(next));
+      assert.equal(next.value.turns[0]?.id, 'zero');
+      assert.equal(next.value.turns[0].endedAt, older.endedAt);
+    }
     const refused = await rpc<Result<unknown>>('work.send', { ref: session.ref, message: 'No delivery' });
     assert(!refused.ok && refused.reason === 'unsupported');
     assert.deepEqual(readFileSync(state), before);
@@ -176,6 +187,13 @@ try {
       db.close();
     }
     const drift = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
+    const missing = 'unknown-desktop-session';
+    const history = await rpc<Result<unknown>>('work.read', { sessionId: missing });
+    assert(!history.ok && history.reason === 'not_found');
+    const input = await rpc<Result<unknown>>('work.read', {
+      sessionId: missing, input: { adapter, marker: 'MARKER' },
+    });
+    assert(!input.ok && input.reason === 'not_found');
     if (cli) {
       const visible = drift.places.flatMap((place) => place.work);
       const external = visible.find((work) => work.ref.id === copilotSession);
