@@ -45,6 +45,7 @@ function setup(idle: string[] = []) {
   let fresh = 0;
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
+    supportsStartPreparation: true,
     capabilities: ['find', 'start', 'send'],
     find: () => [
       {
@@ -82,7 +83,7 @@ function setup(idle: string[] = []) {
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      recordStarted: (ref) => recordWorkerStarted(db, ref),
+      recordStarted: (ref, _directory, facts) => recordWorkerStarted(db, ref, facts),
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
       claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
       unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
@@ -91,11 +92,21 @@ function setup(idle: string[] = []) {
         ['todo', 'doing', 'blocked'].includes(store.getTodo(todoId)?.state ?? ''),
     })
   );
-  const start = async (todoId: string) => {
+  const start = async (
+    todoId: string,
+    preparation?: { pack: string; parameters: Record<string, unknown> }
+  ) => {
     const outcome = await invokeOperation(
       registry,
       'work.start',
-      { adapter: 'claude-desktop', place, title: 'repo', message: 'Build it.', todoId },
+      {
+        adapter: 'claude-desktop',
+        place,
+        title: 'repo',
+        message: 'Build it.',
+        todoId,
+        ...(preparation ? { preparation } : {}),
+      },
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
     );
     expect(outcome.kind).toBe('completed');
@@ -128,6 +139,23 @@ describe('work.start reuses only sessions the daemon started', () => {
 
     expect(await h.start('build')).toBe(worker);
     expect(h.sent).toEqual([worker]);
+  });
+
+  test('reuses a prepared reviewer for a new head but not a different stable preparation', async () => {
+    const h = setup();
+    const preparation = (head: string, branch: string) => ({
+      pack: 'coding',
+      parameters: { head, branch },
+    });
+    h.todo('first', 'todo');
+    const reviewer = await h.start('first', preparation('head-1', 'main'));
+    h.finish('first');
+    h.idle.push(reviewer);
+    h.todo('second', 'todo');
+    expect(await h.start('second', preparation('head-2', 'main'))).toBe(reviewer);
+    h.finish('second');
+    h.todo('third', 'todo');
+    expect(await h.start('third', preparation('head-3', 'other'))).not.toBe(reviewer);
   });
 });
 
