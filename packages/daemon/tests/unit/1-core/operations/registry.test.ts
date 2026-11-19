@@ -41,6 +41,23 @@ describe('operation registry', () => {
     expect(Object.isFrozen(registry.entries[0])).toBe(true);
   });
 
+  test('does not expose the underlying pipeline runner on registry entries', async () => {
+    const raw = mock(async () => ({ accepted: false }));
+    const guarded = mock(async () => ({ accepted: true }));
+    const definition = { ...example(), execute: guarded, pipelineRunner: raw };
+    const registry = createOperationRegistry([definition]);
+    const entry = registry.get('message.send');
+    expect(entry).toBeDefined();
+    expect(entry && Reflect.has(entry, 'pipelineRunner')).toBe(false);
+    expect(Reflect.has(registry.entries[0], 'pipelineRunner')).toBe(false);
+    expect(await entry!.execute({ content: 'hello' }, { source: 'rpc' })).toEqual({
+      accepted: true,
+    });
+    expect(guarded).toHaveBeenCalledTimes(1);
+    expect(raw).not.toHaveBeenCalled();
+    expect(definition.pipelineRunner).toBe(raw);
+  });
+
   test('captures execution before the source callback is reassigned', async () => {
     const original = mock(async () => ({ accepted: true }));
     const replacement = mock(async () => ({ accepted: false }));
