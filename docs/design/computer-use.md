@@ -21,12 +21,14 @@ A HyperNeo session already calls daemon operations in process: every session get
    - edge: on `send`, one host `dispatch` request (below);
    - edge: write one audit row from the host's reply (todo, session, tool, app, class, decision, reason, dispatched, time).
 3. **One host request, `dispatch {worker_id, work_dir, tool, args}`.** The control socket keeps its one-request, one-response framing. `dispatch` does in that single request what `resolve` does today (verify the target app, classify the action, check the stored grant, open the dialog when there is none), and only when all pass sends the call on the private driver channel. The channel is the worker's existing `Channel` in the host's slot map, selected by `worker_id`, which the daemon sets to the caller session; nothing in the daemon sends `start` today, so `dispatch` starts the slot itself when the worker has none, with the same code `start` runs (signature check, private home under `work_dir`, record). The daemon sends `work_dir` as the caller session's working directory. A slot ends through the existing `stop` (`stop-operation.ts`) or when the host exits. The reply carries the resolved app, class, decision, reason and whether input was sent. The host writes one log line per `dispatch`.
+
+   As a discovery exception, `list_windows` without an app or pid lists windows across apps, including titles, without an app grant. It still requires an approved desktop-control worker. A targeted listing requires the app grant.
 4. **The host answers only the live daemon process.** On each control connection the host reads the peer PID (tokio `peer_cred`, `LOCAL_PEEREPID` on macOS) and accepts only:
    - the sidecar it spawned, while it still holds that child unreaped (a PID cannot be reused before it is reaped); or
    - for an attached daemon, the `pid` in `runtime.json`, read again on every connection, and only when that process started at or before the file's `startedAt` and at most 60 seconds earlier. A recycled PID starts later and is refused; a restarted daemon writes a new file.
 
    Every other process gets `not_daemon`. No key, prompt or signing step.
-5. **The owner approves each app once,** through the existing dialog and grant store (`desktop_grants.rs`). Unchanged.
+5. **The owner approves each app once,** through the dialog and grant store (`desktop_grants.rs`).
 
 ## Cut
 
@@ -39,7 +41,7 @@ A HyperNeo session already calls daemon operations in process: every session get
 ## Limits
 
 - A process running as the daemon, or one that rewrites `runtime.json` before the host attaches, can act as the daemon. A worker with its sandbox off runs as the user and can already do that. The worker sandbox closes it; this design does not.
-- A grant is per app and class, not per task, as today.
+- A grant covers all action classes for one verified app, across tasks.
 
 ## Where it lives
 

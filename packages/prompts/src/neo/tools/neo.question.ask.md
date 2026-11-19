@@ -10,3 +10,5 @@ Ask one necessary question on an open ask you own. In the human's language, give
 - reply: ask a question answered in chat. relay: relay a worker question you cannot answer in your own words, one line of at most 80 characters, with 2–6 options. Its answer goes to the worker. Use todoId, or session (its notice key) if there is no todo; the daemon follows that session in an ask. Relay requires no other open card.
 
 For other kinds use replaces to replace an open same-ask card atomically. A closed same-ask replaces ID is ignored. Unknown or other-ask IDs are refused. Without replacement, an open card blocks a new one. A proposal, relayed-session work decision or card the human held cannot be replaced; wait for the human (who can also take back a held card).
+
+For a todo that needs desktop control, send kind desktop_control with todoId and app. The human must use Allow on the card to enable control; do not enable it yourself.

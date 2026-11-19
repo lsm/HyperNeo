@@ -49,6 +49,7 @@ import { runMigration510 } from '../../../../src/storage/schema/m510-neo-card-ac
 import { runMigration512 } from '../../../../src/storage/schema/m512-neo-todo-produces-follow-up.ts';
 import { runMigration515 } from '../../../../src/storage/schema/m515-neo-question-held.ts';
 import { runMigration527 } from '../../../../src/storage/schema/m527-neo-question-option-details.ts';
+import { runMigration531 } from '../../../../src/storage/schema/m531-neo-question-desktop-app.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
@@ -93,6 +94,7 @@ describe('neo.message.send replyTo', () => {
     runMigration512(mailbox.db);
     runMigration515(mailbox.db);
     runMigration527(mailbox.db);
+    runMigration531(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);
@@ -179,6 +181,31 @@ describe('neo.message.send replyTo', () => {
           .get(requestId) as { payload_json: string }
       ).payload_json
     );
+
+  test('a chat reply leaves a desktop control card open and control off', async () => {
+    store.askQuestion(
+      'desktop',
+      'ask',
+      {
+        text: 'Allow desktop control?',
+        kind: 'desktop_control',
+        app: 'Calendar',
+        todoId: 't1',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      2
+    );
+    const id = crypto.randomUUID();
+    expect(await send(id, 'Yes, allow it', { kind: 'question', id: 'desktop' })).toMatchObject({
+      value: { ok: true, created: true },
+    });
+    expect(prompt(id).words).toBe('Yes, allow it');
+    expect(store.getQuestion('desktop')).toMatchObject({ state: 'open', answer: null });
+    expect(store.getTodo('t1')?.named?.desktopControl).not.toBe(true);
+  });
 
   test('a reply to a question goes to root Neo and records the words as its answer', async () => {
     const id = crypto.randomUUID();

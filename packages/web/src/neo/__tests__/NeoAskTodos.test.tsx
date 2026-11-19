@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/pr
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { locale } from '../../lib/i18n/index.ts';
 import * as clipboard from '../../lib/utils.ts';
-import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { NeoAskTodos, QuestionBox, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { neoRelativeTime } from '../neo-time.ts';
 import guidanceQuestions from './fixtures/question-guidance.json';
@@ -101,6 +101,37 @@ const toggleAll = (app: ReturnType<typeof render>) => {
       : app.getByRole('button', { name: /^(All|全部) ·/ })
   );
 };
+
+describe('QuestionBox', () => {
+  it('shows the desktop control action in the selected language', () => {
+    const card = question('desktop', {
+      kind: 'desktop_control',
+      app: 'Calendar',
+      todoId: 't1',
+      todoTitle: 'Todo t1',
+    });
+    const view = render(
+      <QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={vi.fn()} />
+    );
+    expect(view.getByRole('button', { name: '\u5141\u8bb8' })).toBeTruthy();
+  });
+
+  it('offers desktop control for the named app and todo', async () => {
+    locale.value = 'en';
+    const allow = vi.fn();
+    const card = question('desktop', {
+      kind: 'desktop_control',
+      app: 'Calendar',
+      todoId: 't1',
+      todoTitle: 'Todo t1',
+      text: 'Allow desktop control?',
+    });
+    const view = render(<QuestionBox question={card} onAnswer={vi.fn()} onDesktopAllow={allow} />);
+    await waitFor(() => expect(view.getByText('Todo t1 — Calendar')).toBeTruthy());
+    fireEvent.click(view.getByRole('button', { name: 'Allow' }));
+    expect(allow).toHaveBeenCalledWith(card);
+  });
+});
 
 describe('NeoAskTodos', () => {
   it('uses creation facts, hides row times, and shows lifecycle time only in expanded details', () => {
@@ -1357,6 +1388,22 @@ describe('NeoAskTodos', () => {
 });
 
 describe('neoQuestionAnswerLabel', () => {
+  it('localizes the desktop control button answer', () => {
+    expect(
+      neoQuestionAnswerLabel(
+        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('\u5141\u8bb8');
+    locale.value = 'en';
+    expect(
+      neoQuestionAnswerLabel(
+        question('desktop', { kind: 'desktop_control', answer: 'Allow', answeredBy: 'button' }),
+        []
+      )
+    ).toBe('Allow');
+  });
+
   it('says chat answers in the human words and an empty multiple choice as none', () => {
     expect(
       neoQuestionAnswerLabel(

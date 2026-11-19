@@ -28,8 +28,17 @@ use tokio::{
     process::Command,
     sync::Mutex,
     task::{JoinHandle, JoinSet},
-    time::timeout,
+    time::{timeout, timeout_at, Instant},
 };
+
+pub(crate) async fn owner_answer<F: std::future::Future<Output = &'static str>>(
+    deadline: Instant,
+    answer: F,
+) -> &'static str {
+    timeout_at(deadline, answer)
+        .await
+        .unwrap_or("waiting_for_owner")
+}
 
 #[cfg(test)]
 static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
@@ -171,7 +180,7 @@ impl Control {
                 } else {
                     listener.accept().await
                 };
-                let (stream, _) = match accepted {
+                let (mut stream, _) = match accepted {
                     Ok(connection) => connection,
                     Err(error) => {
                         log::warn!("Desktop control accept failed: {error}");
@@ -179,8 +188,14 @@ impl Control {
                         continue;
                     }
                 };
+                while requests.try_join_next().is_some() {}
                 if requests.len() >= 16 {
-                    requests.join_next().await;
+                    let _ = timeout(
+                        Duration::from_secs(2),
+                        stream.write_all(b"{\"ok\": false, \"error\": \"desktop_busy\"}\n"),
+                    )
+                    .await;
+                    continue;
                 }
                 let state = state.clone();
                 requests.spawn(async move {
@@ -311,6 +326,18 @@ impl Drivers {
         process.seconds <= advertised && process.seconds + 60 >= advertised
     }
     async fn request(&self, request: Request) -> Result<Value> {
+        #[cfg(test)]
+        let deadline = if request
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args["fixture_deadline"] == true)
+        {
+            Instant::now() + Duration::from_millis(300)
+        } else {
+            Instant::now() + Duration::from_secs(20)
+        };
+        #[cfg(not(test))]
+        let deadline = Instant::now() + Duration::from_secs(20);
         if request.worker.is_empty()
             || request.worker.len() > 64
             || !request
@@ -338,6 +365,9 @@ impl Drivers {
                     "hold" => "hold",
                     "panic" => "panic",
                     "real" => "real",
+                    "mock-allow" => "mock-allow",
+                    "mock-deny" => "mock-deny",
+                    "mock-hold" => "mock-hold",
                     _ => "deny",
                 };
                 grants::ASKS.lock().unwrap().1.clear();
@@ -384,11 +414,23 @@ impl Drivers {
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
                             let reason = if reason == "app_action_not_authorized" {
-                                grants::ask_owner(bundle, requirement, class)
+                                let (bundle, requirement, class) =
+                                    (bundle.to_owned(), requirement.to_owned(), class.to_owned());
+                                owner_answer(deadline, async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        grants::ask_owner(&bundle, &requirement, &class)
+                                    })
+                                    .await
+                                    .unwrap_or("guards_unavailable")
+                                })
+                                .await
                             } else {
                                 reason
                             };
-                            result = json!({"reason": reason, "class": class, "bundle_id": bundle});
+                            if reason != "allowed" {
+                                result =
+                                    json!({"reason": reason, "class": class, "bundle_id": bundle});
+                            }
                         }
                     }
                     #[cfg(test)]
@@ -419,6 +461,12 @@ impl Drivers {
         let mut bundle = Value::Null;
         let mut class = Value::Null;
         let mut observed = Value::Null;
+        let unscoped_windows = request.action == "dispatch"
+            && request.tool.as_deref() == Some("list_windows")
+            && request
+                .arguments
+                .as_ref()
+                .is_none_or(|args| args["pid"].is_null() && args["app"].is_null());
         if request.action == "dispatch"
             && record::ensure_enabled(&self.records.join("workers").join(&request.worker)).is_err()
         {
@@ -433,7 +481,7 @@ impl Drivers {
                 false,
             ));
         }
-        if request.action == "dispatch" {
+        if request.action == "dispatch" && !unscoped_windows {
             let tool = request.tool.as_deref().unwrap_or_default();
             let arguments = request.arguments.clone().unwrap_or(Value::Null);
             let resolved = target::resolve(tool, &arguments, request.instance.as_ref());
@@ -452,11 +500,24 @@ impl Drivers {
                 match grants::check(bundle.as_str().unwrap_or_default(), requirement, class_name) {
                     Ok(()) => Value::Null,
                     Err(reason) if reason == "app_action_not_authorized" => {
-                        json!(grants::ask_owner(
-                            bundle.as_str().unwrap_or_default(),
-                            requirement,
-                            class_name
-                        ))
+                        let (app, requirement, class_name) = (
+                            bundle.as_str().unwrap_or_default().to_owned(),
+                            requirement.to_owned(),
+                            class_name.to_owned(),
+                        );
+                        let answer = owner_answer(deadline, async move {
+                            tokio::task::spawn_blocking(move || {
+                                grants::ask_owner(&app, &requirement, &class_name)
+                            })
+                            .await
+                            .unwrap_or("guards_unavailable")
+                        })
+                        .await;
+                        if answer == "allowed" {
+                            Value::Null
+                        } else {
+                            json!(answer)
+                        }
                     }
                     Err(reason) => json!(reason),
                 }
@@ -503,7 +564,22 @@ impl Drivers {
             }
             slots.entry(worker_id.clone()).or_default().clone()
         };
-        let mut worker = slot.lock().await;
+        let mut worker = if request.action == "dispatch" {
+            match timeout_at(deadline, slot.lock()).await {
+                Ok(worker) => worker,
+                Err(_) => {
+                    return Ok(finish(
+                        bundle,
+                        class,
+                        "refused",
+                        json!("desktop_busy"),
+                        false,
+                    ))
+                }
+            }
+        } else {
+            slot.lock().await
+        };
         let result: Result<Option<Value>> = async {
             match request.action.as_str() {
                 "start" => {
@@ -520,7 +596,7 @@ impl Drivers {
                         request.arguments.as_ref().unwrap_or(&Value::Null),
                         observed.get("instance"),
                     );
-                    if current["value"] != observed {
+                    if !unscoped_windows && current["value"] != observed {
                         let reply =
                             finish(bundle, class, "refused", json!("target_mismatch"), false);
                         log::info!(
@@ -529,13 +605,22 @@ impl Drivers {
                         );
                         return Ok(Some(reply));
                     }
+                    if Instant::now() >= deadline {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("desktop_timeout"),
+                            false,
+                        )));
+                    }
                     #[cfg(not(test))]
                     let limit = Duration::from_secs(30);
                     #[cfg(test)]
                     let limit = Duration::from_millis(100);
                     let active = worker.as_mut().unwrap();
-                    let call = timeout(
-                        limit,
+                    let call = timeout_at(
+                        deadline.min(Instant::now() + limit),
                         active.channel.call(
                             request.tool.as_deref().unwrap_or_default(),
                             request.arguments.clone(),

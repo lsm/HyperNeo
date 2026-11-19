@@ -142,3 +142,8 @@ test('createDesktopTargetBroker returns null without Desktop', async () => {
   root = mkdtempSync('/tmp/broker-');
   expect(await createDesktopTargetBroker(root)({ worker_id: 'w' }, 'click', {}, 'c')).toBeNull();
 });
+
+test('createDesktopTargetBroker reports a saturated host as busy', async () => {
+  const { broker } = await desktop(() => ({ ok: false, error: 'desktop_busy' }));
+  expect(await broker({ worker_id: 'w' }, 'click', {}, 'c')).toEqual({ reason: 'desktop_busy' });
+});

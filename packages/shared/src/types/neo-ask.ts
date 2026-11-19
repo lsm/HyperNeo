@@ -74,7 +74,7 @@ export interface NeoTodo extends ArtifactProjection {
   producesFollowUp?: true;
 }
 
-export type NeoQuestionKind = 'yesno' | 'choice' | 'reply';
+export type NeoQuestionKind = 'yesno' | 'choice' | 'reply' | 'desktop_control';
 
 export type NeoQuestionState = 'open' | 'answered' | 'retired';
 
@@ -101,6 +101,8 @@ export interface NeoAnswerProvenance {
 }
 
 export interface NeoQuestion {
+  app?: string;
+  todoTitle?: string;
   answerProvenance?: NeoAnswerProvenance;
   readonly artifacts?: readonly (ArtifactRef | PublicHandoffReference)[];
   retireWhen?: NeoTodoCheck;
