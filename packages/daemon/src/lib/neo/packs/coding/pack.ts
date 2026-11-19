@@ -45,7 +45,6 @@ import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
-import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
 import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
 import { codingSessionAssignmentReads } from './session-assignments-worker.ts';
@@ -331,7 +330,6 @@ export function createCodingPack(deps: {
         },
         ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
-      sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
     workerStartExclusions: async (todo) => {

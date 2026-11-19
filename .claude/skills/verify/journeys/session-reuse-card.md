@@ -14,4 +14,4 @@ width, checks their descriptions, default notice and absence of repeated delegat
 labels or tables, and selects one session per
 matter. The daemon must report `per_ask`. Evidence is
 `evidence/session-reuse-card.json` and `evidence/session-reuse-card.png`.
-The legacy coding strategy card has a distinct question and names its repository.
+The coding merge policy card names its repository.

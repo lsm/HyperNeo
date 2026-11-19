@@ -14,10 +14,10 @@ assert.equal(process.env.HOME, join(run, 'home')); assert.equal(process.env.HYPE
 const dbPath = join(run, 'data/daemon.db'); assert(!existsSync(dbPath));
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const evidence: unknown[] = [];
-const strategy = (value: string) => ({ pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'sessionStrategy', value });
-const alternatives = [[strategy('long_lived')], [strategy('per_task')], [strategy('per_pr')]];
-const options = ['Long-lived work-type sessions', 'One session per task', 'One session per PR', 'Use the default for now'];
-const savedOf = (rows: { key: string }[]) => rows.filter((row) => row.key === 'sessionStrategy');
+const strategy = (value: string) => ({ pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'mergePolicy', value });
+const alternatives = [[strategy('review_bot')], [strategy('ci_only')], [strategy('human')]];
+const options = ['CI and review bot approval', 'CI passes', 'Human approval', 'Use the default for now'];
+const savedOf = (rows: { key: string }[]) => rows.filter((row) => row.key === 'mergePolicy');
 let questionId = '';
 for (const phase of ['initial', 'restart']) {
   const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
@@ -42,7 +42,7 @@ for (const phase of ['initial', 'restart']) {
     if (phase === 'initial') {
       const db = app.db.getDatabase();
       db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
-        VALUES ('synthetic-root','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
+        VALUES ('synthetic-root','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{"queryMode":"manual"}','{}')`);
       new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'synthetic-root', originMessageId: null, title: 'Synthetic settings', request: 'Verify a choice between settings', createdAt: 1 });
       const proposed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'strategy-request', alternatives });
       assert.equal(proposed.ok, true); questionId = proposed.questionId;
@@ -57,7 +57,7 @@ for (const phase of ['initial', 'restart']) {
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);
     const saved = savedOf((await rpc('pack.preferences.list', {})).preferences) as any[];
-    assert.deepEqual(saved.map((s) => ({ pack: s.pack, scope: s.scope, key: s.key, value: s.value })), [strategy('per_pr')]);
+    assert.deepEqual(saved.map((s) => ({ pack: s.pack, scope: s.scope, key: s.key, value: s.value })), [strategy('human')]);
     assert.equal(saved[0].setBy, 'human');
     assert.equal((await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'strategy-request', alternatives: alternatives.slice(1) })).reason, 'proposal_is_immutable');
     assert.equal((await mcp('pack.preferences.applyAnswer', { questionId })).ok, true);
