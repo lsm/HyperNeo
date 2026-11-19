@@ -237,7 +237,6 @@ test.each([
 test.each([
   "UPDATE neo_todos SET named='{}'",
   'UPDATE neo_todos SET approved_at=NULL',
-  "UPDATE neo_todos SET state='todo'",
   "UPDATE neo_asks SET status='closed'",
   `INSERT INTO neo_todos VALUES('second','ask','Other','doing',1,'{"desktopControl":true}'); INSERT INTO neo_todo_sessions VALUES('second','{"adapter":"hyperneo","id":"worker-a"}')`,
   `UPDATE neo_todo_sessions SET ref='{"adapter":"hyperneo","id":"worker-a","daemon":"remote"}'`,
@@ -248,6 +247,16 @@ test.each([
     value: { reason: 'desktop_not_enabled', dispatched: false },
   });
   expect(requests).toHaveLength(0);
+});
+
+test.each(['todo', 'blocked'])('dispatches for an approved opted-in %s todo', async (state) => {
+  db.prepare('UPDATE neo_todos SET state=?').run(state);
+  expect(await call()).toMatchObject({
+    kind: 'completed',
+    value: { reason: null, dispatched: true },
+  });
+  expect(requests).toHaveLength(1);
+  expect(JSON.parse(audit()[0].params_summary)).toMatchObject({ todo: 'todo' });
 });
 
 test('missing workspace and unlisted tools cannot reach resolve or a grant dialog', async () => {
