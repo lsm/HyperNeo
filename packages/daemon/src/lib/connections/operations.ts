@@ -128,7 +128,7 @@ export function createGoogleConnectionOperations(
           'Provide clientId, or connectionId to reuse saved client details.'
         ),
       resultSchema: googleConnectionAttempt,
-      execute: async (input) => (await service()).connect(input),
+      execute: async (input) => (await service()).connectPipeline(input),
     }),
     defineOperation({
       name: 'connections.google.login',
