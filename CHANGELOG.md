@@ -4,6 +4,25 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-11-19
+
+- Connect Microsoft accounts for Outlook mail and calendar, and add Deepgram recorded voice and speech (#11077, #11099, #11103, #11106, #10885).
+- Require human approval for new work, show todo outcomes, and add the human inbox (#11071, #11056, #10795).
+- Let core choose coding sessions and allow session reuse per project (#11092, #11055).
+- Improve Claude and Codex sign-in, session routing, worker release, and review notifications (#11116, #11120, #11114, #11052).
+- Store voice provider credentials per host and give Neo resident tools their full action descriptions (#11126, #11147).
+- Keep desktop control available for blocked workers and guide macOS permissions when needed (#11134, #11145).
+- Fix fresh-install embedding startup and release SDK checks (#11182, #11136).
+- Upgrade the pinned Bun runtime to 1.4.4 and fix release-tag ratchet checks (#11141, #11229).
+
+### API compatibility
+
+Compared with v0.59.0, the pinned phone source inventory reports 4 breaking, 0 risky, and 1 safe method. Across all schema changes, the report lists 13 breaking, 0 risky, and 44 safe changes.
+
+- Question results remove `labels` and add `optionDetails` and `recommended`; `neo.question.answer` removes `when` and `where` inputs.
+- Three safe operations were added: `voice.testConnection`, `voice.testLive`, and `voice.testSpeech`.
+- The phone source inventory describes source usage, not proof of the installed binary's compatibility.
+
 ## [0.60.1] - 2026-11-19
 
 - Store voice provider credentials per host (#11126).
