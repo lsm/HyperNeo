@@ -149,6 +149,7 @@ export function claimTodoWorker(
     liveTodo: (id: string | null) => boolean;
     isBound: (states: readonly string[]) => boolean;
     liveStates: readonly string[];
+    shareWith: readonly string[];
   }
 ): boolean {
   return db.transaction(() => {
@@ -164,7 +165,8 @@ export function claimTodoWorker(
     const held = workers.filter((worker) => worker.claimedBy === todoId);
     const ownRole =
       roles.find((entry) => entry.adapter === ref.adapter && entry.id === ref.id)?.role ?? 'do';
-    if (own?.claimedBy === todoId && ownRole !== role) return false;
+    if (own?.claimedBy === todoId && ownRole !== role && !checks.shareWith.includes(ownRole))
+      return false;
     if (own?.claimedBy !== todoId && held.length >= 4) return false;
     if (
       workers.some(
@@ -198,7 +200,6 @@ export function unclaimTodoWorker(
         (entry) => entry.adapter === ref.adapter && entry.id === ref.id
       )?.role ?? 'do';
     if (currentRole !== role) return;
-    recordStartedWork(db, ref, Date.now(), false, false, { todoId: null });
     db.prepare(`DELETE FROM neo_todo_roles WHERE rowid = (SELECT rowid FROM neo_todo_roles
       WHERE todo_id = ? AND role = ? AND adapter = ? AND id = ? ORDER BY at DESC, rowid DESC LIMIT 1)`).run(
       todoId,
@@ -206,6 +207,12 @@ export function unclaimTodoWorker(
       ref.adapter,
       ref.id
     );
+    if (
+      !readTodoRoles(db, todoId).some(
+        (entry) => entry.adapter === ref.adapter && entry.id === ref.id && entry.role !== role
+      )
+    )
+      recordStartedWork(db, ref, Date.now(), false, false, { todoId: null });
   })();
 }
 
@@ -224,6 +231,17 @@ export function readWorkerLastTurn(
     .get(sessionId) as { timestamp: string; oneHour: number } | null;
   const at = row ? Date.parse(row.timestamp) : Number.NaN;
   return Number.isFinite(at) ? { at, oneHourCache: Number(row?.oneHour) > 0 } : null;
+}
+
+export function readWorkerPreparations(db: BunDatabase, adapter: string) {
+  return db
+    .prepare(`SELECT id, preparation FROM work_started_sessions
+    WHERE adapter = ? AND kind = 'worker' AND released_at IS NULL
+      AND (unusable_at IS NULL OR unusable_at <= ?)`)
+    .all(adapter, Date.now() - 60 * 60_000) as {
+    id: string;
+    preparation: string | null;
+  }[];
 }
 
 export function forgetWorkGone(db: BunDatabase, root: string): void {
@@ -361,6 +379,14 @@ export function readReusableWorkers(
 class WorkStartedSessionReads {
   constructor(private readonly db: BunDatabase) {}
 
+  todoRoles(todoId: string) {
+    return readTodoRoles(this.db, todoId);
+  }
+
+  workerPreparations(adapter: string) {
+    return readWorkerPreparations(this.db, adapter);
+  }
+
   startedWork(): StartedWorkFacts[] {
     return readStartedWork(this.db);
   }
@@ -413,7 +439,7 @@ export const workStartedSessionReads = defineRepositoryOp(
   'work.startedSessionReads',
   'read',
   WorkStartedSessionReads,
-  ['startedWork', 'startedByUs', 'reusableWorkers']
+  ['startedWork', 'startedByUs', 'reusableWorkers', 'todoRoles', 'workerPreparations']
 );
 
 export const workStartedSessionWrites = defineRepositoryOp(

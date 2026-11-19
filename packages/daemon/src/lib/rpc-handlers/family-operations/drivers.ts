@@ -821,14 +821,38 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     },
     markUnusable: (ref: StartedWork, reason: string) =>
       gatewayFor(db()).call(workStartedSessionWrites, 'markUnusable', ref, reason),
-    claimWorker: (ref: WorkRef, todoId?: string, role?: string, model?: string, effort?: string) =>
+    roleContext: async (todoId: string, adapter: string, preparationPack?: string) => {
+      const [todo, roles, preparations] = await Promise.all([
+        new NeoAskTodoRepository(db()).read('getTodo', todoId),
+        gatewayFor(db()).call(workStartedSessionReads, 'todoRoles', todoId),
+        gatewayFor(db()).call(workStartedSessionReads, 'workerPreparations', adapter),
+      ]);
+      const pack = context.neoPacks().find((item) => item.id === todo?.check?.pack);
+      return {
+        roles,
+        preparations,
+        shares: pack?.roles ?? {},
+        perRoundFields:
+          context.neoPacks().find((item) => item.id === preparationPack)
+            ?.preparationPerRoundFields ?? [],
+      };
+    },
+    claimWorker: (
+      ref: WorkRef,
+      todoId?: string,
+      role?: string,
+      model?: string,
+      effort?: string,
+      shareWith?: readonly string[]
+    ) =>
       new NeoTodoSessionRepository(db()).write(
         'claimWorker',
         ref,
         todoId ?? null,
         role,
         model,
-        effort
+        effort,
+        shareWith
       ),
     unclaimWorker: (todoId: string, ref: WorkRef, role?: string) =>
       new NeoTodoSessionRepository(db()).write('unclaimWorker', todoId, ref, role),

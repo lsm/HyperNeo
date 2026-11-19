@@ -1,6 +1,5 @@
 import { createCodingIssueTracker, planCodingIssueHome } from './issue-tracker.ts';
 import { NeoAskTodoRepository } from '../../../../storage/repositories/neo-ask-todo-repository.ts';
-import { NeoTodoSessionRepository } from '../../../../storage/repositories/neo-todo-session-repository.ts';
 import { listPackPreferences } from '../../preference-operations.ts';
 import { withCodingWorkerStartBrief } from './worker-worktree-brief.ts';
 import { createCodingHumanMergeOperation } from './human-merge-operation.ts';
@@ -47,8 +46,6 @@ import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
 import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
-import { codingSessionAssignmentReads } from './session-assignments-worker.ts';
-import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import { createCodingQuotaReader, runCodingGh } from './ledger-quota.ts';
 
@@ -331,15 +328,8 @@ export function createCodingPack(deps: {
         ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
     },
+    preparationPerRoundFields: ['head'],
     prepareExecution: prepareCodingExecution,
-    workerStartExclusions: async (todo) => {
-      const target = new NeoTodoSessionRepository(deps.database()).get(todo.id);
-      return {
-        value: await gatewayFor(deps.database()).call(codingSessionAssignmentReads, 'actorRefs', {
-          adapter: target?.verb === 'start' ? target.adapter : undefined,
-        }),
-      };
-    },
     workerTarget: (todo, target) =>
       decideCodingSessionTarget(deps.database(), todo, target, deps.lines),
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),

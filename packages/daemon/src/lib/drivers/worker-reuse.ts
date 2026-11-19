@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { WorkRef, WorkSummary } from './types.ts';
 
@@ -15,12 +16,13 @@ type ReuseRequest = {
   adapter: string;
   folder: string;
   refreshStatus: boolean;
+  roleWorker?: string;
   excludeRefs?: readonly WorkRef[];
 };
 
 type ReuseDecision =
   | { action: 'send'; candidate: WorkerReuseCandidate }
-  | { action: 'wait'; candidate: WorkerReuseCandidate }
+  | { action: 'wait'; candidate: WorkerReuseCandidate; role: boolean }
   | { action: 'start' };
 
 export function chooseReusableWorker(
@@ -33,7 +35,7 @@ export function chooseReusableWorker(
         free &&
         work.ref.adapter === request.adapter &&
         !work.ref.daemon &&
-        work.place.folder === request.folder &&
+        (work.place.folder === request.folder || work.ref.id === request.roleWorker) &&
         (work.status === 'done' || (work.status === 'running' && request.refreshStatus)) &&
         !request.excludeRefs?.some(
           (ref) =>
@@ -53,8 +55,10 @@ function decideReuse(
   candidates: readonly WorkerReuseCandidate[],
   sameAskCandidates: readonly WorkerReuseCandidate[],
   request: ReuseRequest,
-  sameAsk: readonly string[]
+  sameAsk: readonly string[],
+  busyRole: WorkerReuseCandidate | null
 ): ReuseDecision {
+  if (busyRole) return { action: 'wait', candidate: busyRole, role: true };
   const candidate = chooseReusableWorker(candidates, request);
   if (candidate) return { action: 'send', candidate };
   const busy = sameAskCandidates.find(
@@ -71,15 +75,32 @@ function decideReuse(
       ) &&
       (work.status === 'running' || work.status === 'queued' || (!free && work.status === 'done'))
   );
-  return busy ? { action: 'wait', candidate: busy } : { action: 'start' };
+  return busy ? { action: 'wait', candidate: busy, role: false } : { action: 'start' };
 }
 
 export const reuseWorkerDecision = (superpipe({})('work-start-reuse-decision') as PipelineAPI)
-  .input(['candidates', 'sameAskCandidates', 'request', 'sameAsk'])
-  .pipe(decideReuse, ['candidates', 'sameAskCandidates', 'request', 'sameAsk'], 'decision')
+  .input(['candidates', 'sameAskCandidates', 'request', 'sameAsk', 'busyRole'])
+  .pipe(
+    decideReuse,
+    ['candidates', 'sameAskCandidates', 'request', 'sameAsk', 'busyRole'],
+    'decision'
+  )
   .end('decision') as (
   candidates: readonly WorkerReuseCandidate[],
   sameAskCandidates: readonly WorkerReuseCandidate[],
   request: ReuseRequest,
-  sameAsk: readonly string[]
+  sameAsk: readonly string[],
+  busyRole: WorkerReuseCandidate | null
 ) => ReuseDecision;
+export function matchingPreparation(
+  stored: string | null,
+  requested: { pack: string; parameters: Record<string, unknown>; sandbox?: boolean } | undefined,
+  perRoundFields: readonly string[]
+): boolean {
+  if (!stored || !requested) return !stored && !requested;
+  const prior = JSON.parse(stored) as typeof requested;
+  if (prior.pack !== requested.pack || prior.sandbox !== requested.sandbox) return false;
+  const stable = (parameters: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(parameters).filter(([key]) => !perRoundFields.includes(key)));
+  return isDeepStrictEqual(stable(prior.parameters), stable(requested.parameters));
+}

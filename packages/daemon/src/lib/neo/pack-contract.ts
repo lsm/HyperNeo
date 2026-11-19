@@ -185,6 +185,8 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     }
   ): string;
   workGoal?(instruction: string, goal: NeoWorkGoal | null): string;
+  preparationPerRoundFields?: readonly string[];
+  roles?: Record<string, { shareWith?: readonly string[] }>;
   prepareExecution?: NeoExecutionPreparation;
   instructions(): string | null;
 }
