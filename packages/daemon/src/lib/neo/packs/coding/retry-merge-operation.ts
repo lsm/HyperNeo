@@ -2,7 +2,7 @@ import { neoToolDescription } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import { defineOperation } from '../../../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { readCodingDaemonMergeFacts } from './daemon-merge-facts.ts';
@@ -38,7 +38,15 @@ export function createCodingRetryMergeOperation(
   invalidate: (url: string) => void = () => {}
 ) {
   const retry = (superpipe({})('neo.coding.merge.retry') as PipelineAPI)
-    .input('input')
+    .input(['input', 'caller'])
+    .pipe(
+      (caller: OperationCaller) =>
+        caller.role === 'neo'
+          ? { value: caller }
+          : refuse('Only Neo can accept a stopped daemon merge report.'),
+      'caller',
+      'result:result'
+    )
     .pipe(
       async (input: Input) => {
         const [failure] = await ledger.write('daemonMerge', { kind: 'failures', ...input });
@@ -73,16 +81,16 @@ export function createCodingRetryMergeOperation(
       'result',
       'result'
     )
-    .endAsync('result') as (input: Input) => Promise<{ accepted: boolean; reason?: string }>;
+    .endAsync('result') as (
+    input: Input,
+    caller: OperationCaller
+  ) => Promise<{ accepted: boolean; reason?: string }>;
   return defineOperation({
     name: 'neo.coding.merge.retry',
     description: neoToolDescription('neo.coding.merge.retry'),
     inputSchema: Input,
     resultSchema: z.object({ accepted: z.boolean(), reason: z.string().optional() }),
     policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: async (input, caller) =>
-      caller.role === 'neo'
-        ? retry(input)
-        : { accepted: false, reason: 'Only Neo can accept a stopped daemon merge report.' },
+    execute: retry,
   });
 }
