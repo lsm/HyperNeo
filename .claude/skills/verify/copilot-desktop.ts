@@ -124,6 +124,17 @@ try {
     assert(!refused.ok && refused.reason === 'unsupported');
     assert.deepEqual(readFileSync(state), before);
   }
+  if (mode === 'desktop') {
+    const db = new Database(state);
+    try {
+      db.exec('ALTER TABLE sessions RENAME TO changed_sessions');
+    } finally {
+      db.close();
+    }
+    const drift = await rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query);
+    assert.equal(drift.places.length, 0);
+    assert.match(drift.unreachable[0]?.reason ?? '', /^Unsupported Copilot Desktop state schema:/);
+  }
   if (cli) {
     const folder = join(run, 'workspace');
     mkdirSync(folder);
