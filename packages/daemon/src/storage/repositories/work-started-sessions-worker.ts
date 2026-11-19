@@ -1,6 +1,7 @@
-import type { Database as BunDatabase } from './sqlite-compat.ts';
-import type { WorkerReuseFacts } from '../lib/drivers/worker-reuse.ts';
-import { workerWorkKey } from '../lib/work-locations.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { WorkerReuseFacts } from '../../lib/drivers/worker-reuse.ts';
+import { workerWorkKey } from '../../lib/work-locations.ts';
 
 export interface StartedWork {
   adapter: string;
@@ -138,3 +139,50 @@ export function readReusableWorkers(
     ])
   );
 }
+
+class WorkStartedSessionReads {
+  constructor(private readonly db: BunDatabase) {}
+
+  startedWork(): StartedWorkFacts[] {
+    return readStartedWork(this.db);
+  }
+
+  startedByUs(ref: StartedWork): boolean {
+    return readStartedWork(this.db, null, undefined, ref).length > 0;
+  }
+
+  reusableWorkers(
+    adapter: string,
+    todoId?: string,
+    sessionId?: string
+  ): [string, WorkerReuseFacts][] {
+    return [...readReusableWorkers(this.db, adapter, todoId, sessionId)];
+  }
+}
+
+class WorkStartedSessionWrites {
+  constructor(private readonly db: BunDatabase) {}
+
+  recordStarted(ref: StartedWork, directory?: string): void {
+    recordWorkerStarted(this.db, ref);
+    if (directory) forgetWorkGone(this.db, directory);
+  }
+
+  markUnusable(ref: StartedWork): void {
+    markWorkUnusable(this.db, ref);
+  }
+}
+
+export const workStartedSessionReads = defineRepositoryOp(
+  'work.startedSessionReads',
+  'read',
+  WorkStartedSessionReads,
+  ['startedWork', 'startedByUs', 'reusableWorkers']
+);
+
+export const workStartedSessionWrites = defineRepositoryOp(
+  'work.startedSessionWrites',
+  'write',
+  WorkStartedSessionWrites,
+  ['recordStarted', 'markUnusable']
+);
