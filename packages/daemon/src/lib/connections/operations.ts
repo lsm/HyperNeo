@@ -3,6 +3,7 @@ import { createGoogleDraftOperations } from './google-draft-operations.ts';
 import { createGoogleThreadOperations } from './google-thread-operations.ts';
 import { createGoogleReadOperations } from './google-read-operations.ts';
 import { randomUUID } from 'node:crypto';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
@@ -94,6 +95,15 @@ export function createGoogleConnectionOperations(
   deps: GoogleConnectionDependencies = {}
 ) {
   const service = () => getGoogleConnectionService(db(), deps);
+  type Service = Awaited<ReturnType<typeof service>>;
+  const disconnect = (superpipe({})('connections.google.disconnect') as PipelineAPI)
+    .input('input')
+    .pipe(
+      async (input: { connectionId: string }) => (await service()).disconnect(input.connectionId),
+      'input',
+      'result'
+    )
+    .endAsync('result') as (input: { connectionId: string }) => ReturnType<Service['disconnect']>;
   return [
     ...createGoogleReadOperations(db, service),
     ...createGoogleThreadOperations(service),
@@ -130,7 +140,7 @@ export function createGoogleConnectionOperations(
       policy,
       inputSchema: z.object({ connectionId: z.string().min(1).max(200) }).strict(),
       resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
-      execute: async ({ connectionId }) => (await service()).disconnect(connectionId),
+      execute: disconnect,
     }),
   ];
 }
