@@ -130,6 +130,20 @@ describe('pack settings operations', () => {
       value: { preferences: [watch, { ...preference, value: 'human' }] },
     });
   });
+  test('retired settings do not appear in get or list', async () => {
+    db.getDatabase()
+      .prepare(`INSERT INTO neo_pack_preferences
+      (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1)`)
+      .run();
+    const retired = { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'sessionStrategy' };
+    expect(await invoke('pack.preferences.get', retired)).toMatchObject({
+      value: { preference: null },
+    });
+    expect(await invoke('pack.preferences.list', { pack: 'coding' })).toMatchObject({
+      value: { preferences: [watch] },
+    });
+  });
   test('the MCP snapshot has no packPreferences', async () => {
     expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
     const snapshot = await invoke(
