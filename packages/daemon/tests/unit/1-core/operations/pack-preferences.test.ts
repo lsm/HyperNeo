@@ -179,6 +179,9 @@ describe('pack settings operations', () => {
     expect(await invoke('pack.preferences.get', core)).toMatchObject({
       value: { preference: core },
     });
+    expect(await invoke('pack.preferences.list', {})).toMatchObject({
+      value: { preferences: [watch, core] },
+    });
     const live = createNeoService(
       db,
       {

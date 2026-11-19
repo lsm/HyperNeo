@@ -1204,7 +1204,7 @@ export class NeoService {
   }
 
   packPreferences() {
-    return listDeclaredPackPreferences(this.db.getDatabase(), this.packs());
+    return listDeclaredPackPreferences(this.db.getDatabase(), this.installedPacks());
   }
 
   async refreshPackPreferences(): Promise<void> {
