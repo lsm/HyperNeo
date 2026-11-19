@@ -123,8 +123,7 @@ export function readNeoRuleApproval(
     proposal.answered_by !== 'chat' ||
     picked === 'invalid' ||
     (JSON.stringify(picked ?? words.trim()) !== proposal.answer &&
-      (proposal.applied_at === null ||
-        JSON.stringify(historicalLetterAnswer(words, proposal)) !== proposal.answer)) ||
+      JSON.stringify(historicalLetterAnswer(words, proposal)) !== proposal.answer) ||
     proposal.text !== proposal.question_text
   )
     return false;
