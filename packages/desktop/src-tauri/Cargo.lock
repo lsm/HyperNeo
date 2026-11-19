@@ -2680,6 +2680,7 @@ dependencies = [
 name = "hyperneo-desktop"
 version = "0.60.2"
 dependencies = [
+ "cc",
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "cua-driver-sdk",
