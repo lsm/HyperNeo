@@ -213,3 +213,15 @@ pub(super) fn ask_owner(bundle_id: &str, requirement: &str, class: &str) -> &'st
     });
     "app_action_not_authorized"
 }
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+
+    #[test]
+    fn declined_owner_answer_is_returned_to_the_waiting_caller() {
+        FIXTURE_DIALOG.lock().unwrap().0 = "deny";
+        let result = ask_owner("io.example.test", "fixture-requirement", "pointer");
+        assert_eq!(result, "owner_declined");
+    }
+}
