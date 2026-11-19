@@ -18,10 +18,11 @@ import { runMigration455 } from '../../../../src/storage/schema/m455-work-starte
 import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusable';
 import { runMigration517 } from '../../../../src/storage/schema/m517-work-released';
 import { runMigration519 } from '../../../../src/storage/schema/m519-work-started-role';
+import { runMigration528 } from '../../../../src/storage/schema/m528-work-start-record';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readStartedWork,
-  recordStartedWork,
+  recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const at = '2026-10-24T05:00:00.000Z';
@@ -49,6 +50,7 @@ beforeEach(() => {
   runMigration465(db);
   runMigration517(db);
   runMigration519(db);
+  runMigration528(db);
 });
 
 afterEach(() => {
@@ -77,7 +79,7 @@ async function startThroughWorkStart(adapter: string, id: string) {
       adapters: () => [starter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      recordStarted: (ref) => recordStartedWork(db, ref),
+      recordStarted: (ref) => recordWorkerStarted(db, ref),
     })
   );
   const outcome = await invokeOperation(
@@ -91,6 +93,7 @@ async function startThroughWorkStart(adapter: string, id: string) {
 }
 
 function startedForTodo(todoId: string, adapter: string, id: string) {
+  recordWorkerStarted(db, { adapter, id });
   db.prepare('INSERT INTO neo_todo_sessions VALUES (?, ?, ?)').run(
     todoId,
     '{}',
