@@ -46,6 +46,9 @@ try {
   ids.forEach((id, n) => store.updateTodo(store.getTodo(id)!, { instruction: instruction(n), report: report(n) }, Date.now()));
   const fullList = bytes(store.listTodos(opened.ask.id));
   const held = await agent('neo.todo.hold', { todoId: ids[0], reason: 'Synthetic wait' });
+  assert.equal(held.todo.state, 'blocked');
+  assert.equal(held.todo.blockedBy, 'held');
+  assert.deepEqual(store.todoCards(store.getTodo(ids[0])!), []);
   const edited = await agent('neo.todo.edit', { todoId: ids[1], title: 'Step 1 renamed' });
   const others = (result: unknown, own: number) => ids.filter((_, n) => n !== own && JSON.stringify(result).includes(`Instruction ${n}:`));
   assert.equal(held.todo.id, ids[0]); assert(held.records.some((record: string) => record.startsWith('held:'))); assert(!('todos' in held));
