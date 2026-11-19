@@ -14,14 +14,26 @@ describe('voice.testSpeech', () => {
   let speech: NeoSpeech | undefined;
   afterEach(async () => {
     await speech?.dispose();
-    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    if (server) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
+    }
   });
 
-  async function setup(status: number, body: string | Uint8Array, gate?: Promise<void>) {
+  async function setup(
+    status: number,
+    body: string | Uint8Array,
+    gate?: Promise<void>,
+    wrongType = false
+  ) {
     const requests: { path: string; body: unknown }[] = [];
     let started!: () => void;
     const requestStarted = new Promise<void>((resolve) => {
       started = resolve;
+    });
+    let closed!: () => void;
+    const responseClosed = new Promise<void>((resolve) => {
+      closed = resolve;
     });
     server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
@@ -32,8 +44,10 @@ describe('voice.testSpeech', () => {
       });
       started();
       await gate;
-      response.writeHead(status, { 'content-type': 'audio/pcm' });
-      response.end(body);
+      response.on('close', closed);
+      response.writeHead(status, { 'content-type': wrongType ? 'text/plain' : 'audio/pcm' });
+      if (wrongType) response.write(body);
+      else response.end(body);
     });
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -66,7 +80,7 @@ describe('voice.testSpeech', () => {
       expect(result.kind).toBe('completed');
       return result.kind === 'completed' ? result.value : result;
     };
-    return { call, requests, requestStarted, keys };
+    return { call, requests, requestStarted, responseClosed, keys };
   }
 
   test('reports audio from the configured speech service', async () => {
@@ -85,6 +99,17 @@ describe('voice.testSpeech', () => {
   test('does not report success for an empty audio response', async () => {
     const { call } = await setup(200, new Uint8Array());
     expect(await call()).toEqual({ ok: false, reason: 'Speech service returned no audio' });
+  });
+
+  test('closes a non-audio response without waiting for the server', async () => {
+    const { call, responseClosed } = await setup(200, 'not audio', undefined, true);
+    expect(await call()).toEqual({ ok: false, reason: 'Speech service returned no PCM audio' });
+    await Promise.race([
+      responseClosed,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('response not closed')), 500)
+      ),
+    ]);
   });
 
   test('credential updates continue during synthesis and their keys are redacted', async () => {

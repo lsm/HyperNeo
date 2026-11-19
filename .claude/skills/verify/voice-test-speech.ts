@@ -15,6 +15,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 copyFileSync(new URL('./gh-stub.sh', import.meta.url), join(run, 'bin/gh'));
 chmodSync(join(run, 'bin/gh'), 0o700);
 let failing = false;
+let wrongType = false;
 let requests = 0;
 const secret = 'synthetic-saved-voice-key';
 const newSecret = 'synthetic-new-voice-key';
@@ -31,6 +32,7 @@ const tts = Bun.serve({
     requests++;
     started?.();
     await hold;
+    if (wrongType) return new Response('not audio', { headers: { 'content-type': 'text/plain' } });
     return failing
       ? new Response(`Unauthorized: ${secret} ${newSecret}`, { status: 401 })
       : new Response(new Uint8Array([1, 0, 2, 0]), { headers: { 'content-type': 'audio/pcm' } });
@@ -56,6 +58,9 @@ try {
   };
   const success = await call();
   assert.deepEqual(success, { ok: true });
+  wrongType = true;
+  assert.deepEqual(await call(), { ok: false, reason: 'Speech service returned no PCM audio' });
+  wrongType = false;
   failing = true;
   const failure = await call();
   assert.equal(failure.reason.includes(secret), false);
@@ -74,7 +79,7 @@ try {
   }
   const concurrent = await pending;
   assert.deepEqual(concurrent, { ok: false, reason: 'HTTP 401: Unauthorized: [key] [key]' });
-  assert.equal(requests, 3);
+  assert.equal(requests, 4);
   const evidence = { success, concurrent, requests };
   writeFileSync(join(run, 'evidence/voice-test-speech.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));

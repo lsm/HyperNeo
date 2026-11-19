@@ -208,9 +208,10 @@ export class NeoSpeechAudio {
         result = { ok: false, reason: `HTTP ${response.status}: ${body.trim()}` };
       } else {
         const type = response.headers.get('content-type') ?? '';
-        if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body)
+        if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body) {
+          await response.body?.cancel().catch(() => {});
           result = { ok: false, reason: 'Speech service returned no PCM audio' };
-        else {
+        } else {
           const reader = response.body.getReader();
           try {
             const first = await reader.read();
