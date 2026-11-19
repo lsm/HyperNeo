@@ -121,7 +121,7 @@ try {
   assert.deepEqual(names, ['HyperNeo project 1', 'HyperNeo project 2']);
   const description = world.operations.find((op) => op.name === 'neo.todo.add')!.description;
   assert(description.includes('target.name'));
-  assert(description.includes('local starts'));
+  assert(description.includes("New local workers default to '<engine> <project> <n>'"));
   assert(!description.includes('use work.rename after starting'));
   const db = app.db.getDatabase();
   const spacePlace = { machine: 'synthetic', spaceId: 'naming-space', name: 'Space' };
