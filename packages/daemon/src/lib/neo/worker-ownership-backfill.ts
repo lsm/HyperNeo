@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { workerOwnershipFacts } from '../../storage/repositories/worker-ownership-read-worker.ts';
 import { workerOwnershipWrites } from '../../storage/repositories/worker-ownership-write-worker.ts';
-import { reviewedWorkerListId, type WorkRef } from './worker-ownership-apply.ts';
+import type { WorkRef, SkippedWork } from './worker-ownership-apply.ts';
 import { defineOperation } from '../operations/registry.ts';
 
 export type WorkerOwnershipRow = {
@@ -62,34 +62,33 @@ const dryRun = (superpipe({})('neo.workerOwnership.candidates') as PipelineAPI)
   .pipe(readFacts, 'db', 'result')
   .endAsync('result') as (db: Database) => Promise<ReturnType<typeof inferWorkerOwnership>>;
 const applyReviewed = (superpipe({})('neo.workerOwnership.apply') as PipelineAPI)
-  .input(['reviewedListId', 'reviewed', 'criteria', 'db'])
+  .input(['reviewed', 'confirmedCount', 'db'])
   .pipe(
-    (
-      reviewedListId: string | undefined,
-      reviewed: WorkRef[] | undefined,
-      criteria: string | undefined
-    ) => {
-      if (!reviewedListId || !reviewed || criteria !== 'start-unclaimed')
+    (reviewed: WorkRef[] | undefined, confirmedCount: number | undefined) => {
+      if (!reviewed?.length || confirmedCount !== reviewed.length)
         return {
           reason: {
             accepted: false as const,
-            reason: 'A reviewed list and start-unclaimed criteria are required.',
+            reason: 'A non-empty list and matching confirmed count are required.',
+            invalid: [],
+            skipped: [],
           },
         };
       if (
         new Set(reviewed.map((ref) => JSON.stringify([ref.adapter, ref.id]))).size !==
-          reviewed.length ||
-        reviewedWorkerListId(reviewed) !== reviewedListId
+        reviewed.length
       )
         return {
           reason: {
             accepted: false as const,
-            reason: 'Reviewed list id does not match the supplied list.',
+            reason: 'Duplicate refs are not allowed.',
+            invalid: [],
+            skipped: [],
           },
         };
       return { value: reviewed };
     },
-    ['reviewedListId', 'reviewed', 'criteria'],
+    ['reviewed', 'confirmedCount'],
     'result:outcome'
   )
   .pipe(
@@ -99,12 +98,12 @@ const applyReviewed = (superpipe({})('neo.workerOwnership.apply') as PipelineAPI
     'outcome'
   )
   .endAsync('outcome') as (
-  id: string | undefined,
   reviewed: WorkRef[] | undefined,
-  criteria: string | undefined,
+  confirmedCount: number | undefined,
   db: Database
 ) => Promise<
-  { accepted: false; reason: string } | { accepted: true; applied: number; reviewed: number }
+  | { accepted: false; reason: string; invalid: WorkRef[]; skipped: SkippedWork[] }
+  | { accepted: true; applied: WorkRef[]; skipped: SkippedWork[] }
 >;
 
 const CandidateSchema = z.object({
@@ -136,20 +135,30 @@ export function createWorkerOwnershipBackfillOperations(db: Database) {
       name: 'neo.workerOwnership.apply',
       description: 'Apply reviewed historical worker ownership for unclaimed start bindings.',
       inputSchema: z.object({
-        reviewedListId: z.string().trim().min(1).optional(),
         reviewed: z
           .array(z.object({ adapter: z.string().min(1), id: z.string().min(1) }))
-          .min(1)
           .optional(),
-        criteria: z.string().optional(),
+        confirmedCount: z.number().int().nonnegative().optional(),
       }),
       resultSchema: z.discriminatedUnion('accepted', [
-        z.object({ accepted: z.literal(false), reason: z.string() }),
-        z.object({ accepted: z.literal(true), applied: z.number(), reviewed: z.number() }),
+        z.object({
+          accepted: z.literal(false),
+          reason: z.string(),
+          invalid: z.array(z.object({ adapter: z.string(), id: z.string() })),
+          skipped: z.array(
+            z.object({ adapter: z.string(), id: z.string(), reason: z.enum(['weak', 'claimed']) })
+          ),
+        }),
+        z.object({
+          accepted: z.literal(true),
+          applied: z.array(z.object({ adapter: z.string(), id: z.string() })),
+          skipped: z.array(
+            z.object({ adapter: z.string(), id: z.string(), reason: z.enum(['weak', 'claimed']) })
+          ),
+        }),
       ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input) =>
-        applyReviewed(input.reviewedListId, input.reviewed, input.criteria, db),
+      execute: async (input) => applyReviewed(input.reviewed, input.confirmedCount, db),
     }),
   ];
 }

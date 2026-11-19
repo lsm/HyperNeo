@@ -45179,8 +45179,10 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
-          "criteria": {
-            "type": "string"
+          "confirmedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
           },
           "reviewed": {
             "items": {
@@ -45200,12 +45202,7 @@
               ],
               "type": "object"
             },
-            "minItems": 1,
             "type": "array"
-          },
-          "reviewedListId": {
-            "minLength": 1,
-            "type": "string"
           }
         },
         "type": "object"
@@ -45221,13 +45218,61 @@
                 "const": false,
                 "type": "boolean"
               },
+              "invalid": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "reason": {
                 "type": "string"
+              },
+              "skipped": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "weak",
+                        "claimed"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               }
             },
             "required": [
               "accepted",
-              "reason"
+              "reason",
+              "invalid",
+              "skipped"
             ],
             "type": "object"
           },
@@ -45239,16 +45284,56 @@
                 "type": "boolean"
               },
               "applied": {
-                "type": "number"
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               },
-              "reviewed": {
-                "type": "number"
+              "skipped": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "weak",
+                        "claimed"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               }
             },
             "required": [
               "accepted",
               "applied",
-              "reviewed"
+              "skipped"
             ],
             "type": "object"
           }

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   inferWorkerOwnership,
   type WorkerOwnershipRow,
@@ -6,30 +5,26 @@ import {
 } from './worker-ownership-backfill.ts';
 
 export type WorkRef = { adapter: string; id: string };
+export type SkippedWork = WorkRef & { reason: 'weak' | 'claimed' };
 
 export function reviewedWorkerOwnership(
   rows: readonly WorkerOwnershipRow[],
   touches: readonly WorkerOwnershipTouch[],
   reviewed: readonly WorkRef[]
-): WorkRef[] {
-  const listed = new Set(reviewed.map(({ adapter, id }) => JSON.stringify([adapter, id])));
-  return inferWorkerOwnership(rows, touches)
-    .candidates.filter(
-      ({ adapter, id, evidence }) =>
-        listed.has(JSON.stringify([adapter, id])) &&
-        evidence.claimedBy === null &&
-        evidence.verbs.includes('start')
-    )
-    .map(({ adapter, id }) => ({ adapter, id }));
-}
-
-export function reviewedWorkerListId(reviewed: readonly WorkRef[]): string {
-  const canonical = reviewed
-    .map(({ adapter, id }) => [adapter, id])
-    .sort((a, b) => {
-      const left = JSON.stringify(a);
-      const right = JSON.stringify(b);
-      return left < right ? -1 : left > right ? 1 : 0;
-    });
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+) {
+  const key = ({ adapter, id }: WorkRef) => JSON.stringify([adapter, id]);
+  const candidates = new Map(
+    inferWorkerOwnership(rows, touches).candidates.map((candidate) => [key(candidate), candidate])
+  );
+  const selected: WorkRef[] = [];
+  const skipped: SkippedWork[] = [];
+  const invalid: WorkRef[] = [];
+  for (const ref of reviewed) {
+    const candidate = candidates.get(key(ref));
+    if (!candidate) invalid.push(ref);
+    else if (candidate.evidence.claimedBy !== null) skipped.push({ ...ref, reason: 'claimed' });
+    else if (!candidate.evidence.verbs.includes('start')) skipped.push({ ...ref, reason: 'weak' });
+    else selected.push(ref);
+  }
+  return { selected, skipped, invalid };
 }

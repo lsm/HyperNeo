@@ -9,13 +9,19 @@ class WorkerOwnershipWriter {
   apply(reviewed: WorkRef[]) {
     return this.db.transaction(() => {
       const { rows, touches } = new WorkerOwnershipReader(this.db).readFacts();
-      const selected = reviewedWorkerOwnership(rows, touches, reviewed);
+      const { selected, skipped, invalid } = reviewedWorkerOwnership(rows, touches, reviewed);
+      if (invalid.length)
+        return {
+          accepted: false as const,
+          reason: 'Some refs are not current candidates.',
+          invalid,
+          skipped,
+        };
       const update = this.db.prepare(
         "UPDATE work_started_sessions SET role = 'worker' WHERE adapter = ? AND id = ? AND (role IS NULL OR role = '') AND released_at IS NULL AND claimed_by IS NULL"
       );
-      let applied = 0;
-      for (const ref of selected) applied += update.run(ref.adapter, ref.id).changes;
-      return { accepted: true as const, applied, reviewed: reviewed.length };
+      for (const ref of selected) update.run(ref.adapter, ref.id);
+      return { accepted: true as const, applied: selected, skipped };
     })();
   }
 }
