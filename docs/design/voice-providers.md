@@ -114,24 +114,40 @@ voice up by answering Neo:
   card, whose answer re-records the row and applies over whatever changed. When the saved
   parts already equal the preset's output the apply is a no-op success and writes nothing,
   so unrelated settings writes after a successful apply never block anything.
-  The guards and the write are one step, not two. The operation re-reads the
-  preference rows and the settings, re-runs both refusals and the part-equality check
-  against those reads, merges the three parts into the `voice`
-  object it just read — the settings store merges at the top-level key, replacing the
-  whole `voice` object, so preserved fields must come from that read — and writes, all
-  inside one immediate transaction, publishing the update only after the commit. The
-  write goes through the same path the web form uses — the settings manager into
-  `packages/daemon/src/storage/repositories/global-settings-writes.ts` (`apply`) and
-  `packages/daemon/src/storage/repositories/settings-repository.ts`, whose write notifies `global_settings`
-  subscribers as part of the write — so the apply must not bypass it, or the form would
-  miss the notification it refreshes from.
+  The guards, the preset choice and the write are one step, not two. Inside one
+  immediate transaction the apply re-reads the provider row and derives the preset from
+  that row: the row it validates is the row it maps. A provider switch between the
+  operation's first read and the transaction therefore cannot write the old provider's
+  preset — a valid-to-valid change (OpenAI read first, Deepgram committed meanwhile)
+  applies Deepgram under the newer row's `set_at`, and a row that is missing or holds
+  neither enum on the re-read refuses `provider_not_chosen`. Against that row and the
+  settings read in the same transaction it re-runs both refusals and the part-equality
+  check, merges the three parts into the `voice` object it just read — the settings
+  store merges at the top-level key, replacing the whole `voice` object, so preserved
+  fields must come from that read — and writes. The transaction has one owner: a
+  registered gateway write operation, defined beside `globalSettingsWrites` and
+  registered in `packages/daemon/src/storage/db-gateway/db-ops.ts`, whose run reads the
+  provider row and the settings on the gateway's own connection, writes through
+  `packages/daemon/src/storage/repositories/settings-repository.ts` (whose write
+  notifies `global_settings` subscribers) and records the change with the change
+  recorder it is handed, so the gateway publishes the update after the commit
+  (`DbGateway.run` in `storage/db-gateway/db-gateway.ts`; the write lane does the same
+  in `db-gateway-worker.ts`). The operation pipeline is a thin call to that one op and
+  does nothing else around it: `SettingsManager.updateGlobalSettingsAsync` is a
+  separate asynchronous gateway call and is not this atomic step.
   A web edit that commits while the apply runs either lands first, and the transaction
-  sees it and refuses, or lands after. Landing after is safe because the web save is
-  itself conditional by then: the voice form builds a full `voice` draft from the
-  settings it loaded (`VoiceSettings.tsx`) and queues whole-draft saves, so slice 5
-  makes that save a compare-and-set that refuses a draft whose baseline no longer
-  matches (details under slice 5, below). The apply lands after slice 5, so no
-  unconditional full-draft writer exists when it does.
+  sees it and refuses, or lands after. Landing after is safe only once the web save is
+  conditional at the point where it serializes. Preparation in the handler runs before
+  the gateway call (`prepareGlobalSettingsUpdate`, then `updateGlobalSettingsAsync`,
+  `settings-handlers.ts`), so a check there can pass, the preset can commit, and the
+  stale draft can still write after it. Slice 5 therefore puts the baseline comparison
+  inside the gateway transaction that writes the voice patch — in
+  `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`), the
+  registered write the web form already goes through — refusing
+  `voice_changed_since_edit` there, key-only saves included (details under slice 5,
+  below). Until that has landed, 7a is not activated: the apply ships behind it,
+  because the current unconditional web writer would let a queued draft overwrite an
+  applied preset.
   The two commits — the card answer and the apply — are deliberately not atomic with
   each other. The human's answer lands first and is never
   rolled back; the apply is re-runnable — after a failure it retries, after a success it is
@@ -201,13 +217,15 @@ default and target branch), near the repository's 300-line budget, failing tests
    voice save becomes a compare-and-set: the form builds a full `voice` draft from the
    settings it loaded (`VoiceSettings.tsx`) and queues whole-draft saves — the gateway
    strips daemon-owned keys (`keepNeoOwnedSettings`) but passes `voice` through — so the
-   draft carries the `voice` object it was built from and
-   `prepareGlobalSettingsUpdate` (`rpc-handlers/settings-handlers.ts`) refuses
+   draft carries the `voice` object it was built from. The authoritative check is not
+   in the handler, where preparation runs before the gateway call, but in
+   `globalSettingsWrites.apply` (`packages/daemon/src/storage/repositories/global-settings-writes.ts`),
+   inside the same gateway transaction that writes the patch: it refuses
    `voice_changed_since_edit` when the stored `voice` differs from that baseline,
    whatever field the save touches, a key-only save included; the form then reloads and
    re-applies the human's edit onto the fresh settings. A queued draft can therefore
    never overwrite settings saved after it was built — the preset apply's write
-   included.
+   included. 7a is not activated until this has landed.
 6. **Tests Neo can run — merged (#11177).** All three test operations, and saving a key
    wakes Neo with an attention event naming the host (never the key).
 7. **The provider card, re-cut.** The choice is recorded by the existing card machinery and
@@ -219,6 +237,8 @@ default and target branch), near the repository's 300-line budget, failing tests
      reads, three refusals and a transactional write, and the settings repository's
      merge path (`packages/daemon/src/storage/repositories/settings-repository.ts`,
      146 lines) for the write. Built-in presets only: no custom URL, no second card.
+     The numbers are a plan, not a measurement: the implemented slice diff is checked
+     against the 300-line budget and splits there if it crosses it.
      - `neo/packs/voice/pack.ts` (new): always-enabled pack with one global preference —
        the enum `provider` (`openai`, `deepgram`) — and instructions telling Neo to ask
        once when voice first matters, apply the answer, then run the three tests and
@@ -228,16 +248,18 @@ default and target branch), near the repository's 300-line budget, failing tests
      - `voice/provider-presets.ts` (new): the preset table — the three parts for each
        of the two providers.
      - `voice/apply-preset-operation.ts` (new): `voice.applyProviderPreset` as one pipeline
-       with no input — read the recorded rows (refuse `provider_not_chosen` without the
-       provider), then one immediate transaction that re-reads the preference rows and
-       the settings, re-runs the `legacy_key_host_changed` and
-       `settings_changed_since_answer` guards and the part-equality check against those
-       reads, merges the parts and writes through the
-       settings gateway, publishing the update after the commit; registered in
-       `rpc-handlers/index.ts` beside the test operations, name added to
+       with no input — a thin call to one registered gateway write operation (defined
+       beside `globalSettingsWrites` in `packages/daemon/src/storage/db-gateway/db-ops.ts`)
+       that on its own connection re-reads the provider row, derives the preset from it
+       (refusing `provider_not_chosen` if the row is missing or holds neither enum),
+       re-runs the `legacy_key_host_changed` and `settings_changed_since_answer` guards
+       and the part-equality check against those reads, and writes through the settings
+       repository, the gateway publishing the update after the commit; the operation is
+       registered in `rpc-handlers/index.ts` beside the test operations, name added to
        `shared/src/types/operation-names/neo.ts`, tool description in
        `packages/prompts/src/neo/tools/voice.applyProviderPreset.md` with its import and
-       registry entry in `packages/prompts/src/mod.ts`.
+       registry entry in `packages/prompts/src/mod.ts`. The slice is not activated until
+       slice 5's transactional baseline check has landed (see slice 5).
    - **7b. On-request part, model and voice changes:** `voice.setPart` on the same write
      path; the part cards from the "one part or one voice" paragraph above.
 
@@ -263,6 +285,8 @@ daemon integration cases for cards and Neo messages:
 | A legacy inline key, then a preset whose recorded host differs from the current one | refused `legacy_key_host_changed`; the inline key is never sent to the new host; after the key is saved per host or cleared, the apply fills the preset |
 | Parts edited on the web after the card was answered, then the apply | refused `settings_changed_since_answer`; parts unchanged; a fresh card answer applies over them |
 | A web voice edit in the same second as the card answer, parts differing from the preset | refused `settings_changed_since_answer` — the answer's own second counts as written; parts unchanged |
+| The provider row changed from OpenAI to Deepgram between the operation's first read and its transaction | the transaction derives Deepgram's preset from the row it re-read, under that row's `set_at`; the stale OpenAI preset is never written |
+| The provider row deleted between the reads | refused `provider_not_chosen`; settings unchanged |
 | The web voice draft loaded before the preset apply, saved after it | refused `voice_changed_since_edit`; the form reloads and re-applies the edit; the applied parts stand |
 | A key-only save from a draft loaded before the preset apply | refused the same way; no key or old endpoint is written over the applied parts |
 | A web edit committed while the apply transaction runs | the edit is either seen inside the transaction and the apply refuses, or commits after it — a voice save only with a matching baseline, so it lands on the applied parts; no edit or saved key is lost |
