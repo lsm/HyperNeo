@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/pr
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GlobalSettings } from '@hyperneo/shared';
 import { updateGlobalSettings } from '../../../lib/api-helpers.ts';
+import { toastsSignal } from '../../../lib/toast.ts';
 import { VoiceSettings } from '../VoiceSettings.tsx';
 
 const { globalSettings } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({ updateGlobalSettings: vi.fn() })
 vi.mock('../../../lib/connection-manager.ts', () => ({ connectionManager: {} }));
 
 beforeEach(() => {
+  toastsSignal.value = [];
   globalSettings.value = {
     voice: {
       enabled: true,
@@ -60,6 +62,12 @@ describe('VoiceSettings host keys', () => {
       )
     );
     expect(deepgram.value).toBe('');
+    await waitFor(() =>
+      expect(
+        toastsSignal.value.some((toast) => toast.message === 'Key saved for api.deepgram.com')
+      ).toBe(true)
+    );
+    expect(JSON.stringify(toastsSignal.value)).not.toContain('synthetic-deepgram');
     fireEvent.click(screen.getByLabelText('Remove API key for api.deepgram.com'));
     await waitFor(() =>
       expect(updateGlobalSettings).toHaveBeenLastCalledWith(
@@ -67,6 +75,23 @@ describe('VoiceSettings host keys', () => {
         { timeout: 120_000 }
       )
     );
+    await waitFor(() =>
+      expect(
+        toastsSignal.value.some((toast) => toast.message === 'Key removed for api.deepgram.com')
+      ).toBe(true)
+    );
+  });
+
+  it('does not report success when saving a key fails', async () => {
+    vi.mocked(updateGlobalSettings).mockRejectedValueOnce(new Error('save failed'));
+    render(<VoiceSettings />);
+    const key = screen.getByLabelText('API key for api.deepgram.com');
+    fireEvent.input(key, { target: { value: 'synthetic-deepgram' } });
+    fireEvent.blur(key);
+    await waitFor(() =>
+      expect(toastsSignal.value.some((toast) => toast.message === 'save failed')).toBe(true)
+    );
+    expect(toastsSignal.value.some((toast) => toast.type === 'success')).toBe(false);
   });
 
   it('follows structured part endpoints and omits insecure endpoints', () => {
