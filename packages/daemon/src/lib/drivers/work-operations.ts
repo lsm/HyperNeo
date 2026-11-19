@@ -23,7 +23,11 @@ import type { RemoteDaemons } from './find-operation.ts';
 import { stampWork } from './places.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
-import { chooseReusableWorker, type WorkerReuseFacts } from './worker-reuse.ts';
+import {
+  reuseWorkerDecision,
+  type WorkerReuseCandidate,
+  type WorkerReuseFacts,
+} from './worker-reuse.ts';
 import {
   PlaceSchema,
   WorkDetailSchema,
@@ -745,11 +749,20 @@ export async function reuseIdleWorker(
     refreshStatus: !!adapter.status,
     excludeRefs: input.excludeRefs,
   };
-  for (
-    let chosen = chooseReusableWorker(candidates, request);
-    chosen;
-    chosen = chooseReusableWorker(candidates, request)
-  ) {
+  let busy: WorkerReuseCandidate | undefined;
+  for (;;) {
+    const decision = reuseWorkerDecision(
+      candidates,
+      sameAskCandidates,
+      request,
+      policy?.mode === 'per_ask' && input.todoId && deps.todoWorker ? policy.sameAsk : []
+    );
+    if (decision.action === 'start') break;
+    if (decision.action === 'wait') {
+      busy = decision.candidate;
+      break;
+    }
+    const chosen = decision.candidate;
     candidates.splice(candidates.indexOf(chosen), 1);
     const work = chosen.work;
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
@@ -824,37 +837,21 @@ export async function reuseIdleWorker(
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
   }
-  if (policy?.mode === 'per_ask' && input.todoId && deps.todoWorker) {
-    const busy = sameAskCandidates.find(
-      ({ work, free }) =>
-        policy.sameAsk.includes(work.ref.id) &&
-        work.ref.adapter === adapter.id &&
-        !work.ref.daemon &&
-        work.place.folder === folder &&
-        !input.excludeRefs?.some(
-          (ref) =>
-            ref.adapter === work.ref.adapter &&
-            ref.id === work.ref.id &&
-            ref.daemon === work.ref.daemon
-        ) &&
-        (isBusyWork(work.status) || (!free && work.status === 'done'))
-    );
-    if (busy) {
-      const status = await adapter.status?.(busy.work.ref).catch(() => null);
-      if (
-        status?.ok &&
-        (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
-        (!requested ||
-          ((requested.provider === undefined || requested.provider === status.value.provider) &&
-            workStartConfiguration.confirm(requested, {
-              ...(status.value.model ? { model: status.value.model } : {}),
-              ...(status.value.effort ? { effort: status.value.effort } : {}),
-            }).ok))
-      ) {
-        const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
-        if (queued === 'none') return null;
-        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
-      }
+  if (busy && input.todoId && deps.todoWorker) {
+    const status = await adapter.status?.(busy.work.ref).catch(() => null);
+    if (
+      status?.ok &&
+      (isBusyWork(status.value.status) || (!busy.free && status.value.status === 'done')) &&
+      (!requested ||
+        ((requested.provider === undefined || requested.provider === status.value.provider) &&
+          workStartConfiguration.confirm(requested, {
+            ...(status.value.model ? { model: status.value.model } : {}),
+            ...(status.value.effort ? { effort: status.value.effort } : {}),
+          }).ok))
+    ) {
+      const queued = await deps.todoWorker.wait(input.todoId, busy.work.ref, input.message);
+      if (queued === 'none') return null;
+      return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
     }
   }
   return null;
