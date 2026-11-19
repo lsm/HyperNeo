@@ -129,6 +129,34 @@ mod tests {
         actions.into_inner()
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn settings_opener_is_reaped_after_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("echo $$ > \"$1\"")
+            .arg("fixture")
+            .arg(&pid_file);
+        run_settings_command(&mut command).unwrap();
+        let pid: libc::pid_t = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+
     #[test]
     fn accessibility_requests_access_before_opening_settings() {
         assert_eq!(
