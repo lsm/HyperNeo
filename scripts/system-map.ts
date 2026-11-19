@@ -541,11 +541,9 @@ export function countPipelineRoutes(
         const factory = unwrapPipelineExpression(current.expression);
         if (!ts.isCallExpression(factory) || factory.flags & ts.NodeFlags.OptionalChain)
           return false;
-        const identifier = unwrapPipelineExpression(factory.expression);
+        const id = unwrapPipelineExpression(factory.expression);
         return (
-          ts.isIdentifier(identifier) &&
-          identifier.text === 'superpipe' &&
-          identifier.getStart(parsed) === inlineOffset
+          ts.isIdentifier(id) && id.text === 'superpipe' && id.getStart(parsed) === inlineOffset
         );
       };
       let body: ts.Node = execute.body;
@@ -553,14 +551,15 @@ export function countPipelineRoutes(
         const statements = body.statements;
         if (statements.length === 2 && inlineOffset !== undefined) {
           const declaration = statements[0];
-          if (
-            !ts.isVariableStatement(declaration) ||
-            !(declaration.declarationList.flags & ts.NodeFlags.Const) ||
-            declaration.declarationList.declarations.length !== 1
-          )
-            return false;
-          const binding = declaration.declarationList.declarations[0];
-          if (
+          const binding =
+            ts.isVariableStatement(declaration) &&
+            declaration.declarationList.flags & ts.NodeFlags.Const &&
+            declaration.declarationList.declarations.length === 1
+              ? declaration.declarationList.declarations[0]
+              : undefined;
+          if (ts.isExpressionStatement(declaration)) name = '';
+          else if (
+            !binding ||
             !ts.isIdentifier(binding.name) ||
             binding.name.text !== name ||
             !binding.initializer ||
