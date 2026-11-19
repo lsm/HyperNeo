@@ -74,7 +74,6 @@ import {
 import { resolveNeoTodoTarget } from './todo-target.ts';
 import { wireNeoTodoMutations } from './todo-mutation-operation.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { desktopControlQuestion } from './desktop-control-preference.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import {
@@ -719,11 +718,11 @@ export function createNeoOperations(
   };
   const todoControls: NeoTodoControls = {
     userFolder: service.userFolder,
-    askDesktopControl: async (askId) => {
+    askDesktopControl: async (question) => {
       await invokeOperation(
         service.sessions.getOperationRegistry(),
         'pack.preferences.ask',
-        desktopControlQuestion(askId),
+        question,
         { source: 'internal', role: 'neo' }
       );
     },

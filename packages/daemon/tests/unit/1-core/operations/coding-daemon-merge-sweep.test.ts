@@ -970,6 +970,7 @@ test('merge retry rejects non-Neo callers before reading or writing', async () =
 
 test('human merge operation adds and removes the label on explicit intent', async () => {
   const operation = createCodingHumanMergeOperation(spawn);
+  expect(operation.pipelineRunner.pipeline.name).toBe(operation.name);
   const caller = { role: 'neo' } as Parameters<typeof operation.execute>[1];
   expect(await operation.execute({ url, enabled: true }, caller)).toEqual({ accepted: true });
   const before = calls.length;

@@ -23,7 +23,7 @@ import {
   neoTodoPlaceRefusal,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
-import { recordNeoTodoAdmission } from './todo-add-operation.ts';
+import { preflightTodoDesktopControl, recordNeoTodoAdmission } from './todo-add-operation.ts';
 import type { NeoPack, NeoTodoPolicyScope } from './pack-contract.ts';
 import { neoTodoRepository } from './pack-contract.ts';
 import { neoTodoFollowUpRefusal } from './todo-follow-up.ts';
@@ -392,6 +392,14 @@ export function createNeoAskRecordOperations(
         const ids: (string | undefined)[] = [];
         const currentScope = priorAsk?.id === ask.id ? readScope : { ask };
         const rows = drafts.map((todo) => recordedRow(todo, currentScope));
+        const desktop = await preflightTodoDesktopControl(
+          store,
+          controls.askDesktopControl,
+          ask.id,
+          drafts.some((todo, index) => !rows[index] && todo.named?.desktopControl === true),
+          caller.role
+        );
+        if ('reason' in desktop) return desktop.reason;
         for (const [index, todo] of drafts.entries()) {
           const row = rows[index];
           const after = todo.after.map((ref) =>
@@ -405,7 +413,7 @@ export function createNeoAskRecordOperations(
                 store.getAsk(ask.id)!,
                 { ...todo, after },
                 policies,
-                caller.role
+                desktop.value
               )
             : { ok: true as const };
           if (!added.ok) return added;

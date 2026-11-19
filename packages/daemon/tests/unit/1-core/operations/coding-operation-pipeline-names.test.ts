@@ -25,6 +25,11 @@ const operations = [
 ];
 
 describe('coding operations', () => {
+  test('preserves the smoke runner description while recording entries', () => {
+    const operation = createCodingSmokeOperation(deps, deps, vi.fn());
+    expect(operation.pipelineRunner.pipeline.name).toBe(operation.name);
+  });
+
   test.each(operations.map((operation) => [operation.name, operation] as const))(
     '%s enters a pipeline named for the operation',
     async (_name, operation) => {

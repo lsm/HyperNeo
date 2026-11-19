@@ -10,10 +10,13 @@ function recordEntry(api: Api, name: string, entered: string[]): Api {
       if (prop === 'end' || prop === 'endAsync') {
         return (...args: unknown[]) => {
           const run = member.apply(target, args) as (...input: unknown[]) => unknown;
-          return (...input: unknown[]) => {
+          const recorded = (...input: unknown[]) => {
             entered.push(name);
             return run(...input);
           };
+          const pipeline = Object.getOwnPropertyDescriptor(run, 'pipeline');
+          if (pipeline) Object.defineProperty(recorded, 'pipeline', pipeline);
+          return recorded;
         };
       }
       return (...args: unknown[]) => {

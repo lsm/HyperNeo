@@ -22,10 +22,14 @@ export const DESKTOP_CONTROL_PREFERENCE: NeoPackPreferenceDeclaration = {
   ask: question,
 };
 
-export function desktopControlQuestion(askId: string) {
+export const DESKTOP_CONTROL_QUESTION_ID = 'core.desktopControl';
+
+export function desktopControlQuestion(askId: string, prior: { id: string; state: string } | null) {
+  if (prior && prior.state !== 'retired') return null;
+
   return {
     askId,
-    requestId: 'core.desktopControl',
+    requestId: prior ? `${DESKTOP_CONTROL_QUESTION_ID}:${prior.id}` : DESKTOP_CONTROL_QUESTION_ID,
     hold: false as const,
     alternatives: [true, false].map((value) => [{ ...address, value }]),
   };

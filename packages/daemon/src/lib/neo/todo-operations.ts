@@ -27,6 +27,7 @@ import {
   type NeoTodoPolicyScope,
   type NeoTodoRepositoryDraft,
 } from './pack-contract.ts';
+import type { desktopControlQuestion } from './desktop-control-preference.ts';
 import { wireNeoTodoAdd } from './todo-add-operation.ts';
 import {
   readNeoTodoCompletion,
@@ -62,7 +63,9 @@ type Ran = Promise<{ ok: true; todo: NeoTodo; records?: string[] } | Rejection>;
 
 export interface NeoTodoControls {
   userFolder?: string;
-  askDesktopControl?: (askId: string) => Promise<void>;
+  askDesktopControl?: (
+    question: NonNullable<ReturnType<typeof desktopControlQuestion>>
+  ) => Promise<void>;
   resolveTarget(
     ref: WorkRef
   ): Promise<
