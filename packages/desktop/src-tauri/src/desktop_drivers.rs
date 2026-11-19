@@ -316,6 +316,17 @@ impl Drivers {
         process.seconds <= advertised && process.seconds + 60 >= advertised
     }
     async fn request(&self, request: Request) -> Result<Value> {
+        #[cfg(test)]
+        let deadline = if request
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args["fixture_deadline"] == true)
+        {
+            Instant::now() + Duration::from_millis(300)
+        } else {
+            Instant::now() + Duration::from_secs(20)
+        };
+        #[cfg(not(test))]
         let deadline = Instant::now() + Duration::from_secs(20);
         if request.worker.is_empty()
             || request.worker.len() > 64

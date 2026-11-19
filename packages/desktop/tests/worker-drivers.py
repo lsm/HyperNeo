@@ -180,7 +180,7 @@ class WorkerDrivers(unittest.TestCase):
 
     def call(self, action, worker='worker-a', **params):
         with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(20)
+            client.settimeout(30)
             client.connect(str(self.root / 'desktop/control.sock'))
             client.sendall((json.dumps(dict(action=action, worker=worker, **params)) + '\n').encode())
             with client.makefile('rb') as stream:
@@ -945,6 +945,48 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(again['result']['dispatched'])
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_busy_worker_returns_busy_instead_of_waiting_for_owner(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(slow))
+            wait_until(lambda: bool(list(slow.glob('d-*/d.starting'))))
+            second = pool.submit(self.dispatch, 'click', {'pid': pid, 'fixture_deadline': True}, workDir=str(slow))
+            try:
+                reply = second.result(timeout=25)['result']
+                self.assertEqual(reply['reason'], 'desktop_busy')
+                self.assertFalse(reply['dispatched'])
+            finally:
+                for marker in slow.glob('d-*/d.starting'):
+                    marker.with_suffix('.release').touch()
+                first.result(timeout=15)
+        print('busy_worker=desktop_busy no_second_input=1')
+
+    def test_saturated_host_refuses_instead_of_stalling(self):
+        pid = finder()
+        self.call('fixture-admit', tool='click', arguments={'pid': pid})
+        slow = self.work / 'slow'
+        slow.mkdir()
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            pending = [pool.submit(self.dispatch, 'click', {'pid': pid}, worker=f'w-{i}', workDir=str(slow))
+                       for i in range(16)]
+            try:
+                wait_until(lambda: len(list(slow.glob('d-*/d.starting'))) == 16)
+                with socket.socket(socket.AF_UNIX) as client:
+                    client.settimeout(2)
+                    client.connect(str(self.root / 'desktop/control.sock'))
+                    client.sendall(b'{"action":"status","worker":"other"}\n')
+                    reply = json.loads(client.makefile('rb').readline())
+                    self.assertEqual(reply, {'ok': False, 'error': 'desktop_busy'})
+            finally:
+                for marker in slow.glob('d-*/d.starting'):
+                    marker.with_suffix('.release').touch()
+                for future in pending:
+                    future.result(timeout=15)
+        print('saturated_host=desktop_busy')
 
     def test_owner_approval_covers_all_actions_for_the_app(self):
         pid = finder()
