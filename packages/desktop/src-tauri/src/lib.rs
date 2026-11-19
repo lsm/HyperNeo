@@ -180,8 +180,8 @@ impl DesktopSettings {
 			.or(file.data_dir)
 			.unwrap_or_else(|| home.join(".hyperneo"));
 		let port = match std::env::var("HYPERNEO_DESKTOP_PORT") {
-			Ok(value) => value.parse()?,
-			Err(_) => file.port.unwrap_or(DAEMON_PORT),
+			Ok(value) if !value.is_empty() => value.parse()?,
+			_ => file.port.unwrap_or(DAEMON_PORT),
 		};
 		let workspace = std::env::var_os("HYPERNEO_DESKTOP_WORKSPACE")
 			.filter(|value| !value.is_empty())
@@ -263,6 +263,10 @@ mod startup_config_tests {
 			.unwrap();
 		assert!(output.status.success());
 		assert_eq!(String::from_utf8(output.stdout).unwrap(), format!("--port\n9461\n--workspace\n{}\n{}\nconfigured\n", workspace.display(), data_dir.display()));
+		std::env::set_var("HYPERNEO_DESKTOP_PORT", "");
+		assert_eq!(DesktopSettings::load().unwrap().port, 9461);
+		std::fs::write(settings_dir.join("settings.json"), "{").unwrap();
+		assert!(DesktopSettings::load().is_err());
 	}
 }
 
@@ -367,7 +371,6 @@ pub fn run() {
 		})
 		.manage(StartupState::default())
 		.setup(|app| {
-			let settings = DesktopSettings::load()?;
 			// Setup logging.
 			app.handle().plugin(
 				tauri_plugin_log::Builder::default()
@@ -380,14 +383,17 @@ pub fn run() {
 					.build(),
 			)?;
 
+			let settings = DesktopSettings::load();
 			#[cfg(target_os = "macos")]
-			if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
-				Some(settings.data_dir.clone()),
-				std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
-				"/usr/bin:/bin:/usr/sbin:/sbin".into(),
-				app.state::<SidecarState>().child.clone(),
-			)) {
-				app.manage(control);
+			if let Ok(settings) = &settings {
+				if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
+					Some(settings.data_dir.clone()),
+					std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
+					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
+					app.state::<SidecarState>().child.clone(),
+				)) {
+					app.manage(control);
+				}
 			}
 
 			// System tray menu.
@@ -458,6 +464,20 @@ pub fn run() {
 				})?;
 
 			log::info!("Global shortcut registered: Cmd/Ctrl+Shift+K to toggle window");
+
+			let settings = match settings {
+				Ok(settings) => settings,
+				Err(error) => {
+					let window = app.get_webview_window("main").expect("Main window not found");
+					fail_startup(
+						app.handle(),
+						&window,
+						&format!("Invalid desktop startup settings: {error}"),
+						&app.state::<StartupState>(),
+					);
+					return Ok(());
+				}
+			};
 
 			// In release mode the desktop app owns the daemon lifecycle: it first
 			// attaches to a daemon that is already running (advertised in
