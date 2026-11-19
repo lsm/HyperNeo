@@ -179,6 +179,7 @@ test.each([
 
 test.each([
   `() => superpipe({})('demo.maybe').end()()`,
+  `() => superpipe({})('demo.maybe').input(f as G).end()()`,
   `() => ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner)()`,
   `() => { const inner = ((superpipe({})('demo.maybe') as Builder).input(f as G).end() as Runner); return inner(); }`,
   `() => (superpipe({})('demo.maybe')!).end()()`,
