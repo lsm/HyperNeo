@@ -10,14 +10,14 @@ The earlier plan had the host accept the paired owner's card answer delivered by
 
 ## Flow
 
-1. A worker call resolves to a verified app and action class with no grant. The host opens one modal dialog per app and waits up to 45 seconds for the answer.
+1. A worker call resolves to a verified app and action class with no grant. The host opens one modal dialog per app. The call has a 20-second deadline for approval and dispatch.
 2. The dialog names the app and the covered actions. "Allow" is the rightmost default button (Return); "Don't Allow" sits to its left (Escape).
 3. Allow records the app-wide grant in the host's private keychain group. A decline records no grant and returns `owner_declined` for that app for ten minutes. A pending answer returns `waiting_for_owner` after the wait expires.
-4. An allowed call checks the target again before dispatch. Approval alone does not send input.
+4. An allowed call checks the target and deadline again before dispatch. If approval arrives after the deadline, it records the grant for the next call and never dispatches the expired call.
 
 Existing per-class grants do not authorize the broader app-wide grant. Owners are asked again for each app; the old keychain items remain in place.
 
-The owner wait plus driver startup and the 30-second driver deadline can exceed a client's request timeout. An input sent after a client times out could be duplicated on retry. The attended signed-host journey must check this end to end; it remains unverified.
+Driver startup already in progress can finish after the deadline so that its resources are cleaned up safely; the expired call still does not dispatch. The signed-host timing remains unverified.
 
 The control socket has no answer or approve action, and requests with unknown fields are rejected. A worker therefore cannot submit, replay or reuse an answer. The host never offers a grant for its own app and refuses it with `app_not_grantable`, so driver input cannot be pointed at its own dialog.
 

@@ -28,8 +28,17 @@ use tokio::{
     process::Command,
     sync::Mutex,
     task::{JoinHandle, JoinSet},
-    time::timeout,
+    time::{timeout, timeout_at, Instant},
 };
+
+pub(crate) async fn owner_answer<F: std::future::Future<Output = &'static str>>(
+    deadline: Instant,
+    answer: F,
+) -> &'static str {
+    timeout_at(deadline, answer)
+        .await
+        .unwrap_or("waiting_for_owner")
+}
 
 #[cfg(test)]
 static FAIL_NEXT_ACCEPT: AtomicBool = AtomicBool::new(false);
@@ -307,6 +316,7 @@ impl Drivers {
         process.seconds <= advertised && process.seconds + 60 >= advertised
     }
     async fn request(&self, request: Request) -> Result<Value> {
+        let deadline = Instant::now() + Duration::from_secs(20);
         if request.worker.is_empty()
             || request.worker.len() > 64
             || !request
@@ -385,11 +395,14 @@ impl Drivers {
                             let reason = if reason == "app_action_not_authorized" {
                                 let (bundle, requirement, class) =
                                     (bundle.to_owned(), requirement.to_owned(), class.to_owned());
-                                tokio::task::spawn_blocking(move || {
-                                    grants::ask_owner(&bundle, &requirement, &class)
+                                owner_answer(deadline, async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        grants::ask_owner(&bundle, &requirement, &class)
+                                    })
+                                    .await
+                                    .unwrap_or("guards_unavailable")
                                 })
                                 .await
-                                .unwrap_or("guards_unavailable")
                             } else {
                                 reason
                             };
@@ -462,11 +475,14 @@ impl Drivers {
                             requirement.to_owned(),
                             class_name.to_owned(),
                         );
-                        let answer = tokio::task::spawn_blocking(move || {
-                            grants::ask_owner(&app, &requirement, &class_name)
+                        let answer = owner_answer(deadline, async move {
+                            tokio::task::spawn_blocking(move || {
+                                grants::ask_owner(&app, &requirement, &class_name)
+                            })
+                            .await
+                            .unwrap_or("guards_unavailable")
                         })
-                        .await
-                        .unwrap_or("guards_unavailable");
+                        .await;
                         if answer == "allowed" {
                             Value::Null
                         } else {
@@ -518,7 +534,22 @@ impl Drivers {
             }
             slots.entry(worker_id.clone()).or_default().clone()
         };
-        let mut worker = slot.lock().await;
+        let mut worker = if request.action == "dispatch" {
+            match timeout_at(deadline, slot.lock()).await {
+                Ok(worker) => worker,
+                Err(_) => {
+                    return Ok(finish(
+                        bundle,
+                        class,
+                        "refused",
+                        json!("waiting_for_owner"),
+                        false,
+                    ))
+                }
+            }
+        } else {
+            slot.lock().await
+        };
         let result: Result<Option<Value>> = async {
             match request.action.as_str() {
                 "start" => {
@@ -544,13 +575,22 @@ impl Drivers {
                         );
                         return Ok(Some(reply));
                     }
+                    if Instant::now() >= deadline {
+                        return Ok(Some(finish(
+                            bundle,
+                            class,
+                            "refused",
+                            json!("waiting_for_owner"),
+                            false,
+                        )));
+                    }
                     #[cfg(not(test))]
                     let limit = Duration::from_secs(30);
                     #[cfg(test)]
                     let limit = Duration::from_millis(100);
                     let active = worker.as_mut().unwrap();
-                    let call = timeout(
-                        limit,
+                    let call = timeout_at(
+                        deadline.min(Instant::now() + limit),
                         active.channel.call(
                             request.tool.as_deref().unwrap_or_default(),
                             request.arguments.clone(),

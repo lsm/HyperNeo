@@ -975,7 +975,11 @@ open(sys.argv[2], 'w').write(reply.decode())
         reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
         self.assertEqual(reply['reason'], 'waiting_for_owner')
         self.assertFalse(reply['dispatched'])
-        self.dialogs('mock-deny')
+        self.dialogs('mock-allow')
+        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.assertFalse(list(self.work.glob('d-*')))
+        next_call = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertTrue(next_call['dispatched'], next_call)
         listed = self.dispatch('list_windows', {}, workDir=str(self.work))['result']
         self.assertTrue(listed['dispatched'], listed)
         print('owner_wait=bounded list_windows=dispatched')
