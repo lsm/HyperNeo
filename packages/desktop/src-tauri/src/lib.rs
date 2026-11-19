@@ -389,9 +389,6 @@ pub fn run() {
 			)?;
 
 			let settings = DesktopSettings::load();
-			#[cfg(all(target_os = "macos", not(debug_assertions)))]
-			permissions_page::show_if_needed(app.handle())?;
-
 			#[cfg(target_os = "macos")]
 			if let Ok(settings) = &settings {
 				if let Some(control) = tauri::async_runtime::block_on(desktop_drivers::Control::setup(
@@ -399,6 +396,15 @@ pub fn run() {
 					std::env::current_exe().map(|path| path.with_file_name("cua-driver")),
 					"/usr/bin:/bin:/usr/sbin:/sbin".into(),
 					app.state::<SidecarState>().child.clone(),
+					{
+						#[cfg(not(debug_assertions))]
+						{
+							let handle = app.handle().clone();
+							std::sync::Arc::new(move || permissions_page::ready_or_show(&handle))
+						}
+						#[cfg(debug_assertions)]
+						std::sync::Arc::new(|| true)
+					},
 				)) {
 					app.manage(control);
 				}

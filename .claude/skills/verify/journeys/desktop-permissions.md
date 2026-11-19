@@ -10,12 +10,14 @@ Start the bundle with `NODE_ENV=test`, a fresh HOME, data directory and DB, and
 no provider keys. Confirm port 9283 is free first. Do not attach to a human's
 running daemon.
 
-On a test account with either permission absent, confirm the desktop permissions
-window appears at startup. The Accessibility and Screen Recording buttons must
+On a test account with either permission absent, confirm no desktop permissions
+window appears at startup. Approve a todo with desktop control and invoke
+`desktop.call` as its worker; confirm the permissions window appears and the
+call is refused without dispatch. The Accessibility and Screen Recording buttons must
 request access and open their respective System Settings panes. After granting
 Screen Recording, quit and reopen the app to confirm the grant takes effect. Return to the app and check the
-statuses again. With both permissions granted, restart and confirm the window
-does not appear. Capture screenshots for review. Do not change permission
+statuses again. With both permissions granted, restart and confirm a desktop call no longer
+opens the permission window. Capture screenshots for review. Do not change permission
 settings on another person's account to create these states.
 
 Close the owned app and stop its owned sidecar. Report missing display access,

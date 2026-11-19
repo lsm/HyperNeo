@@ -52,8 +52,25 @@ async fn serve() {
                 .unwrap()
         });
     let sidecar = std::sync::Arc::new(std::sync::Mutex::new(child));
-    let control =
-        desktop_drivers::Control::setup(base, binary, args[3].clone(), sidecar.clone()).await;
+    let fixture_dir = std::path::PathBuf::from(&args[1]);
+    let desktop_ready = std::sync::Arc::new(move || {
+        use std::io::Write;
+        let mut events = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(fixture_dir.join("permission-checks"))
+            .unwrap();
+        writeln!(events, "check").unwrap();
+        !fixture_dir.join("permissions-missing").exists()
+    });
+    let control = desktop_drivers::Control::setup(
+        base,
+        binary,
+        args[3].clone(),
+        sidecar.clone(),
+        desktop_ready,
+    )
+    .await;
     let mut shutdown_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
     println!("ready");
