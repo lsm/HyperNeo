@@ -92,17 +92,23 @@ voice up by answering Neo:
   (`voice.apiKey`) is bound to whatever host the current recorded endpoint has
   (`resolveVoiceKey` checks that host, not the key's own `apiKeyEndpoint`), so when the
   preset would move the recorded endpoint to a different host the apply refuses
-  `legacy_key_host_changed` — the same refusal the web form gives — until the key is saved
-  per host or cleared. And the apply refuses `settings_changed_since_answer` when the
-  global settings were written after the provider row was (`global_settings.updated_at`
-  versus the row's `set_at`), so a re-run cannot silently overwrite edits the human made on
-  the web after answering; a fresh card re-records the choice and applies it.
+  `legacy_key_host_changed` — the rule today's web form already enforces ("Save the legacy
+  voice key before changing the recorded host"); the per-host key field that makes saving
+  it possible arrives with slice 5. And when the three parts the apply would write differ
+  from the parts currently saved, the apply refuses `settings_changed_since_answer` if the
+  global settings were written after the newest recorded row (`global_settings.updated_at`
+  versus the row's `set_at`). That timestamp is coarse on purpose: many non-voice writers
+  bump it (driver health, rule answers, model changes), and the operation cannot tell a
+  voice edit from any other write — every refusal points the safe way and costs one fresh
+  card, whose answer re-records the row and applies over whatever changed. When the saved
+  parts already equal the preset's output the apply is a no-op success and writes nothing,
+  so unrelated settings writes after a successful apply never block anything.
   The two commits are deliberately not atomic. The human's answer lands first and is never
-  rolled back; the apply is re-runnable while nothing else touched the settings, and a
-  failure leaves the previous settings working with the choice recorded. The preference
-  rows never gate what the daemon dials — the settings are the only source of truth for
-  behavior; a row only stops the question being asked again and labels the choice on later
-  cards.
+  rolled back; the apply is re-runnable — after a failure it retries, after a success it is
+  a no-op — and a failure leaves the previous settings working with the choice recorded.
+  The preference rows never gate what the daemon dials — the settings are the only source
+  of truth for behavior; a row only stops the question being asked again and labels the
+  choice on later cards.
   Layering: the preset table and the operation live with the other voice mechanics in
   `lib/voice/`, registered beside the three test operations; a minimal always-enabled
   `voice` pack (one brief, the two preference declarations, instructions — the shape of the
@@ -208,7 +214,8 @@ daemon integration cases for cards and Neo messages:
 | A recorded `baseUrl` that is not a valid `https://` URL | refused `base_url_insecure`; parts unchanged |
 | A legacy inline key, then a preset whose recorded host differs from the current one | refused `legacy_key_host_changed`; the inline key is never sent to the new host; after the key is saved per host or cleared, the apply fills the preset |
 | Parts edited on the web after the card was answered, then the apply | refused `settings_changed_since_answer`; parts unchanged; a fresh card answer applies over them |
-| The apply run twice | the second run refuses `settings_changed_since_answer` (the first run's own write bumped the settings timestamp); settings unchanged |
+| A non-voice settings write (a rule answer, a model change) after the card was answered, then the apply | the parts still differ from the preset, so it is refused the same way; after parts equal the preset (a successful apply), the same write never blocks a re-run |
+| The apply run twice | the second run is a no-op success — the parts already equal the preset, so nothing is written and the settings timestamp is untouched |
 | Parts edited on the web after an apply | behavior follows the settings; the preference rows are not consulted |
 
 ## Out of scope
