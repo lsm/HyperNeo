@@ -36,7 +36,9 @@ function makeHub() {
       Promise.resolve(
         method === 'auth.providers'
           ? { providers: [{ id: 'anthropic', isAuthenticated: true }] }
-          : null
+          : method === 'providers.list'
+            ? { providers: [{ providerId: 'anthropic' }] }
+            : null
       )
     ),
     onEvent: vi.fn(() => () => {}),

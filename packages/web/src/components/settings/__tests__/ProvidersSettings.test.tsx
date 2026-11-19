@@ -596,6 +596,55 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('saves the selected harness through the OXAP operation', async () => {
+    const provider = createMockProvider('1', 'anthropic-codex', { displayName: 'Codex' });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+    mockRequest.mockImplementation(async (method: string) =>
+      method === 'operation.invoke'
+        ? { accepted: true }
+        : {
+            settings: {
+              settings: {
+                oxapHub: {
+                  path: '/synthetic/oxap',
+                  version: 'synthetic-version',
+                  sha256: 'a'.repeat(64),
+                },
+              },
+            },
+          }
+    );
+    render(<ProvidersSettings />);
+    fireEvent.click(await screen.findByText('Codex'));
+    fireEvent.change(screen.getByLabelText('Harness', { exact: true }), {
+      target: { value: 'oxap-codex' },
+    });
+    expect(screen.getByText('Hub not installed')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Absolute path to OXAP Codex executable')).toBeTruthy();
+    expect(screen.getByText('An absolute path is required.')).toBeTruthy();
+    fireEvent.input(screen.getByLabelText('Harness executable'), {
+      target: { value: '/synthetic/codex' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save harness' }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith(
+        'operation.invoke',
+        {
+          name: 'oxap.settings.save',
+          input: {
+            providerId: 'anthropic-codex',
+            harness: 'oxap-codex',
+            settings: { executable: '/synthetic/codex' },
+          },
+        },
+        { timeout: 300_000 }
+      )
+    );
+    await waitFor(() => expect(screen.getByText('/synthetic/oxap')).toBeTruthy());
+    expect(screen.getByText('synthetic-version')).toBeTruthy();
+    expect(screen.getByText('a'.repeat(64))).toBeTruthy();
+  });
+
   it('expands provider row on click', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),

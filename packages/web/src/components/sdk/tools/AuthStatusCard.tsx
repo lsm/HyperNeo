@@ -75,7 +75,20 @@ export function AuthStatusCard({
       </div>
 
       {output && output.length > 0 && (
-        <div class="text-accent text-xs whitespace-pre-wrap mt-2">{output.join('\n')}</div>
+        <div class="text-accent text-xs whitespace-pre-wrap mt-2">
+          {output
+            .join('\n')
+            .split(/(https?:\/\/[^\s]*[^\s.,):])/g)
+            .map((part) =>
+              /^https?:\/\//.test(part) ? (
+                <a href={part} target="_blank" rel="noopener noreferrer" class="underline">
+                  {part}
+                </a>
+              ) : (
+                part
+              )
+            )}
+        </div>
       )}
 
       {error && <div class="text-danger text-xs mt-2">Error: {error}</div>}

@@ -1,10 +1,12 @@
 import { generateUUID } from '@hyperneo/shared';
+import { isOxapHarness, oxapHarness } from '@hyperneo/shared/types/oxap-harnesses';
 import type {
   MessageDeliveryMode,
   MessageImage,
   ModelInfo,
   ReferenceMention,
   SessionFeatures,
+  SessionConfig,
   SessionType,
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
@@ -176,6 +178,7 @@ interface MessageInputProps {
   sessionId: string;
   pendingAttachmentKey?: string;
   sessionType?: SessionType;
+  harness?: SessionConfig['harness'];
   onSend: (
     content: string,
     images?: MessageImage[],
@@ -205,6 +208,7 @@ export default function MessageInput({
   sessionId,
   pendingAttachmentKey,
   sessionType,
+  harness,
   onSend,
   disabled,
   onOpenTools,
@@ -225,6 +229,7 @@ export default function MessageInput({
   registerDropTarget,
   store,
 }: MessageInputProps) {
+  const textOnly = isOxapHarness(harness) && oxapHarness(harness).input === 'text';
   const isTouchDeviceRef = useRef(
     window.matchMedia('(pointer: coarse)').matches ||
       ('ontouchstart' in window && window.innerWidth < 768)
@@ -308,10 +313,10 @@ export default function MessageInput({
 
   useEffect(() => {
     registerDropTarget?.((files) => {
-      if (!disabled) void handleFileDrop(files);
+      if (!disabled && !textOnly) void handleFileDrop(files);
     });
     return () => registerDropTarget?.(null);
-  }, [disabled, handleFileDrop, registerDropTarget]);
+  }, [disabled, textOnly, handleFileDrop, registerDropTarget]);
 
   useEffect(() => {
     onDraftActiveChange?.(content.trim().length > 0);
@@ -1071,7 +1076,7 @@ export default function MessageInput({
 
   const handleSubmit = useCallback(
     async (deliveryMode: MessageDeliveryMode = 'immediate') => {
-      if (disabled) {
+      if (disabled || (textOnly && attachments.length > 0)) {
         return;
       }
       if (
@@ -1124,6 +1129,7 @@ export default function MessageInput({
     },
     [
       disabled,
+      textOnly,
       extractOutgoingMessage,
       attachments,
       clearDraft,
@@ -1289,6 +1295,11 @@ export default function MessageInput({
             />
           )}
 
+          {textOnly && (
+            <p class="mb-1 text-xs text-fg-muted">
+              This harness accepts text only; images cannot be attached, pasted, or dropped.
+            </p>
+          )}
           <div class="flex items-end gap-3">
             <InputActionsMenu
               isOpen={actionsMenu.isOpen}
@@ -1302,6 +1313,8 @@ export default function MessageInput({
               onModelSwitch={handleModelSwitch}
               onOpenTools={() => onOpenTools?.()}
               onAttachFile={openFilePicker}
+              attachmentReason={textOnly ? 'This harness accepts text only.' : undefined}
+              showTools={!isOxapHarness(harness)}
               coordinatorMode={coordinatorMode}
               coordinatorSwitching={coordinatorSwitching}
               onCoordinatorModeChange={onCoordinatorModeChange}
@@ -1317,7 +1330,7 @@ export default function MessageInput({
               type="file"
               accept="image/png,image/jpeg,image/gif,image/webp"
               multiple
-              onChange={handleFileSelect}
+              onChange={textOnly ? undefined : handleFileSelect}
               class="hidden"
             />
 
@@ -1361,7 +1374,15 @@ export default function MessageInput({
                   : undefined
               }
               onStop={handleInterrupt}
-              onPaste={disabled ? undefined : handlePaste}
+              onPaste={
+                disabled
+                  ? undefined
+                  : textOnly
+                    ? (e) => {
+                        if (e.clipboardData?.files.length) e.preventDefault();
+                      }
+                    : handlePaste
+              }
               textareaRef={textareaInputRef}
               transparent={true}
               transcribing={isTranscribing}

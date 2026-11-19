@@ -5,6 +5,11 @@ import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelPicker } from '../ModelPicker';
 
+const mockListProviders = vi.fn();
+vi.mock('../../lib/api-helpers.ts', () => ({
+  listProviders: (...args) => mockListProviders(...args),
+}));
+
 const mockGetHubIfConnected = vi.fn(() => null);
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -79,6 +84,7 @@ describe('ModelPicker', () => {
     cleanup();
     onSelectModel.mockClear();
     onSelectThinking.mockClear();
+    mockListProviders.mockResolvedValue({ providers: [] });
     mockConnectionState.value = 'connected';
     mockGetHubIfConnected.mockReturnValue(null);
   });
@@ -120,6 +126,58 @@ describe('ModelPicker', () => {
   });
 
   describe('model filtering', () => {
+    it('limits an OXAP chat to its provider even if SDK authentication is absent', async () => {
+      mockGetHubIfConnected.mockReturnValue(
+        makeHub([{ id: 'anthropic-codex', isAuthenticated: false, errorKind: 'credential' }])
+      );
+      const { container } = renderPicker({
+        harness: 'oxap-codex',
+        provider: 'anthropic-codex',
+        activeModelInfo: makeModel('codex-a', 'anthropic-codex', 'Codex A'),
+        availableModels: [
+          makeModel('codex-a', 'anthropic-codex', 'Codex A'),
+          makeModel('codex-b', 'anthropic-codex', 'Codex B'),
+          makeModel('sdk', 'anthropic', 'SDK Model'),
+        ],
+      });
+      await openDropdown(container);
+      const menu = container.querySelector('#model-preferences')!;
+      expect(menu.textContent).toContain('Codex B');
+      expect(menu.textContent).not.toContain('SDK Model');
+    });
+
+    it('keeps the current provider usable and offers a retry when provider lookup fails', async () => {
+      mockListProviders
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue({ providers: [] });
+      const { container, getByRole, getByText } = renderPicker({ harness: 'sdk' });
+      await openDropdown(container);
+      expect(getByText('Model Beta')).toBeTruthy();
+      expect(getByRole('alert').textContent).toContain('Could not load providers');
+      fireEvent.click(getByRole('button', { name: 'Retry providers' }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+    });
+
+    it('hides OXAP providers from SDK chats', async () => {
+      mockListProviders.mockResolvedValue({
+        providers: [
+          { providerId: 'anthropic-codex', configJson: JSON.stringify({ harness: 'oxap-codex' }) },
+        ],
+      });
+      const { container } = renderPicker({
+        harness: 'sdk',
+        availableModels: [activeModelInfo, makeModel('codex', 'anthropic-codex', 'Codex Model')],
+      });
+      await openDropdown(container);
+      const menu = container.querySelector('#model-preferences')!;
+      expect(menu.textContent).toContain('Model Alpha');
+      expect(menu.textContent).not.toContain('Codex Model');
+    });
+
     it('renders unavailable models as disabled and unselectable', async () => {
       const models: ModelInfo[] = [
         makeModel('model-alpha', 'anthropic', 'Model Alpha'),

@@ -22,6 +22,7 @@ export interface ChatComposerProps {
   sessionStatus?: string;
   sessionType?: SessionType;
   harness?: SessionConfig['harness'];
+  provider?: string;
   thinkingLevel?: ThinkingLevel;
   isProcessing: boolean;
   currentAction?: string;
@@ -71,6 +72,7 @@ export function ChatComposer({
   sessionStatus,
   sessionType,
   harness,
+  provider,
   thinkingLevel,
   isProcessing,
   currentAction,
@@ -139,6 +141,7 @@ export function ChatComposer({
           modelLoading={modelLoading}
           onModelSwitch={onModelSwitch}
           harness={harness}
+          provider={provider}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}
@@ -175,6 +178,7 @@ export function ChatComposer({
               sessionId={sessionId}
               pendingAttachmentKey={pendingAttachmentKey}
               sessionType={sessionType}
+              harness={harness}
               onSend={onSend}
               disabled={
                 isWaitingForInput ||

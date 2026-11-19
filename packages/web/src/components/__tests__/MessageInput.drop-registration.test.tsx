@@ -1,11 +1,14 @@
 // @ts-nocheck
 import { signal } from '@preact/signals';
-import { cleanup, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAgentWorking = signal(false);
 
 const handleFileDrop = vi.fn(async () => {});
+const handlePaste = vi.fn();
+const openFilePicker = vi.fn();
+let menuOpen = false;
 
 vi.mock('../../lib/state.ts', () => ({
   globalSettings: { value: { voice: { enabled: false } } },
@@ -42,7 +45,7 @@ vi.mock('../../hooks', () => ({
     loading: false,
     switchModel: vi.fn(async () => {}),
   }),
-  useModal: () => ({ isOpen: false, toggle: vi.fn(), close: vi.fn() }),
+  useModal: () => ({ isOpen: menuOpen, toggle: vi.fn(), close: vi.fn() }),
   useCommandAutocomplete: () => ({
     showAutocomplete: false,
     filteredCommands: [],
@@ -68,9 +71,9 @@ vi.mock('../../hooks', () => ({
     handleRemove: vi.fn(),
     clear: vi.fn(),
     restore: vi.fn(),
-    openFilePicker: vi.fn(),
+    openFilePicker,
     getImagesForSend: vi.fn(() => undefined),
-    handlePaste: vi.fn(),
+    handlePaste,
   }),
   useInterrupt: () => ({ interrupting: false, handleInterrupt: vi.fn(async () => {}) }),
 }));
@@ -97,6 +100,9 @@ describe('MessageInput registerDropTarget', () => {
   beforeEach(() => {
     cleanup();
     handleFileDrop.mockClear();
+    handlePaste.mockClear();
+    openFilePicker.mockClear();
+    menuOpen = false;
     mockAgentWorking.value = false;
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -175,6 +181,47 @@ describe('MessageInput registerDropTarget', () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    expect(handleFileDrop).not.toHaveBeenCalled();
+  });
+  it('disables image attach with a reason for a text-only harness', () => {
+    menuOpen = true;
+    const { getByRole } = render(
+      <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+    );
+    const button = getByRole('button', { name: 'Attach image' });
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain('text only');
+    fireEvent.click(button);
+    expect(openFilePicker).not.toHaveBeenCalled();
+  });
+
+  it('prevents pasted images in a text-only harness', () => {
+    const { getByRole, getByText } = render(
+      <MessageInput sessionId="s1" onSend={vi.fn()} harness="oxap-codex" />
+    );
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
+    });
+    fireEvent(getByRole('textbox'), event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlePaste).not.toHaveBeenCalled();
+    expect(getByText(/accepts text only/)).toBeTruthy();
+  });
+
+  it('does not accept dropped images in a text-only harness', () => {
+    let target: ((files: FileList) => void) | null = null;
+    render(
+      <MessageInput
+        sessionId="s1"
+        onSend={vi.fn()}
+        harness="oxap-codex"
+        registerDropTarget={(fn) => {
+          target = fn;
+        }}
+      />
+    );
+    target!(makeFileList([new File(['x'], 'a.png', { type: 'image/png' })]));
     expect(handleFileDrop).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,20 @@
+import { existsSync } from 'node:fs';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
-import { answerCodexProbeLocally, oxapCodexProvider } from './oxap-codex-provider.ts';
+import { answerCodexProbeLocally, oxapCodexProvider, serveLocalRelease } from './oxap-codex-provider.ts';
+import { releaseName } from '../../../packages/daemon/src/lib/oxap/oxap-install.ts';
 import { createLocalSocket } from '../../../packages/daemon/src/lib/pairing/local-credential.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 const run = process.env.HYPERNEO_DATA_DIR!.replace(/\/data$/, '');
 answerCodexProbeLocally();
+serveLocalRelease('/usr/bin/true', releaseName(), `${run}/release`);
+const releaseFetch = globalThis.fetch;
+globalThis.fetch = Object.assign(async (...args: Parameters<typeof fetch>) => {
+  const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+  if (url.endsWith('/SHA256SUMS.txt')) await new Promise((resolve) => setTimeout(resolve, 11_000));
+  return releaseFetch(...args);
+}, { preconnect: releaseFetch.preconnect }) as typeof fetch;
 const app = await createDaemonApp({
   config: {
     ...getConfig({
@@ -53,6 +62,10 @@ const transport = new WebSocketClientTransport({
 rpc.registerTransport(transport);
 await transport.initialize();
 await rpc.request('providers.create', oxapCodexProvider);
+await rpc.request('providers.create', {
+  params: { providerId: 'anthropic', displayName: 'Synthetic SDK', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: false, sortOrder: 2 },
+  credentials: { apiKey: 'sk-devproxy-test-key' },
+});
 setModelsCache(
   new Map([
     [
@@ -69,14 +82,31 @@ setModelsCache(
           releaseDate: '',
           available: true,
         },
+        {
+          id: 'synthetic-sdk', name: 'Synthetic SDK Model', alias: 'synthetic-sdk', family: 'sonnet',
+          provider: 'anthropic', contextWindow: 128000, description: '', releaseDate: '', available: true,
+        },
       ],
     ],
   ])
 );
 await rpc.request('models.list', {});
+const seeded = await rpc.request<{ sessionId: string }>('session.create', {
+  title: 'Synthetic sign-in', workspacePath: `${run}/home`,
+  config: { provider: 'anthropic-codex', model: 'codex-6-luna', queryMode: 'manual' },
+});
+await app.db.saveSDKMessage(seeded.sessionId, {
+  type: 'auth_status', isAuthenticating: true, uuid: crypto.randomUUID(),
+  session_id: seeded.sessionId, output: ['Open https://example.com/device.', 'Enter code SYNTHETIC'],
+});
+console.log(`AUTH_SESSION=${seeded.sessionId}`);
 const listProviders = app.db.providers.listProviders.bind(app.db.providers);
 let failProviderList = true;
 app.db.providers.listProviders = () => {
+  const marker = `${run}/fail-provider-list`;
+  if (existsSync(marker)) {
+    throw new Error('Synthetic provider lookup failure');
+  }
   if (failProviderList) {
     failProviderList = false;
     throw new Error('Synthetic provider lookup failure');
