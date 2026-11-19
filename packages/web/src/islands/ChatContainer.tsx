@@ -1074,6 +1074,11 @@ export default function ChatContainer({
         }) && (
           <ErrorBanner
             error={error}
+            downloadFailure={
+              !localError &&
+              !retryStatusMessage &&
+              errorDetails?.metadata?.kind === 'package_download_failure'
+            }
             hasDetails={!!storeError?.details}
             onViewDetails={errorDialog.open}
             onDismiss={() => {
@@ -1290,6 +1295,9 @@ export default function ChatContainer({
                             msg.uuid ? maps.replacementStatusMap.get(msg.uuid) : undefined
                           }
                           isLiveTail={idx === messages.length - 1}
+                          disableDeliveryRetry={
+                            errorDetails?.metadata?.kind === 'package_download_failure'
+                          }
                           stopped={
                             msg.uuid && msg.uuid === stoppedCardUuid ? stoppedEpisode : undefined
                           }

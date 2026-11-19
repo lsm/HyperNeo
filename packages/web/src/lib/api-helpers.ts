@@ -74,6 +74,16 @@ export async function cancelRateLimitRetry(sessionId: string): Promise<{ success
   return await hub.request<{ success: boolean }>('session.cancelRateLimitRetry', { sessionId });
 }
 
+export async function retryClaudeDownload(): Promise<
+  { accepted: true } | { accepted: false; reason: string }
+> {
+  return await getHubOrThrow().request(
+    'operation.invoke',
+    { name: 'daemon.retryClaudeDownload', input: {} },
+    { timeout: 180_000 }
+  );
+}
+
 export async function retryNowAfterRateLimit(sessionId: string): Promise<{ success: boolean }> {
   const hub = getHubOrThrow();
   return await hub.request<{ success: boolean }>('session.retryNowAfterRateLimit', { sessionId });
