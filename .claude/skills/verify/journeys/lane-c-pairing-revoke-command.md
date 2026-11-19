@@ -19,8 +19,8 @@ CLI's devices reader against its explicit owned session-door socket. No live dae
 port 8399 is used.
 
 The committed local Bun evidence was produced with Bun 1.4.3, rather than the repository's
-pinned release runtime 1.4.2. It proves that local runtime only; native-daemon proof under
-Bun 1.4.2 remains unverified here. Reuse an existing pinned runtime when available; do not
+pinned release runtime 1.4.2 at the time. It proves that local runtime only; native-daemon proof under
+Bun 1.4.4 remains unverified here. Reuse an existing pinned runtime when available; do not
 install a runtime merely to relabel these results.
 
 Commit the failing native-command proof first: the baseline rejects the missing

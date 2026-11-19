@@ -33,5 +33,5 @@ it performs no extra validation, initialization or SQL.
 Run the focused strict checker, SQL/constructor/gateway suites, graph/diff measurement and
 repository checks. Save payload sizes, timing, loop lag, RSS/WAL and SQL hashes without
 UUIDs. Close owned socket, locks, processors and app before data cleanup. Public
-activation, full FS/capture/ownership graph, native Bun 1.4.2 when another Bun is
+activation, full FS/capture/ownership graph, native Bun 1.4.4 when another Bun is
 installed, browser and Neo-owned deployment smoke remain unverified by this construction.

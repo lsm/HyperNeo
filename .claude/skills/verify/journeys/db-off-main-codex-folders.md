@@ -1,6 +1,6 @@
 # Codex Desktop discovery keeps health responsive
 
-Use SKILL.md's in-process setup, pinned Bun1.4.2, fresh synthetic HOME/data/DB,
+Use SKILL.md's in-process setup, pinned Bun1.4.4, fresh synthetic HOME/data/DB,
 and PROOF=.claude/skills/verify/codex-snapshot-reader.ts. No model/mock/GUI is needed.
 Run with `1200` after the run directory, repeat with `1200 bridge`, then `0`.
 The helper creates only a synthetic external state_5.sqlite:10000 complete rows,

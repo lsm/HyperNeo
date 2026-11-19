@@ -1,6 +1,6 @@
 # Schedule operation pipeline names
 
-Run on base and changed tree with Bun 1.4.2:
+Run on base and changed tree with Bun 1.4.4:
 
 ```bash
 bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence-directory .claude/skills/verify/schedule-pipeline-names.ts verify

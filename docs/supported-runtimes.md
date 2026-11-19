@@ -1,6 +1,6 @@
 # Supported runtimes
 
-HyperNeo's daemon and native proof jobs use Bun 1.4.2. Development, CI builds and
+HyperNeo's daemon and native proof jobs use Bun 1.4.4. Development, CI builds and
 release packaging use that pinned runtime. Install dependencies with
 `bun install --frozen-lockfile`.
 

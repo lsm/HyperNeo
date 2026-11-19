@@ -1,7 +1,7 @@
 # Build Bun parity for inline gateway serialization
 
 Use shared resource/isolation/cleanup setup in ../SKILL.md. With pinned
-Bun 1.4.2 on PATH, run:
+Bun 1.4.4 on PATH, run:
 
     VERIFY_PROOF_RUNTIME=bun bash .claude/skills/verify/proof-run.sh /absolute/fresh/evidence scripts/bun-gateway-probe.ts
 

@@ -3,7 +3,7 @@
 The wrapper checks resources, scrubs credentials, uses disposable HOME/data and ephemeral
 listeners, saves evidence and deletes the synthetic daemon data after cleanup. No provider
 turn, HTTP mock, live daemon, real credentials or existing workspace is involved. Record
-actual runtimes; local Bun 1.4.3 does not establish pinned native Bun 1.4.2 coverage.
+actual runtimes; local Bun 1.4.3 does not establish pinned native Bun 1.4.4 coverage.
 
 Commit the failing proof first: real workspace.remove reaches a denied main DELETE. The
 change is a thin data-only writer bridge around the existing remove transaction, plus one

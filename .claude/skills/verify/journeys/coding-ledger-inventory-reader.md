@@ -1,7 +1,7 @@
 # PR sweep and daily counts read ledger inventories off main
 
 Follow SKILL.md's shared resource, isolation and cleanup rules. Use pinned Bun
-1.4.2 and fresh absolute evidence directories. No provider, live data, simulator,
+1.4.4 and fresh absolute evidence directories. No provider, live data, simulator,
 real GitHub or GUI is used; acquisition uses the refusing synthetic gh fixture.
 
 ```bash
