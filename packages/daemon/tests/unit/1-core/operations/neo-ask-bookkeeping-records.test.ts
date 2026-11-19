@@ -343,11 +343,12 @@ describe('todo and ask bookkeeping records through MCP', () => {
     try {
       const described = await h.call('operations.describe', { name: 'neo.question.ask' });
       expect(described).toMatchObject({ found: true });
+      expect(described.description).toContain('Otherwise supply retireWhen {pack,kind,params}.');
       expect(described.description).toContain(
-        'If a supplied todoId is unknown, belongs to another ask, or is done or removed'
+        'supply it explicitly for a missing check or invalid, foreign, done or removed todo'
       );
       expect(described.description).toContain(
-        'supply explicit retireWhen to open the question on the ask without linking that todo; otherwise it is refused'
+        'With an explicit check, an unusable todo produces an unlinked card and todo_closed.'
       );
     } finally {
       h.db.close();
