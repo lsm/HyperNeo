@@ -1,14 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 
-const [run] = process.argv.slice(2);
+const [run, session = 'neo:proof'] = process.argv.slice(2);
 if (!run) throw new Error('usage: desktop-control-toggle-seed.ts <run>');
 const db = new Database(join(run, 'data/daemon.db'));
 const now = Date.now();
 db.run(
   `INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
-   VALUES ('desktop-ask', 'neo:proof', 'Errands on the clinic and tax sites', 'Book and file', 'open', ?, ?)`,
-  [now, now]
+   VALUES ('desktop-ask', ?, 'Errands on the clinic and tax sites', 'Book and file', 'open', ?, ?)`,
+  [session, now, now]
 );
 for (const [position, id, title, worker] of [
   [0, 'dentist', 'Book the dentist on the clinic site', 'worker-dentist'],

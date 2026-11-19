@@ -311,6 +311,12 @@ export function NeoLive() {
       entries: neoAskEntriesInOrder(workEntries.filter((entry) => neoAskEntryGroup(entry) === key)),
     };
   });
+  const allowDesktop = (question: NeoQuestionEntry) => {
+    if (question.todoId)
+      void neo.setDesktopControl(question.todoId, true).then((ok) => {
+        if (ok) void neo.answerQuestion(question.id, 'Allow');
+      });
+  };
   const askCard = (
     entry: NeoAskEntry,
     listed = false,
@@ -341,6 +347,7 @@ export function NeoLive() {
       }
       onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
       onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+      onDesktopAllow={allowDesktop}
       onTopic={
         workQuery.trim() &&
         !sceneEntries.some((loaded) => loaded.ask.topicKey === entry.ask.topicKey)
@@ -1217,6 +1224,7 @@ export function NeoLive() {
                 })
               }
               onDesktopControl={(todoId, on) => void neo.setDesktopControl(todoId, on)}
+              onDesktopAllow={allowDesktop}
               onReply={
                 ready
                   ? (question) =>
@@ -1243,6 +1251,7 @@ export function NeoLive() {
                     onOpen={openSession}
                     disabled={!connected || !!neo.busyWork}
                     onAnswer={(answer) => void neo.answerQuestion(question.id, answer)}
+                    onDesktopAllow={allowDesktop}
                     onReply={replyToQuestion && (() => replyToQuestion(question))}
                   />
                 </div>

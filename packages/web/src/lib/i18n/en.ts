@@ -146,6 +146,7 @@ export const en = {
   'todo.open': 'Open',
   'ask.todoCount': '{count} todos',
   'ask.questionsWaiting': '{count} waiting on you',
+  'question.allow': 'Allow',
   'todo.desktopControl': 'Let the agent use this computer',
   'todo.desktopOn': 'Let it use this computer',
   'todo.desktopOff': 'Stop letting it use this computer',

@@ -175,7 +175,7 @@ function read(outcome: Awaited<ReturnType<typeof snapshot>>): NeoSnapshot {
 const childTables = () =>
   observer.queries
     .filter((query) => query.child)
-    .map((query) => query.sql.match(/from (neo_\w+) where/)?.[1])
+    .map((query) => query.sql.match(/from (neo_\w+) where (?:ask_id|todo_id)/)?.[1])
     .sort();
 
 test('a 231-todo snapshot reads todos, cards and sessions once for its rows and once for step owners', async () => {

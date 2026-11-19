@@ -155,6 +155,7 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
   | 'text'
+  | 'app'
   | 'retireWhen'
   | 'kind'
   | 'options'
@@ -176,7 +177,7 @@ export const NEO_ADVISORY_QUESTION = (question: string) =>
   `EXISTS (SELECT 1 FROM neo_pack_preference_proposals p WHERE p.question_id = ${question}.id
     AND json_extract(p.values_json, '$.hold') = 0)`;
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, desktop_app AS app, (SELECT title FROM neo_todos WHERE id = neo_questions.todo_id) AS todoTitle, text, kind, options, option_details_json AS optionDetailsJson, recommended, multiple, no_label AS noLabel,
   yes_label AS yesLabel, todos, state, answer, answered_by AS answeredBy,
   answer_provenance_json AS answerProvenanceJson, answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   retire_when_json AS retireWhenJson, confirm_json AS confirmJson, reply_to_json AS replyToJson, artifacts_json AS artifactsJson, source_session_json AS sourceSessionJson, document, cause, actions_applied_at AS actionsAppliedAt, held_at AS heldAt, hold_requests AS holdRequests, created_at AS createdAt FROM neo_questions`;
@@ -216,6 +217,8 @@ const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) a
 
 const toQuestion = ({
   answerProvenanceJson,
+  app,
+  todoTitle,
   retireWhenJson,
   confirmJson,
   replyToJson,
@@ -230,6 +233,7 @@ const toQuestion = ({
   recommended,
   ...row
 }: QuestionRow): NeoQuestion => ({
+  ...(app ? { app, ...(todoTitle ? { todoTitle } : {}) } : {}),
   ...(optionDetailsJson
     ? { optionDetails: JSON.parse(optionDetailsJson) as Record<string, string> }
     : {}),
@@ -249,9 +253,11 @@ const toQuestion = ({
   ...(todoId ? { todoId } : {}),
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
-  ...(row.kind === 'start'
-    ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
-    : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
+  ...(app
+    ? { kind: 'desktop_control' as const, options: ['Allow'], multiple: false }
+    : row.kind === 'start'
+      ? { kind: 'choice' as const, options: JSON.parse(row.todos) as string[], multiple: true }
+      : { kind: row.kind, options: parsed<string[]>(row.options), multiple: row.multiple === 1 }),
   todos: JSON.parse(row.todos) as string[],
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
@@ -1111,13 +1117,13 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, option_details_json, recommended, multiple, no_label, yes_label,
-           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           todos, confirm_json, document, reply_to_json, todo_id, artifacts_json, source_session_json, retire_when_json, cause, created_at, desktop_app) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
         askId,
         draft.text,
-        draft.kind,
+        draft.kind === 'desktop_control' ? 'choice' : draft.kind,
         draft.options ? JSON.stringify(draft.options) : null,
         draft.optionDetails ? JSON.stringify(draft.optionDetails) : null,
         draft.recommended ?? null,
@@ -1143,7 +1149,8 @@ export class NeoAskTodoRepository {
         draft.sourceSession ? JSON.stringify(draft.sourceSession) : null,
         draft.retireWhen ? JSON.stringify(draft.retireWhen) : null,
         draft.cause ?? null,
-        now
+        now,
+        draft.app ?? null
       );
     this.touchAsk(askId, now, true, draft.cause === 'relay-session-proposal');
     return this.getQuestion(id)!;

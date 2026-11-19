@@ -323,6 +323,7 @@ const AskKinds = z.discriminatedUnion('kind', [
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
+  z.object({ ...Asked, kind: z.literal('desktop_control'), todoId: Text, app: Text }),
 ]);
 const Ask = AskKinds.refine((input) => input.askId || ('input' in input && input.input), {
   message: 'Pass input for a human request, or askId for follow-up work.',
@@ -389,7 +390,9 @@ export const NeoQuestionSchema = z.object({
   id: z.string(),
   askId: z.string(),
   text: z.string(),
-  kind: z.enum(['yesno', 'choice', 'reply']),
+  kind: z.enum(['yesno', 'choice', 'reply', 'desktop_control']),
+  app: z.string().optional(),
+  todoTitle: z.string().optional(),
   options: z.array(z.string()).nullable(),
   optionDetails: z.record(z.string(), z.string()).optional(),
   recommended: z.string().optional(),
@@ -425,6 +428,8 @@ const QuestionReadResult = z.union([
       id: true,
       text: true,
       kind: true,
+      app: true,
+      todoTitle: true,
       state: true,
       answer: true,
       answerProvenance: true,
@@ -451,6 +456,8 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
     id,
     text,
     kind,
+    app,
+    todoTitle,
     state,
     answer,
     answerProvenance,
@@ -471,6 +478,8 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       id,
       text,
       kind,
+      ...(app ? { app } : {}),
+      ...(todoTitle ? { todoTitle } : {}),
       state,
       answer,
       ...(answerProvenance ? { answerProvenance } : {}),
@@ -547,6 +556,8 @@ export function planNeoQuestion(
       : checkRecords
         ? { records: checkRecords }
         : {};
+  if (input.kind === 'desktop_control' && !todoId)
+    return fail('todo_closed: desktop control requires a current todo on this ask.');
   const confirm = input.confirm ?? null;
   if (confirm) {
     if (input.kind !== 'choice' || input.multiple || input.options.length !== 1)
@@ -574,6 +585,7 @@ export function planNeoQuestion(
     ...(todoId ? { todoId } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
+    ...(input.kind === 'desktop_control' ? { app: input.app } : {}),
     options: input.kind === 'choice' ? input.options : null,
     ...(input.kind === 'choice' && input.details && Object.keys(input.details).length
       ? { optionDetails: input.details }
@@ -610,12 +622,14 @@ export function planNeoQuestionAnswer(
     return fail(`question_closed: this question is ${question.state}.`);
   const picked = [answer].flat();
   const allowed =
-    question.kind === 'yesno'
-      ? typeof answer === 'string' && (answer === 'no' || answer === 'yes')
-      : question.kind === 'reply'
-        ? typeof answer === 'string' && answer.trim().length > 0
-        : picked.every((value) => question.options?.includes(value)) &&
-          (question.kind !== 'choice' || question.multiple || picked.length === 1);
+    question.kind === 'desktop_control'
+      ? typeof answer === 'string' && answer === 'Allow'
+      : question.kind === 'yesno'
+        ? typeof answer === 'string' && (answer === 'no' || answer === 'yes')
+        : question.kind === 'reply'
+          ? typeof answer === 'string' && answer.trim().length > 0
+          : picked.every((value) => question.options?.includes(value)) &&
+            (question.kind !== 'choice' || question.multiple || picked.length === 1);
   if (!allowed)
     return fail(`answer_invalid: that is not an answer to this ${question.kind} question.`);
   return {
