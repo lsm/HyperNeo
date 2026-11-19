@@ -41,6 +41,7 @@ import {
   planNeoTodoDependencies,
 } from './todo-dependencies.ts';
 import { isNeoTodoStartable, neoTodoFailed } from './todo-runner.ts';
+import { neoTodoCovered } from './todo-state.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -410,6 +411,16 @@ export function requireNeoOpenTodo(todo: NeoTodo | null, ask: NeoAsk | null): Ga
   return 'reason' in open ? open : { value: todo };
 }
 
+export function requireNeoHoldCardClear(
+  todo: NeoTodo,
+  input: { hold?: string | null },
+  cards: readonly NeoQuestion[]
+): Gate<NeoTodo> {
+  return input.hold != null && neoTodoCovered(todo, cards)
+    ? fail('already_waiting: this todo already waits on an open card; answer that one.')
+    : { value: todo };
+}
+
 export function planNeoTodoEdit(todo: NeoTodo, input: EditPlan, now = Date.now()): Gate<TodoPlan> {
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
@@ -615,6 +626,12 @@ export function createNeoTodoOperations(
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
+      const clear = requireNeoHoldCardClear(
+        latest.value,
+        input,
+        input.hold != null ? todos.todoCards(latest.value) : []
+      );
+      if ('reason' in clear) return clear.reason;
       if (input.hold != null && checked.startedAt !== latest.value.startedAt)
         return { ok: false, reason: 'todo_changed: the worker changed; retry the hold.' };
       const edited = planNeoTodoEdit(latest.value, input);
@@ -701,6 +718,12 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: EditPlan) =>
+        requireNeoHoldCardClear(todo, input, input.hold != null ? todos.todoCards(todo) : []),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(
       (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>

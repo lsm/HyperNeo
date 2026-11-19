@@ -69,6 +69,11 @@ try {
   assert(card.entry.todos.find((todo) => todo.id === ids[0])?.statusCodes?.some((status) => status.code === 'todo.held'));
   assert.equal(card.entry.questions.filter((question) => question.state === 'open').length, 0);
   assert.equal(card.entry.todos.filter((todo) => todo.instruction?.startsWith('Instruction ')).length, 11);
+  store.askQuestion('pending', opened.ask.id, { kind: 'reply', text: 'What next?', todoId: ids[2], options: null, multiple: false, yesLabel: null, noLabel: null }, Date.now());
+  const refusal = await handler({ name: 'neo.todo.hold', input: { todoId: ids[2], reason: 'Wait.' } });
+  const refused = JSON.parse(refusal.content[0].text);
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /already_waiting/);
   const released = await agent('neo.todo.hold', { todoId: ids[0], reason: null });
   assert.equal(released.todo.state, 'todo');
   assert.equal(released.todo.blockedBy, null);
