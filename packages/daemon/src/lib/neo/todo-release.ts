@@ -226,7 +226,7 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
           try {
             const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
             if (!result.ok) {
-              if (['busy', 'not_open', 'not_found'].includes(result.reason)) return;
+              if (['busy', 'not_open', 'not_found', 'unreachable'].includes(result.reason)) return;
               throw new Error(`${result.reason}: ${result.detail}`);
             }
             if (!result.value.compacted) return;

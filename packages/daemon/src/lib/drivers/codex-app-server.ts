@@ -69,6 +69,7 @@ export async function compactCodexThread(
   threadId: string
 ): Promise<boolean> {
   if (!server.onNotification) return false;
+  await server.call('thread/resume', { threadId });
   let complete!: (compacted: boolean) => void;
   const completed = new Promise<boolean>((resolve) => {
     complete = resolve;

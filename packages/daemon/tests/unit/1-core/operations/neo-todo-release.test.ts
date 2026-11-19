@@ -780,7 +780,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
     const h = setup();
     const ref = { ...worker, id: crypto.randomUUID() };
     const warnings: string[] = [];
-    const attempts = [false, 'busy', 'not_open', 'not_found', true] as const;
+    const attempts = [false, 'busy', 'not_open', 'not_found', 'unreachable', true] as const;
     let index = 0;
     try {
       h.reuse('long_lived');
@@ -829,13 +829,17 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
           },
           now,
           undefined,
-          () => async () => ({ ok: false, reason: 'unreachable', detail: 'Synthetic disconnect' })
+          () => async () => ({
+            ok: false,
+            reason: 'not_delivered',
+            detail: 'Synthetic compaction refusal',
+          })
         );
 
       for (let sweep = 0; sweep < 5; sweep++) await runRelease(Date.now() + sweep * 6 * 60_000);
       expect(warnings).toHaveLength(3);
       expect(warnings[2]).toContain('3/3');
-      expect(errors[2]).toBe('unreachable: Synthetic disconnect');
+      expect(errors[2]).toBe('not_delivered: Synthetic compaction refusal');
       expect((await h.sessions.read('workerCompactionFacts', ref))?.failure?.count).toBe(3);
       expect(kept(h)).toEqual([{ kept: 'kept_for_reuse' }]);
       expect((await h.sessions.read('workerCompactionFacts', ref))?.compactedAt).toBeNull();

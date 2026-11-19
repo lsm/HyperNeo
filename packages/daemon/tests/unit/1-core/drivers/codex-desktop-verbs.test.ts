@@ -1229,7 +1229,8 @@ describe('codex-desktop adapter status and send', () => {
     async (method) => {
       let notify: (message: { method: string; params: unknown }) => void = () => {};
       const unsubscribe = vi.fn();
-      const call = vi.fn(async () => {
+      const call = vi.fn(async (request: string) => {
+        if (request === 'thread/resume') return {};
         notify({ method, params: { threadId: 'busy', item: { type: 'contextCompaction' } } });
         notify({
           method: 'item/completed',
@@ -1256,8 +1257,9 @@ describe('codex-desktop adapter status and send', () => {
         ok: true,
         value: { compacted: true },
       });
-      expect(call).toHaveBeenCalledTimes(1);
-      expect(call).toHaveBeenCalledWith('thread/compact/start', { threadId: 'idle' });
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(call).toHaveBeenNthCalledWith(1, 'thread/resume', { threadId: 'idle' });
+      expect(call).toHaveBeenNthCalledWith(2, 'thread/compact/start', { threadId: 'idle' });
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
   );

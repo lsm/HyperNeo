@@ -1,6 +1,6 @@
 # Codex worker compaction
 
-Use Bun 1.4.4 and a Codex CLI that supports the app-server. The probe starts a real app-server over stdio, completes one turn through a synthetic loopback model, then calls the daemon's compaction adapter and checks the matching completion notification. The app-server has an empty home and receives no provider credentials.
+Use Bun 1.4.4 and a Codex CLI that supports the app-server. The probe starts a real app-server over stdio, completes one turn through a synthetic loopback model, then starts a fresh app-server and uses the daemon's compaction helper to resume the persisted thread and confirm compaction. The app-server has an empty home and receives no provider credentials.
 
 ```bash
 codex_bin=$(command -v codex)

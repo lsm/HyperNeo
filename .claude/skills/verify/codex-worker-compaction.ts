@@ -77,6 +77,10 @@ try {
     input: [{ type: 'text', text: 'Reply with a short sentence.', text_elements: [] }],
   });
   assert.equal(await firstTurn.promise, 'completed');
+  await server.close();
+  server = await startCodexBootstrapServer(codex, (message) => events.push(message));
+  const loaded = (await server.call('thread/loaded/list', {})) as { data: string[] };
+  assert.ok(!loaded.data.includes(thread.id), 'Expected a persisted thread that is not loaded');
   const baseline = requests;
   const turnEvents = events.length;
   const compacted = await compactCodexThread(server, thread.id);
@@ -93,7 +97,7 @@ try {
       (event.method === 'item/completed' && params.item?.type === 'contextCompaction'));
   });
   assert.ok(confirmations.length > 0);
-  console.log(`PASS: live app-server emitted ${confirmations.map((event) => event.method).join(', ')} after ${requests - baseline} compaction model request(s).`);
+  console.log(`PASS: fresh app-server resumed the persisted thread and emitted ${confirmations.map((event) => event.method).join(', ')} after ${requests - baseline} compaction model request(s).`);
 } finally {
   clearTimeout(timer);
   await server?.close();
