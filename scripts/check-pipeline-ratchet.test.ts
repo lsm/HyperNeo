@@ -180,6 +180,42 @@ test('a pipeline declared inside an outer parameter scope is still readable', ()
   expect(f.run().code).toBe(0);
 });
 
+test.each([
+  `function setup() { const run = handler; return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `function setup() { let run = handler; return defineOperation({ name: 'demo.shadow', execute: run }); }`,
+  `function setup() { { var run = handler; } return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `function setup() { const { run } = handlers; return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `defineOperation({ name: 'demo.shadow', execute: () => { const run = handler; return run(); } });`,
+  `function setup() { try {} catch (run) { return defineOperation({ name: 'demo.shadow', execute: () => run() }); } }`,
+  `function setup() { for (const run of handlers) { return defineOperation({ name: 'demo.shadow', execute: () => run() }); } }`,
+  `function setup() { function run() {} return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `function setup() { class run {} return defineOperation({ name: 'demo.shadow', execute: () => new run() }); }`,
+])('a local binding cannot be mistaken for an outer pipeline: %s', (operation) => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `const run = superpipe({})('demo.shadow').end(); ${operation}`
+  );
+  const result = f.run();
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('unreadable: 1 (baseline 0)');
+});
+
+test('a binding in a sibling block does not shadow an outer pipeline', () => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `
+    const run = superpipe({})('demo.outer').end();
+    function setup() {
+      { const run = handler; }
+      return defineOperation({ name: 'demo.outer', execute: () => run() });
+    }
+  `
+  );
+  expect(f.run().code).toBe(0);
+});
+
 test('a forwarded name is unreadable rather than a constructed name', () => {
   const f = fixture();
   f.put(

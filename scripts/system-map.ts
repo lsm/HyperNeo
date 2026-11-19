@@ -498,30 +498,63 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
       if (tokens[i].text === '{') scope.push(i);
       else if (tokens[i].text === '}') scope.pop();
     }
-    let parameterScopes: { name: string; start: number; end: number }[] | undefined;
-    const parameterShadows = (reference: number, pipeline: number, name: string): boolean => {
-      if (!parameterScopes) {
-        parameterScopes = [];
+    let bindingScopes: { name: string; start: number; end: number }[] | undefined;
+    const bindingShadows = (reference: number, pipeline: number, name: string): boolean => {
+      if (!bindingScopes) {
+        bindingScopes = [];
         const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+        const add = (binding: ts.BindingName, scope: ts.Node) => {
+          if (ts.isIdentifier(binding)) {
+            bindingScopes!.push({ name: binding.text, start: scope.pos, end: scope.end });
+          } else {
+            for (const element of binding.elements) {
+              if (ts.isBindingElement(element)) add(element.name, scope);
+            }
+          }
+        };
+        const declarationScope = (node: ts.VariableDeclaration): ts.Node | undefined => {
+          if (ts.isCatchClause(node.parent)) return node.parent.block;
+          if (!ts.isVariableDeclarationList(node.parent)) return undefined;
+          const blockScoped = (node.parent.flags & ts.NodeFlags.BlockScoped) !== 0;
+          for (let scope: ts.Node | undefined = node.parent.parent; scope; scope = scope.parent) {
+            if (ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return scope;
+            if (
+              blockScoped &&
+              (ts.isBlock(scope) ||
+                ts.isCaseBlock(scope) ||
+                ts.isForStatement(scope) ||
+                ts.isForInStatement(scope) ||
+                ts.isForOfStatement(scope))
+            )
+              return scope;
+            if (!blockScoped && ts.isFunctionLike(scope)) {
+              return (scope as ts.FunctionLikeDeclaration).body ?? scope;
+            }
+          }
+          return undefined;
+        };
         const visit = (node: ts.Node) => {
           if (ts.isFunctionLike(node)) {
             const fn = node as ts.FunctionLikeDeclaration;
             if (fn.body) {
-              const add = (binding: ts.BindingName) => {
-                if (ts.isIdentifier(binding)) {
-                  parameterScopes!.push({
-                    name: binding.text,
-                    start: fn.body!.pos,
-                    end: fn.body!.end,
-                  });
-                } else {
-                  for (const element of binding.elements) {
-                    if (ts.isBindingElement(element)) add(element.name);
-                  }
-                }
-              };
-              for (const parameter of fn.parameters) add(parameter.name);
+              for (const parameter of fn.parameters) add(parameter.name, fn.body);
             }
+          }
+          if (ts.isVariableDeclaration(node)) {
+            const scope = declarationScope(node);
+            if (scope) add(node.name, scope);
+          }
+          if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+            let scope: ts.Node | undefined = node.parent;
+            while (
+              scope &&
+              !ts.isBlock(scope) &&
+              !ts.isCaseBlock(scope) &&
+              !ts.isModuleBlock(scope) &&
+              !ts.isSourceFile(scope)
+            )
+              scope = scope.parent;
+            if (scope) add(node.name, scope);
           }
           ts.forEachChild(node, visit);
         };
@@ -529,7 +562,7 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
       }
       const ref = tokens[reference].offset;
       const declaration = tokens[pipeline].offset;
-      return parameterScopes.some(
+      return bindingScopes.some(
         (scope) =>
           scope.name === name &&
           ref >= scope.start &&
@@ -642,14 +675,14 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
             scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
             ((body.length === 1 &&
               body[0] === pipeline.variable &&
-              !parameterShadows(executeStart, pipeline.index, pipeline.variable)) ||
+              !bindingShadows(executeStart, pipeline.index, pipeline.variable)) ||
               body.some(
                 (token, index) =>
                   token === pipeline.variable &&
                   (body[index - 1] !== '.' ||
                     (body[index - 2] === '.' && body[index - 3] === '.')) &&
                   body[index + 1] === '(' &&
-                  !parameterShadows(executeStart + index, pipeline.index, token)
+                  !bindingShadows(executeStart + index, pipeline.index, token)
               )))
       );
       if (reached.length === 0) {
