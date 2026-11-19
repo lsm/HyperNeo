@@ -5,7 +5,7 @@ import type {
   WorkerOwnershipTouch as Touch,
 } from '../../lib/neo/worker-ownership-backfill.ts';
 
-class WorkerOwnershipReader {
+export class WorkerOwnershipReader {
   constructor(private readonly db: Database) {}
 
   readFacts() {
@@ -31,7 +31,7 @@ class WorkerOwnershipReader {
         binding.ref
           ? (JSON.parse(binding.ref) as { adapter: string; id: string; daemon?: string })
           : null,
-        target.ref,
+        target.verb === 'start' ? undefined : target.ref,
       ];
       for (const ref of refs)
         if (ref && !ref.daemon)

@@ -45179,6 +45179,30 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "criteria": {
+            "type": "string"
+          },
+          "reviewed": {
+            "items": {
+              "properties": {
+                "adapter": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "adapter",
+                "id"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
           "reviewedListId": {
             "minLength": 1,
             "type": "string"
@@ -45189,21 +45213,46 @@
       "name": "neo.workerOwnership.apply",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "accepted": {
-            "const": false,
-            "type": "boolean"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason"
+            ],
+            "type": "object"
           },
-          "reason": {
-            "type": "string"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "applied": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "accepted",
+              "applied",
+              "reviewed"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "accepted",
-          "reason"
-        ],
-        "type": "object"
+        ]
       }
     },
     {

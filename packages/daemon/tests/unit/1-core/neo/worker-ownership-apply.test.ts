@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { reviewedWorkerOwnership } from '../../../../src/lib/neo/worker-ownership-apply.ts';
 
 describe('reviewedWorkerOwnership', () => {
-  test('only selects reviewed, unclaimed start bindings without protected uses', async () => {
-    const modulePath = '../../../../src/lib/neo/worker-ownership-apply.ts';
-    const { reviewedWorkerOwnership } = await import(modulePath);
+  test('only selects reviewed, unclaimed start bindings without protected uses', () => {
     const ids = ['start', 'weak', 'claimed', 'send', 'adopt', 'bind', 'named', 'released'];
     const rows = ids.map((id) => ({
       adapter: 'hyperneo',
