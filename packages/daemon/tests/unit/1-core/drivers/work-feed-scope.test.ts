@@ -93,7 +93,6 @@ async function startThroughWorkStart(adapter: string, id: string) {
 }
 
 function startedForTodo(todoId: string, adapter: string, id: string) {
-  recordWorkerStarted(db, { adapter, id });
   db.prepare('INSERT INTO neo_todo_sessions VALUES (?, ?, ?)').run(
     todoId,
     '{}',

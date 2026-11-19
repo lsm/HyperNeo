@@ -65,9 +65,12 @@ describe('readFreeWorkers', () => {
     db.prepare(`INSERT INTO work_started_sessions (adapter, id, started_at, claimed_by, kind)
       VALUES ('claude-desktop', 'legacy-claim', 1, 'todo', NULL),
              ('claude-desktop', 'legacy-worker', 1, NULL, 'worker')`).run();
-    const trusted = readStartedWork(db).map((worker) => worker.id);
-    expect(trusted).toContain('legacy-worker');
-    expect(trusted).not.toContain('legacy-claim');
+    const visible = readStartedWork(db).map((worker) => worker.id);
+    expect(visible).toContain('legacy-worker');
+    expect(visible).toContain('legacy-claim');
+    expect(
+      readStartedWork(db, null, undefined, { adapter: 'claude-desktop', id: 'legacy-claim' })
+    ).toEqual([]);
     expect([...readFreeWorkers(db, 'claude-desktop')]).toEqual(['legacy-worker']);
     expect(sessions.fenceWorkerRelease({ adapter: 'claude-desktop', id: 'legacy-claim' }, 3)).toBe(
       'not_started_by_us'
