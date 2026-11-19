@@ -7,6 +7,7 @@ import type {
 export function readCopilotDesktop({ statePath, id, query }: CopilotDesktopRead) {
   const app = new Database(statePath, { readonly: true });
   try {
+    app.exec('PRAGMA busy_timeout = 2000');
     const rows = app.prepare(`
       WITH candidates AS (
         SELECT s.id, w.id AS workspaceId, COALESCE(NULLIF(s.title, ''), w.name) AS title,
@@ -41,6 +42,12 @@ export function readCopilotDesktop({ statePath, id, query }: CopilotDesktopRead)
       text,
       text
     ) as CopilotDesktopSession[];
+  } catch (error) {
+    if (/no such (?:table|column)/.test(String(error)))
+      throw new Error(`Unsupported Copilot Desktop state schema: ${String(error)}`, {
+        cause: error,
+      });
+    throw error;
   } finally {
     app.close();
   }

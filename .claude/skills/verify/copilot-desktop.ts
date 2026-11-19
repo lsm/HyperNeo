@@ -127,6 +127,13 @@ try {
   if (mode === 'desktop') {
     const db = new Database(state);
     try {
+      db.exec('BEGIN EXCLUSIVE');
+      const [afterLock] = await Promise.all([
+        rpc<z.infer<typeof FindWorkResultSchema>>('work.find', query),
+        new Promise<void>((resolve) => setTimeout(resolve, 500)).then(() => db.exec('COMMIT')),
+      ]);
+      assert.deepEqual(afterLock.unreachable, []);
+      assert(afterLock.places.some((place) => place.work.some((work) => work.ref.id === copilotSession)));
       db.exec('ALTER TABLE sessions RENAME TO changed_sessions');
     } finally {
       db.close();

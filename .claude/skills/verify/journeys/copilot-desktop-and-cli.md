@@ -19,6 +19,9 @@ The daemon must refuse sends to a Desktop-owned session and preserve the App
 database. CLI start is available only when the CLI is present. Use the Copilot
 owned lifecycle and input delivery journeys for CLI mutation proof.
 
+In `desktop` mode, discovery waits for a briefly locked App database, then
+reports an unsupported schema after the fixture renames the session table.
+
 Desktop exposes find, status, read, and turns through the driver. The public
 launch link opens an App confirmation or draft and supplies no submitted-turn
 receipt. Desktop mutations are unsupported, and an attended App run is still
