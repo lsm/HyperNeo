@@ -45,13 +45,9 @@ import { decideCodingDaemonMerge } from './daemon-merge-gates.ts';
 import { prepareCodingMerge } from './merge-gates.ts';
 import { deliverCodingHealth } from './health-delivery.ts';
 import { CODING_STAGE_PREFERENCES } from './stage-preferences.ts';
-import { CODING_SESSION_STRATEGY_PREFERENCE } from './session-strategy.ts';
 import { decideCodingSessionTarget } from './session-target.ts';
 import { CODING_WORK_KINDS, type CodingLines } from './stage-lines.ts';
-import {
-  codingSessionAssignmentReads,
-  codingSessionAssignmentWrites,
-} from './session-assignments-worker.ts';
+import { codingSessionAssignmentReads } from './session-assignments-worker.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { createCodingReviewThreadReader } from './connector-review-thread-reader.ts';
 import { createCodingQuotaReader, runCodingGh } from './ledger-quota.ts';
@@ -334,7 +330,6 @@ export function createCodingPack(deps: {
         },
         ask: 'Which path globs or labels require human sign-off? Use label:human-merge for an explicit label; bare names also match labels.',
       },
-      sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
     },
     prepareExecution: prepareCodingExecution,
     workerStartExclusions: async (todo) => {
@@ -345,12 +340,8 @@ export function createCodingPack(deps: {
         }),
       };
     },
-    workerTarget: (todo, target, status) =>
-      decideCodingSessionTarget(deps.database(), todo, target, status, deps.lines),
-    workerTargetRefused: (todo) =>
-      gatewayFor(deps.database()).call(codingSessionAssignmentWrites, 'releaseFeature', {
-        todoId: todo.id,
-      }),
+    workerTarget: (todo, target) =>
+      decideCodingSessionTarget(deps.database(), todo, target, deps.lines),
     matter: (ask) => codingAskMatter(ask, ask.projectId ? deps.projectRepos(ask.projectId) : []),
     review: runCodingReview,
     todos: {

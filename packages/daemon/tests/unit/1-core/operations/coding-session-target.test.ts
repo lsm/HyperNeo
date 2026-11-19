@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
-import { CODING_SESSION_STRATEGY_PREFERENCE } from '../../../../src/lib/neo/packs/coding/session-strategy.ts';
 import { decideCodingSessionTarget } from '../../../../src/lib/neo/packs/coding/session-target.ts';
-import { createPackPreferenceQuestions } from '../../../../src/lib/neo/preference-questions.ts';
 import {
   CodingTodoPrRepository,
   createCodingTodoPack,
@@ -15,13 +12,10 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { gatewayFor } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import type { CodingLines } from '../../../../src/lib/neo/packs/coding/stage-lines.ts';
 import { catalogModel, driverCodingLines } from '../../helpers/coding-lines.ts';
-import type { WorkRef } from '../../../../src/lib/drivers/types.ts';
-import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 
 const repo = 'synthetic/repo';
 const ref = (id: string) => ({ adapter: 'claude-desktop', id });
 const start = (name?: string) => ({ verb: 'start' as const, adapter: 'claude-desktop', name });
-type Live = 'idle' | 'running' | 'needs_you' | 'unreachable' | 'gone' | 'archived' | 'interrupted';
 
 function setup() {
   const db = new Database(':memory:');
@@ -76,69 +70,34 @@ function setup() {
     );
     if (state) db.prepare('UPDATE neo_todos SET state = ? WHERE id = ?').run(state, item.id);
   };
-  const live: Record<string, Live> = {};
-  const models: Record<string, { model: string; provider: string }> = {};
-  const status = async (work: WorkRef): Promise<OperationOutcome> => {
-    const state = live[work.id] ?? 'idle';
-    if (state === 'gone') return { kind: 'completed', value: { ok: false, reason: 'not_found' } };
-    if (state === 'unreachable')
-      return { kind: 'failed' as const, code: 'execution_failed' as const, message: 'offline' };
-    return {
-      kind: 'completed' as const,
-      value: {
-        ok: true,
-        value: {
-          ref: work,
-          title: work.id,
-          place: { machine: 'm', name: 'w' },
-          status:
-            state === 'idle'
-              ? 'done'
-              : state === 'archived' || state === 'interrupted'
-                ? 'stopped'
-                : state,
-          ...(state === 'archived' ? { archived: true } : {}),
-          ...models[work.id],
-          lastActivityAt: 1,
-        },
-      },
-    };
-  };
-  const coding = {
-    id: 'coding',
-    describe: 'coding',
-    instructions: () => null,
-    preferences: {
-      sessionStrategy: CODING_SESSION_STRATEGY_PREFERENCE,
-      mergePolicy: {
-        label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
-        valueLabels: {},
-        scope: 'repo',
-        type: { kind: 'enum', values: ['ci_only', 'human'] },
-        default: 'human',
-        ask: 'Merge policy?',
-      },
-    },
-  } satisfies NeoPack;
-  const [askSetting] = createPackPreferenceQuestions(
-    db,
-    todos,
-    () => [coding],
-    () => 'en',
-    async () => {}
-  );
   const decide = (
     item: NeoTodo,
     target: Parameters<typeof decideCodingSessionTarget>[2],
     lines?: CodingLines
-  ) => decideCodingSessionTarget(db, item, target, status, lines);
-  const questions = (askId: string) => todos.listQuestionsForAsks([askId]);
-  const agentAsk = (input: Record<string, unknown>) =>
-    askSetting!.execute(input as never, { source: 'internal', sessionId: 'neo', role: 'neo' });
-  return { db, todos, todo, worked, live, models, decide, questions, agentAsk };
+  ) => decideCodingSessionTarget(db, item, target, lines);
+  return { db, todos, todo, worked, decide };
 }
 
 describe('coding session target decision', () => {
+  test('a later slice keeps its start target even when its feature has a worker', async () => {
+    const { todo, worked, decide, db } = setup();
+    worked(todo(), 'prior-worker', 'backend', 'done');
+    const next = todo();
+    const requested = start('backend');
+    expect(await decide(next, requested)).toEqual({ value: requested });
+    expect(db.prepare('SELECT count(*) AS n FROM pack_coding_feature_sessions').get()).toEqual({
+      n: 0,
+    });
+  });
+
+  test('a PR holder does not redirect an explicitly addressed worker', async () => {
+    const { todo, worked, decide } = setup();
+    const url = 'https://github.com/synthetic/repo/pull/9';
+    worked(todo('feature', repo, url), 'holder', 'backend', 'done');
+    const target = { verb: 'send' as const, ref: ref('author') };
+    expect(await decide(todo('other', repo, url), target)).toEqual({ value: target });
+  });
+
   const catalog = [catalogModel('glm-6', 'glm'), catalogModel('claude-opus-5-5', 'anthropic')];
   const glmHold = [{ provider: 'glm', model: 'glm-6', reason: 'rate_limit', retryAt: 4e12 }];
   const routed = (kinds: string[], held: boolean) =>
@@ -266,390 +225,16 @@ describe('coding session target decision', () => {
     );
   });
 
-  test('an idle worker whose status names no provider is ranked as the line it resolves to', async () => {
-    const { db, todo, models, decide } = setup();
-    const prior = todo('other');
-    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
-      prior.id,
-      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
-      JSON.stringify({ adapter: 'hyperneo', id: 'old-worker' })
-    );
-    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
-    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
-      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'old-worker' } },
-    });
-    models['old-worker'] = { model: 'glm-6' } as { model: string; provider: string };
-    const rules = [
-      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
-    ];
-    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
-      value: { verb: 'start', model: 'claude-opus-5-5' },
-    });
-  });
-
-  test('a new feature does not reuse an idle worker on an excluded line; it starts on a usable one', async () => {
-    const { db, todo, models, decide } = setup();
-    const prior = todo('other');
-    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
-      prior.id,
-      JSON.stringify({ verb: 'start', adapter: 'hyperneo', name: 'backend' }),
-      JSON.stringify({ adapter: 'hyperneo', id: 'glm-worker' })
-    );
-    db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(prior.id);
-    models['glm-worker'] = { model: 'glm-6', provider: 'glm' };
-    expect(await decide(todo('third'), glm, driverCodingLines(catalog))).toEqual({
-      value: { verb: 'send', ref: { adapter: 'hyperneo', id: 'glm-worker' } },
-    });
-    const rules = [
-      { line: { provider: 'glm', model: 'glm-6' }, never: { kinds: ['coding.write'] } },
-    ];
-    expect(await decide(todo(), glm, driverCodingLines(catalog, { rules }))).toMatchObject({
-      value: { verb: 'start', adapter: 'hyperneo', model: 'claude-opus-5-5' },
-    });
-  });
-
   test('a send to an existing session is not ranked', async () => {
-    const { todo, worked, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
+    const { todo, decide } = setup();
     const kinds: string[] = [];
-    expect(await decide(todo(), start(), routed(kinds, true))).toEqual({
-      value: { verb: 'send', ref: ref('backend-1') },
-    });
+    const target = { verb: 'send' as const, ref: ref('backend-1') };
+    expect(await decide(todo(), target, routed(kinds, true))).toEqual({ value: target });
     expect(kinds).toEqual([]);
   });
 
   test('leaves a todo outside any coding repository to the target Neo chose', async () => {
     const { todo, decide } = setup();
     expect(await decide(todo('feature', ''), start('docs'))).toEqual({ value: start('docs') });
-  });
-
-  test('later work of a feature goes to its session, and queues there while it is busy', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    expect(await decide(first, start('backend'))).toEqual({ value: start('backend') });
-    worked(first, 'backend-1', 'backend', 'done');
-    expect(await decide(todo(), start())).toEqual({
-      value: { verb: 'send', ref: ref('backend-1') },
-    });
-    live['backend-1'] = 'running';
-    expect(await decide(todo(), start())).toEqual({
-      value: { verb: 'send', ref: ref('backend-1') },
-    });
-    live['backend-1'] = 'unreachable';
-    expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
-  });
-
-  test('an unreachable session shared with active work still blocks a fresh start', async () => {
-    const { todo, worked, live, decide } = setup();
-    worked(todo('other'), 'shared', 'backend', 'done');
-    worked(todo('other'), 'shared', 'backend', 'doing');
-    live.shared = 'unreachable';
-    expect(await decide(todo(), start('backend'))).toMatchObject({ reason: expect.any(String) });
-  });
-
-  test.each(['done', 'removed'] as const)(
-    'a %s owner keeps a live feature session but releases a missing one',
-    async (state) => {
-      const { todo, worked, live, decide } = setup();
-      const first = todo();
-      await decide(first, start('backend'));
-      worked(first, 'owner', 'backend', state);
-      expect(await decide(todo(), start('other'))).toEqual({
-        value: { verb: 'send', ref: ref('owner') },
-      });
-      live.owner = 'unreachable';
-      expect(await decide(todo(), start('other'))).toMatchObject({ reason: expect.any(String) });
-      live.owner = 'gone';
-      expect(await decide(todo(), start('other'))).toEqual({ value: start('other') });
-    }
-  );
-
-  test('unrelated work reuses an idle session of its work type before starting one', async () => {
-    const { todo, worked, live, decide } = setup();
-    worked(todo('other'), 'front', 'frontend', 'done');
-    worked(todo('other'), 'back', 'backend', 'done');
-    const next = todo();
-    expect(await decide(next, start('backend'))).toEqual({
-      value: { verb: 'send', ref: ref('back') },
-    });
-    worked(next, 'back');
-    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('back') } });
-    live.front = 'needs_you';
-    live.back = 'running';
-    expect(await decide(todo('other'), start('frontend'))).toEqual({
-      value: start('frontend-2'),
-    });
-  });
-
-  test('an idle session of another work type is never reused for new work', async () => {
-    const { todo, worked, decide } = setup();
-    worked(todo('other'), 'jason', 'Jason', 'done');
-    worked(todo('other'), 'worker', 'dev', 'done');
-    expect(await decide(todo(), start())).toEqual({
-      value: { verb: 'send', ref: ref('worker') },
-    });
-  });
-
-  test('a place holding only sessions of other work types starts a fresh worker', async () => {
-    const { todo, worked, decide } = setup();
-    worked(todo('other'), 'jason', 'Jason', 'done');
-    worked(todo('other'), 'reviews', 'Claude review TLS W1a', 'done');
-    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
-  });
-
-  test('a session assigned as a review actor is never reused for other work', async () => {
-    const { db, todo, worked, decide } = setup();
-    const review = todo('other');
-    worked(review, 'actor', undefined, 'done');
-    db.prepare(
-      `INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'coding', ?, ?)`
-    ).run(
-      review.id,
-      'assignment:github.com/synthetic/repo/pull/9:head:review',
-      JSON.stringify({
-        url: 'github.com/synthetic/repo/pull/9',
-        head: 'head',
-        acceptanceContract: 'contract',
-        newDispatch: true,
-        write: ref('author'),
-        actor: { kind: 'agent', id: 'actor', model: 'm', harness: 'claude-desktop' },
-        ref: ref('actor'),
-      })
-    );
-    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
-  });
-
-  test('a session held by unfinished work is busy even when its turn is idle', async () => {
-    const { todo, worked, decide } = setup();
-    worked(todo('other'), 'dev', 'dev', 'doing');
-    expect(await decide(todo(), start())).toEqual({ value: start('dev-2') });
-  });
-
-  test('a concurrent dispatch of the same feature waits instead of starting a duplicate', async () => {
-    const { todo, decide } = setup();
-    const [first, second] = [todo(), todo()];
-    expect(await decide(first, start())).toEqual({ value: start('dev') });
-    expect(await decide(second, start())).toMatchObject({ reason: expect.any(String) });
-    expect(await decide(first, start())).toEqual({ value: start('dev') });
-  });
-
-  test('per-task work starts its own session even when another is idle', async () => {
-    const { db, todo, worked, decide, questions } = setup();
-    db.prepare(
-      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_task"', 'human', 1)`
-    ).run(repo);
-    worked(todo('other'), 'idle', 'dev', 'done');
-    expect(await decide(todo(), start('dev'))).toEqual({ value: start('dev') });
-    expect(questions('feature')).toEqual([]);
-  });
-
-  test('the first dispatch uses the saved strategy without asking for it', async () => {
-    const { todo, worked, decide, questions } = setup();
-    worked(todo('other'), 'idle', 'dev', 'done');
-    expect(await decide(todo(), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('idle') },
-    });
-    expect(questions('feature')).toEqual([]);
-  });
-
-  test('unfinished work on a feature session does not hide an unreadable status', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'doing');
-    live['backend-1'] = 'unreachable';
-    expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
-  });
-
-  test('a refused send-only dispatch leaves the feature free for a later start', async () => {
-    const { todo, decide } = setup();
-    expect(await decide(todo(), { verb: 'send', ref: ref('elsewhere') })).toMatchObject({
-      reason: expect.stringMatching(/^session_start_needed/),
-    });
-    expect(await decide(todo(), start())).toEqual({ value: start('dev') });
-  });
-
-  test('a feature reserved by a todo that settled without a session is free to start again', async () => {
-    const { db, todo, decide } = setup();
-    const first = todo();
-    expect(await decide(first, start())).toEqual({ value: start('dev') });
-    db.prepare("UPDATE neo_todos SET state = 'removed' WHERE id = ?").run(first.id);
-    const next = todo();
-    expect(await decide(next, start())).toEqual({ value: start('dev') });
-    expect(await decide(todo(), start())).toMatchObject({ reason: expect.any(String) });
-  });
-
-  test('an archived session is never reused; a live idle one is, and with none a new one starts', async () => {
-    for (const idleLive of [true, false]) {
-      const { todo, worked, live, decide } = setup();
-      worked(todo('other'), 'gone', 'dev', 'done');
-      worked(todo('other'), 'idle', 'dev-2', 'done');
-      live.gone = 'archived';
-      if (!idleLive) live.idle = 'archived';
-      expect(await decide(todo(), start())).toMatchObject(
-        idleLive ? { value: { verb: 'send', ref: ref('idle') } } : { value: { verb: 'start' } }
-      );
-    }
-  });
-
-  test('a feature whose own session was archived starts a new one', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
-    live['backend-1'] = 'archived';
-    const next = todo();
-    expect(await decide(next, start())).toMatchObject({ value: { verb: 'start' } });
-    worked(next, 'backend-2', 'backend', 'done');
-    expect(await decide(todo(), start())).toEqual({
-      value: { verb: 'send', ref: ref('backend-2') },
-    });
-  });
-
-  test('a feature whose own session was archived moves to a live idle session of its work type', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
-    worked(todo('other'), 'spare', 'backend-2', 'done');
-    live['backend-1'] = 'archived';
-    const moved = todo();
-    expect(await decide(moved, start('backend'))).toEqual({
-      value: { verb: 'send', ref: ref('spare') },
-    });
-    worked(moved, 'spare');
-    expect(await decide(todo(), start('backend'))).toEqual({
-      value: { verb: 'send', ref: ref('spare') },
-    });
-  });
-
-  test('a feature whose own session was archived starts over rather than take another type', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
-    worked(todo('other'), 'spare', 'backend-2', 'done');
-    live['backend-1'] = 'archived';
-    const moved = todo();
-    expect(await decide(moved, start())).toEqual({ value: start('dev') });
-    worked(moved, 'dev', 'dev', 'done');
-    expect(await decide(todo(), start())).toEqual({ value: { verb: 'send', ref: ref('dev') } });
-  });
-
-  test('an archived session keeps its name taken', async () => {
-    const { todo, worked, live, decide } = setup();
-    worked(todo('other'), 'gone', 'dev', 'done');
-    live.gone = 'archived';
-    expect(await decide(todo(), start())).toEqual({ value: start('dev-2') });
-  });
-
-  test('two dispatches racing to take over an archived owner: only one wins', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
-    live['backend-1'] = 'archived';
-    const results = await Promise.all([decide(todo(), start()), decide(todo(), start())]);
-    expect(results.filter((result) => 'value' in result)).toHaveLength(1);
-    expect(results.filter((result) => 'reason' in result)).toHaveLength(1);
-  });
-
-  test('a stopped but open feature session keeps its feature', async () => {
-    const { todo, worked, live, decide } = setup();
-    const first = todo();
-    await decide(first, start('backend'));
-    worked(first, 'backend-1', 'backend', 'done');
-    worked(todo('other'), 'spare', 'backend-2', 'done');
-    worked(todo('other'), 'gone', 'backend-3', 'done');
-    live['backend-1'] = 'interrupted';
-    live.gone = 'archived';
-    expect(await decide(todo(), start())).toEqual({
-      value: { verb: 'send', ref: ref('backend-1') },
-    });
-  });
-
-  test('later slices of a PR follow the session that took over its archived holder', async () => {
-    const { todo, worked, live, decide } = setup();
-    const url = 'https://github.com/synthetic/repo/pull/9';
-    const first = todo('feature', repo, url);
-    await decide(first, start('backend'));
-    worked(first, 'holder', 'backend', 'done');
-    worked(todo('other'), 'spare', 'backend-2', 'done');
-    live.holder = 'archived';
-    const second = todo('feature', repo, url);
-    expect(await decide(second, start('backend'))).toEqual({
-      value: { verb: 'send', ref: ref('spare') },
-    });
-    worked(second, 'spare', undefined, 'done');
-    expect(await decide(todo('feature', repo, url), start('backend'))).toEqual({
-      value: { verb: 'send', ref: ref('spare') },
-    });
-  });
-
-  test('per-PR slices follow the live replacement of an archived holder, and queue there', async () => {
-    const { db, todo, worked, live, decide } = setup();
-    db.prepare(
-      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
-    ).run(repo);
-    const url = 'https://github.com/synthetic/repo/pull/9';
-    const first = todo('feature', repo, url);
-    expect(await decide(first, start('dev'))).toEqual({ value: start('dev') });
-    worked(first, 'a', 'dev', 'done');
-    live.a = 'archived';
-    const second = todo('feature', repo, url);
-    expect(await decide(second, start('dev'))).toEqual({ value: start('dev') });
-    worked(second, 'b', 'dev', 'done');
-    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('b') },
-    });
-    live.b = 'running';
-    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('b') },
-    });
-  });
-
-  test('a PR follows its live replacement holder from another ask, and queues there', async () => {
-    const { db, todo, worked, live, decide } = setup();
-    const url = 'https://github.com/synthetic/repo/pull/9';
-    const first = todo('feature', repo, url);
-    await decide(first, start('backend'));
-    worked(first, 'a', 'backend', 'done');
-    live.a = 'archived';
-    const fix = todo('other', repo, url);
-    db.prepare('UPDATE neo_todos SET created_at = 2 WHERE id = ?').run(fix.id);
-    expect(await decide(fix, start('backend'))).toMatchObject({ value: { verb: 'start' } });
-    worked(fix, 'b', 'backend-2', 'doing');
-    live.b = 'running';
-    expect(await decide(todo('feature', repo, url), start())).toEqual({
-      value: { verb: 'send', ref: ref('b') },
-    });
-  });
-
-  test('per-PR slices follow the latest dispatched live holder, not the latest created', async () => {
-    const { db, todo, worked, live, decide } = setup();
-    db.prepare(
-      `INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-       VALUES ('coding', 'repo', ?, 'sessionStrategy', '"per_pr"', 'human', 1)`
-    ).run(repo);
-    const url = 'https://github.com/synthetic/repo/pull/9';
-    const ran = (item: NeoTodo, session: string, at: number) => {
-      worked(item, session, 'dev', 'done');
-      db.prepare('UPDATE neo_todo_sessions SET started_at = ? WHERE todo_id = ?').run(at, item.id);
-    };
-    const original = todo('feature', repo, url);
-    const waiting = todo('feature', repo, url);
-    const later = todo('feature', repo, url);
-    ran(original, 'a', 1);
-    ran(later, 'a', 2);
-    live.a = 'archived';
-    expect(await decide(waiting, start('dev'))).toEqual({ value: start('dev') });
-    ran(waiting, 'b', 3);
-    expect(await decide(todo('feature', repo, url), start('dev'))).toEqual({
-      value: { verb: 'send', ref: ref('b') },
-    });
   });
 });

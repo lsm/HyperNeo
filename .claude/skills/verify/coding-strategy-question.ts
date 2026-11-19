@@ -52,14 +52,12 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const core = await rpc('pack.preferences.get', { pack: 'core', scope: { kind: 'project', key: 'synthetic-project' }, key: 'sessionReuse' });
-  const coding = await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'repo', key: 'github.com/synthetic/sessions' }, key: 'sessionStrategy' });
   const globalCore = await rpc('pack.preferences.get', { pack: 'core', scope: { kind: 'global', key: '' }, key: 'sessionReuse' });
-  const globalCoding = await rpc('pack.preferences.get', { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'sessionStrategy' });
   assert.equal(core.preference?.value, 'per_todo');
-  assert.equal(coding.preference?.value, 'per_pr');
   assert.equal(globalCore.preference, null);
-  assert.equal(globalCoding.preference?.value, 'per_task');
   const db = app.db.getDatabase();
+  const coding = db.prepare("SELECT scope_kind AS scope, value_json AS value FROM neo_pack_preferences WHERE pack='coding' AND key='sessionStrategy' ORDER BY scope_kind").all();
+  assert.deepEqual(coding, [{ scope: 'global', value: '\"per_task\"' }, { scope: 'repo', value: '\"per_pr\"' }]);
   const store = new NeoAskTodoRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   store.openAsk({ id: 'synthetic-ask', projectId: 'synthetic-project', sessionId: 'synthetic-neo', originMessageId: null, title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
@@ -73,9 +71,9 @@ try {
   assert.deepEqual(decision, { value: target });
   assert.equal(asked, 0);
   evidence.core = core.preference;
-  evidence.coding = coding.preference;
+  evidence.coding = coding;
   evidence.globalCore = globalCore.preference;
-  evidence.globalCoding = globalCoding.preference;
+
   evidence.decision = decision;
   evidence.codingQuestions = asked;
   console.log('PASS: the restarted daemon copies the host-prefixed coding value to its project, preserves the old value and does not ask the coding question.');

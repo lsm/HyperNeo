@@ -28,10 +28,10 @@ const delegationQuestion = rpc('pack.preferences.ask', {
   alternatives: [[{ ...delegation, value: 'self' }], [{ ...delegation, value: 'saved' }]],
 }).questionId;
 assert(delegationQuestion);
-const coding = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'sessionStrategy' };
+const coding = { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/repo' }, key: 'mergePolicy' };
 const codingQuestion = rpc('pack.preferences.ask', {
   askId, requestId: 'synthetic-coding', hold: false,
-  alternatives: ['long_lived', 'per_task', 'per_pr'].map((value) => [{ ...coding, value }]),
+  alternatives: ['review_bot', 'ci_only', 'human'].map((value) => [{ ...coding, value }]),
 }).questionId;
 assert(codingQuestion);
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -55,7 +55,7 @@ try {
   const codingCard = card.locator(`[id="neo-ref-question-${codingQuestion}"]`);
   await codingCard.waitFor();
   observed.codingText = await codingCard.innerText();
-  assert(observed.codingText.includes('How should coding sessions be reused in this repository?'));
+  assert(observed.codingText.includes('How are pull requests reviewed?'));
   assert(observed.codingText.includes('synthetic/repo'));
   const body = card.locator(`[id="neo-ref-question-${questionId}"]`);
   await body.waitFor();

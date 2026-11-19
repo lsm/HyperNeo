@@ -114,6 +114,21 @@ const saved = async () => {
 };
 
 describe('immutable human settings proposals', () => {
+  test('the retired coding session strategy cannot open a new settings card', async () => {
+    const choice = (value: string) => ({
+      pack: 'coding',
+      scope: { kind: 'repo', key: 'synthetic/repo' },
+      key: 'sessionStrategy',
+      value,
+    });
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'retired-strategy',
+      alternatives: [[choice('long_lived')], [choice('per_task')]],
+    });
+    expect(reply).not.toMatchObject({ kind: 'completed', value: { ok: true } });
+  });
+
   test('delegation choices do not repeat labels and explain the unsaved default', async () => {
     db.updateGlobalSettings({ language: 'en' });
     const choice = (value: string) => ({
@@ -649,27 +664,27 @@ describe('immutable human settings proposals', () => {
     const strategy = (value: string) => ({
       pack: 'coding',
       scope: { kind: 'repo', key: 'synthetic/one' },
-      key: 'sessionStrategy',
+      key: 'mergePolicy',
       value,
     });
     const ask = (requestId: string) =>
       invoke('pack.preferences.ask', {
         askId: 'ask',
         requestId,
-        alternatives: [[strategy('long_lived')], [strategy('per_task')], [strategy('per_pr')]],
+        alternatives: [[strategy('review_bot')], [strategy('ci_only')], [strategy('human')]],
       });
     const reply = await ask('strategy');
     expect(reply).toMatchObject({ value: { ok: true } });
     const questionId = (reply as { value: { questionId: string } }).value.questionId;
     expect(await ask('strategy')).toEqual(reply);
     expect(service.todos.getQuestion(questionId)!.text).toContain(
-      'How should coding sessions be reused in this repository?'
+      'How are pull requests reviewed?'
     );
     expect(service.todos.getQuestion(questionId)!.text).toContain('synthetic/one');
     db.updateGlobalSettings({ language: 'zh-Hans' });
     const translated = (await ask('strategy-chinese')) as { value: { questionId: string } };
     expect(service.todos.getQuestion(translated.value.questionId)!.text).toContain(
-      '如何在此仓库复用编码会话？'
+      '如何审查拉取请求？'
     );
     expect(service.todos.getQuestion(translated.value.questionId)!.text).toContain('synthetic/one');
     db.updateGlobalSettings({ language: 'en' });
@@ -677,9 +692,9 @@ describe('immutable human settings proposals', () => {
       kind: 'choice',
       multiple: false,
       options: [
-        'Long-lived work-type sessions',
-        'One session per task',
-        'One session per PR',
+        'CI and review bot approval',
+        'CI passes',
+        'Human approval',
         'Use the default for now',
       ],
     });
@@ -689,7 +704,7 @@ describe('immutable human settings proposals', () => {
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
     await invoke('neo.question.answer', { questionId, answer: option(questionId, 1) }, human);
     expect(await saved()).toMatchObject({
-      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+      value: { preferences: [{ ...strategy('ci_only'), setBy: 'human' }] },
     });
 
     const kept = (await ask('strategy-kept')) as { value: { questionId: string } };
@@ -699,7 +714,7 @@ describe('immutable human settings proposals', () => {
       human
     );
     expect(await saved()).toMatchObject({
-      value: { preferences: [{ ...strategy('per_task'), setBy: 'human' }] },
+      value: { preferences: [{ ...strategy('ci_only'), setBy: 'human' }] },
     });
   });
 
