@@ -255,23 +255,26 @@ export function createCodingMergeOperation(deps: Deps) {
       ['input', 'result'],
       'result'
     )
-    .endAsync('result') as (input: Input) => Promise<Result>;
-  return defineOperation({
-    name: 'neo.coding.merge.prepare',
-    description: neoToolDescription('neo.coding.merge.prepare'),
-    inputSchema: Input,
-    resultSchema: z.union([
-      z.object({
-        accepted: z.literal(true),
-        head: z.string(),
-        command: z.array(z.string()),
-        reminder: z.string().optional(),
-      }),
-      z.object({ accepted: z.literal(false), reason: z.string() }),
-    ]),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input) => prepare(input),
-  });
+    .endAsync('result');
+  return {
+    ...defineOperation({
+      name: 'neo.coding.merge.prepare',
+      description: neoToolDescription('neo.coding.merge.prepare'),
+      inputSchema: Input,
+      resultSchema: z.union([
+        z.object({
+          accepted: z.literal(true),
+          head: z.string(),
+          command: z.array(z.string()),
+          reminder: z.string().optional(),
+        }),
+        z.object({ accepted: z.literal(false), reason: z.string() }),
+      ]),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input) => prepare(input),
+    }),
+    pipelineRunner: prepare,
+  };
 }
 
 export const codingMergeGithubSchemas = { Head, Pr, Reviews, Checks, Threads };
