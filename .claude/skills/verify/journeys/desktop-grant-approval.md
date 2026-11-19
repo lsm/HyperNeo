@@ -46,6 +46,12 @@ for the same app. Decline applies to the app for ten minutes. The tests answer
 the dialog through the fixture seam and remove their fixture grants; the real
 dialog also needs an attended check.
 
+For the attended check, use a disposable target and a real worker client. Answer
+Allow near the end of the 45-second owner wait and exercise a slow driver call.
+Record the client's request timeout, the reply or timeout, and whether input was
+issued after the client stopped waiting. Do not retry input while its outcome is
+unknown. This timing and the signed-host dialog remain unverified until observed.
+
 To see the real dialog, start the signed host directly, send
 `{"action":"fixture-dialog","worker":"w","tool":"real"}` and then a `resolve`
 for `click` on Finder's pid to `desktop/control.sock`. The dialog stays open

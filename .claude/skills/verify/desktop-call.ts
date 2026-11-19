@@ -58,6 +58,7 @@ try {
   const described = JSON.stringify(JSON.parse((await call({ name: 'operations.describe', input: { name: 'desktop.call' } })).content[0].text));
   const listedTools = catalog.filter(tool => described.includes(`"const":"${tool.name}"`));
   assert.equal(listedTools.length, catalog.length, described);
+  assert(described.includes('including their titles, without an app grant'));
   assert(described.includes('For * and other shifted symbols, send the base key with shift'));
   assert(described.includes('Unknown key names return driver_error'));
   const input = { tool: 'click', args: { pid: 123, x: 5, y: 7 } };

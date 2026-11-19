@@ -6854,7 +6854,7 @@
               },
               "tool": {
                 "const": "list_windows",
-                "description": "List windows belonging to the authorized target app.",
+                "description": "List windows for an authorized target app. With no app or pid, list windows across apps, including their titles, without an app grant.",
                 "type": "string"
               }
             },
