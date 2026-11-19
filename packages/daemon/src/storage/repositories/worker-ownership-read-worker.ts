@@ -1,3 +1,4 @@
+import { readWorkerOwnershipRows } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type {
@@ -10,11 +11,7 @@ export class WorkerOwnershipReader {
 
   readFacts() {
     const raw = this.db;
-    const rows = raw
-      .prepare(
-        `SELECT adapter, id, started_at AS startedAt, claimed_by AS claimedBy, released_at AS releasedAt, role FROM work_started_sessions ORDER BY adapter, id`
-      )
-      .all() as Row[];
+    const rows = readWorkerOwnershipRows(raw) as Row[];
     const bindings = raw
       .prepare(
         `SELECT s.ref, s.target, t.named, t.state FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id`

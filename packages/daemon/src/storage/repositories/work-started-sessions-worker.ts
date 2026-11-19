@@ -186,3 +186,54 @@ export const workStartedSessionWrites = defineRepositoryOp(
   WorkStartedSessionWrites,
   ['recordStarted', 'markUnusable']
 );
+
+export function readReleaseReuseRow(db: BunDatabase, todoId: string) {
+  const row = db
+    .prepare(
+      `WITH uses AS (
+           SELECT json_extract(o.ref, '$.adapter') AS adapter, json_extract(o.ref, '$.id') AS id,
+             MAX(COALESCE(ot.finished_at, ot.updated_at)) AS usedAt,
+             MAX(json_extract(o.target, '$.place.folder')) AS folder,
+             MAX(ot.state IN ('todo', 'doing', 'blocked')) AS live
+           FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
+           JOIN work_started_sessions w ON w.adapter = json_extract(o.ref, '$.adapter')
+             AND w.id = json_extract(o.ref, '$.id') AND w.role = 'worker' AND w.released_at IS NULL
+           WHERE o.ref IS NOT NULL AND json_extract(o.ref, '$.daemon') IS NULL
+           GROUP BY 1, 2
+         )
+         SELECT a.status = 'open' AS askOpen, a.project_id AS projectId,
+           (SELECT mine.folder FROM uses mine WHERE mine.adapter = json_extract(s.ref, '$.adapter')
+             AND mine.id = json_extract(s.ref, '$.id')) IS NOT NULL AS hasFolder,
+           EXISTS (SELECT 1 FROM uses mine JOIN uses other
+               ON other.adapter = mine.adapter AND other.id <> mine.id AND other.folder = mine.folder
+             WHERE mine.adapter = json_extract(s.ref, '$.adapter') AND mine.id = json_extract(s.ref, '$.id')
+               AND NOT other.live
+               AND (other.usedAt > mine.usedAt OR (other.usedAt = mine.usedAt AND other.id > mine.id))
+           ) AS newerFree
+         FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+         JOIN neo_asks a ON a.id = t.ask_id
+         WHERE s.todo_id = ?`
+    )
+    .get(todoId) as {
+    askOpen: number;
+    projectId: string | null;
+    hasFolder: number;
+    newerFree: number;
+  } | null;
+  return row;
+}
+
+export function readWorkerOwnershipRows(db: BunDatabase) {
+  return db
+    .prepare(
+      `SELECT adapter, id, started_at AS startedAt, claimed_by AS claimedBy, released_at AS releasedAt, role FROM work_started_sessions ORDER BY adapter, id`
+    )
+    .all();
+}
+
+export function markReviewedWorkers(db: BunDatabase, refs: StartedWork[]): void {
+  const update = db.prepare(
+    "UPDATE work_started_sessions SET role = 'worker' WHERE adapter = ? AND id = ? AND (role IS NULL OR role = '') AND released_at IS NULL AND claimed_by IS NULL"
+  );
+  for (const ref of refs) update.run(ref.adapter, ref.id);
+}
