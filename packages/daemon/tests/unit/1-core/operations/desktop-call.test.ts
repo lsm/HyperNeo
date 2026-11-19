@@ -248,7 +248,7 @@ test.each([
   async (identity) => {
     expect(await call(identity)).toMatchObject({
       kind: 'completed',
-      value: { ok: false, reason: 'desktop_not_enabled', dispatched: false },
+      value: { ok: false, reason: 'desktop_worker_only', dispatched: false },
     });
     expect(requests).toHaveLength(0);
     expect(audit()).toHaveLength(0);
