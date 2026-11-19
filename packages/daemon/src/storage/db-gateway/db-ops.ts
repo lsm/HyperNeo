@@ -99,6 +99,7 @@ import { codingSweepReads, codingSweepWrites } from '../../lib/neo/packs/coding/
 import { codingTurnPrReads } from '../../lib/neo/packs/coding/turn-prs.ts';
 import { codingTodoPrWrites } from '../../lib/neo/packs/coding/todo-prs.ts';
 import { codingSessionAssignmentReads } from '../../lib/neo/packs/coding/session-assignments-worker.ts';
+import { mailboxDeliveryReads } from '../repositories/mailbox-delivery-read-worker.ts';
 import { codingTodoStorageWrites } from '../../lib/neo/packs/coding/todo-storage.ts';
 import { codingDeliveryWrites } from '../../lib/neo/packs/coding/delivery-facts.ts';
 import {
@@ -317,6 +318,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     codingAssignmentWrites,
     codingTodoPrWrites,
     codingSessionAssignmentReads,
+    mailboxDeliveryReads,
     codingTodoStorageWrites,
     codingDeliveryWrites,
     codingSweepReads,

@@ -2,6 +2,8 @@ import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-q
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
+import { mailboxDeliveryReads } from '../../storage/repositories/mailbox-delivery-read-worker.ts';
 import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import { planMailboxAdmission } from './admission-plan.ts';
 import { parseMailboxEntry, type MailboxEntry } from './entry.ts';
@@ -21,13 +23,6 @@ export interface MailboxDeliveryDeps {
   scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
   defersFor?(sessionId: string, entry: MailboxEntry): boolean;
   prepareEntry?(entry: MailboxEntry, jobId: string): Promise<MailboxEntry | null>;
-}
-
-function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
-  const row = db.prepare('SELECT rowid AS rid FROM job_queue WHERE id = ?').get(jobId) as
-    | { rid: number }
-    | undefined;
-  return row?.rid;
 }
 
 export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHandler {
@@ -82,7 +77,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     if (!canDeliver()) return { outcome: 'already_settled' };
-    const admissionRowid = readAdmissionRowid(deps.db, job.id);
+    const admissionRowid = await gatewayFor(deps.db).call(
+      mailboxDeliveryReads,
+      'admissionRowid',
+      job.id
+    );
     const plan = planMailboxAdmission({ ...entry, to: entry.to }, admissionRowid);
     const messageUuid = plan.message.uuid;
     const existing = deps.sdkMessageRepo.getDeliveryContent(target, messageUuid);
