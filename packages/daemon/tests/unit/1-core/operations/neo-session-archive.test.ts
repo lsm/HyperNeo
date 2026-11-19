@@ -82,17 +82,20 @@ describe('neo.session.archive', () => {
     db.getDatabase().exec(`CREATE TRIGGER archive_record_fault BEFORE UPDATE OF archived_at ON work_started_sessions
       BEGIN SELECT RAISE(FAIL, 'synthetic provenance failure'); END`);
     const priorLogging = getLoggerConfig();
-    configureLogger({ level: LogLevel.ERROR });
-    const messages: string[] = [];
-    const unsubscribe = subscribeToStructuredLogs((event) => messages.push(event.message));
+    configureLogger({ level: LogLevel.WARN });
+    const messages: { message: string; level: string }[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => messages.push(event));
     try {
       expect(await invoke(ref, caller)).toMatchObject({
         value: { ok: true, value: { archived: true } },
       });
       expect(archive).toHaveBeenCalledTimes(1);
-      expect(messages.some((message) => message.includes('Archive provenance write failed'))).toBe(
-        true
-      );
+      expect(
+        messages.some(
+          (event) =>
+            event.level === 'warn' && event.message.includes('Archive provenance write failed')
+        )
+      ).toBe(true);
     } finally {
       unsubscribe();
       configureLogger(priorLogging);
