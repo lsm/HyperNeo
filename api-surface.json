@@ -45179,9 +45179,30 @@
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
-          "reviewedListId": {
-            "minLength": 1,
-            "type": "string"
+          "confirmedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reviewed": {
+            "items": {
+              "properties": {
+                "adapter": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "adapter",
+                "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -45189,21 +45210,136 @@
       "name": "neo.workerOwnership.apply",
       "resultSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "accepted": {
-            "const": false,
-            "type": "boolean"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": false,
+                "type": "boolean"
+              },
+              "invalid": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "skipped": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "weak",
+                        "claimed",
+                        "live"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "accepted",
+              "reason",
+              "invalid",
+              "skipped"
+            ],
+            "type": "object"
           },
-          "reason": {
-            "type": "string"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "accepted": {
+                "const": true,
+                "type": "boolean"
+              },
+              "applied": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "skipped": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "enum": [
+                        "weak",
+                        "claimed",
+                        "live"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "adapter",
+                    "id",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "accepted",
+              "applied",
+              "skipped"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "accepted",
-          "reason"
-        ],
-        "type": "object"
+        ]
       }
     },
     {

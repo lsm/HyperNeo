@@ -2,6 +2,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { workerOwnershipFacts } from '../../storage/repositories/worker-ownership-read-worker.ts';
+import { workerOwnershipWrites } from '../../storage/repositories/worker-ownership-write-worker.ts';
+import type { WorkRef, SkippedWork } from './worker-ownership-apply.ts';
 import { defineOperation } from '../operations/registry.ts';
 
 export type WorkerOwnershipRow = {
@@ -17,6 +19,7 @@ export type WorkerOwnershipTouch = {
   id: string;
   verb: string;
   humanNamed: boolean;
+  live?: boolean;
 };
 
 export function inferWorkerOwnership(
@@ -59,19 +62,50 @@ const dryRun = (superpipe({})('neo.workerOwnership.candidates') as PipelineAPI)
   .input(['db'])
   .pipe(readFacts, 'db', 'result')
   .endAsync('result') as (db: Database) => Promise<ReturnType<typeof inferWorkerOwnership>>;
-const refuseApply = (superpipe({})('neo.workerOwnership.apply') as PipelineAPI)
-  .input(['reviewedListId'])
+const applyReviewed = (superpipe({})('neo.workerOwnership.apply') as PipelineAPI)
+  .input(['reviewed', 'confirmedCount', 'db'])
   .pipe(
-    (reviewedListId: string | undefined) => ({
-      accepted: false as const,
-      reason: reviewedListId
-        ? 'Apply is not available until the candidate list has been reviewed.'
-        : 'A reviewed-list id is required.',
-    }),
-    'reviewedListId',
-    'result'
+    (reviewed: WorkRef[] | undefined, confirmedCount: number | undefined) => {
+      if (!reviewed?.length || confirmedCount !== reviewed.length)
+        return {
+          reason: {
+            accepted: false as const,
+            reason: 'A non-empty list and matching confirmed count are required.',
+            invalid: [],
+            skipped: [],
+          },
+        };
+      if (
+        new Set(reviewed.map((ref) => JSON.stringify([ref.adapter, ref.id]))).size !==
+        reviewed.length
+      )
+        return {
+          reason: {
+            accepted: false as const,
+            reason: 'Duplicate refs are not allowed.',
+            invalid: [],
+            skipped: [],
+          },
+        };
+      return { value: reviewed };
+    },
+    ['reviewed', 'confirmedCount'],
+    'result:outcome'
   )
-  .endAsync('result') as (id?: string) => Promise<{ accepted: false; reason: string }>;
+  .pipe(
+    (reviewed: WorkRef[], db: Database) =>
+      db.gateway.call(workerOwnershipWrites, 'apply', reviewed),
+    ['outcome', 'db'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  reviewed: WorkRef[] | undefined,
+  confirmedCount: number | undefined,
+  db: Database
+) => Promise<
+  | { accepted: false; reason: string; invalid: WorkRef[]; skipped: SkippedWork[] }
+  | { accepted: true; applied: WorkRef[]; skipped: SkippedWork[] }
+>;
 
 const CandidateSchema = z.object({
   adapter: z.string(),
@@ -100,11 +134,40 @@ export function createWorkerOwnershipBackfillOperations(db: Database) {
     }),
     defineOperation({
       name: 'neo.workerOwnership.apply',
-      description: 'Refuse historical worker ownership application pending review.',
-      inputSchema: z.object({ reviewedListId: z.string().trim().min(1).optional() }),
-      resultSchema: z.object({ accepted: z.literal(false), reason: z.string() }),
+      description: 'Apply reviewed historical worker ownership for unclaimed start bindings.',
+      inputSchema: z.object({
+        reviewed: z
+          .array(z.object({ adapter: z.string().min(1), id: z.string().min(1) }))
+          .optional(),
+        confirmedCount: z.number().int().nonnegative().optional(),
+      }),
+      resultSchema: z.discriminatedUnion('accepted', [
+        z.object({
+          accepted: z.literal(false),
+          reason: z.string(),
+          invalid: z.array(z.object({ adapter: z.string(), id: z.string() })),
+          skipped: z.array(
+            z.object({
+              adapter: z.string(),
+              id: z.string(),
+              reason: z.enum(['weak', 'claimed', 'live']),
+            })
+          ),
+        }),
+        z.object({
+          accepted: z.literal(true),
+          applied: z.array(z.object({ adapter: z.string(), id: z.string() })),
+          skipped: z.array(
+            z.object({
+              adapter: z.string(),
+              id: z.string(),
+              reason: z.enum(['weak', 'claimed', 'live']),
+            })
+          ),
+        }),
+      ]),
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input) => refuseApply(input.reviewedListId),
+      execute: async (input) => applyReviewed(input.reviewed, input.confirmedCount, db),
     }),
   ];
 }

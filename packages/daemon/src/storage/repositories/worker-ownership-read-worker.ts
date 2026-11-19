@@ -5,7 +5,7 @@ import type {
   WorkerOwnershipTouch as Touch,
 } from '../../lib/neo/worker-ownership-backfill.ts';
 
-class WorkerOwnershipReader {
+export class WorkerOwnershipReader {
   constructor(private readonly db: Database) {}
 
   readFacts() {
@@ -17,9 +17,9 @@ class WorkerOwnershipReader {
       .all() as Row[];
     const bindings = raw
       .prepare(
-        `SELECT s.ref, s.target, t.named FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id`
+        `SELECT s.ref, s.target, t.named, t.state FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id`
       )
-      .all() as { ref: string | null; target: string; named: string | null }[];
+      .all() as { ref: string | null; target: string; named: string | null; state: string }[];
     const touches: Touch[] = [];
     for (const binding of bindings) {
       const target = JSON.parse(binding.target) as {
@@ -31,7 +31,7 @@ class WorkerOwnershipReader {
         binding.ref
           ? (JSON.parse(binding.ref) as { adapter: string; id: string; daemon?: string })
           : null,
-        target.ref,
+        target.verb === 'start' ? undefined : target.ref,
       ];
       for (const ref of refs)
         if (ref && !ref.daemon)
@@ -40,6 +40,7 @@ class WorkerOwnershipReader {
             id: ref.id,
             verb: target.verb,
             humanNamed: named?.session != null,
+            live: ['todo', 'doing', 'blocked'].includes(binding.state),
           });
     }
     return { rows, touches };
