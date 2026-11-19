@@ -88,7 +88,9 @@ export function createOperationRegistry(
     if (byName.has(definition.name)) {
       throw new Error(`Duplicate operation name: ${definition.name}`);
     }
-    byName.set(definition.name, Object.freeze({ ...definition }));
+    const registered = { ...definition };
+    Reflect.deleteProperty(registered, 'pipelineRunner');
+    byName.set(definition.name, Object.freeze(registered));
   }
   return {
     entries: Object.freeze([...byName.values()]),
