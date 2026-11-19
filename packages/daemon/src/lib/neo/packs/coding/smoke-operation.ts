@@ -1,5 +1,5 @@
 import { neoToolDescription } from '@hyperneo/prompts';
-import superpipe, { type PipelineAPI } from 'superpipe';
+import superpipe, { type DescribedRunner, type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation } from '../../../operations/registry.ts';
 import { parsePrUrl } from '../../../github/parse-pr-url.ts';
@@ -18,7 +18,6 @@ const Input = z.object({
 });
 export type CodingSmokeRequest = z.infer<typeof Input>;
 type Input = CodingSmokeRequest;
-type Result = { accepted: true } | { accepted: false; reason: string };
 
 export function createCodingSmokeOperation(
   repo: CodingDeliveryFactsRepository,
@@ -34,16 +33,20 @@ export function createCodingSmokeOperation(
       'input',
       'result'
     )
-    .endAsync('result') as (input: Input) => Promise<Result>;
-  return defineOperation({
-    name: 'neo.coding.smoke',
-    description: neoToolDescription('neo.coding.smoke'),
-    inputSchema: Input,
-    resultSchema: z.union([
-      z.object({ accepted: z.literal(true) }),
-      z.object({ accepted: z.literal(false), reason: z.string() }),
-    ]),
-    policy: { safetyClass: 'mutate', roles: ['neo'] },
-    execute: (input) => record(input),
-  });
+    .endAsync('result');
+  const description: DescribedRunner = record;
+  return {
+    ...defineOperation({
+      name: 'neo.coding.smoke',
+      description: neoToolDescription('neo.coding.smoke'),
+      inputSchema: Input,
+      resultSchema: z.union([
+        z.object({ accepted: z.literal(true) }),
+        z.object({ accepted: z.literal(false), reason: z.string() }),
+      ]),
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input) => record(input),
+    }),
+    pipelineRunner: description,
+  };
 }

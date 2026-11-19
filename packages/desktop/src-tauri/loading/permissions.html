@@ -29,19 +29,17 @@
   <main>
     <h1>Set up desktop control</h1>
     <p>Allow these permissions in System Settings so workers can see and control your screen when you enable desktop control.</p>
-    <section>
-      <h2>Accessibility</h2>
-      <p id="accessibility-status">Checking…</p>
+    <section id="accessibility-step" hidden>
+      <h2>Step 1 of 2 · Accessibility</h2>
+      <p>Turn on HyperNeo in Accessibility.</p>
       <button id="open-accessibility" type="button">Open Accessibility settings</button>
     </section>
-    <section>
-      <h2>Screen Recording</h2>
-      <p id="screen-recording-status">Checking…</p>
-      <p id="restart-note"></p>
+    <section id="screen-recording-step" hidden>
+      <h2>Step 2 of 2 · Screen Recording</h2>
+      <p>Turn on HyperNeo in Screen Recording. If macOS asks you to quit and reopen, follow its instructions.</p>
       <button id="open-screen-recording" type="button">Open Screen Recording settings</button>
     </section>
-    <button id="check-again" type="button">Check again</button>
-    <p id="message" role="status"></p>
+    <p id="message" role="status">Checking permissions…</p>
   </main>
 </body>
 </html>

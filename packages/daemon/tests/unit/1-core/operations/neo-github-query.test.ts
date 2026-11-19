@@ -116,7 +116,8 @@ describe('pack-owned Neo operation registration', () => {
       ];
       db.updateGlobalSettings({ neo: { packs: ['synthetic-pack'] } });
       const pack = service.filePacks[0];
-      const invalid = { ...pack.operations![0], pipelineRunner: async () => ({ ok: true }) };
+      const invalid = { ...pack.operations![0] };
+      Reflect.set(invalid, 'pipelineRunner', async () => ({ ok: true }));
       service.filePacks = [{ ...pack, operations: [invalid] }];
       expect(() => createNeoOperations(service)).toThrow(
         'Invalid pack pipeline runner for verify.pack.echo'

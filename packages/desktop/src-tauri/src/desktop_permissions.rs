@@ -94,8 +94,26 @@ fn run_settings_command(command: &mut std::process::Command) -> std::io::Result<
     command.status().map(|_| ())
 }
 
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn hyperneo_show_permission_hint(screen_recording: bool, ready: extern "C" fn(bool) -> bool);
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn permission_ready(screen_recording: bool) -> bool {
+    let status = macos::status();
+    if screen_recording {
+        status.screen_recording
+    } else {
+        status.accessibility
+    }
+}
+
 #[tauri::command]
-pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), String> {
+pub(crate) fn open_desktop_permission_settings(
+    app: tauri::AppHandle,
+    permission: &str,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         open_desktop_permission_settings_with(permission, macos::request, |pane| {
@@ -103,11 +121,16 @@ pub(crate) fn open_desktop_permission_settings(permission: &str) -> Result<(), S
                 "x-apple.systempreferences:com.apple.preference.security?{pane}"
             )))
             .map_err(|error| error.to_string())
+        })?;
+        let screen_recording = permission == "screenRecording";
+        app.run_on_main_thread(move || unsafe {
+            hyperneo_show_permission_hint(screen_recording, permission_ready);
         })
+        .map_err(|error| error.to_string())
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = permission;
+        let _ = (app, permission);
         Err("Desktop permissions are only available on macOS".into())
     }
 }
