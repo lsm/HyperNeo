@@ -2,6 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { countPipelineRoutes } from './system-map.ts';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -114,6 +115,35 @@ test('a pipeline in another function cannot hide an unreadable route', () => {
   const result = f.run();
   expect(result.code).toBe(1);
   expect(result.output).toContain('unreadable');
+});
+
+test.each([
+  'condition && run()',
+  'condition ? run() : fallback()',
+  'queue(() => run())',
+  'run?.()',
+])('a conditional or deferred pipeline call stays unreadable: %s', (expression) => {
+  const source = `const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('an early return before a pipeline call stays unreadable', () => {
+  const source = `const run = superpipe({})('demo.maybe').end();
+    defineOperation({ name: 'demo.maybe', execute: () => { if (condition) return; return run(); } });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('a direct pipeline call inside a try-return stays readable', () => {
+  const source = `const run = superpipe({})('demo.try').end();
+    defineOperation({ name: 'demo.try', execute: async () => { try { return await run(); } catch { return null; } } });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(0);
 });
 
 test.each(['service.run()', 'service?.run()', '({...service.run()})'])(

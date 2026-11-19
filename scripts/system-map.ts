@@ -489,12 +489,69 @@ function stringToken(text: string | undefined): string | undefined {
   return text.slice(1, -1);
 }
 
-export function countPipelineRoutes(sources: Map<string, string>): PipelineCounts {
+export function countPipelineRoutes(
+  sources: Map<string, string>,
+  strictCalls = false
+): PipelineCounts {
   const counts: PipelineCounts = { missing: 0, misnamed: 0, dynamic: 0, unreadable: 0 };
   for (const [file, source] of sources) {
     if (!isSource(file)) continue;
     const tokens = pipelineTokens(source);
     let resolveLocal: ReturnType<typeof createLocalPipelineResolver> | undefined;
+    let parsedCalls: ts.SourceFile | undefined;
+    const hasUnconditionalCall = (start: number, name: string): boolean => {
+      const parsed = (parsedCalls ??= ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true
+      ));
+      const offset = tokens[start].offset;
+      let execute: ts.Node | undefined;
+      const find = (node: ts.Node) => {
+        if (node.getStart(parsed) === offset && ts.isArrowFunction(node)) execute = node;
+        else if (node.pos <= offset && node.end > offset) ts.forEachChild(node, find);
+      };
+      find(parsed);
+      if (!execute || !ts.isArrowFunction(execute)) return false;
+      let body: ts.Node = execute.body;
+      if (ts.isBlock(body)) {
+        if (body.statements.length !== 1) return false;
+        let statement = body.statements[0];
+        if (ts.isTryStatement(statement)) {
+          if (statement.finallyBlock || statement.tryBlock.statements.length !== 1) return false;
+          statement = statement.tryBlock.statements[0];
+        }
+        if (!ts.isReturnStatement(statement)) return false;
+        const expression = statement.expression;
+        if (!expression) return false;
+        body = expression;
+      }
+      let found = false;
+      const visit = (node: ts.Node) => {
+        if (
+          ts.isFunctionLike(node) ||
+          ts.isConditionalExpression(node) ||
+          (ts.isBinaryExpression(node) &&
+            [
+              ts.SyntaxKind.AmpersandAmpersandToken,
+              ts.SyntaxKind.BarBarToken,
+              ts.SyntaxKind.QuestionQuestionToken,
+            ].includes(node.operatorToken.kind)) ||
+          (ts.isCallExpression(node) && !!(node.flags & ts.NodeFlags.OptionalChain))
+        )
+          return;
+        if (
+          ts.isCallExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === name
+        )
+          found = true;
+        ts.forEachChild(node, visit);
+      };
+      visit(body);
+      return found;
+    };
     const scopes: number[][] = [];
     const scope: number[] = [];
     for (let i = 0; i < tokens.length; i++) {
@@ -686,13 +743,20 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
                   (body[index - 1] !== '.' ||
                     (body[index - 2] === '.' && body[index - 3] === '.')) &&
                   body[index + 1] === '(' &&
+                  (!strictCalls || hasUnconditionalCall(executeStart, token)) &&
                   !bindingShadows(executeStart + index, pipeline.index, token)
               )))
       );
       if (reached.length === 0) {
         const arrow = body.includes('=>') || (body.includes('=') && body.includes('>'));
         const call = body.some(
-          (token, index) => /^[A-Za-z_$][\w$]*$/.test(token) && body[index + 1] === '('
+          (token, index) =>
+            /^[A-Za-z_$][\w$]*$/.test(token) &&
+            (body[index + 1] === '(' ||
+              (strictCalls &&
+                body[index + 1] === '?' &&
+                body[index + 2] === '.' &&
+                body[index + 3] === '('))
         );
         if (arrow && !call) {
           counts.missing++;
