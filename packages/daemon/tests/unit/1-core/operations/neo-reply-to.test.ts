@@ -182,6 +182,31 @@ describe('neo.message.send replyTo', () => {
       ).payload_json
     );
 
+  test('a chat reply leaves a desktop control card open and control off', async () => {
+    store.askQuestion(
+      'desktop',
+      'ask',
+      {
+        text: 'Allow desktop control?',
+        kind: 'desktop_control',
+        app: 'Calendar',
+        todoId: 't1',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+      },
+      2
+    );
+    const id = crypto.randomUUID();
+    expect(await send(id, 'Yes, allow it', { kind: 'question', id: 'desktop' })).toMatchObject({
+      value: { ok: true, created: true },
+    });
+    expect(prompt(id).words).toBe('Yes, allow it');
+    expect(store.getQuestion('desktop')).toMatchObject({ state: 'open', answer: null });
+    expect(store.getTodo('t1')?.named?.desktopControl).not.toBe(true);
+  });
+
   test('a reply to a question goes to root Neo and records the words as its answer', async () => {
     const id = crypto.randomUUID();
     expect(await send(id, '在做 / 做完', { kind: 'question', id: 'q1' })).toMatchObject({

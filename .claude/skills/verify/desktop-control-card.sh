@@ -29,7 +29,9 @@ read -r PORT MOCK_PORT <<< "$ports"
 VERIFY_MOCK_PORT="$MOCK_PORT" VERIFY_NORMAL_PRIORITY=1 bash .claude/skills/verify/launch.sh "$PORT" "$RUN" &
 job=$!; wait "$job"; job=''
 ENVV=(env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" VERIFY_PORT="$PORT")
-bun .claude/skills/verify/desktop-control-toggle-seed.ts "$RUN" | tee "$OUT/seed.json"
+"${ENVV[@]}" bun .claude/skills/verify/rpc.ts neo.open '{}' > "$OUT/neo-open.json"
+NEO_SESSION=$(bun -e 'const r=await Bun.file(process.argv[1]).json(); if(!r.reply.ok || !r.reply.sessionId) throw new Error("Neo open failed"); console.log(r.reply.sessionId)' "$OUT/neo-open.json")
+bun .claude/skills/verify/desktop-control-toggle-seed.ts "$RUN" "$NEO_SESSION" | tee "$OUT/seed.json"
 "${ENVV[@]}" bun .claude/skills/verify/rpc.ts desktop.status '{}' | tee "$OUT/status-before.json"
 "${ENVV[@]}" bun .claude/skills/verify/rpc.ts neo.question.ask '{"askId":"desktop-ask","todoId":"dentist","kind":"desktop_control","app":"Calendar","text":"Allow desktop control?","retireWhen":{"pack":"core","kind":"evidence","params":{"path":"/nonexistent-proof-result"}}}' > "$OUT/card.json"
 bun -e 'const r=await Bun.file(process.argv[1]).json(); if(!r.reply.ok || r.reply.question.kind!=="desktop_control") throw new Error(JSON.stringify(r));' "$OUT/card.json"

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { revealAsk } from './queue-ask.mjs';
 
 const [port, out, run] = process.argv.slice(2);
@@ -36,6 +37,17 @@ try {
     assert.match(await card.innerText(), /Book the dentist on the clinic site/);
     assert.match(await card.innerText(), /Calendar/);
     await page.screenshot({ path: join(out, `${name}.png`) });
+    if (name === 'wide-light') {
+      const questionId = JSON.parse(readFileSync(join(out, 'card.json'), 'utf8')).reply.question.id;
+      await card.getByRole('button', { name: 'Reply in chat' }).click();
+      const composer = page.getByRole('textbox', { name: 'Message Neo', exact: true });
+      await composer.fill('Yes, allow it');
+      await composer.press('Enter');
+      await page.getByText('Yes, allow it', { exact: true }).first().waitFor();
+      const response = JSON.parse(execSync(`env -i HOME="${run}/home" PATH="${process.env.PATH}" NODE_ENV=test HYPERNEO_DATA_DIR="${run}/data" VERIFY_PORT=${port} bun .claude/skills/verify/rpc.ts neo.question.get '{"questionId":"${questionId}"}'`, { encoding: 'utf8' })).reply;
+      assert.equal(response.question.state, 'open', 'chat must not answer the desktop control card');
+      await card.waitFor();
+    }
     if (name === 'phone-dark') {
       await card.getByRole('button', { name: 'Allow' }).tap();
       await card.waitFor({ state: 'hidden' });
