@@ -1,3 +1,4 @@
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
@@ -22,6 +23,7 @@ import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  compactHyperneoWorker,
   createHyperneoAdapter,
   type HyperneoSessionControl,
 } from '../../../../src/lib/drivers/hyperneo-adapter';
@@ -31,6 +33,47 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff'
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
+
+describe('compactHyperneoWorker', () => {
+  test('queues an internal compact and resolves from the session completion event', async () => {
+    const messageQueue = new MessageQueue();
+    messageQueue.start();
+    const enqueued = vi.fn();
+    messageQueue.onMessageEnqueued = (id) => enqueued(messageQueue.getPendingOrInFlightContent(id));
+    let complete = () => {};
+    const unsubscribe = vi.fn();
+    try {
+      const pending = compactHyperneoWorker(
+        { messageQueue, getProcessingState: () => ({ status: 'idle' }) },
+        (listener) => {
+          complete = listener;
+          return unsubscribe;
+        }
+      );
+      expect(enqueued.mock.calls).toEqual([['/compact']]);
+      complete();
+      expect(await pending).toEqual({ ok: true, value: { compacted: true } });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      messageQueue.stop();
+    }
+  });
+
+  test('leaves the queue alone while a worker has a live turn', async () => {
+    const messageQueue = new MessageQueue();
+    const subscribe = vi.fn(() => () => {});
+    const result = await compactHyperneoWorker(
+      {
+        messageQueue,
+        getProcessingState: () => ({ status: 'processing', messageId: 'live', phase: 'streaming' }),
+      },
+      subscribe
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'busy' });
+    expect(messageQueue.size()).toBe(0);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+});
 
 function control(
   db: Database,

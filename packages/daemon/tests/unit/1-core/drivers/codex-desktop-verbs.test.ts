@@ -1224,6 +1224,36 @@ describe('codex-desktop adapter status and send', () => {
     expect(desktop).not.toHaveBeenCalled();
   });
 
+  test('compact requests the idle thread and waits for its completion notification', async () => {
+    let notify: (message: { method: string; params: unknown }) => void = () => {};
+    const unsubscribe = vi.fn();
+    const call = vi.fn(async () => {
+      notify({ method: 'thread/compacted', params: { threadId: 'busy' } });
+      notify({ method: 'thread/compacted', params: { threadId: 'idle' } });
+      return {};
+    });
+    const connect = vi.fn(
+      async (): Promise<CodexAppServer> => ({
+        call,
+        close: () => {},
+        onNotification: (listener) => {
+          notify = (message) => listener({ jsonrpc: '2.0', ...message });
+          return unsubscribe;
+        },
+      })
+    );
+    const driver = adapter(0, '', connect);
+    expect(await driver.compact!(ref('busy'), user)).toMatchObject({ ok: false, reason: 'busy' });
+    expect(connect).not.toHaveBeenCalled();
+    expect(await driver.compact!(ref('idle'), user)).toEqual({
+      ok: true,
+      value: { compacted: true },
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('thread/compact/start', { threadId: 'idle' });
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
   test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
     const calls: unknown[] = [];
     const server: () => Promise<CodexAppServer> = async () => ({

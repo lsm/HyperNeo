@@ -58,9 +58,36 @@ function readCodexSocketFile(socketPath: string): CodexSocketFile {
 export interface CodexAppServer {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
   close(): void | Promise<void>;
+  onNotification?(listener: (notification: JsonRpcNotification) => void): () => void;
   selectConfiguration?: (
     request: Parameters<typeof selectCodexConfiguration>[0]
   ) => ReturnType<typeof selectCodexConfiguration>;
+}
+
+export async function compactCodexThread(
+  server: CodexAppServer,
+  threadId: string
+): Promise<boolean> {
+  if (!server.onNotification) return false;
+  let complete!: (compacted: boolean) => void;
+  const completed = new Promise<boolean>((resolve) => {
+    complete = resolve;
+  });
+  const unsubscribe = server.onNotification((message) => {
+    if (
+      message.method === 'thread/compacted' &&
+      (message.params as { threadId?: unknown } | undefined)?.threadId === threadId
+    )
+      complete(true);
+  });
+  const timeout = setTimeout(() => complete(false), 60_000);
+  try {
+    await server.call('thread/compact/start', { threadId });
+    return await completed;
+  } finally {
+    clearTimeout(timeout);
+    unsubscribe();
+  }
 }
 
 export async function startCodexBootstrapServer(
@@ -81,11 +108,15 @@ export async function startCodexBootstrapServer(
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
+  const listeners = new Set<(notification: JsonRpcNotification) => void>();
   const transport = new ProcessJsonRpcTransport({
     command,
     args: ['app-server', '--listen', 'stdio://'],
     requestTimeoutMs: CALL_TIMEOUT_MS,
-    onNotification,
+    onNotification: (notification) => {
+      onNotification?.(notification);
+      for (const listener of listeners) listener(notification);
+    },
     onProcessSpawn: (child) => {
       endInput = () => child.stdin?.end();
     },
@@ -95,6 +126,12 @@ export async function startCodexBootstrapServer(
     },
   });
   const server: CodexAppServer = {
+    onNotification: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     call: async (method, params) => {
       const response = await transport.sendRequest(method, params);
       if ('error' in response)
@@ -142,6 +179,7 @@ export function connectCodexAppServer(
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws+unix://${socketPath}:/`);
     const pending = new Map<number, Pending>();
+    const listeners = new Set<(notification: JsonRpcNotification) => void>();
     let nextId = 1;
     let closing = false;
     let closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,6 +265,14 @@ export function connectCodexAppServer(
           trackedTurns: turns.size,
         });
       }
+      if (typeof message.method === 'string' && message.id === undefined) {
+        const notification: JsonRpcNotification = {
+          jsonrpc: '2.0',
+          method: message.method,
+          params: message.params,
+        };
+        for (const listener of listeners) listener(notification);
+      }
       const waiting = typeof message.id === 'number' ? pending.get(message.id) : undefined;
       if (!waiting || typeof message.id !== 'number') return;
       pending.delete(message.id);
@@ -264,6 +310,12 @@ export function connectCodexAppServer(
         socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'initialized', params: {} }));
         resolve({
           call,
+          onNotification: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
           close: () => {
             if (!closing && turns.size) {
               closeTimer = setTimeout(() => {

@@ -1,3 +1,4 @@
+import type { AgentSession } from '../agent/agent-session.ts';
 import { withWorkerProvenance } from './worker-provenance.ts';
 import { installClaudeNativeWrites } from './claude-native-writes.ts';
 import { releaseWorkerSandbox, workerSandboxOn } from './worker-sandbox.ts';
@@ -95,7 +96,40 @@ export interface HyperneoSessionRow {
   queryFailureError?: string | null;
 }
 
+export async function compactHyperneoWorker(
+  session: Pick<AgentSession, 'getProcessingState' | 'messageQueue'>,
+  onCompacted: (listener: () => void) => () => void
+): Promise<Result<{ compacted: boolean }>> {
+  const queue = session.messageQueue;
+  if (
+    session.getProcessingState().status !== 'idle' ||
+    queue.size() > 0 ||
+    queue.hasOutstandingInternalCompaction()
+  )
+    return reject('busy', 'The HyperNeo session still has work to process.');
+  if (!queue.isRunning()) return { ok: true, value: { compacted: false } };
+
+  let complete!: (compacted: boolean) => void;
+  const completed = new Promise<boolean>((resolve) => {
+    complete = resolve;
+  });
+  const unsubscribe = onCompacted(() => complete(true));
+  const timeout = setTimeout(() => complete(false), 60_000);
+  const id = crypto.randomUUID();
+  try {
+    void queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true }).catch(() => {
+      if (!queue.hasOutstandingInternalCompaction()) complete(false);
+    });
+    return { ok: true, value: { compacted: await completed } };
+  } finally {
+    clearTimeout(timeout);
+    unsubscribe();
+    queue.remove(id);
+  }
+}
+
 export interface HyperneoSessionControl {
+  compact?: WorkAdapter['compact'];
   rename?: WorkAdapter['rename'];
   archive?: WorkAdapter['archive'];
   withdraw?: (
@@ -871,6 +905,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       : undefined,
     status: async (ref, since, receipt) => runHyperneoStatus(ref, deps, since, receipt),
     stop: async (ref) => runHyperneoStop(ref, deps),
+    compact: deps.sessions.compact,
     archive: async (ref, admit) => {
       const check = () => {
         const found = requireHyperneoSession(ref, deps);
