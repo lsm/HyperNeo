@@ -332,6 +332,9 @@ const Hold = z.object({
   decision: z.boolean().optional().describe('Ask the human to start, resume or remove this step.'),
 });
 
+export const neoHoldNeedsDecision = (input: { reason: string | null; decision?: boolean }) =>
+  input.reason !== null && input.decision === true;
+
 const Remove = z.object({
   todoId: Text,
   reason: Text,
@@ -707,6 +710,17 @@ export function createNeoTodoOperations(
     .pipe(withCheck, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
+    .pipe(
+      async (plan: TodoPlan, input: EditPlan): Promise<Gate<TodoPlan>> => {
+        const failed =
+          input.hold && plan.todo.startedAt !== null ? await controls.stop(plan.todo) : null;
+        return failed
+          ? fail(`${failed}; the todo is unchanged, its session may still run.`)
+          : { value: plan };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: EditPlan,
@@ -837,9 +851,9 @@ export function createNeoTodoOperations(
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) =>
         present(
-          input.reason === null
-            ? await edit({ todoId: input.todoId, hold: null }, caller)
-            : await holdCard({ todoId: input.todoId, reason: input.reason }, caller)
+          neoHoldNeedsDecision(input)
+            ? await holdCard({ todoId: input.todoId, reason: input.reason! }, caller)
+            : await edit({ todoId: input.todoId, hold: input.reason }, caller)
         ),
     }),
     defineOperation({

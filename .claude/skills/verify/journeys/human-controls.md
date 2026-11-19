@@ -13,7 +13,7 @@ High and one Low. A paired headless browser drives the real /neo list at 1280 px
 
 - each step has a Step actions menu: Mark done, Hold (Pause once started), four
   priority levels with the current one ticked, and Cancel this step;
-- A passive hold through RPC shows On hold without opening a question.
+- A passive hold through RPC shows On hold without opening a question or showing Waiting on you.
 - Priority: Urgent replaces the Low badge with Urgent; Mark done and Cancel take the
   step out of the open list;
 - Pause on the running step and Hold on a waiting one each open one card with the

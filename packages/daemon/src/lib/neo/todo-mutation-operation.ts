@@ -15,7 +15,7 @@ import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { getDataDir } from '../data-dir.ts';
 import { neoEvidencePathRefusal } from './core-todo-checks.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
-import type { NeoTodoControls } from './todo-operations.ts';
+import { neoHoldNeedsDecision, type NeoTodoControls } from './todo-operations.ts';
 
 type Input = Parameters<InstanceType<typeof neoTodoMutationReads.Repository>['plan']>[0];
 type Plan = { todo: NeoTodo; patch: NeoTodoPatch; records?: string[] };
@@ -206,8 +206,7 @@ export function wireNeoTodoMutations(
           ...entry,
           execute: (input, caller) =>
             entry.name === 'neo.todo.hold' &&
-            (input as { reason: unknown; decision?: boolean }).reason !== null &&
-            (input as { decision?: boolean }).decision === true
+            neoHoldNeedsDecision(input as { reason: string | null; decision?: boolean })
               ? entry.execute(input, caller)
               : mutate({ ...holdAsEdit(entry.name, input), kind } as Input, caller).then(present),
         }

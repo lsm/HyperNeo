@@ -74,6 +74,7 @@ try {
     const { page, card } = await open(desktop, 1280);
     assert.equal(await row(card, 'controls-hold').locator('[data-todo-priority="high"]').innerText(), 'High');
     assert.match(await row(card, 'controls-passive').innerText(), /On hold/);
+    assert.doesNotMatch(await card.innerText(), /Waiting on you/);
     assert.equal(await card.locator('[data-ask-question]').count(), 0);
     assert.equal(await card.locator('[data-todo-priority]').count(), 2);
     await card.screenshot({ path: `${out}/list-1280.png` });

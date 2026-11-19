@@ -227,6 +227,7 @@ describe('bind an already running worker without dispatch', () => {
       const held = await invoke('neo.todo.hold', {
         todoId: todo.id,
         reason: 'The human said wait.',
+        decision: true,
       });
       expect(held.ok).toBe(true);
       expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
@@ -238,7 +239,9 @@ describe('bind an already running worker without dispatch', () => {
           text: 'The human said wait.',
         },
       ]);
-      expect(await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.' })).toMatchObject({
+      expect(
+        await invoke('neo.todo.hold', { todoId: todo.id, reason: 'Again.', decision: true })
+      ).toMatchObject({
         ok: false,
         reason: expect.stringContaining('already_waiting'),
       });

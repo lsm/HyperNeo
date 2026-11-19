@@ -65,7 +65,7 @@ try {
   const human = await invokeOperation(registry, 'neo.ask.read', { askId: opened.ask.id }, { source: 'rpc', principal: LOCAL_RPC_PRINCIPAL });
   assert.equal(human.kind, 'completed');
   const card = (human as { value: { entry: { state: string; questions: { state: string }[]; todos: { id: string; instruction: string | null; statusCodes?: { code: string }[] }[] } } }).value;
-  assert.equal(card.entry.state, 'waiting');
+  assert.equal(card.entry.state, 'doing');
   assert(card.entry.todos.find((todo) => todo.id === ids[0])?.statusCodes?.some((status) => status.code === 'todo.held'));
   assert.equal(card.entry.questions.filter((question) => question.state === 'open').length, 0);
   assert.equal(card.entry.todos.filter((todo) => todo.instruction?.startsWith('Instruction ')).length, 11);

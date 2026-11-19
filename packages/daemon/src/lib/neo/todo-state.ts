@@ -41,8 +41,7 @@ export function neoTodoPlace(
   cards: readonly Pick<NeoQuestion, 'state' | 'todos'>[]
 ): NeoTodoPlace | null {
   if (!['todo', 'doing', 'blocked'].includes(todo.state)) return null;
-  if (neoTodoCovered(todo, cards) || (todo.state === 'blocked' && todo.blockedBy === 'held'))
-    return 'waiting';
+  if (neoTodoCovered(todo, cards)) return 'waiting';
   const unheld = todo.state === 'blocked' && todo.blockedBy === 'question';
   if (todo.state === 'todo' || (unheld && todo.startedAt === null)) return 'queued';
   return todo.state === 'doing' || unheld ? 'running' : null;
