@@ -107,31 +107,35 @@ export async function compactHyperneoWorker(
     !queue.hasOutstandingInternalCompaction();
   if (!idle()) return reject('busy', 'The HyperNeo session still has work to process.');
 
-  let complete!: (compacted: boolean) => void;
-  const completed = new Promise<boolean>((resolve) => {
-    complete = resolve;
-  });
+  const completed = Promise.withResolvers<Result<{ compacted: boolean }>>();
   const startup = new AbortController();
   const id = crypto.randomUUID();
   let enqueued = false;
+  const unconfirmed = () =>
+    completed.resolve(reject('not_delivered', 'The HyperNeo session did not confirm compaction.'));
   const unsubscribe = onCompacted(() => {
-    if (enqueued) complete(true);
+    if (enqueued) completed.resolve({ ok: true, value: { compacted: true } });
   });
   const timeout = setTimeout(() => {
     startup.abort();
-    complete(false);
+    unconfirmed();
   }, 60_000);
   try {
     const enqueue = async () => {
       if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
-      if (startup.signal.aborted || !queue.isRunning() || !idle()) return complete(false);
+      if (startup.signal.aborted) return;
+      if (!idle()) {
+        completed.resolve(reject('busy', 'The HyperNeo session still has work to process.'));
+        return;
+      }
+      if (!queue.isRunning()) return unconfirmed();
       enqueued = true;
       await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
     };
     void enqueue().catch(() => {
-      if (!queue.hasOutstandingInternalCompaction()) complete(false);
+      if (!queue.hasOutstandingInternalCompaction()) unconfirmed();
     });
-    return { ok: true, value: { compacted: await completed } };
+    return await completed.promise;
   } finally {
     clearTimeout(timeout);
     unsubscribe();

@@ -753,7 +753,9 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
           undefined,
           () => async (target) => {
             attempts.push(target.id);
-            return { ok: true, value: { compacted: attempts.length > 1 } };
+            return attempts.length > 1
+              ? { ok: true, value: { compacted: true } }
+              : { ok: false, reason: 'not_delivered', detail: 'Compaction was not confirmed.' };
           }
         );
 
@@ -767,6 +769,40 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await runRelease(later);
       await runRelease(later);
       expect(attempts).toEqual([ref.id, ref.id]);
+      expect(await h.sessions.read('workerCompactedAt', ref)).toBeGreaterThan(0);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('skips busy and unavailable workers without using the compaction attempt budget', async () => {
+    const h = setup();
+    const ref = { ...worker, id: crypto.randomUUID() };
+    const warnings: string[] = [];
+    const attempts = [false, 'busy', 'not_open', 'not_found', true] as const;
+    let index = 0;
+    try {
+      h.reuse('long_lived');
+      h.startNext(ref);
+      await h.finishTodo(h.add(started));
+      for (const _attempt of attempts) {
+        await releaseNeoTodoWorkers(
+          h.sessions,
+          h.invoke,
+          (message) => warnings.push(message),
+          Date.now(),
+          undefined,
+          () => async () => {
+            const outcome = attempts[index++];
+            return typeof outcome === 'boolean'
+              ? { ok: true, value: { compacted: outcome } }
+              : { ok: false, reason: outcome, detail: 'Synthetic skip' };
+          }
+        );
+      }
+      expect(index).toBe(attempts.length);
+      expect(warnings).toEqual([]);
       expect(await h.sessions.read('workerCompactedAt', ref)).toBeGreaterThan(0);
       expect(h.archived).toEqual([]);
     } finally {

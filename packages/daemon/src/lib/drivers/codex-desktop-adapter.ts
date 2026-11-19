@@ -1486,7 +1486,9 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         return reject('busy', 'The Codex thread still has a live turn.');
       return withCodexAppServer(deps, async (server) => {
         try {
-          return { ok: true, value: { compacted: await compactCodexThread(server, ref.id) } };
+          return (await compactCodexThread(server, ref.id))
+            ? { ok: true, value: { compacted: true } }
+            : reject('not_delivered', 'The Codex app-server did not confirm compaction.');
         } catch (error) {
           return reject('not_delivered', error instanceof Error ? error.message : String(error));
         }

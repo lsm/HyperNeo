@@ -230,8 +230,11 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
       const run = async () => {
         try {
           const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
-          if (!result.ok || !result.value.compacted)
-            throw new Error(result.ok ? 'Compaction was not confirmed' : result.reason);
+          if (!result.ok) {
+            if (['busy', 'not_open', 'not_found'].includes(result.reason)) return;
+            throw new Error(result.reason);
+          }
+          if (!result.value.compacted) return;
           await sessions.recordWorkerCompacted(plan.ref, at);
           failedCompactions.delete(key);
         } catch (error) {
