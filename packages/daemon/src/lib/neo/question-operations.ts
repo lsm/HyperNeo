@@ -849,7 +849,12 @@ export function createNeoQuestionOperations(
     .pipe(
       (question: NeoQuestion): Gate<NeoQuestion> => {
         const todo = question.todoId ? store.getTodo(question.todoId) : null;
-        return todo?.state === 'blocked' && todo.blockedBy === 'needs-human'
+        const onlyThisCard =
+          !!todo &&
+          ['todo', 'doing', 'blocked'].includes(todo.state) &&
+          !todo.instruction?.trim() &&
+          !todo.check;
+        return (todo?.state === 'blocked' && todo.blockedBy === 'needs-human') || onlyThisCard
           ? fail(
               'todo_waiting: this card is what its todo waits on. Settle the todo first: neo.todo.remove when it is no longer needed, neo.todo.continue to send its worker on, or neo.question.ask with replaces to ask differently. Finished work needs nothing: its passing check closes both.'
             )

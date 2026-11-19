@@ -42,7 +42,7 @@ const moved = [
   {
     file: 'question-operations.ts',
     name: 'neo.question.retire',
-    text: 'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. A proposal or relayed-session work decision must be answered by the human and cannot be retired. A card its todo is blocked on is refused until that todo is settled, so the work and the card end together. A card the human holds (heldAt) is refused too: they put it aside on purpose, so do not remind them about it. An already closed question comes back unchanged.',
+    text: 'Retire an open question on an ask you own when it no longer needs an answer, with the reason in one short sentence. It leaves the open questions and shows in Details as no longer needed. A proposal or relayed-session work decision must be answered by the human and cannot be retired. A card its todo is blocked on, or whose todo has no instruction and no check, is refused until that todo is settled, so the work and the card end together. A card the human holds (heldAt) is refused too: they put it aside on purpose, so do not remind them about it. An already closed question comes back unchanged.',
   },
   {
     file: 'question-operations.ts',
@@ -77,7 +77,7 @@ const moved = [
   {
     file: 'todo-operations.ts',
     name: 'neo.todo.hold',
-    text: "Hold a todo that is waiting to start, or pause one that is running, to ask the human whether it goes ahead. reason is the card's whole text: your question to the human in their language, naming what waits, why it needs them, and that Start or Resume goes ahead and Remove drops it. The daemon stops a running todo's worker and opens that card with Start or Resume and Remove; the card is the hold, and the human's answer releases it. reason null releases a todo held by an older start answer. Hold only what the human said must wait.",
+    text: "Hold a todo that is waiting to start, or pause one that is running, to ask the human whether it goes ahead. reason is the card's whole text: your question to the human in their language, naming what waits, why it needs them, and that Start or Resume goes ahead and Remove drops it. The daemon stops a running todo's worker and opens that card with Start or Resume and Remove; the card is the hold, and the human's answer releases it. reason null releases a todo held by an older start answer. Hold only what the human said must wait. Never hold a todo to wait for something else (a PR, a sign-off, another card or step): that is not the human's decision, and the card goes stale when that thing changes. A step of the same ask waits with after; otherwise keep the todo yourself and act when that thing changes.",
   },
   {
     file: 'todo-operations.ts',
