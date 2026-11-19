@@ -366,10 +366,9 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('resolves bearer authorization from the credential manager', async () => {
-    const getCredentials = mock(async () => ({
-      type: 'api_key' as const,
-      apiKey: 'stored-key',
-    }));
+    const getCredentials = mock(async (id: string) =>
+      id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+    );
     let init: RequestInit | undefined;
     globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
       init = requestInit;
@@ -393,10 +392,9 @@ describe('voice transcribe pipeline', () => {
   });
 
   it('resolves the stored key scoped to the configured endpoint', async () => {
-    const getCredentials = mock(async () => ({
-      type: 'api_key' as const,
-      apiKey: 'stored-key',
-    }));
+    const getCredentials = mock(async (id: string) =>
+      id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+    );
     let init: RequestInit | undefined;
     globalThis.fetch = mock(async (_url: string | URL | Request, requestInit?: RequestInit) => {
       init = requestInit;
@@ -458,7 +456,9 @@ describe('voice transcribe pipeline', () => {
   describe('keys by host', () => {
     const storedKey = () =>
       ({
-        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+        getCredentials: mock(async (id: string) =>
+          id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'stored-key' } : null
+        ),
       }) as unknown as Pick<ProviderCredentialManager, 'getCredentials'>;
     const sent = () => {
       const seen: { url?: string; authorization?: string } = {};

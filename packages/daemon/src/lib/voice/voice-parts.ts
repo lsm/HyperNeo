@@ -42,6 +42,12 @@ export async function resolveVoiceKey(
   target: URL,
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>
 ): Promise<string | undefined> {
+  const hostCredentials = await credentialManager?.getCredentials(
+    `${VOICE_CREDENTIAL_PROVIDER_ID}:${target.host}`
+  );
+  if (hostCredentials?.type === 'api_key' && hostCredentials.apiKey?.trim()) {
+    return hostCredentials.apiKey.trim();
+  }
   const inline = voice?.apiKey?.trim();
   if (inline)
     return hostOf(voiceParts(voice).recorded?.endpoint) === target.host ? inline : undefined;

@@ -387,6 +387,41 @@ describe('Settings RPC Handlers', () => {
       );
     });
 
+    it('stores a host key without returning it in settings or events', async () => {
+      const credentialManager = createMockCredentialManager();
+      const hubData = createMockMessageHub();
+      registerSettingsHandlers(
+        hubData.hub,
+        settingsManagerData.settingsManager,
+        internalEventBusData.bus,
+        dbData.db,
+        credentialManager.manager
+      );
+      const handler = hubData.handlers.get('settings.global.update');
+      const result = await handler!(
+        {
+          updates: {
+            voice: {
+              enabled: true,
+              endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+              model: 'whisper-1',
+              live: { provider: 'deepgram', endpoint: 'wss://api.deepgram.com/v1/listen' },
+              hostKey: { host: 'api.deepgram.com', apiKey: 'test-secret' },
+            },
+          },
+        },
+        {}
+      );
+      expect(credentialManager.storeApiKey).toHaveBeenCalledWith(
+        'voice-transcription:api.deepgram.com',
+        'test-secret'
+      );
+      expect(JSON.stringify(result)).not.toContain('test-secret');
+      expect(JSON.stringify(internalEventBusData.publishAsyncMock.mock.calls)).not.toContain(
+        'test-secret'
+      );
+    });
+
     it('removes stored voice credentials when hasApiKey is cleared', async () => {
       const credentialManager = createMockCredentialManager();
       settingsManagerData.mocks.getGlobalSettings.mockReturnValue({

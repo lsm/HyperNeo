@@ -87,6 +87,7 @@ export interface VoiceSettings {
   apiKey?: string;
   hasApiKey?: boolean;
   apiKeyEndpoint?: string;
+  hostKey?: { host: string; apiKey?: string };
   allowInsecureTls?: boolean;
   allowPrivateNetwork?: boolean;
   mode?: VoiceMode;

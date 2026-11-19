@@ -3,7 +3,8 @@ import type { VoiceSettings } from '@hyperneo/shared';
 import { resolveSpeechPart } from '../../../../src/lib/voice/voice-parts.ts';
 
 const credentials = {
-  getCredentials: async () => ({ type: 'api_key' as const, apiKey: 'sk-openai' }),
+  getCredentials: async (id: string) =>
+    id === 'voice-transcription' ? { type: 'api_key' as const, apiKey: 'sk-openai' } : null,
 };
 const voice = (speechEndpoint?: string): VoiceSettings => ({
   enabled: true,
