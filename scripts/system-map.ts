@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
 export { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
@@ -493,6 +494,7 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
   for (const [file, source] of sources) {
     if (!isSource(file)) continue;
     const tokens = pipelineTokens(source);
+    let resolveLocal: ReturnType<typeof createLocalPipelineResolver> | undefined;
     const scopes: number[][] = [];
     const scope: number[] = [];
     for (let i = 0; i < tokens.length; i++) {
@@ -688,13 +690,16 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
               )))
       );
       if (reached.length === 0) {
-        if (body.includes('=>') || (body.includes('=') && body.includes('>'))) {
-          if (
-            body.some((token, index) => /^[A-Za-z_$][\w$]*$/.test(token) && body[index + 1] === '(')
-          )
-            counts.unreadable++;
-          else counts.missing++;
-        } else counts.unreadable++;
+        const arrow = body.includes('=>') || (body.includes('=') && body.includes('>'));
+        const call = body.some(
+          (token, index) => /^[A-Za-z_$][\w$]*$/.test(token) && body[index + 1] === '('
+        );
+        if (arrow && !call) {
+          counts.missing++;
+        } else {
+          const resolved = (resolveLocal ??= createLocalPipelineResolver(source, file))(name);
+          if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
+        }
       } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;
       i = end;
     }
