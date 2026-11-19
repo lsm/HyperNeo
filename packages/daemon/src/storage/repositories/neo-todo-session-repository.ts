@@ -17,6 +17,8 @@ import {
   readWorkCompaction,
   recordStartedWork,
   recordWorkRelease,
+  recordTodoRole,
+  readTodoRoles,
   type WorkCompactionFailure,
   workStartedSessionWrites,
 } from './work-started-sessions-worker.ts';
@@ -815,23 +817,48 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return true;
   }
 
-  claimWorker(ref: WorkRef, todoId: string | null): boolean {
-    const workers = readStartedWork(this.db);
-    const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
-    if (own?.releasedAt) return false;
-    if (own?.claimedBy !== todoId && this.liveTodo(own?.claimedBy ?? null)) return false;
-    const holders = todoId ? LIVE_TODO_STATES : [...LIVE_TODO_STATES, 'done', 'removed'];
-    if (this.doingTodoOn(ref, null, holders)) return false;
-    if (!todoId) return true;
-    if (!this.liveTodo(todoId)) return false;
-    if (workers.some((worker) => worker.claimedBy === todoId && worker !== own)) return false;
-    recordStartedWork(this.db, ref, Date.now(), false, false, { todoId });
-    return true;
+  claimWorker(
+    ref: WorkRef,
+    todoId: string | null,
+    role = 'do',
+    model?: string,
+    effort?: string
+  ): boolean {
+    return this.db.transaction(() => {
+      const workers = readStartedWork(this.db);
+      const own = workers.find((worker) => worker.adapter === ref.adapter && worker.id === ref.id);
+      if (own?.releasedAt) return false;
+      if (own?.claimedBy !== todoId && this.liveTodo(own?.claimedBy ?? null)) return false;
+      const holders = todoId ? LIVE_TODO_STATES : [...LIVE_TODO_STATES, 'done', 'removed'];
+      if (this.doingTodoOn(ref, null, holders)) return false;
+      if (!todoId) return true;
+      if (!this.liveTodo(todoId)) return false;
+      const roles = readTodoRoles(this.db, todoId);
+      if (
+        workers.some(
+          (worker) =>
+            worker.claimedBy === todoId &&
+            worker !== own &&
+            (roles.find((entry) => entry.adapter === worker.adapter && entry.id === worker.id)
+              ?.role ?? 'do') === role
+        )
+      )
+        return false;
+      recordStartedWork(this.db, ref, Date.now(), false, false, { todoId });
+      recordTodoRole(this.db, todoId, role, ref, model, effort);
+      return true;
+    })();
   }
 
-  unclaimWorker(todoId: string, ref: WorkRef): void {
-    if (this.startedFacts(ref)?.claimedBy === todoId)
+  unclaimWorker(todoId: string, ref: WorkRef, role = 'do'): void {
+    this.db.transaction(() => {
+      if (this.startedFacts(ref)?.claimedBy !== todoId) return;
       recordStartedWork(this.db, ref, Date.now(), false, false, { todoId: null });
+      this.db
+        .prepare(`DELETE FROM neo_todo_roles WHERE rowid = (SELECT rowid FROM neo_todo_roles
+        WHERE todo_id = ? AND role = ? AND adapter = ? AND id = ? ORDER BY at DESC, rowid DESC LIMIT 1)`)
+        .run(todoId, role, ref.adapter, ref.id);
+    })();
   }
 
   private startedFacts(ref: WorkRef) {

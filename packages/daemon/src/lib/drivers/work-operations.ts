@@ -97,8 +97,14 @@ export interface WorkVerbDeps {
     caller: OperationCaller
   ) => Promise<{ mode: 'long_lived' | 'per_ask' | 'per_todo'; sameAsk: string[] }>;
   markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
-  claimWorker?: (ref: WorkRef, todoId?: string) => Promise<boolean>;
-  unclaimWorker?: (todoId: string, ref: WorkRef) => Promise<void>;
+  claimWorker?: (
+    ref: WorkRef,
+    todoId?: string,
+    role?: string,
+    model?: string,
+    effort?: string
+  ) => Promise<boolean>;
+  unclaimWorker?: (todoId: string, ref: WorkRef, role?: string) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
   acceptedTodo?: (todoId: string) => boolean;
   noticeReply?: (ref: WorkRef, sessionId: string) => boolean;
@@ -130,6 +136,7 @@ export interface WorkVerbDeps {
       model?: string;
       effort?: string;
       preparation?: unknown;
+      role?: string;
     }
   ) => void | Promise<void>;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
@@ -165,6 +172,7 @@ export const StartWorkInputSchema = z.object({
     .min(1)
     .optional()
     .describe('Agents must provide an open todo on an accepted human request.'),
+  role: z.string().trim().min(1).max(100).optional(),
   adapter: z.string().min(1),
   place: PlaceSchema.optional(),
   title: z.string().trim().min(1).max(200),
@@ -656,6 +664,7 @@ export async function startWork(
         model: result.value.model,
         effort: result.value.effort,
         preparation: input.preparation,
+        ...(ownedTodoId(input, caller, deps) ? { role: input.role ?? 'do' } : {}),
       });
     return result;
   }
@@ -776,10 +785,12 @@ export async function reuseIdleWorker(
       : input.message;
     const todoId = ownedTodoId(input, caller, deps);
     const claimed = deps.claimWorker
-      ? await deps.claimWorker(work.ref, todoId).catch((error: unknown) => {
-          reuseHolds.delete(key);
-          throw error;
-        })
+      ? await deps
+          .claimWorker(work.ref, todoId, input.role, identity?.model, identity?.effort)
+          .catch((error: unknown) => {
+            reuseHolds.delete(key);
+            throw error;
+          })
       : true;
     if (!claimed) {
       reuseHolds.delete(key);
@@ -804,7 +815,7 @@ export async function reuseIdleWorker(
       };
     }
     reuseHolds.delete(key);
-    if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref);
+    if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref, input.role);
     await deps.markUnusable?.(work.ref, sent.reason);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);

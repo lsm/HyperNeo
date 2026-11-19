@@ -74,6 +74,7 @@ export function recordWorkerStarted(
     model?: string;
     effort?: string;
     preparation?: unknown;
+    role?: string;
   }
 ): void {
   if (!facts) {
@@ -98,7 +99,42 @@ export function recordWorkerStarted(
       ref.adapter,
       ref.id
     );
+    if (facts.todoId && facts.role)
+      recordTodoRole(db, facts.todoId, facts.role, ref, facts.model, facts.effort);
   })();
+}
+
+export function recordTodoRole(
+  db: BunDatabase,
+  todoId: string,
+  role: string,
+  ref: StartedWork,
+  model?: string,
+  effort?: string
+): void {
+  db.prepare(`INSERT INTO neo_todo_roles (todo_id, role, adapter, id, at, model, effort)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    todoId,
+    role,
+    ref.adapter,
+    ref.id,
+    Date.now(),
+    model ?? null,
+    effort ?? null
+  );
+}
+
+export function readTodoRoles(db: BunDatabase, todoId: string) {
+  return db
+    .prepare(`SELECT role, adapter, id, model, effort FROM neo_todo_roles
+    WHERE todo_id = ? ORDER BY at DESC, rowid DESC`)
+    .all(todoId) as {
+    role: string;
+    adapter: string;
+    id: string;
+    model: string | null;
+    effort: string | null;
+  }[];
 }
 
 export function forgetWorkGone(db: BunDatabase, root: string): void {
