@@ -11,7 +11,6 @@ import {
 import {
   NEO_DELIVERABLE_CHAR_LIMIT,
   NEO_REPLY_CHAR_LIMIT,
-  NEO_REPLY_LINE_LIMIT,
   NEO_REPLY_WORD_LIMIT,
 } from '@hyperneo/shared/types/neo-publication';
 import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
@@ -233,15 +232,13 @@ describe('root Neo system prompt', () => {
   test('states the reply length rule once, in the publish description', () => {
     const prompt = neoPrompt([]);
     const publish = neoToolDescription('neo.publication.publish');
+    expect(publish).toContain('publish unrelated matters as separate messages');
     expect(publish).toContain(
-      `write at most ${NEO_REPLY_WORD_LIMIT} words as a short title line, then a few bullets`
+      'a short bold title line that states the conclusion or the decision the human must make, then a few bullets or a small table, with the key choice in bold; no walls of text'
     );
-    expect(publish).toContain(
-      `the server refuses text over ${NEO_REPLY_CHAR_LIMIT} characters or ${NEO_REPLY_LINE_LIMIT} lines, counting every line including blank ones`
-    );
-    expect(publish).toContain(
-      'any decision the human must make in text, with the key choice in bold'
-    );
+    expect(publish).toContain(`Write at most ${NEO_REPLY_WORD_LIMIT} words`);
+    expect(publish).toContain(`the server refuses text over ${NEO_REPLY_CHAR_LIMIT} characters.`);
+    expect(publish).not.toContain('5 lines');
     expect(publish).not.toContain('one-sentence summary');
     expect(publish).toContain(`at most ${NEO_DELIVERABLE_CHAR_LIMIT} characters`);
     for (const stale of [

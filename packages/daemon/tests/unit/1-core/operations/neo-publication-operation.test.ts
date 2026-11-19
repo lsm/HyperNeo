@@ -21,11 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishHandoff, publicHandoffReference } from '../../../../src/lib/handoffs/outbox.ts';
 import { DELIVERABLE_CHAR_LIMIT } from '../../../../src/lib/neo/publication.ts';
-import {
-  NEO_REPLY_CHAR_LIMIT,
-  NEO_REPLY_LINE_LIMIT,
-  neoCharCount,
-} from '@hyperneo/shared/types/neo-publication';
+import { NEO_REPLY_CHAR_LIMIT, neoCharCount } from '@hyperneo/shared/types/neo-publication';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
@@ -561,7 +557,7 @@ describe('Neo publication without runtime input attribution', () => {
     );
   });
 
-  test('holds every reply text to the character and line limits, with or without details', async () => {
+  test('holds every reply text to the character limit, with or without details', async () => {
     const send = (requestId: string, text: string, details?: string) =>
       publish({ requestId, text, ...(details === undefined ? {} : { details }) }, caller);
     const long = `${'The build is green and the review is finished. '.repeat(10)}The branch is ready to merge.`;
@@ -578,21 +574,12 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: false,
       reason: 'reply_summary_too_long',
     });
-    for (const [requestId, text] of [
-      ['six-lines', 'Status\n- a\n- b\n- c\n- d\n- e'],
-      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
-      ['blank-runs', 'Merged.\n\n\nCI green.\nReviewed.\nDone.'],
-      ['trailing-blank', 'Title\n- a\n- b\n- c\n- d\n\n'],
-      ['trailing-run', 'Title\n- a\n- b\n- c\n- d\n\n\n'],
-    ] as const)
-      expect(await send(requestId, text)).toMatchObject({
-        accepted: false,
-        reason: 'reply_needs_details',
-      });
     expect(ledger.list(conversationId) ?? []).toHaveLength(0);
 
     for (const [requestId, text] of [
       ['chars-at-limit', 'x'.repeat(NEO_REPLY_CHAR_LIMIT)],
+      ['many-lines', 'Status\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h'],
+      ['blank-between', 'Merged.\n\n- CI green\n- Reviewed\n- Deployed\n- Docs updated'],
       ['five-lines', 'Title\n- a\n- b\n- c\n- d'],
       ['blank-inside-five', 'Merged.\n\n- CI green\n- Reviewed\n- Docs updated'],
       ['terminal-newline', 'Title\n- a\n- b\n- c\n- d\n'],
@@ -615,7 +602,7 @@ describe('Neo publication without runtime input attribution', () => {
       accepted: true,
       publication: { shortText: 'a'.repeat(NEO_REPLY_CHAR_LIMIT - 5), fullText: 'b'.repeat(20) },
     });
-    expect(ledger.list(conversationId)).toHaveLength(7);
+    expect(ledger.list(conversationId)).toHaveLength(9);
   });
 
   test('refuses exactly one character over the reply limit', async () => {

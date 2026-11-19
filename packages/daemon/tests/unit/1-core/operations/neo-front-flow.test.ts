@@ -1459,17 +1459,17 @@ test('Neo answers a message the front already answered', async () => {
   expect(service.publications.list(conversationId)).toHaveLength(2);
 });
 
-test('a front reply over the shared line limit is told to shorten, not to add details', async () => {
+test('a front reply over the shared character limit is told to shorten, not to add details', async () => {
   const { id } = await deliveredConvoInput();
   const refused = await convoPublish({
-    requestId: 'six-lines',
+    requestId: 'too-long',
     replyTo: [id],
-    fullText: 'Status\n- a\n- b\n- c\n- d\n- e',
+    fullText: 'x'.repeat(401),
     verbatim: true,
   });
   expect(refused.accepted).toBe(false);
   expect(refused.reason).toMatch(/^front_reply_too_long: Shorten/);
-  expect(refused.reason).toContain('at most 150 characters and 5 lines');
+  expect(refused.reason).toContain('at most 150 characters.');
   expect(service.publications.list(conversationId) ?? []).toHaveLength(0);
 });
 
@@ -1948,6 +1948,7 @@ test('a reply that answers hands the input to the full session with that answer 
   expect(said).toContain('<already-said>');
   expect(said).toContain('The build passed.');
   expect(said).not.toContain('Front');
+  expect(said).toMatch(/\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [^)]+\)/);
 });
 
 test('the hand-off tells the full session whether the reply answered or promised work', async () => {
