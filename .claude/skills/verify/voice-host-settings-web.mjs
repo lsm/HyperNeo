@@ -54,14 +54,16 @@ try {
     return field && field.value === '';
   });
   await expectCount(1);
+  await page.getByText('Key saved for api.deepgram.com').waitFor();
   await page.reload();
   await page.getByLabel('API key for api.deepgram.com', { exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.getByLabel('API key for api.deepgram.com', { exact: true }).inputValue(), '');
   await page.getByLabel('Remove API key for api.deepgram.com').click();
   await expectCount(0);
+  await page.getByText('Key removed for api.deepgram.com').waitFor();
   database.close();
   await context.close();
-  console.log(JSON.stringify({ screenshots: 4, uniqueHostFields: 2, passwordInputs: true, savedAndRemoved: true }));
+  console.log(JSON.stringify({ screenshots: 4, uniqueHostFields: 2, passwordInputs: true, savedAndRemoved: true, feedbackShown: true }));
 } finally {
   await browser.close();
 }

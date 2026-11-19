@@ -61,7 +61,10 @@ export function VoiceSettings() {
     setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
   }, [settings]);
 
-  const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
+  const save = async (
+    next: VoiceSettingsConfig,
+    options?: { silent?: boolean; successMessage?: string }
+  ) => {
     const { hasApiKey: _omitHasApiKey, ...payload } = next;
     const { hostKey: _omitHostKey, ...display } = next;
     setDraft(display);
@@ -71,8 +74,10 @@ export function VoiceSettings() {
     if (!options?.silent) setSaving(true);
     const run = async () => {
       try {
-        await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        const result = await updateGlobalSettings({ voice: payload }, { timeout: 120_000 });
+        if (!result.success) throw new Error('Failed to save voice settings');
         lastSaveFailedRef.current = false;
+        if (options?.successMessage) toast.success(options.successMessage);
       } catch (error) {
         setDraft(globalSettings.value?.voice ?? DEFAULT_VOICE);
         toast.error(error instanceof Error ? error.message : 'Failed to save voice settings');
@@ -124,7 +129,7 @@ export function VoiceSettings() {
     setHostKeys((keys) => ({ ...keys, [host]: '' }));
     void save(
       { ...draft, apiKey: undefined, hostKey: { host, ...(apiKey ? { apiKey } : {}) } },
-      { silent: true }
+      { silent: true, successMessage: `Key ${apiKey ? 'saved' : 'removed'} for ${host}` }
     );
   };
 
