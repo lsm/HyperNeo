@@ -105,6 +105,8 @@ try {
   sql.prepare("UPDATE neo_todos SET state='doing' WHERE id='todo'").run();
   const current = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(current.dispatched, true, JSON.stringify(current));
+  const currentAudit = sql.prepare("SELECT params_summary FROM mcp_audit_log WHERE tool_name='desktop.call' ORDER BY rowid DESC LIMIT 1").get() as { params_summary: string };
+  assert.equal(JSON.parse(currentAudit.params_summary).todo, 'todo');
   sql.prepare("UPDATE neo_todos SET state='blocked' WHERE id='todo'").run();
   const ambiguous = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(ambiguous.reason, 'todo_ambiguous');
@@ -115,8 +117,8 @@ try {
   assert.equal(finished.reason, 'todo_not_active');
   assert.equal(finished.dispatched, false);
   assert.equal(requests.length, 5);
-  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, blockedAllowed: true, pendingAllowed: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
-  console.log(`desktop.call journey PASS host_requests=4 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
+  writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, blockedAllowed: true, pendingAllowed: true, currentPreferred: true, ambiguousRefused: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
+  console.log(`desktop.call journey PASS host_requests=5 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
   await new Promise<void>(done => host.close(() => done()));
   await app.cleanup();

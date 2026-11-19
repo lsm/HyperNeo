@@ -14,10 +14,12 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test PATH="$PATH"
   bun .claude/skills/verify/desktop-call.ts "$RUN"
 ```
 
-Pass prints `desktop.call journey PASS host_requests=4 initial_audit_rows=2
-blocked_allowed=1 pending_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
+Pass prints `desktop.call journey PASS host_requests=5 initial_audit_rows=2
+blocked_allowed=1 pending_allowed=1 current_preferred=1 ambiguous_refused=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=12`: operations.describe lists every catalog tool.
 Approved unfinished todos remain enabled after a worker blocks or returns to todo;
 finished todos return `todo_not_active` without dispatching.
+An active doing todo takes precedence over a blocked todo, and multiple opted-in
+unfinished todos with none doing return `todo_ambiguous` without dispatching.
 The press_key description gives shifted-symbol guidance and names driver_error for unknown keys.
 A driver result with isError must come back as an MCP tool error (`isError: true`)
 with `ok: false, reason: driver_error`

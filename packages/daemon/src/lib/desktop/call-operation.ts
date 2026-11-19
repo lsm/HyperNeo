@@ -36,9 +36,11 @@ type Facts = {
   worker: string;
   workDir: string | null;
   finished?: boolean;
+  ambiguous?: boolean;
 };
 
 export function decideDesktopCall(facts: Facts) {
+  if (!facts.todo && facts.ambiguous) return refuse('todo_ambiguous');
   if (!facts.todo && facts.finished) return refuse('todo_not_active');
   if (!facts.todo || !facts.workDir) return refuse('desktop_not_enabled');
   return { value: { todo: facts.todo.id, worker: facts.worker, workDir: facts.workDir } };
@@ -70,8 +72,13 @@ export function createDesktopCallOperation(
         const session = options.getSession(worker);
         const rows = readDesktopTodos(db, worker);
         const todo = desktopOptIn(rows, worker);
+        const active = rows.filter((row) => row.active);
         return {
           todo,
+          ambiguous:
+            !active.some((row) => row.doing) &&
+            active.filter((row) => JSON.parse(row.named ?? '{}').desktopControl === true).length >
+              1,
           finished:
             !todo &&
             !rows.some((row) => row.active) &&
