@@ -170,6 +170,8 @@ async function checkSlowInterruptedDownload(compiledBinary: string, copilotVersi
   const mirror = await startMirror();
   try {
     const interrupted = await runBinary(binary, run, mirror.url);
+    if (!interrupted.stderr.includes('npm could not download the package'))
+      throw new Error(`Expected an npm download failure:\n${interrupted.stderr}`);
     if (interrupted.status === 0 || !interrupted.stderr.includes('cannot reach npm'))
       throw new Error(`Expected a named network failure:\n${interrupted.stderr}`);
     const kept = partialBytes(run);
