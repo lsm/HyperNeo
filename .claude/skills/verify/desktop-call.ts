@@ -100,11 +100,21 @@ try {
   sql.prepare("UPDATE neo_todos SET state='todo' WHERE id='todo'").run();
   const pending = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(pending.dispatched, true, JSON.stringify(pending));
+  sql.prepare("INSERT INTO neo_todos(id,ask_id,position,title,done_when,named,state,approved_at,created_at,updated_at) VALUES('older','ask',1,'Older task','Observed',?, 'blocked',?,?,?)").run(JSON.stringify({ desktopControl: true }), now, now, now);
+  sql.prepare('INSERT INTO neo_todo_sessions(todo_id,target,ref) VALUES(?,?,?)').run('older', JSON.stringify({ adapter: 'hyperneo' }), JSON.stringify({ adapter: 'hyperneo', id: worker }));
+  sql.prepare("UPDATE neo_todos SET state='doing' WHERE id='todo'").run();
+  const current = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(current.dispatched, true, JSON.stringify(current));
+  sql.prepare("UPDATE neo_todos SET state='blocked' WHERE id='todo'").run();
+  const ambiguous = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
+  assert.equal(ambiguous.reason, 'todo_ambiguous');
+  assert.equal(ambiguous.dispatched, false);
+  sql.prepare("UPDATE neo_todos SET state='done' WHERE id='older'").run();
   sql.prepare("UPDATE neo_todos SET state='done' WHERE id='todo'").run();
   const finished = JSON.parse((await call({ name: 'desktop.call', input })).content[0].text);
   assert.equal(finished.reason, 'todo_not_active');
   assert.equal(finished.dispatched, false);
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 5);
   writeFileSync(join(run, 'evidence/desktop-call.json'), JSON.stringify({ passed: true, hostRequests: requests.length, auditRows: audited.length, blockedAllowed: true, pendingAllowed: true, finishedRefused: true, driverErrorBody: true, rpcRefused: true, sessionDoorRefused: true, spoofRefused: true, unlistedRefused: true, unapprovedRefused: true, describedTools: listedTools.length }, null, 2));
   console.log(`desktop.call journey PASS host_requests=4 initial_audit_rows=2 blocked_allowed=1 pending_allowed=1 finished_refused=1 driver_error_body=1 refused_paths=5 described_tools=${listedTools.length}`);
 } finally {
