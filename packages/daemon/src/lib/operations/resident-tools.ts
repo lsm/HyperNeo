@@ -75,4 +75,7 @@ export const residentToolDescription = (superpipe({})('neo.resident.description'
     ['family', 'actions'],
     'description'
   )
-  .end('description') as (family: ResidentFamily, registry: Pick<OperationRegistry, 'get'>) => string;
+  .end('description') as (
+  family: ResidentFamily,
+  registry: Pick<OperationRegistry, 'get'>
+) => string;
