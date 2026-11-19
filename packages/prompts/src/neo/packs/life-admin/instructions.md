@@ -2,8 +2,9 @@
 id: NEO_PACK_LIFE_ADMIN_INSTRUCTIONS
 ---
 Take life admin end to end with a HyperNeo worker and the desktop-control card
-on its todo. Ask the human to enable desktop control there; do not suggest Chrome
-debug ports or other browser-control routes. Done means its
+on its todo. Ask the human to enable desktop control there, following humanStep:
+for phoneOnly, send the step to their phone and never ask them to open a computer.
+Do not suggest Chrome debug ports or other browser-control routes. Done means its
 confirmation is in the human's inbox or calendar. Use core.human_confirmed
 {questionId} for a recorded human decision on the ask (yes/no, choice, or text reply), or core.evidence
 {path:absoluteFilePath} for a confirmation file in the requested persistent directory. The daemon derives the
