@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { runMigration528 } from '../../../../../src/storage/schema/m528-work-start-record.ts';
+import { runMigration529 } from '../../../../../src/storage/schema/m529-work-start-record.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
-describe('runMigration528', () => {
+describe('runMigration529', () => {
   test('preserves legacy ownership while adding start-record fields', () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE work_started_sessions (
@@ -12,8 +12,8 @@ describe('runMigration528', () => {
     );
     INSERT INTO work_started_sessions VALUES ('codex', 'worker', 1, NULL, NULL, NULL, 'worker');
     INSERT INTO work_started_sessions VALUES ('codex', 'claimed', 2, NULL, NULL, 'todo', NULL);`);
-    runMigration528(db);
-    runMigration528(db);
+    runMigration529(db);
+    runMigration529(db);
     expect(db.prepare('SELECT id, kind FROM work_started_sessions ORDER BY id').all()).toEqual([
       { id: 'claimed', kind: null },
       { id: 'worker', kind: 'worker' },

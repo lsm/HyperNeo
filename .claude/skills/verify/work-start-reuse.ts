@@ -104,6 +104,17 @@ try {
   todos.bind('todo-card-refused', afterCardRefused.value.ref, Date.now());
   store.updateTodo(store.getTodo('todo-card-refused')!, { state: 'doing' }, 2);
   const first = await start('first', neo);
+  const record = db.prepare(`SELECT kind, started_by AS startedBy, ask_id AS askId, todo_id AS todoId,
+    machine, folder, harness FROM work_started_sessions WHERE adapter = 'hyperneo' AND id = ?`).get(first.id) as {
+      kind: string; startedBy: string; askId: string; todoId: string; machine: string; folder: string; harness: string;
+    };
+  assert.equal(record.kind, 'worker');
+  assert.equal(record.startedBy, `session:${neo.sessionId}`);
+  assert.equal(record.askId, 'synthetic-ask');
+  assert.equal(record.todoId, 'todo-plan');
+  assert.equal(record.machine, place.machine);
+  assert.equal(record.folder, folder);
+  assert.equal(record.harness, 'hyperneo');
   const questions = db.prepare("SELECT count(*) AS n FROM neo_pack_preference_proposals WHERE request_id LIKE 'core.sessionReuse:%'").get() as { n: number };
   assert.equal(questions.n, 1, 'the first eligible start opens a reuse question');
   await settle([first.id]);
@@ -134,7 +145,7 @@ try {
   store.addTodo('todo-build', 'synthetic-ask', { title: 'Build', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 3);
   const build = await start('build', neo, 'todo-build');
   const observed = {
-    first: { reused: first.reused },
+    first: { reused: first.reused, record },
     humanStart: { reused: byHuman.reused, newSession: byHuman.id !== first.id },
     neoSecond: { reused: second.reused, sameRefAsEarlier: [first.id, byHuman.id].includes(second.id), sessionsBefore: before, sessionsAfter: afterReuse },
     neoThirdAllLeased: { reused: third.reused, newSession: ![first.id, byHuman.id].includes(third.id), sessionsAfter: afterThird },

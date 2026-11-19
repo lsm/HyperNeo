@@ -4,7 +4,10 @@ import type { Database } from '../../storage/database.ts';
 import type { Database as RawDatabase } from '../../storage/sqlite-compat.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { gatewayFor } from '../../storage/db-gateway/db-gateway.ts';
-import { workStartedSessionReads } from '../../storage/repositories/work-started-sessions-worker.ts';
+import {
+  workStartedSessionReads,
+  workStartedSessionWrites,
+} from '../../storage/repositories/work-started-sessions-worker.ts';
 import { isNeoConversationSession } from './publication-read-operation.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import {
@@ -93,7 +96,15 @@ async function archiveSession(
       deps.remote
     );
   try {
-    return await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
+    const result = await route.local(ref, () => admitSessionArchive(ref, caller, deps.db, started));
+    if (result.ok)
+      await gatewayFor(deps.db.getDatabase()).call(
+        workStartedSessionWrites,
+        'recordArchived',
+        ref,
+        caller.principal === NEO_TODO_RELEASE_PRINCIPAL ? 'todo release' : 'archive requested'
+      );
+    return result;
   } catch (error) {
     return reject('unreachable', error instanceof Error ? error.message : String(error));
   }

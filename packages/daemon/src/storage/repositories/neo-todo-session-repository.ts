@@ -14,6 +14,7 @@ import {
   markWorkUnusable,
   readStartedWork,
   recordStartedWork,
+  recordWorkRelease,
 } from './work-started-sessions-worker.ts';
 import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -737,7 +738,6 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
-              EXISTS (SELECT 1 FROM work_started_sessions w WHERE w.adapter = json_extract(s.ref, '$.adapter') AND w.id = json_extract(s.ref, '$.id') AND w.role = 'worker') AS owned,
               (SELECT value_json FROM pack_facts WHERE todo_id = s.todo_id AND pack = 'core' AND key = 'release_pending') AS pending,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
                 WHERE json_extract(ot.named, '$.session') IS NOT NULL
@@ -768,7 +768,6 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         shared: number;
         humanNamed: number;
         releasedBy: string | null;
-        owned: number;
         pending: string | null;
       }[]
     ).map((row) => ({
@@ -778,20 +777,24 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       shared: row.shared === 1,
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
-      owned: row.owned === 1,
+      owned: readStartedWork(this.db, null, undefined, JSON.parse(row.ref) as WorkRef).length > 0,
       pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
 
-  fenceWorkerRelease(ref: WorkRef, now: number): 'fenced' | 'live' | 'not_started_by_us' {
+  fenceWorkerRelease(
+    ref: WorkRef,
+    now: number,
+    reason = 'finished todo'
+  ): 'fenced' | 'live' | 'not_started_by_us' {
     if (readStartedWork(this.db, null, undefined, ref).length === 0) return 'not_started_by_us';
-    return this.fenceRelease(ref, now) ? 'fenced' : 'live';
+    return this.fenceRelease(ref, now, reason) ? 'fenced' : 'live';
   }
 
-  fenceRelease(ref: WorkRef, now: number): boolean {
+  fenceRelease(ref: WorkRef, now: number, reason = 'finished todo'): boolean {
     if (this.doingTodoOn(ref, null, LIVE_TODO_STATES)) return false;
     if (this.liveTodo(this.startedFacts(ref)?.claimedBy ?? null)) return false;
-    recordStartedWork(this.db, ref, now, false, true);
+    recordWorkRelease(this.db, ref, now, reason);
     return true;
   }
 
