@@ -52,7 +52,7 @@ export function readCopilotTurnFacts(
   limit = 10,
   inputs: State['inputs'] = {}
 ): Result<{ turns: WorkTurnFact[] }> {
-  const turns: WorkTurnFact[] = [];
+  const turns: Omit<WorkTurnFact, 'cursor'>[] = [];
   for (const [inputId, input] of Object.entries(readCopilotInputs(file, id, inputs, () => false))) {
     const { at, endedAt, outcome } = input;
     if (
@@ -61,7 +61,8 @@ export function readCopilotTurnFacts(
       endedAt === undefined ||
       !outcome ||
       !Number.isFinite(at) ||
-      !Number.isFinite(endedAt)
+      !Number.isFinite(endedAt) ||
+      endedAt < 0
     )
       continue;
     const finalUrls = readTurnUrls([input.replyReport]);
@@ -74,14 +75,19 @@ export function readCopilotTurnFacts(
       urls: finalUrls,
       finalUrls,
       complete: input.replyAvailability === 'complete',
-      cursor: JSON.stringify([id, endedAt, inputId]),
     });
   }
   turns.sort((a, b) => a.endedAt - b.endedAt || a.id.localeCompare(b.id));
-  const offset = cursor ? turns.findIndex((turn) => turn.cursor === cursor) + 1 : 0;
+  let consumed = 0;
+  const indexed = turns.map((turn, index) => {
+    const seq = turn.endedAt;
+    consumed = turns[index - 1]?.endedAt === seq ? consumed + 1 : 0;
+    return { ...turn, cursor: JSON.stringify({ seq, consumed }) };
+  });
+  const offset = cursor ? indexed.findIndex((turn) => turn.cursor === cursor) + 1 : 0;
   if (cursor && !offset)
     return reject('not_found', 'Copilot turn cursor is outside retained history.');
-  return { ok: true, value: { turns: turns.slice(offset, offset + limit) } };
+  return { ok: true, value: { turns: indexed.slice(offset, offset + limit) } };
 }
 
 export function readCopilotObservations(

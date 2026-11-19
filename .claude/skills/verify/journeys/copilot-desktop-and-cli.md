@@ -25,6 +25,10 @@ schema after the fixture renames the session table. In `both` mode, schema
 drift preserves CLI matches with an unavailable note. A search with no
 fallback matches reports the Desktop error as unreachable.
 
+Replay the cursor from the first completed turn to read the next turn, even
+when both ended at the same time. With schema drift, unknown transcript and
+input-marker lookups return `not_found` in both Desktop modes.
+
 Desktop exposes find, status, read, and turns through the driver. The public
 launch link opens an App confirmation or draft and supplies no submitted-turn
 receipt. Desktop mutations are unsupported, and an attended App run is still

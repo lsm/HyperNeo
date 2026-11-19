@@ -99,6 +99,7 @@ export function createCopilotDesktopAdapter(
     if (session?.id !== id || !isAbsolute(session.folder)) return null;
     return join(home, '.copilot', 'session-state', id, 'events.jsonl');
   };
+  const readableHistory = (id: string) => historyFile(id).catch(() => null);
   return {
     id: COPILOT_CLIENT.id,
     capabilities: ['find', 'status', 'turns'],
@@ -114,11 +115,11 @@ export function createCopilotDesktopAdapter(
     },
     find: (query) => find(query, read, machine),
     async readTurns(id, around, before, after, cursor) {
-      const file = await historyFile(id);
+      const file = await readableHistory(id);
       return file ? readCopilotHistory(file, id, around, before, after, cursor) : null;
     },
     async readInput(id, marker) {
-      const file = await historyFile(id);
+      const file = await readableHistory(id);
       return file ? readInput(file, id, marker) : null;
     },
     async turns(ref, cursor, limit) {
