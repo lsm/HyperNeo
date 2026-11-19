@@ -29,6 +29,7 @@ type ReuseRelease =
   | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept };
 const COMPACT_RETRY_MS = 5 * 60_000;
 const nextCompaction = new Map<string, number>();
+let compactionInFlight = false;
 
 function planKeptCompaction({
   ref,
@@ -172,7 +173,7 @@ export function readNeoTodoArchive(
 }
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
-  .input(['row', 'invoke', 'sessions', 'workerCompact', 'now'])
+  .input(['row', 'invoke', 'sessions', 'workerCompact', 'now', 'warn'])
   .pipe(
     async (row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
       if (!row.releasedBy) return { value: row };
@@ -203,24 +204,34 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   )
   .pipe(planKeptCompaction, 'reuse', 'compaction')
   .pipe(
-    async (plan: ReuseRelease, sessions: NeoTodoSessionRepository, now: number) => {
+    (
+      plan: ReuseRelease,
+      sessions: NeoTodoSessionRepository,
+      now: number,
+      warn: (message: string, error: unknown) => void
+    ) => {
       if (!('compact' in plan)) return plan;
       const key = neoWorkerKey(plan.ref)!;
-      if ((nextCompaction.get(key) ?? 0) > now) return { reason: plan.kept };
-      nextCompaction.set(key, Infinity);
+      if (compactionInFlight || (nextCompaction.get(key) ?? 0) > now) return { reason: plan.kept };
+      compactionInFlight = true;
       const at = Date.now();
-      try {
-        const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
-        if (result.ok && result.value.compacted) {
-          await sessions.recordWorkerCompacted(plan.ref, at);
-          nextCompaction.delete(key);
+      const run = async () => {
+        let confirmed = false;
+        try {
+          const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
+          if (result.ok && result.value.compacted) {
+            await sessions.recordWorkerCompacted(plan.ref, at);
+            confirmed = true;
+          }
+        } finally {
+          if (!confirmed) nextCompaction.set(key, Date.now() + COMPACT_RETRY_MS);
+          compactionInFlight = false;
         }
-      } finally {
-        if (nextCompaction.has(key)) nextCompaction.set(key, Date.now() + COMPACT_RETRY_MS);
-      }
+      };
+      void run().catch((error) => warn(`Worker ${key} compaction failed`, error));
       return { reason: plan.kept };
     },
-    ['compaction', 'sessions', 'now'],
+    ['compaction', 'sessions', 'now', 'warn'],
     'result:release'
   )
   .pipe(
@@ -256,7 +267,8 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   invoke: Invoke,
   sessions: NeoTodoSessionRepository,
   workerCompact: WorkerCompact | undefined,
-  now: number
+  now: number,
+  warn: (message: string, error: unknown) => void
 ) => Promise<Released | Kept | Pending>;
 
 export async function releaseNeoTodoWorkers(
@@ -274,7 +286,7 @@ export async function releaseNeoTodoWorkers(
   );
   for (const row of rows) {
     try {
-      const outcome = await releaseWorker(row, invoke, sessions, workerCompact, now).catch(
+      const outcome = await releaseWorker(row, invoke, sessions, workerCompact, now, warn).catch(
         (error: unknown): Pending => ({
           code: 'error',
           pending: error instanceof Error ? error.message : String(error),

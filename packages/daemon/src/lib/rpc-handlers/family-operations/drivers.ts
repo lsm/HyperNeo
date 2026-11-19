@@ -215,7 +215,7 @@ export function hyperneoSessionControl(context: FamilyOperationContext): Hyperne
   const { sessionManager, internalEventBus, db } = context.deps;
   return {
     compact: async (ref) => {
-      const session = sessionManager.getCachedSession(ref.id);
+      const session = await sessionManager.getSessionForControl(ref.id);
       if (!session || session.getSessionData().status === 'archived')
         return { ok: true, value: { compacted: false } };
       return compactHyperneoWorker(session, (complete) =>

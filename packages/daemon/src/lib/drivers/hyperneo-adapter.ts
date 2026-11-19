@@ -97,27 +97,38 @@ export interface HyperneoSessionRow {
 }
 
 export async function compactHyperneoWorker(
-  session: Pick<AgentSession, 'getProcessingState' | 'messageQueue'>,
+  session: Pick<AgentSession, 'getProcessingState' | 'messageQueue' | 'ensureQueryStarted'>,
   onCompacted: (listener: () => void) => () => void
 ): Promise<Result<{ compacted: boolean }>> {
   const queue = session.messageQueue;
-  if (
-    session.getProcessingState().status !== 'idle' ||
-    queue.size() > 0 ||
-    queue.hasOutstandingInternalCompaction()
-  )
-    return reject('busy', 'The HyperNeo session still has work to process.');
-  if (!queue.isRunning()) return { ok: true, value: { compacted: false } };
+  const idle = () =>
+    session.getProcessingState().status === 'idle' &&
+    queue.size() === 0 &&
+    !queue.hasOutstandingInternalCompaction();
+  if (!idle()) return reject('busy', 'The HyperNeo session still has work to process.');
 
   let complete!: (compacted: boolean) => void;
   const completed = new Promise<boolean>((resolve) => {
     complete = resolve;
   });
-  const unsubscribe = onCompacted(() => complete(true));
-  const timeout = setTimeout(() => complete(false), 60_000);
+  const startup = new AbortController();
   const id = crypto.randomUUID();
+  let enqueued = false;
+  const unsubscribe = onCompacted(() => {
+    if (enqueued) complete(true);
+  });
+  const timeout = setTimeout(() => {
+    startup.abort();
+    complete(false);
+  }, 60_000);
   try {
-    void queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true }).catch(() => {
+    const enqueue = async () => {
+      if (!queue.isRunning()) await session.ensureQueryStarted(startup.signal);
+      if (startup.signal.aborted || !queue.isRunning() || !idle()) return complete(false);
+      enqueued = true;
+      await queue.enqueueWithId(id, '/compact', true, { durable: true, prepend: true });
+    };
+    void enqueue().catch(() => {
       if (!queue.hasOutstandingInternalCompaction()) complete(false);
     });
     return { ok: true, value: { compacted: await completed } };

@@ -35,22 +35,24 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 describe('compactHyperneoWorker', () => {
-  test('queues an internal compact and resolves from the session completion event', async () => {
+  test('wakes a stopped query queue and waits for the compact boundary', async () => {
     const messageQueue = new MessageQueue();
-    messageQueue.start();
-    const enqueued = vi.fn();
-    messageQueue.onMessageEnqueued = (id) => enqueued(messageQueue.getPendingOrInFlightContent(id));
+    const ensureQueryStarted = vi.fn(async () => messageQueue.start());
+    const enqueued = Promise.withResolvers<unknown>();
+    messageQueue.onMessageEnqueued = (id) =>
+      enqueued.resolve(messageQueue.getPendingOrInFlightContent(id));
     let complete = () => {};
     const unsubscribe = vi.fn();
     try {
       const pending = compactHyperneoWorker(
-        { messageQueue, getProcessingState: () => ({ status: 'idle' }) },
+        { messageQueue, ensureQueryStarted, getProcessingState: () => ({ status: 'idle' }) },
         (listener) => {
           complete = listener;
           return unsubscribe;
         }
       );
-      expect(enqueued.mock.calls).toEqual([['/compact']]);
+      expect(await enqueued.promise).toBe('/compact');
+      expect(ensureQueryStarted).toHaveBeenCalledTimes(1);
       complete();
       expect(await pending).toEqual({ ok: true, value: { compacted: true } });
       expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -62,9 +64,11 @@ describe('compactHyperneoWorker', () => {
   test('leaves the queue alone while a worker has a live turn', async () => {
     const messageQueue = new MessageQueue();
     const subscribe = vi.fn(() => () => {});
+    const ensureQueryStarted = vi.fn(async () => {});
     const result = await compactHyperneoWorker(
       {
         messageQueue,
+        ensureQueryStarted,
         getProcessingState: () => ({ status: 'processing', messageId: 'live', phase: 'streaming' }),
       },
       subscribe
@@ -72,6 +76,7 @@ describe('compactHyperneoWorker', () => {
     expect(result).toMatchObject({ ok: false, reason: 'busy' });
     expect(messageQueue.size()).toBe(0);
     expect(subscribe).not.toHaveBeenCalled();
+    expect(ensureQueryStarted).not.toHaveBeenCalled();
   });
 });
 
