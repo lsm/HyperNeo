@@ -23,7 +23,7 @@ The default place and an explicit copy share one adapter/place lane. The unit
 regression also overlaps a direct start with queue.fill; a rejected start releases
 its lane, while other places and engines remain independent.
 
-Numbered names and lanes cover local starts only. The forwarding regression
+Numbered names and lanes cover starts on the local daemon only. The forwarding regression
 preserves an explicit target.name, or the pre-existing title when absent, and
 asserts that neither the local inventory nor its lane is consulted.
 

@@ -19,7 +19,10 @@ import { runMigration465 } from '../../../../src/storage/schema/m465-work-unusab
 import { runMigration517 } from '../../../../src/storage/schema/m517-work-released';
 import { runMigration519 } from '../../../../src/storage/schema/m519-work-started-role';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readStartedWork, recordStartedWork } from '../../../../src/storage/work-started-sessions';
+import {
+  readStartedWork,
+  recordStartedWork,
+} from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const at = '2026-10-24T05:00:00.000Z';
 const place = { machine: 'imac', folder: '/Users/me/focus/heron', name: 'heron' };

@@ -9,7 +9,7 @@ import {
   readReusableWorkers,
   recordStartedWork,
   recordWorkerStarted,
-} from '../../../../src/storage/work-started-sessions.ts';
+} from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 
 describe('readFreeWorkers', () => {
   let db: Database;
@@ -263,6 +263,30 @@ describe('readFreeWorkers', () => {
       store.settleAsk(store.getAsk('ask')!, 'done', 'Observed', 300);
       expect(readReusableWorkers(db, 'claude-desktop').get('shared')?.settledAt).toBe(300);
     });
+  });
+});
+
+describe('retired session strategy migration', () => {
+  test('deletes only retired coding preferences and preserves copied settings', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    db.exec(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'global', '', 'sessionStrategy', '"per_pr"', 'human', 1),
+      ('coding', 'repo', 'example/repo', 'sessionStrategy', '"per_task"', 'human', 1),
+      ('coding', 'project', 'orphan', 'sessionStrategy', '"long_lived"', 'human', 1),
+      ('coding', 'global', '', 'watchedRepos', '[]', 'human', 1),
+      ('core', 'project', 'project', 'sessionReuse', '"per_todo"', 'human', 1),
+      ('other', 'global', '', 'sessionStrategy', '"other"', 'human', 1);
+      DELETE FROM migration_markers WHERE key = 'migration_528'`);
+    runMigrations(db, () => {});
+    const rows = db.prepare('SELECT pack, key FROM neo_pack_preferences ORDER BY pack, key').all();
+    expect(rows).toEqual([
+      { pack: 'coding', key: 'watchedRepos' },
+      { pack: 'core', key: 'sessionReuse' },
+      { pack: 'other', key: 'sessionStrategy' },
+    ]);
+    db.close();
   });
 });
 

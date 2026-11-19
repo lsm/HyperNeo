@@ -8,10 +8,15 @@ bun "$(dirname "$0")/rpc.ts" operations.describe '{"name":"neo.question.ask"}' \
   > "$RUN/evidence/question-description.json"
 bun -e '
 const { reply } = await Bun.file(process.argv[1]).json();
-const guidance = `Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option.`;
-if (!reply?.found || !reply.description.includes(`choice: 1-6 options, multiple for pick-any. Each option is an action the human can take; one option confirms that action. A card left open is undecided, so no option may mean later or not now: when the human decides a step must wait, record that with neo.todo.hold. The card labels them A, B, C… in order and the human may answer by letter, so keep letters out of the option text by default. When the text names approaches by letter, pass labels with one distinct uppercase letter A–F per option, matching those names. ${guidance}`)) {
-  console.error("FAIL: discovered neo.question.ask does not explain option letters and the built-in chat reply after choice.");
-  process.exit(1);
+if (!reply?.found) throw new Error("neo.question.ask is missing from discovery");
+for (const phrase of [
+  "one option confirms",
+  "multiple enables pick-any",
+  "accepts replies by number",
+  "Use Reply in chat for free text",
+  "omit catch-all and defer options",
+]) {
+  if (!reply.description.includes(phrase)) throw new Error(`Missing choice guidance: ${phrase}`);
 }
-console.log(`PASS: discovered neo.question.ask: ${reply.description}`);
+console.log("PASS: numbered choices, confirmation and built-in chat reply");
 ' "$RUN/evidence/question-description.json"

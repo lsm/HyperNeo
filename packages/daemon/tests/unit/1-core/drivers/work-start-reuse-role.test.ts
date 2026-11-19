@@ -10,7 +10,7 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readReusableWorkers,
   recordWorkerStarted,
-} from '../../../../src/storage/work-started-sessions';
+} from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 

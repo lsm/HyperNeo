@@ -63,6 +63,7 @@ struct Drivers {
     records: PathBuf,
     descriptor: PathBuf,
     sidecar: peer::ChildSlot,
+    desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -95,12 +96,13 @@ impl Control {
         binary: std::io::Result<PathBuf>,
         verification_path: String,
         sidecar: peer::ChildSlot,
+        desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Option<Self> {
         let (Some(base), Ok(binary)) = (base, binary) else {
             log::warn!("Desktop control unavailable: startup paths unavailable");
             return None;
         };
-        match Self::bind(base, binary, verification_path, sidecar).await {
+        match Self::bind(base, binary, verification_path, sidecar, desktop_ready).await {
             Ok(control) => control,
             Err(error) => {
                 log::warn!("Desktop control unavailable: {error}");
@@ -113,6 +115,7 @@ impl Control {
         binary: PathBuf,
         verification_path: String,
         sidecar: peer::ChildSlot,
+        desktop_ready: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Result<Option<Self>> {
         let directory = base.join("desktop");
         std::fs::DirBuilder::new()
@@ -163,6 +166,7 @@ impl Control {
             descriptor: base.join("runtime.json"),
             records: directory,
             sidecar,
+            desktop_ready,
         });
         let state = drivers.clone();
         let task = tokio::spawn(async move {
@@ -467,6 +471,15 @@ impl Drivers {
             && record::ensure_enabled(&self.records.join("workers").join(&request.worker)).is_err()
         {
             return Err("Desktop worker is stopped".into());
+        }
+        if request.action == "dispatch" && !(self.desktop_ready)() {
+            return Ok(finish(
+                Value::Null,
+                Value::Null,
+                "refused",
+                json!("desktop_permissions_required"),
+                false,
+            ));
         }
         if request.action == "dispatch" && !unscoped_windows {
             let tool = request.tool.as_deref().unwrap_or_default();
@@ -798,6 +811,7 @@ mod peer_tests {
             records: directory.path().into(),
             descriptor: directory.path().join("missing-runtime.json"),
             sidecar: Arc::new(StdMutex::new(Some(child))),
+            desktop_ready: Arc::new(|| true),
         };
         assert_eq!(wait_unreaped(pid).unwrap(), (Some(0), None));
         assert!(drivers.authorized(pid));

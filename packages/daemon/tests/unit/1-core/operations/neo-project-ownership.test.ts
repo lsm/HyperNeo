@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/packs/coding/project-mirror-async';
 import { mergePlaceGroups } from '../../../../src/lib/drivers/places';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types';
-import { recordStartedWork } from '../../../../src/storage/work-started-sessions';
+import { recordStartedWork } from '../../../../src/storage/repositories/work-started-sessions-worker';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { createTestDb } from '../../../helpers/database';
 
