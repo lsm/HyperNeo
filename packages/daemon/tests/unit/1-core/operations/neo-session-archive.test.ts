@@ -125,6 +125,29 @@ describe('neo.session.archive', () => {
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
   });
 
+  test("checks Neo's started-session record through the database gateway", async () => {
+    const raw = db.getDatabase();
+    const prepare = raw.prepare.bind(raw);
+    const direct: string[] = [];
+    const watched = async (call: () => Promise<unknown>) => {
+      raw.prepare = ((sql: string) => {
+        if (sql.includes('work_started_sessions') && !raw.inTransaction) direct.push(sql);
+        return prepare(sql);
+      }) as typeof raw.prepare;
+      try {
+        return await call();
+      } finally {
+        raw.prepare = prepare;
+      }
+    };
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({
+      value: { ok: false, reason: 'not_started_by_us' },
+    });
+    recordWorkerStarted(raw, ref);
+    expect(await watched(() => invoke(ref, caller))).toMatchObject({ value: { ok: true } });
+    expect(direct).toEqual([]);
+  });
+
   test('forwards a remote Neo archive without a local ownership record', async () => {
     const target = { ...ref, daemon: 'remote' };
     expect(await invoke(target, caller)).toMatchObject({ value: { ok: true } });
