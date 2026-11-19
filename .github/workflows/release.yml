@@ -1,14 +1,14 @@
 # Release - Build, publish to npm, and create GitHub Release
 #
-# Triggered by version tags (v*). Waits for CI to pass on the tagged
-# commit before building platform binaries and publishing to npm.
+# Triggered by version tags (v*). Requires a successful dev CI run for the
+# tagged commit before building platform binaries and publishing to npm.
 #
 # Also triggerable manually (workflow_dispatch) as a build-only dry run:
 # with the `publish` input off, the build/package jobs run (validating new
 # targets like Windows) but nothing reaches npm or the GitHub Release.
 #
 # Flow:
-# 1. Wait for CI workflow to pass on this commit (handles race conditions)
+# 1. Verify the completed dev CI run for this commit and tag ratchets
 # 2. Build binaries for all platforms (5 targets)
 # 3. Package into platform-specific npm packages
 # 4. Publish to npm registry (Trusted Publishing via OIDC)
@@ -29,12 +29,13 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   # ============================================
   # WAIT FOR CI
   # Ensure the tagged commit has passed all CI checks.
-  # If CI is still running, wait for it to complete.
+  # Missing or unfinished CI evidence blocks publication.
   # ============================================
 
   wait-for-ci:
@@ -110,54 +111,30 @@ jobs:
           fi
           echo "Dispatched publish anchored to tag $TAG"
 
-      - name: Wait for CI to pass
-        if: github.event_name == 'push'
-        run: |
-          echo "Waiting for CI workflow to pass on commit $GITHUB_SHA..."
-
-          # Wait for the tag-triggered CI run to appear (may not have started
-          # yet if the tag was pushed right after the commit). Only the tag
-          # run is safe to wait on: dev-push runs share the ci-refs/heads/dev
-          # concurrency group and can be cancelled mid-run by newer dev
-          # pushes, which would abort this release. The tag run has its own
-          # group and is never cancelled by dev traffic. Filtering on the
-          # push event matters too: a workflow_dispatch on the same tag ref
-          # reports the same headBranch (e.g. a manual dispatch)
-          # but is not the release evidence run.
-          for attempt in $(seq 1 30); do
-            RUN_ID=$(gh run list \
-              --workflow=main.yml \
-              --commit="$GITHUB_SHA" \
-              --event push \
-              --json databaseId,headBranch \
-              --jq "[.[] | select(.headBranch == \"$GITHUB_REF_NAME\")][0].databaseId // empty")
-
-            if [ -n "$RUN_ID" ]; then
-              echo "Found tag-triggered CI run: $RUN_ID"
-              break
-            fi
-
-            echo "No tag-triggered CI run found yet, waiting... (attempt $attempt/30)"
-            sleep 10
-          done
-
-          if [ -z "$RUN_ID" ]; then
-            echo "ERROR: No tag-triggered CI workflow run found for commit $GITHUB_SHA"
-            echo "Ensure the commit was pushed to dev before tagging and that"
-            echo "main.yml at the tagged commit triggers on v* tags"
-            exit 1
-          fi
-
-          # Wait for the run to complete (exits 0 on success, non-zero on failure)
-          echo "Watching CI run $RUN_ID..."
-          gh run watch "$RUN_ID" --exit-status || {
-            echo "ERROR: CI workflow failed. Cannot release."
-            exit 1
-          }
-
-          echo "CI passed! Proceeding with release."
+      - name: Verify exact-commit dev CI
+        if: github.event_name == 'push' || inputs.publish == true
+        run: bash scripts/release-ci-gate.sh "$GITHUB_SHA"
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Setup Bun for tag ratchets
+        if: github.event_name == 'push' || inputs.publish == true
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies for tag ratchets
+        if: github.event_name == 'push' || inputs.publish == true
+        run: bun install --frozen-lockfile
+
+      - name: Verify tag ratchets against the first parent
+        if: github.event_name == 'push' || inputs.publish == true
+        env:
+          DB_RATCHET_BASE: ${{ github.sha }}^1
+        run: |
+          bun run check:db-main-thread
+          bun run check:get-database
+          bun run check:pipeline-ratchet
 
   # ============================================
   # RELEASE BUILD

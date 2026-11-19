@@ -25,9 +25,17 @@ check fail '[]'
 check fail "[${good/\"success\"/\"failure\"}]"
 check fail "[${good/\"success\"/\"cancelled\"}]"
 check fail "[${good/\"completed\"/\"in_progress\"}]"
+check fail "[${good/\"success\"/null}]"
 check fail "[${good/\"dev\"/\"other\"}]"
 check fail "[${good/\"push\"/\"workflow_dispatch\"}]"
 check fail "[${good/$EXPECTED_SHA/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}]"
 check fail "[${good/\"success\"/\"failure\"},$good]"
 check fail 'not json'
+if bash "$root/scripts/release-ci-gate.sh" not-a-sha > "$run/output" 2>&1; then
+  echo 'Invalid SHA was accepted'; exit 1
+fi
+rm "$GH_FIXTURE"
+if bash "$root/scripts/release-ci-gate.sh" "$EXPECTED_SHA" > "$run/output" 2>&1; then
+  echo 'Failed GitHub lookup was accepted'; exit 1
+fi
 echo 'PASS: only the latest completed successful dev push for the exact commit is accepted'

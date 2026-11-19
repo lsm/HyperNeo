@@ -24,7 +24,6 @@
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | none (only the path filter and the gate run)    |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
-# | Push of a v* tag                      | check + unit + online + web (no path filter)    |
 # | workflow_dispatch                     | mocked CI + build                               |
 #
 # NOTE: Real-API daemon shards are manual-only in real-api-tests.yml.
@@ -43,16 +42,13 @@ name: CI
 on:
   push:
     branches: [dev]
-    tags: ['v*']
   pull_request:
     branches: [dev]
   workflow_dispatch:
 
 # One group per ref. A PR's new head cancels the run for its old head, which
-# frees the account's shared runners. Dev pushes, tags and manual runs are
-# never cancelled mid-run: a newer push waits for the running one. Tag runs
-# land in their own group (ci-refs/tags/<tag>-<event>), so a release's CI
-# evidence run is never touched by dev pushes or a manual run on the tag.
+# frees the account's shared runners. Dev pushes and manual runs are never
+# cancelled mid-run: a newer push waits for the running one.
 concurrency:
   group: ci-${{ github.ref }}${{ github.ref_type == 'tag' && format('-{0}', github.event_name) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -131,12 +127,8 @@ jobs:
         with:
           fetch-depth: ${{ github.ref_type == 'tag' && 2 || 1 }}
 
-      # Give the handler gate its comparison tip. On pull_request the checkout
-      # only fetches refs/pull/N/merge; on workflow_dispatch it only fetches the
-      # dispatched branch; on a tag push it only fetches the tag. Push-to-dev
-      # needs no extra fetch (origin/dev == HEAD, so the gate diff is empty
-      # and it no-ops); a tag at the dev tip no-ops the same way, and a tag
-      # behind the tip diffs against the post-tag delta.
+      # Give the handler gate its comparison tip for pull requests and
+      # manually dispatched runs. Push-to-dev already has origin/dev.
       - name: Fetch base branch for the space-task handler gate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
         run: git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
@@ -222,10 +214,10 @@ jobs:
       - name: Test CI gate script
         run: bun run test:ci-gate
 
-      # Folded in from the former test-cli job: ~2s of tests that used to occupy
-      # a whole runner. Gated to the same events test-cli ran on (push to dev
-      # or a release tag, workflow_dispatch) — skipped on PRs, exactly as
-      # before; tag pushes run it so the release evidence run covers it.
+      - name: Test release CI evidence gate
+        run: bash scripts/test-release-ci-gate.sh
+
+      # CLI tests run on dev pushes and manual CI dispatches, not PRs.
       - name: Run CLI tests
         if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch'
         working-directory: packages/cli
