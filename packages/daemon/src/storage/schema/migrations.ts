@@ -1,3 +1,4 @@
+import { runMigration528 } from './m528-retire-session-strategy.ts';
 import { runMigration526 } from './m526-neo-front-failure-reason.ts';
 import { runMigration527 } from './m527-neo-question-option-details.ts';
 import { runMigration500 } from './m500-paired-device-owner.ts';
@@ -1089,6 +1090,7 @@ export function runMigrations(
   run(migrationMarkerKey(525), () => runMigration525(db));
   run(migrationMarkerKey(526), () => runMigration526(db));
   run(migrationMarkerKey(527), () => runMigration527(db));
+  run(migrationMarkerKey(528), () => runMigration528(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

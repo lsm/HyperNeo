@@ -143,6 +143,9 @@ describe('pack settings operations', () => {
     expect(await invoke('pack.preferences.list', { pack: 'coding' })).toMatchObject({
       value: { preferences: [watch] },
     });
+    expect(await invoke('pack.preferences.list', {})).toMatchObject({
+      value: { preferences: [watch] },
+    });
   });
   test('the MCP snapshot has no packPreferences', async () => {
     expect(await invoke('pack.preferences.set', setting)).toMatchObject({ value: { ok: true } });
