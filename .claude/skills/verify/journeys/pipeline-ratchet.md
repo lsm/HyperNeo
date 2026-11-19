@@ -6,6 +6,7 @@ The user surface is the CI quality command. Run from the checkout root after
 ```bash
 bun run check:pipeline-ratchet
 bun run test:pipeline-ratchet
+bun run test:ci-ratchet-base
 ```
 
 The first prints all four counts and exits zero at the committed baseline. The
@@ -25,3 +26,9 @@ The reader follows direct local pipeline bindings. Forwarded names and routes it
 cannot follow count as unreadable; a literal pipeline found in another lexical
 scope does not establish a route. It compares the baseline with `DB_RATCHET_BASE`
 (or `origin/dev`) so a source change cannot raise the ceiling by editing JSON.
+
+CI selects the previous dev commit on a dev push, the tagged commit's first parent on a tag
+push, and the current dev tip for pull requests and manual dispatches. The tag
+fixture advances dev to a lower baseline, then requires the earlier tag to pass
+against its first parent while the later dev comparison rejects it. It also checks
+that raising the baseline in a tagged commit is still refused.

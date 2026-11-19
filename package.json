@@ -59,6 +59,7 @@
     "check:pipeline-ratchet": "bun scripts/check-pipeline-ratchet.ts",
     "compare:pipeline-verdicts": "bun scripts/pipeline-verdict-compare.ts",
     "test:pipeline-ratchet": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-pipeline-ratchet.test.ts",
+    "test:ci-ratchet-base": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-ratchet-base.test.ts",
     "test:test-types": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-test-types.test.ts",
     "api:surface": "bun scripts/api-surface.ts",
     "check:api-surface": "bun scripts/api-surface.ts --check",
