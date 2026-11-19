@@ -191,7 +191,9 @@ export function neoChoiceByNumber(
   return picked.every((option) => option !== undefined) &&
     (question.multiple || picked.length === 1)
     ? (picked as string[])
-    : 'invalid';
+    : question.options.includes(words.trim())
+      ? [words.trim()]
+      : 'invalid';
 }
 
 export interface NeoReplyTo {
