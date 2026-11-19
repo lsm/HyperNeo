@@ -116,6 +116,14 @@ const audit = () =>
     timestamp: number;
   }>;
 
+test('desktop.call reports when the Desktop app is not connected', async () => {
+  await new Promise<void>((done) => server.close(() => done()));
+  const outcome = await call();
+  expect(outcome).toMatchObject({
+    value: { ok: false, reason: 'desktop_app_not_connected', dispatched: false },
+  });
+});
+
 test.each(['universal_read', 'direct_task_worker'] as const)(
   'in-process MCP dispatch from a %s todo worker uses only its session and workspace',
   async (role) => {

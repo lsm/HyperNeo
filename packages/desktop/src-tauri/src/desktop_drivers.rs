@@ -334,6 +334,9 @@ impl Drivers {
                     "hold" => "hold",
                     "panic" => "panic",
                     "real" => "real",
+                    "mock-allow" => "mock-allow",
+                    "mock-deny" => "mock-deny",
+                    "mock-hold" => "mock-hold",
                     _ => "deny",
                 };
                 grants::ASKS.lock().unwrap().1.clear();
@@ -380,11 +383,20 @@ impl Drivers {
                     "resolve" => {
                         if let Err(reason) = grants::check(bundle, requirement, class) {
                             let reason = if reason == "app_action_not_authorized" {
-                                grants::ask_owner(bundle, requirement, class)
+                                let (bundle, requirement, class) =
+                                    (bundle.to_owned(), requirement.to_owned(), class.to_owned());
+                                tokio::task::spawn_blocking(move || {
+                                    grants::ask_owner(&bundle, &requirement, &class)
+                                })
+                                .await
+                                .unwrap_or("guards_unavailable")
                             } else {
                                 reason
                             };
-                            result = json!({"reason": reason, "class": class, "bundle_id": bundle});
+                            if reason != "allowed" {
+                                result =
+                                    json!({"reason": reason, "class": class, "bundle_id": bundle});
+                            }
                         }
                     }
                     #[cfg(test)]
@@ -415,12 +427,18 @@ impl Drivers {
         let mut bundle = Value::Null;
         let mut class = Value::Null;
         let mut observed = Value::Null;
+        let unscoped_windows = request.action == "dispatch"
+            && request.tool.as_deref() == Some("list_windows")
+            && request
+                .arguments
+                .as_ref()
+                .is_none_or(|args| args["pid"].is_null() && args["app"].is_null());
         if request.action == "dispatch"
             && record::ensure_enabled(&self.records.join("workers").join(&request.worker)).is_err()
         {
             return Err("Desktop worker is stopped".into());
         }
-        if request.action == "dispatch" {
+        if request.action == "dispatch" && !unscoped_windows {
             let tool = request.tool.as_deref().unwrap_or_default();
             let arguments = request.arguments.clone().unwrap_or(Value::Null);
             let resolved = target::resolve(tool, &arguments, request.instance.as_ref());
@@ -439,11 +457,21 @@ impl Drivers {
                 match grants::check(bundle.as_str().unwrap_or_default(), requirement, class_name) {
                     Ok(()) => Value::Null,
                     Err(reason) if reason == "app_action_not_authorized" => {
-                        json!(grants::ask_owner(
-                            bundle.as_str().unwrap_or_default(),
-                            requirement,
-                            class_name
-                        ))
+                        let (app, requirement, class_name) = (
+                            bundle.as_str().unwrap_or_default().to_owned(),
+                            requirement.to_owned(),
+                            class_name.to_owned(),
+                        );
+                        let answer = tokio::task::spawn_blocking(move || {
+                            grants::ask_owner(&app, &requirement, &class_name)
+                        })
+                        .await
+                        .unwrap_or("guards_unavailable");
+                        if answer == "allowed" {
+                            Value::Null
+                        } else {
+                            json!(answer)
+                        }
                     }
                     Err(reason) => json!(reason),
                 }
@@ -507,7 +535,7 @@ impl Drivers {
                         request.arguments.as_ref().unwrap_or(&Value::Null),
                         observed.get("instance"),
                     );
-                    if current["value"] != observed {
+                    if !unscoped_windows && current["value"] != observed {
                         let reply =
                             finish(bundle, class, "refused", json!("target_mismatch"), false);
                         log::info!(

@@ -34,6 +34,8 @@ type Refusal =
   | 'target_mismatch'
   | 'app_action_not_authorized'
   | 'app_action_declined'
+  | 'waiting_for_owner'
+  | 'owner_declined'
   | 'app_not_grantable'
   | 'guards_unavailable';
 type Context = { reason: Refusal; class?: string; app_id?: string };
@@ -48,6 +50,8 @@ const explanations: Record<string, string> = {
     'The owner has not approved this action class for this app. The Mac asks the owner in a dialog; retry after they answer.',
   app_action_declined:
     'The owner declined this action class for this app on the Mac. It will not be asked again for 10 minutes.',
+  waiting_for_owner: 'The owner has not answered the desktop access request yet.',
+  owner_declined: 'The owner declined desktop access to this app.',
   app_not_grantable: 'HyperNeo cannot be given control of its own app.',
   driver_unavailable: 'The desktop driver is not available.',
   driver_error: 'The desktop driver failed after the call was sent.',

@@ -1,6 +1,6 @@
 # Desktop grant approval
 
-The signed Desktop host refuses a verified app and action class without a
+The signed Desktop host refuses a verified app without a
 grant, opens its own "Allow HyperNeo to control an app?" dialog, and records the
 grant in its private keychain group only after a click on Allow. See
 `docs/design/desktop-grant-approval.md`.
@@ -8,6 +8,21 @@ grant in its private keychain group only after a click on Allow. See
 Unsigned fixture host (also runs in CI): the grant store is unreadable, so every
 call returns `guards_unavailable`, forged answer fields and approve actions are
 refused, and no dialog opens.
+
+The fake owner and fake driver exercise dispatch without a signed host:
+
+```bash
+cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml \
+  --bin desktop-driver-fixture -- --cfg test
+python3 packages/desktop/tests/worker-drivers.py \
+  packages/desktop/tests/driver-host/target/debug/desktop-driver-fixture \
+  -k owner_approval_covers -k owner_decline_is -k owner_wait_is -k simultaneous_classes
+```
+
+Pass means four tests report `OK`: one approval covers pointer and keyboard,
+concurrent requests share a dialog, decline and timeout return to the caller,
+and a targetless window listing reaches the fake driver. This does not verify
+the signed host or the real dialog.
 
 ```bash
 cargo rustc --locked --manifest-path packages/desktop/tests/driver-host/Cargo.toml \
@@ -25,12 +40,11 @@ APPLE_SIGNING_IDENTITY=<identity name or SHA-1> \
   bash .claude/skills/verify/desktop-grant-approval.sh "$RUN/evidence" <profile>
 ```
 
-Pass means `grant-approval.txt` ends in `OK` with `signed_host=True`, a
-same-user keychain add returns -34018, a declined dialog records nothing and
-puts that app and class on a 10-minute `app_action_declined` cooldown, the dialog
-text names no focus, idle or revoke check, and an
-allowed dialog grants only Finder/pointer. The tests answer the dialog through
-the fixture seam and remove their fixture grants.
+Pass means `grant-approval.txt` ends in `OK` with `signed_host=True`, the
+same-user keychain add is refused, and approval covers both pointer and keyboard
+for the same app. Decline applies to the app for ten minutes. The tests answer
+the dialog through the fixture seam and remove their fixture grants; the real
+dialog also needs an attended check.
 
 To see the real dialog, start the signed host directly, send
 `{"action":"fixture-dialog","worker":"w","tool":"real"}` and then a `resolve`

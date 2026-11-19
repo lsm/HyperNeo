@@ -764,12 +764,12 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.dialogs('deny')
         requirement = self.resolve('click', {'pid': pid})['value']['requirement']
         self.assertEqual(same_user_add('pointer\n' + requirement, 'com.apple.finder'), -34018)
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
                          {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
         print(f'signed_host={SIGNED} same_user_add=-34018 resolve={denied}')
 
-    def test_fixture_grant_survives_restart_and_covers_only_its_app_signer_and_class(self):
+    def test_fixture_grant_survives_restart_and_covers_only_its_app_signer(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         granted = self.call('fixture-grant', tool='click', arguments={'pid': pid})
@@ -783,12 +783,11 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.setUp()
         self.addCleanup(self.call, 'fixture-revoke', tool='click', arguments={'pid': pid})
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['bundle_id'], 'com.apple.finder')
-        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve'),
-                         {'reason': 'app_action_not_authorized', 'class': 'keyboard', 'bundle_id': 'com.apple.finder'})
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['value']['class'], 'keyboard')
         dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
         self.assertEqual(self.resolve('click', {'pid': dock}, action='resolve'),
-                         {'reason': 'app_action_not_authorized', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
-        print('grant_after_restart=finder/pointer keyboard=denied other_app=denied')
+                         {'reason': 'owner_declined', 'class': 'pointer', 'bundle_id': 'com.apple.dock'})
+        print('grant_after_restart=finder keyboard=allowed other_app=denied')
 
     def dialogs(self, answer=None):
         result = self.call('fixture-dialog', **({'tool': answer} if answer else {}))
@@ -805,18 +804,18 @@ open(sys.argv[2], 'w').write(reply.decode())
         for action in ('approve', 'grant', 'answer'):
             self.assertEqual(self.call(action, tool='click', arguments={'pid': pid}),
                              {'ok': False, 'error': 'Unknown Desktop control action'})
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve'),
                          {'reason': denied, 'class': 'pointer', 'bundle_id': 'com.apple.finder'})
         wait_until(lambda: self.dialogs() == base + (1 if SIGNED else 0))
         if SIGNED:
-            wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+            self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'owner_declined')
             self.assertEqual(self.dialogs(), base + 1)
             self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], denied)
-            wait_until(lambda: self.dialogs() == base + 2)
+            self.assertEqual(self.dialogs(), base + 1)
             self.dialogs('deny')
             self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], denied)
-            wait_until(lambda: self.dialogs() == base + 3)
+            wait_until(lambda: self.dialogs() == base + 2)
         print(f'signed_host={SIGNED} forged_answers=refused declined_dialog=no_grant retry={"cooldown" if SIGNED else "no_dialog"} other_class={"new_dialog" if SIGNED else "no_dialog"}')
 
     def test_retry_overlapping_a_decline_keeps_the_cooldown(self):
@@ -828,10 +827,10 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertEqual(first, 'guards_unavailable')
             self.assertEqual(self.dialogs('deny'), base)
             return
-        self.assertEqual(first, 'app_action_not_authorized')
+        self.assertEqual(first, 'waiting_for_owner')
         wait_until(lambda: self.dialogs() == base + 1)
-        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
-        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'app_action_declined')
+        self.dialogs('deny')
+        wait_until(lambda: self.resolve('click', {'pid': pid}, action='resolve')['reason'] == 'owner_declined')
         self.assertEqual(self.dialogs(), base + 1)
         print('overlapping_retry=no_second_dialog')
 
@@ -847,7 +846,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         wait_until(lambda: self.dialogs() == base + 1)
         time.sleep(0.2)
         self.dialogs('deny')
-        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['reason'], 'owner_declined')
         wait_until(lambda: self.dialogs() == base + 2)
         print('failed_dialog=no_grant asks_again')
 
@@ -876,7 +875,7 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertEqual(buttons, [['Allow', '\r'], ["Don't Allow", '\x1b']])
         print('dialog_buttons=allow_rightmost_return deny_left_escape')
 
-    def test_owner_yes_grants_exactly_the_shown_pair(self):
+    def test_owner_yes_grants_the_app(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
         self.call('fixture-revoke', tool='type_text', arguments={'pid': pid})
@@ -887,12 +886,11 @@ open(sys.argv[2], 'w').write(reply.decode())
             self.assertEqual(first['reason'], 'guards_unavailable')
             self.assertEqual(self.dialogs(), before)
             return
-        self.assertEqual(first['reason'], 'app_action_not_authorized')
-        wait_until(lambda: 'value' in self.resolve('click', {'pid': pid}, action='resolve'))
+        self.assertEqual(first['value']['class'], 'pointer')
         self.dialogs('deny')
-        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['reason'], 'app_action_not_authorized')
+        self.assertEqual(self.resolve('type_text', {'pid': pid}, action='resolve')['value']['class'], 'keyboard')
         self.assertEqual(self.resolve('click', {'pid': pid}, action='resolve')['value']['class'], 'pointer')
-        print('owner_yes=finder/pointer keyboard=still_denied')
+        print('owner_yes=finder pointer_and_keyboard=allowed')
 
     def test_refuses_worker_path_traversal(self):
         self.assertFalse(self.call('start', '../escape', workDir=str(self.work))['ok'])
@@ -904,7 +902,7 @@ open(sys.argv[2], 'w').write(reply.decode())
     def test_dispatch_refuses_without_starting_a_driver(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})
-        denied = 'app_action_not_authorized' if SIGNED else 'guards_unavailable'
+        denied = 'owner_declined' if SIGNED else 'guards_unavailable'
         result = self.dispatch('click', {'pid': pid}, workDir=str(self.work))
         self.assertTrue(result['ok'], result)
         reply = result['result']
@@ -947,6 +945,53 @@ open(sys.argv[2], 'w').write(reply.decode())
         self.assertTrue(again['result']['dispatched'])
         self.assertTrue(alive(record['pid']))
         print('dispatch=allowed started=1 call=click reused_slot=1')
+
+    def test_owner_approval_covers_all_actions_for_the_app(self):
+        pid = finder()
+        before = self.dialogs('mock-allow')
+        for tool in ('click', 'type_text'):
+            reply = self.dispatch(tool, {'pid': pid}, workDir=str(self.work))['result']
+            self.assertTrue(reply['dispatched'], reply)
+            self.assertIsNone(reply['reason'])
+        self.assertEqual(self.dialogs(), before + 1)
+        dock = int(subprocess.check_output(['/usr/bin/pgrep', '-x', 'Dock']).split()[0])
+        self.dialogs('mock-deny')
+        other = self.dispatch('click', {'pid': dock}, workDir=str(self.work))['result']
+        self.assertEqual(other['reason'], 'owner_declined')
+        self.assertEqual(self.dialogs(), before + 2)
+        print('app_grant=one_dialog pointer_and_keyboard=dispatched')
+
+    def test_owner_decline_is_returned_to_the_original_dispatch(self):
+        pid = finder()
+        self.dialogs('mock-deny')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual(reply['reason'], 'owner_declined')
+        self.assertFalse(reply['dispatched'])
+        print('owner_decline=returned no_driver_input=1')
+
+    def test_owner_wait_is_bounded_and_window_listing_needs_no_target(self):
+        pid = finder()
+        self.dialogs('mock-hold')
+        reply = self.dispatch('click', {'pid': pid}, workDir=str(self.work))['result']
+        self.assertEqual(reply['reason'], 'waiting_for_owner')
+        self.assertFalse(reply['dispatched'])
+        self.dialogs('mock-deny')
+        listed = self.dispatch('list_windows', {}, workDir=str(self.work))['result']
+        self.assertTrue(listed['dispatched'], listed)
+        print('owner_wait=bounded list_windows=dispatched')
+
+    def test_simultaneous_classes_share_the_owner_dialog(self):
+        pid = finder()
+        before = self.dialogs('mock-hold')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.dispatch, 'click', {'pid': pid}, workDir=str(self.work))
+            wait_until(lambda: self.dialogs() == before + 1)
+            second = pool.submit(self.dispatch, 'type_text', {'pid': pid}, workDir=str(self.work))
+            self.dialogs('mock-allow')
+            replies = [first.result(timeout=10)['result'], second.result(timeout=10)['result']]
+        self.assertTrue(all(reply['dispatched'] for reply in replies), replies)
+        self.assertEqual(self.dialogs(), before + 1)
+        print('simultaneous_classes=one_dialog both_dispatched=1')
 
     def test_driver_error_reaches_the_caller_with_its_body(self):
         pid = finder()

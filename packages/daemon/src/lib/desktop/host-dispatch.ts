@@ -31,7 +31,7 @@ export function dispatchDesktopCall(
     const client = createConnection(join(dataDir, 'desktop/control.sock'));
     client.setEncoding('utf8');
     let text = '';
-    const timer = setTimeout(() => fail(new Error('Desktop host timed out.')), 60000);
+    const timer = setTimeout(() => fail(new Error('Desktop host timed out.')), 105000);
     function fail(error: Error) {
       clearTimeout(timer);
       client.destroy();
@@ -40,7 +40,19 @@ export function dispatchDesktopCall(
     client.once('connect', () =>
       client.write(JSON.stringify({ action: 'dispatch', ...request }) + '\n')
     );
-    client.once('error', fail);
+    client.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT' && error.code !== 'ECONNREFUSED') return fail(error);
+      clearTimeout(timer);
+      client.destroy();
+      resolve({
+        call_id: request.callId,
+        bundle_id: null,
+        class: null,
+        decision: 'refused',
+        reason: 'desktop_app_not_connected',
+        dispatched: false,
+      });
+    });
     client.once('end', () => fail(new Error('Desktop host closed without a reply.')));
     client.on('data', (chunk) => {
       text += chunk.toString();

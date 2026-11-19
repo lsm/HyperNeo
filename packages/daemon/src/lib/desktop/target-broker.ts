@@ -13,6 +13,8 @@ const Reply = z.object({
         'target_mismatch',
         'app_action_not_authorized',
         'app_action_declined',
+        'waiting_for_owner',
+        'owner_declined',
         'app_not_grantable',
         'guards_unavailable',
       ]),
@@ -35,7 +37,7 @@ function ask(socket: string, request: Record<string, unknown>) {
   return new Promise<string | null>((resolve) => {
     const client = createConnection(socket);
     let text = '';
-    const timer = setTimeout(() => finish(null), 2500);
+    const timer = setTimeout(() => finish(null), 50000);
     function finish(line: string | null) {
       clearTimeout(timer);
       client.destroy();
