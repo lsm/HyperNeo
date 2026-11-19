@@ -456,6 +456,7 @@ export interface PipelineCounts {
 
 interface PipelineToken {
   text: string;
+  offset: number;
 }
 
 function pipelineTokens(source: string): PipelineToken[] {
@@ -463,7 +464,7 @@ function pipelineTokens(source: string): PipelineToken[] {
     /\/\*[\s\S]*?\*\/|\/\/[^\n]*|(?:'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*"|`[^`\\]*(?:\\.[^`\\]*)*`)|[A-Za-z_$][\w$]*|\d+|[^\s]/g;
   return [...source.matchAll(pattern)]
     .filter((match) => !match[0].startsWith('//') && !match[0].startsWith('/*'))
-    .map((match) => ({ text: match[0] }));
+    .map((match) => ({ text: match[0], offset: match.index }));
 }
 
 function closeToken(tokens: PipelineToken[], start: number): number {
@@ -497,6 +498,45 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
       if (tokens[i].text === '{') scope.push(i);
       else if (tokens[i].text === '}') scope.pop();
     }
+    let parameterScopes: { name: string; start: number; end: number }[] | undefined;
+    const parameterShadows = (reference: number, pipeline: number, name: string): boolean => {
+      if (!parameterScopes) {
+        parameterScopes = [];
+        const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+        const visit = (node: ts.Node) => {
+          if (ts.isFunctionLike(node)) {
+            const fn = node as ts.FunctionLikeDeclaration;
+            if (fn.body) {
+              const add = (binding: ts.BindingName) => {
+                if (ts.isIdentifier(binding)) {
+                  parameterScopes!.push({
+                    name: binding.text,
+                    start: fn.body!.pos,
+                    end: fn.body!.end,
+                  });
+                } else {
+                  for (const element of binding.elements) {
+                    if (ts.isBindingElement(element)) add(element.name);
+                  }
+                }
+              };
+              for (const parameter of fn.parameters) add(parameter.name);
+            }
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(parsed);
+      }
+      const ref = tokens[reference].offset;
+      const declaration = tokens[pipeline].offset;
+      return parameterScopes.some(
+        (scope) =>
+          scope.name === name &&
+          ref >= scope.start &&
+          ref < scope.end &&
+          (declaration < scope.start || declaration >= scope.end)
+      );
+    };
     const isParameter = (index: number, name: string | undefined): boolean => {
       if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return false;
       for (const open of [...scopes[index]].reverse()) {
@@ -600,13 +640,16 @@ export function countPipelineRoutes(sources: Map<string, string>): PipelineCount
           (pipeline.index >= executeStart && pipeline.index < executeEnd) ||
           (pipeline.variable &&
             scopes[pipeline.index].every((part, index) => scopes[i][index] === part) &&
-            ((body.length === 1 && body[0] === pipeline.variable) ||
+            ((body.length === 1 &&
+              body[0] === pipeline.variable &&
+              !parameterShadows(executeStart, pipeline.index, pipeline.variable)) ||
               body.some(
                 (token, index) =>
                   token === pipeline.variable &&
                   (body[index - 1] !== '.' ||
                     (body[index - 2] === '.' && body[index - 3] === '.')) &&
-                  body[index + 1] === '('
+                  body[index + 1] === '(' &&
+                  !parameterShadows(executeStart + index, pipeline.index, token)
               )))
       );
       if (reached.length === 0) {

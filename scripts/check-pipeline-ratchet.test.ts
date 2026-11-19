@@ -148,6 +148,38 @@ test.each(['[...run()]', '({...run()})', 'collect(...run())'])(
   }
 );
 
+test.each([
+  `function setup(run) { return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `function setup(run: Handler): Result { return defineOperation({ name: 'demo.shadow', execute: run }); }`,
+  `function setup({ run }) { return defineOperation({ name: 'demo.shadow', execute: () => run() }); }`,
+  `defineOperation({ name: 'demo.shadow', execute: (run) => run() });`,
+])('a parameter shadow cannot be mistaken for an outer pipeline: %s', (operation) => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `const run = superpipe({})('demo.shadow').end(); ${operation}`
+  );
+  const result = f.run();
+  expect(result.code).toBe(1);
+  expect(result.output).toContain('unreadable: 1 (baseline 0)');
+});
+
+test('a pipeline declared inside an outer parameter scope is still readable', () => {
+  const f = fixture();
+  f.put(
+    'packages/demo/src/added.ts',
+    `
+    function outer(run) {
+      function inner() {
+        const run = superpipe({})('demo.inner').end();
+        return defineOperation({ name: 'demo.inner', execute: () => run() });
+      }
+    }
+  `
+  );
+  expect(f.run().code).toBe(0);
+});
+
 test('a forwarded name is unreadable rather than a constructed name', () => {
   const f = fixture();
   f.put(
