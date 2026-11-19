@@ -130,7 +130,11 @@ try {
     todos.recordRef(`todo-${id}`, { adapter: 'hyperneo', id });
     store.updateTodo(store.getTodo(`todo-${id}`)!, { state: 'doing' }, 2);
   }
-  const third = await start('third', neo);
+  const busyRole = await invokeOperation(registry, 'work.start', input('same-role-busy', 'todo-plan'), neo);
+  assert.equal(busyRole.kind, 'completed');
+  assert.equal((busyRole as { value: { reason?: string } }).value.reason, 'worker_busy');
+  store.addTodo('todo-third', 'synthetic-ask', { title: 'Third', doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 2);
+  const third = await start('third', neo, 'todo-third');
   const afterThird = sessions();
   const lease = (id: string, state: 'doing' | 'done', bindRef: boolean) => {
     store.addTodo(`todo-${id}`, 'synthetic-ask', { title: id, doneWhen: 'Synthetic', check: null, instruction: 'Synthetic', named: null }, 1);
@@ -148,6 +152,7 @@ try {
     first: { reused: first.reused, record },
     humanStart: { reused: byHuman.reused, newSession: byHuman.id !== first.id },
     neoSecond: { reused: second.reused, sameRefAsEarlier: [first.id, byHuman.id].includes(second.id), sessionsBefore: before, sessionsAfter: afterReuse },
+    sameRoleBusy: { reason: (busyRole as { value: { reason?: string } }).value.reason },
     neoThirdAllLeased: { reused: third.reused, newSession: ![first.id, byHuman.id].includes(third.id), sessionsAfter: afterThird },
     neoBuildBesideFreeHumanReviewer: { reused: build.reused, gotReviewer: build.id === reviewer, sessionsBefore: beforeBuild, sessionsAfter: sessions() },
     mainThreadStartedSessionSql: mainStartedSql.length,
@@ -232,6 +237,47 @@ try {
     remote = { newSession: reply.value.ref.id !== separate.id, reused: reply.value.reused === true };
   } finally { socket.close(); }
   writeFileSync(join(run, 'evidence/session-reuse-dispatch.json'), JSON.stringify({ perTodo: separate, perAsk: { reason: 'worker_busy', state: store.getTodo('todo-wait')?.state, target: todos.get('todo-wait')?.verb }, noTodo: { reused: noTodoResult.value.reused === true }, foreignTodo, remote }, null, 2));
+
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-C', folder, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const tree = git('write-tree');
+  const firstHead = git('commit-tree', tree, '-m', 'first');
+  git('update-ref', 'refs/heads/dev', firstHead);
+  git('update-ref', 'refs/pull/7/head', firstHead);
+  git('remote', 'add', 'origin', folder);
+  store.addTodo('todo-prepared-review', 'synthetic-ask', { title: 'Prepared review', doneWhen: 'Synthetic', check: { pack: 'coding', kind: 'pr_merged', params: {} }, instruction: 'Synthetic', named: null }, 7);
+  const preparedStart = async (head: string, stable: string) => {
+    const outcome = await invokeOperation(registry, 'work.start', {
+      ...input('prepared-review', 'todo-prepared-review'), role: 'review',
+      preparation: { pack: 'coding', sandbox: false, parameters: { pullRequest: 7, head, role: 'review', stable } },
+    }, neo);
+    assert.equal(outcome.kind, 'completed', JSON.stringify(outcome));
+    const result = (outcome as { value: Result<WorkStarted> }).value;
+    assert(result.ok, JSON.stringify(result));
+    return result.value;
+  };
+  const preparedFirst = await preparedStart(firstHead, 'one');
+  for (let i = 0; i < 100; i++) {
+    const status = await invokeOperation(registry, 'work.status', { ref: preparedFirst.ref }, human);
+    if ((status as { value?: { ok?: boolean; value?: { status?: string } } }).value?.value?.status === 'done') break;
+    if (i === 99) throw new Error('prepared reviewer never went idle');
+    await Bun.sleep(100);
+  }
+  const secondHead = git('commit-tree', tree, '-p', firstHead, '-m', 'second');
+  git('update-ref', 'refs/pull/7/head', secondHead);
+  const preparedSecond = await preparedStart(secondHead, 'one');
+  assert.equal(preparedSecond.reused, true);
+  assert.equal(preparedSecond.ref.id, preparedFirst.ref.id);
+  const preparedChanged = await preparedStart(secondHead, 'two');
+  assert.notEqual(preparedChanged.ref.id, preparedFirst.ref.id);
+  assert.notEqual(preparedChanged.reused, true);
+  writeFileSync(join(run, 'evidence/prepared-role-reuse.json'), JSON.stringify({ first: preparedFirst.ref.id, nextHeadSameReviewer: preparedSecond.ref.id, changedStableNewReviewer: preparedChanged.ref.id, reusedNextHead: preparedSecond.reused === true, reusedChangedStable: preparedChanged.reused === true }, null, 2));
 } finally {
   await app.cleanup();
 }

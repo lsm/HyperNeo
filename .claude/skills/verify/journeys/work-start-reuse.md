@@ -30,6 +30,7 @@ End state, from `evidence/work-start-reuse.json`:
 - `first.record` records the starter, ask, todo, machine, folder and harness for the new worker.
 - `humanStart.newSession` is true.
 - `neoSecond.reused` is true; its ref is an existing worker, and the session count is unchanged.
+- `sameRoleBusy.reason` is `worker_busy`: a further round waits for its assigned worker.
 - `neoThirdAllLeased.reused` is false; it is a new session, and the count grew by one.
 - `neoBuildBesideFreeHumanReviewer.gotReviewer` is false: the free human-opened
   session is never reused, so the build gets a new session and the count grows by one.
@@ -39,8 +40,8 @@ End state, from `evidence/work-start-reuse.json`:
 `evidence/session-reuse-dispatch.json` additionally records a fresh session under
 `per_todo` and a doing todo returning to the queue when its ask's workers are busy
 under `per_ask`.
-When an already-bound todo cannot be queued on a busy worker, it starts a
-fresh session instead of reporting a wait that was never recorded.
+When an assigned role is busy, a new round does not start a different worker;
+if the todo cannot be queued, the refusal says no message was sent.
 The helper also forwards a start through the destination's real RPC door while
 an unrelated worker is idle. The forwarded start creates a fresh session. Remote
 `per_ask` waiting is not implemented by this route.
@@ -48,3 +49,8 @@ Starts with no todo or a todo owned by another Neo also start fresh when the
 daemon cannot determine which matter's reuse setting applies.
 If opening the reuse question fails, work still starts using the default and Neo
 receives a note about the missing card.
+
+The helper also creates a synthetic Git repository and starts a prepared coding
+reviewer through `work.start`. It advances the synthetic pull request head and
+checks `evidence/prepared-role-reuse.json`: the next head uses the same reviewer,
+while changing a stable preparation parameter starts a different reviewer.

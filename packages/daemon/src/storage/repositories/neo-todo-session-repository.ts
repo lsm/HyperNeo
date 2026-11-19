@@ -536,13 +536,15 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
   doingTodoOn(
     ref: WorkRef,
     startedAfter: number | null = null,
-    states: readonly string[] = ['doing']
+    states: readonly string[] = ['doing'],
+    exceptTodoId: string | null = null
   ): { id: string; title: string } | null {
     return (
       (this.db
         .prepare(
           `SELECT t.id, t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
             WHERE t.state IN (SELECT value FROM json_each(?)) AND (? IS NULL OR t.started_at > ?)
+              AND (? IS NULL OR t.id != ?)
               AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
               AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
               AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
@@ -552,6 +554,8 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
           JSON.stringify(states),
           startedAfter,
           startedAfter,
+          exceptTodoId,
+          exceptTodoId,
           ref.adapter,
           ref.id,
           ref.daemon ?? null
@@ -821,12 +825,14 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     todoId: string | null,
     role = 'do',
     model?: string,
-    effort?: string
+    effort?: string,
+    shareWith: readonly string[] = []
   ): boolean {
     return claimTodoWorker(this.db, ref, todoId, role, model, effort, {
       liveTodo: (id) => this.liveTodo(id),
-      isBound: (states) => !!this.doingTodoOn(ref, null, states),
+      isBound: (states) => !!this.doingTodoOn(ref, null, states, todoId),
       liveStates: LIVE_TODO_STATES,
+      shareWith,
     });
   }
 

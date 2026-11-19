@@ -505,6 +505,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         };
       call.input.todoId = todo.id;
       if (target.verb === 'start') {
+        call.input.role = 'do';
         call.input.provenance = true;
         if (exclusions) call.input.excludeRefs = exclusions.value;
       }

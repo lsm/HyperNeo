@@ -11,6 +11,7 @@ import { bindGateway, DbGateway } from '../../../../src/storage/db-gateway/db-ga
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import { recordTodoRole } from '../../../../src/storage/repositories/work-started-sessions-worker.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
@@ -440,7 +441,7 @@ describe('coding actor assignments', () => {
     expect(f.starts[0].preparation).toBeUndefined();
     expect(f.starts[0].message).toContain(QA_SYSTEM_CONTRACT);
     expect(f.starts[0].message).toContain(head);
-    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
+    expect(f.starts[0]).toMatchObject({ role: 'verify', provenance: true });
   });
   test.each([
     { mode: 'off', fork: true, sandbox: false },
@@ -465,7 +466,7 @@ describe('coding actor assignments', () => {
     const f = fixture();
     expect((await f.assign()).ok).toBe(true);
     expect(f.starts[0].preparation).toBeUndefined();
-    expect(f.starts[0]).toMatchObject({ excludeRefs: [write], provenance: true });
+    expect(f.starts[0]).toMatchObject({ role: 'review', provenance: true });
     expect(f.starts[0].message).toContain(REVIEWER_SYSTEM_CONTRACT);
     expect(f.starts[0].message).toContain('PR number: 7');
     expect(f.starts[0].message).toContain(head);
@@ -474,9 +475,7 @@ describe('coding actor assignments', () => {
       "Your folder is your own worktree and stays yours across tasks. For each new task: fetch origin, then switch to a new branch from the latest target, or check out the PR head you were given. Don't create other worktrees or clones."
     );
     await f.assign({ stage: 'verify', candidates: [author] });
-    expect(f.starts[1]).toMatchObject({
-      excludeRefs: [write, { adapter: reviewer.adapter, id: 'fresh-1' }],
-    });
+    expect(f.starts[1]).toMatchObject({ role: 'verify' });
   });
   test('one todo keeps its author and linked fresh reviewer/Verify; repeated calls reuse exact-head assignments', async () => {
     const f = fixture();
@@ -498,6 +497,18 @@ describe('coding actor assignments', () => {
       { id: 'todo', state: 'doing' },
     ]);
     expect(Object.keys(f.assignments.read('todo', url, head))).toEqual(['qa', 'review']);
+  });
+  test('a later review uses the recorded reviewer model', async () => {
+    const f = fixture();
+    recordTodoRole(
+      f.db,
+      'todo',
+      'review',
+      { adapter: reviewer.adapter, id: 'previous' },
+      'claude-sonnet-5-5'
+    );
+    expect((await f.assign()).ok).toBe(true);
+    expect(f.starts[0]).toMatchObject({ role: 'review', model: 'claude-sonnet-5-5' });
   });
   test('an explicit human is an alternative with no reviewer session', async () => {
     const f = fixture();

@@ -25,6 +25,7 @@ import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import {
   reuseWorkerDecision,
+  matchingPreparation,
   type WorkerReuseCandidate,
   type WorkerReuseFacts,
 } from './worker-reuse.ts';
@@ -100,13 +101,30 @@ export interface WorkVerbDeps {
     todoId: string | undefined,
     caller: OperationCaller
   ) => Promise<{ mode: 'long_lived' | 'per_ask' | 'per_todo'; sameAsk: string[] }>;
+  roleContext?: (
+    todoId: string,
+    adapter: string,
+    preparationPack?: string
+  ) => Promise<{
+    roles: {
+      role: string;
+      adapter: string;
+      id: string;
+      model: string | null;
+      effort: string | null;
+    }[];
+    preparations: { id: string; preparation: string | null }[];
+    shares: Record<string, { shareWith?: readonly string[] }>;
+    perRoundFields: readonly string[];
+  }>;
   markUnusable?: (ref: WorkRef, reason: string) => void | Promise<void>;
   claimWorker?: (
     ref: WorkRef,
     todoId?: string,
     role?: string,
     model?: string,
-    effort?: string
+    effort?: string,
+    shareWith?: readonly string[]
   ) => Promise<boolean>;
   unclaimWorker?: (todoId: string, ref: WorkRef, role?: string) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
@@ -711,42 +729,134 @@ export async function reuseIdleWorker(
   deps: WorkVerbDeps
 ): Promise<StartResult | null> {
   const folder = input.place.folder;
-  const adapter = deps.adapters().find((candidate) => candidate.id === input.adapter);
+  const requestedAdapter = deps.adapters().find((candidate) => candidate.id === input.adapter);
   if (
     !('local' in route) ||
     caller.role !== 'neo' ||
     !folder ||
-    !adapter?.send ||
-    ((input.model || input.effort) && !adapter.resolveStartConfiguration) ||
-    input.preparation ||
+    !requestedAdapter?.send ||
+    ((input.model || input.effort) && !requestedAdapter.resolveStartConfiguration) ||
     input.createFolder
   )
     return null;
+  const todoId = ownedTodoId(input, caller, deps);
+  const role = input.role ?? 'do';
+  let adapter = requestedAdapter;
+  let context = todoId
+    ? await deps.roleContext?.(todoId, adapter.id, input.preparation?.pack)
+    : undefined;
+  if (input.preparation && !context) return null;
+  const assigned = context?.roles.find((row) => row.role === role);
+  if (todoId && assigned && assigned.adapter !== adapter.id) {
+    const priorAdapter = deps.adapters().find((candidate) => candidate.id === assigned.adapter);
+    const priorContext = await deps.roleContext?.(
+      todoId,
+      assigned.adapter,
+      input.preparation?.pack
+    );
+    const preparation = priorContext?.preparations.find((entry) => entry.id === assigned.id);
+    if (
+      priorAdapter?.send &&
+      priorContext &&
+      preparation &&
+      matchingPreparation(preparation.preparation, input.preparation, priorContext.perRoundFields)
+    ) {
+      const status = await priorAdapter.status?.({ adapter: assigned.adapter, id: assigned.id });
+      if (status && !status.ok && status.reason !== 'not_found' && status.reason !== 'not_open')
+        return status;
+      if (status?.ok) {
+        adapter = priorAdapter;
+        context = priorContext;
+      }
+    }
+  }
+  const matches = (id: string) => {
+    const entry = context?.preparations.find((item) => item.id === id);
+    return context
+      ? !!entry && matchingPreparation(entry.preparation, input.preparation, context.perRoundFields)
+      : true;
+  };
+  const previous = context?.roles.find((row) => row.role === role && row.adapter === adapter.id);
+  const prior = previous && matches(previous.id) ? previous : undefined;
+  const canShare = (id: string) =>
+    context?.roles.some(
+      (row) =>
+        row.adapter === adapter.id &&
+        row.id === id &&
+        context.shares[role]?.shareWith?.includes(row.role)
+    ) ?? false;
   const policy = await deps.reusePolicy?.(adapter.id, input.todoId, caller);
-  if (policy?.mode === 'per_todo') return null;
+  if (policy?.mode === 'per_todo' && !prior && !context?.roles.some((row) => canShare(row.id)))
+    return null;
   const free = await deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
-  if (!free?.size && !(policy?.mode === 'per_ask' && policy.sameAsk.length)) return null;
+  if (
+    !free?.size &&
+    !prior &&
+    !context?.roles.some((row) => canShare(row.id)) &&
+    !(policy?.mode === 'per_ask' && policy.sameAsk.length)
+  )
+    return null;
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
   if ((input.model || input.effort) && !configured) return null;
   if (configured && !configured.ok) return configured;
   const requested = configured?.ok ? configured.value : null;
   const groups = await adapter.find({ folder, includeClosed: false, limit: 50 });
-  const candidates = groups
-    .flatMap((group) => group.work)
-    .map((work) => ({
-      work,
-      free:
-        !!free?.has(work.ref.id) &&
-        (policy?.mode !== 'per_ask' || policy.sameAsk.includes(work.ref.id)),
-      sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
-      settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
-    }));
-  const sameAskCandidates = [...candidates];
+  const discovered = groups.flatMap((group) => group.work);
+  if (prior && !discovered.some((work) => work.ref.id === prior.id) && adapter.status) {
+    const priorStatus = await adapter
+      .status({ adapter: adapter.id, id: prior.id })
+      .catch(() => null);
+    if (priorStatus?.ok) discovered.push(priorStatus.value);
+  }
+  const candidates = discovered.map((work) => ({
+    work,
+    free:
+      matches(work.ref.id) &&
+      (prior
+        ? work.ref.id === prior.id
+        : (!!free?.has(work.ref.id) || canShare(work.ref.id)) &&
+          (canShare(work.ref.id) ||
+            policy?.mode !== 'per_ask' ||
+            policy.sameAsk.includes(work.ref.id)) &&
+          !context?.roles.some(
+            (row) =>
+              row.adapter === work.ref.adapter &&
+              row.id === work.ref.id &&
+              row.role !== role &&
+              !context.shares[role]?.shareWith?.includes(row.role)
+          )),
+    sameAskAt: free && 'get' in free ? (free.get(work.ref.id)?.sameAskAt ?? null) : null,
+    settledAt: free && 'get' in free ? (free.get(work.ref.id)?.settledAt ?? null) : null,
+  }));
+  const sameAskCandidates = candidates.filter(
+    ({ work }) =>
+      matches(work.ref.id) &&
+      !context?.roles.some(
+        (row) =>
+          row.adapter === work.ref.adapter &&
+          row.id === work.ref.id &&
+          row.role !== role &&
+          !context.shares[role]?.shareWith?.includes(row.role)
+      )
+  );
+  const existing = prior && candidates.find(({ work }) => work.ref.id === prior.id);
+  let busyRole: WorkerReuseCandidate | null = null;
+  if (existing && todoId) {
+    const key = `${existing.work.ref.adapter}\u0000${existing.work.ref.id}`;
+    const live = await adapter.status?.(existing.work.ref).catch(() => null);
+    if (
+      reuseHolds.has(key) ||
+      (live?.ok ? isBusyWork(live.value.status) : isBusyWork(existing.work.status))
+    ) {
+      busyRole = existing;
+    }
+  }
   const request = {
     adapter: adapter.id,
     folder,
     refreshStatus: !!adapter.status,
+    roleWorker: prior?.id ?? context?.roles.find((row) => canShare(row.id))?.id,
     excludeRefs: input.excludeRefs,
   };
   let busy: WorkerReuseCandidate | undefined;
@@ -755,10 +865,17 @@ export async function reuseIdleWorker(
       candidates,
       sameAskCandidates,
       request,
-      policy?.mode === 'per_ask' && input.todoId && deps.todoWorker ? policy.sameAsk : []
+      policy?.mode === 'per_ask' && input.todoId && deps.todoWorker ? policy.sameAsk : [],
+      busyRole
     );
     if (decision.action === 'start') break;
     if (decision.action === 'wait') {
+      if (decision.role && todoId) {
+        const queued =
+          (await deps.todoWorker?.wait(todoId, decision.candidate.work.ref, input.message)) ??
+          'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
       busy = decision.candidate;
       break;
     }
@@ -766,7 +883,13 @@ export async function reuseIdleWorker(
     candidates.splice(candidates.indexOf(chosen), 1);
     const work = chosen.work;
     const key = `${work.ref.adapter}\u0000${work.ref.id}`;
-    if (reuseHolds.has(key)) continue;
+    if (reuseHolds.has(key)) {
+      if (prior?.id === work.ref.id && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
+      continue;
+    }
     reuseHolds.add(key);
     let status;
     try {
@@ -778,6 +901,10 @@ export async function reuseIdleWorker(
     const identity = status?.ok ? status.value : null;
     if (adapter.status && identity?.status !== 'done') {
       reuseHolds.delete(key);
+      if (prior?.id === work.ref.id && identity && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
       continue;
     }
     if (
@@ -799,10 +926,16 @@ export async function reuseIdleWorker(
           harness: adapter.id,
         })
       : input.message;
-    const todoId = ownedTodoId(input, caller, deps);
     const claimed = deps.claimWorker
       ? await deps
-          .claimWorker(work.ref, todoId, input.role, identity?.model, identity?.effort)
+          .claimWorker(
+            work.ref,
+            todoId,
+            role,
+            identity?.model,
+            identity?.effort,
+            context?.shares[role]?.shareWith
+          )
           .catch((error: unknown) => {
             reuseHolds.delete(key);
             throw error;
@@ -810,12 +943,18 @@ export async function reuseIdleWorker(
       : true;
     if (!claimed) {
       reuseHolds.delete(key);
+      if (prior?.id === work.ref.id && todoId) {
+        const queued = (await deps.todoWorker?.wait(todoId, work.ref, input.message)) ?? 'none';
+        return reject('worker_busy', WORKER_BUSY_DETAIL[queued], true);
+      }
       continue;
     }
-    const sent = await adapter.send(work.ref, message, { from, caller }).catch((error: unknown) => {
-      reuseHolds.delete(key);
-      throw error;
-    });
+    const sent = await adapter.send!(work.ref, message, { from, caller }).catch(
+      (error: unknown) => {
+        reuseHolds.delete(key);
+        throw error;
+      }
+    );
     if (sent.ok) {
       setTimeout(() => reuseHolds.delete(key), REUSE_HOLD_MS).unref?.();
       return {

@@ -12,12 +12,18 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   readReusableWorkers,
+  readTodoRoles,
+  readWorkerPreparations,
   recordWorkerStarted,
 } from '../../../../src/storage/repositories/work-started-sessions-worker';
 
 const place = { machine: 'imac', folder: '/focus/repo', name: 'repo' };
 
-function setup(idle: string[] = []) {
+function setup(
+  idle: string[] = [],
+  shares: Record<string, { shareWith?: string[] }> = {},
+  perAsk = false
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -42,9 +48,11 @@ function setup(idle: string[] = []) {
     if (state !== 'todo') store.updateTodo(store.getTodo(id)!, { state, startedAt: 1 }, 2);
   };
   const sent: string[] = [];
+  const busy = new Set<string>();
   let fresh = 0;
   const adapter: WorkAdapter = {
     id: 'claude-desktop',
+    supportsStartPreparation: true,
     capabilities: ['find', 'start', 'send'],
     find: () => [
       {
@@ -57,15 +65,28 @@ function setup(idle: string[] = []) {
           ref: { adapter: 'claude-desktop', id },
           title: id,
           place,
-          status: 'done' as const,
+          status: busy.has(id) ? ('running' as const) : ('done' as const),
           lastActivityAt: 1,
         })),
       },
     ],
+    status: async (ref) => ({
+      ok: true,
+      value: {
+        ref,
+        title: ref.id,
+        place,
+        status: busy.has(ref.id) ? 'running' : 'done',
+        lastActivityAt: 1,
+      },
+    }),
     start: async (request) => ({
       ok: true,
       value: {
-        ref: { adapter: 'claude-desktop', id: `fresh-${++fresh}` },
+        ref: {
+          adapter: 'claude-desktop',
+          id: `${request.preparation ? 'prepared' : Object.keys(shares).length ? 'shared' : 'fresh'}-${++fresh}`,
+        },
         title: request.title,
         place,
         status: 'running',
@@ -82,20 +103,45 @@ function setup(idle: string[] = []) {
       adapters: () => [adapter],
       remote: { list: () => [], invoke: async () => ({}) },
       daemonName: 'imac',
-      recordStarted: (ref) => recordWorkerStarted(db, ref),
+      recordStarted: (ref, _directory, facts) => recordWorkerStarted(db, ref, facts),
       freeWorkers: (id, todoId, sessionId) => readReusableWorkers(db, id, todoId, sessionId),
-      claimWorker: async (ref, todoId) => sessions.claimWorker(ref, todoId ?? null),
-      unclaimWorker: async (todoId, ref) => sessions.unclaimWorker(todoId, ref),
+      ...(perAsk
+        ? {
+            reusePolicy: async () => ({ mode: 'per_ask' as const, sameAsk: [...idle] }),
+            todoWorker: { on: () => false, wait: async () => 'message' as const },
+          }
+        : {}),
+      roleContext: async (todoId, adapter) => ({
+        roles: readTodoRoles(db, todoId),
+        preparations: readWorkerPreparations(db, adapter),
+        shares,
+        perRoundFields: ['head'],
+      }),
+      claimWorker: async (ref, todoId, role, model, effort, shareWith) =>
+        sessions.claimWorker(ref, todoId ?? null, role, model, effort, shareWith),
+      unclaimWorker: async (todoId, ref, role) => sessions.unclaimWorker(todoId, ref, role),
       acceptedTodo: (todoId) => !!store.getTodo(todoId),
       isOpenTodo: (todoId) =>
         ['todo', 'doing', 'blocked'].includes(store.getTodo(todoId)?.state ?? ''),
     })
   );
-  const start = async (todoId: string) => {
+  const start = async (
+    todoId: string,
+    preparation?: { pack: string; parameters: Record<string, unknown> },
+    role?: 'review' | 'check'
+  ) => {
     const outcome = await invokeOperation(
       registry,
       'work.start',
-      { adapter: 'claude-desktop', place, title: 'repo', message: 'Build it.', todoId },
+      {
+        adapter: 'claude-desktop',
+        place,
+        title: 'repo',
+        message: 'Build it.',
+        todoId,
+        ...(role ? { role } : {}),
+        ...(preparation ? { preparation } : {}),
+      },
       { source: 'mcp', sessionId: 'neo', role: 'neo' }
     );
     expect(outcome.kind).toBe('completed');
@@ -104,7 +150,7 @@ function setup(idle: string[] = []) {
     return result.value.ref.id;
   };
   const finish = (id: string) => store.updateTodo(store.getTodo(id)!, { state: 'done' }, 3);
-  return { sessions, todo, finish, idle, sent, start };
+  return { sessions, todo, finish, idle, sent, start, db, busy };
 }
 
 describe('work.start reuses only sessions the daemon started', () => {
@@ -128,6 +174,52 @@ describe('work.start reuses only sessions the daemon started', () => {
 
     expect(await h.start('build')).toBe(worker);
     expect(h.sent).toEqual([worker]);
+  });
+
+  test('reuses a prepared reviewer for a new head but not a different stable preparation', async () => {
+    const h = setup();
+    const preparation = (head: string, branch: string) => ({
+      pack: 'coding',
+      parameters: { head, branch },
+    });
+    h.todo('review', 'todo');
+    const reviewer = await h.start('review', preparation('head-1', 'main'), 'review');
+    h.idle.push(reviewer);
+    expect(readWorkerPreparations(h.db, 'claude-desktop')).toEqual([
+      { id: reviewer, preparation: JSON.stringify(preparation('head-1', 'main')) },
+    ]);
+    expect(await h.start('review', preparation('head-2', 'main'), 'review')).toBe(reviewer);
+    expect(await h.start('review', preparation('head-3', 'other'), 'review')).not.toBe(reviewer);
+  });
+
+  test('roles explicitly allowed to share can use the same claimed worker', async () => {
+    const h = setup([], { check: { shareWith: ['do'] } });
+    h.todo('shared', 'todo');
+    const worker = await h.start('shared');
+    h.idle.push(worker);
+    const ref = { adapter: 'claude-desktop', id: worker };
+    h.sessions.bind('shared', ref, 1);
+    expect(h.sessions.claimWorker(ref, 'shared', 'do')).toBe(true);
+    expect(await h.start('shared', undefined, 'check')).toBe(worker);
+    h.sessions.unclaimWorker('shared', ref, 'check');
+    h.todo('other', 'todo');
+    expect(h.sessions.claimWorker(ref, 'other', 'do')).toBe(false);
+  });
+
+  test('does not wait for a busy worker with a different stable preparation', async () => {
+    const h = setup([], {}, true);
+    h.todo('first-prepared', 'todo');
+    const worker = await h.start('first-prepared', {
+      pack: 'coding',
+      parameters: { branch: 'one' },
+    });
+    h.finish('first-prepared');
+    h.idle.push(worker);
+    h.busy.add(worker);
+    h.todo('second-prepared', 'todo');
+    expect(
+      await h.start('second-prepared', { pack: 'coding', parameters: { branch: 'two' } })
+    ).not.toBe(worker);
   });
 });
 
