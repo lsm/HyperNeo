@@ -8,6 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import { Logger } from '../logger.ts';
 import type { DeliveryLoadResult } from '../agent/message-delivery.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
+import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 import { NeoSpeechAudio, type SpeechPart } from './speech-audio.ts';
 import { neoDerivedId } from './derived-id.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
@@ -152,7 +153,8 @@ export class NeoSpeech {
     private readonly canSay: (sessionId: string) => boolean = isNeo,
     private readonly speechSession: (sessionId: string) => string = (id) => id,
     private readonly handOffMode?: (sessionId: string) => boolean,
-    speechPart?: () => Promise<SpeechPart | undefined>
+    speechPart?: () => Promise<SpeechPart | undefined>,
+    savedVoiceKeys: () => Promise<string[]> = async () => []
   ) {
     this.audio = new NeoSpeechAudio(
       (client, data) => this.send(client, data),
@@ -228,6 +230,20 @@ export class NeoSpeech {
         )
         .endAsync('receipt') as (input: Input, caller: OperationCaller) => Promise<SpeechReceipt>;
     this.operations = [
+      defineOperation({
+        name: 'voice.testSpeech',
+        description: neoToolDescription('voice.testSpeech'),
+        inputSchema: z.object({}),
+        resultSchema: z.object({ ok: z.boolean(), reason: z.string().optional() }),
+        policy: { safetyClass: 'mutate', roles: ['neo'] },
+        execute: (superpipe({})('voice.testSpeech') as PipelineAPI)
+          .pipe(
+            () => withVoiceCredentialLock(async () => this.audio.test(await savedVoiceKeys())),
+            undefined,
+            'result'
+          )
+          .endAsync('result') as () => ReturnType<NeoSpeechAudio['test']>,
+      }),
       defineOperation({
         name: 'neo.speech.listen',
         description: neoToolDescription('neo.speech.listen'),

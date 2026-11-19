@@ -64,4 +64,9 @@ describe('voice.testSpeech', () => {
     const { result } = await run(401, `Unauthorized: ${secret}`);
     expect(result).toEqual({ ok: false, reason: 'HTTP 401: Unauthorized: [key]' });
   });
+
+  test('does not report success for an empty audio response', async () => {
+    const { result } = await run(200, new Uint8Array());
+    expect(result).toEqual({ ok: false, reason: 'Speech service returned no audio' });
+  });
 });

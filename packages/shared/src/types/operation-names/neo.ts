@@ -61,6 +61,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.speech.listen',
   'neo.speech.preview',
   'neo.speech.say',
+  'voice.testSpeech',
   'neo.todo.add',
   'neo.todo.continue',
   'neo.todo.done',

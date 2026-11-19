@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
 import { voiceDiagnostic } from '../voice/diagnostics.ts';
 import type { ClientEventData } from '../operations/client-event-schemas.ts';
+import { readLimitedResponseText } from '../voice/transcribe-fetch.ts';
 type Target = { id: string; sessionId: string; clientId: string; text: string };
 type SpeechRetry = { retryInMs: number } | { giveUp: string };
 const SPEECH_DEADLINE_MS = 180_000;
@@ -180,6 +181,43 @@ export class NeoSpeechAudio {
       )
         return { ok: false, reason: error.message };
       throw error;
+    }
+  }
+
+  async test(savedKeys: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const redact = (text: string) => {
+      for (const key of [...savedKeys].filter(Boolean).sort((a, b) => b.length - a.length))
+        text = text.replaceAll(key, '[key]');
+      return text.slice(0, 500);
+    };
+    try {
+      const backend = await this.backend();
+      const speech = this.speechRequest(backend, 'Hello, this is a voice test.', undefined);
+      const response = await this.request(speech.url, {
+        method: 'POST',
+        signal: AbortSignal.timeout(10_000),
+        redirect: 'error',
+        headers: { 'Content-Type': 'application/json', ...authorization(backend.part) },
+        body: JSON.stringify(speech.body),
+      });
+      if (!response.ok) {
+        const body = await readLimitedResponseText(response).catch(() => 'Response unavailable');
+        return { ok: false, reason: redact(`HTTP ${response.status}: ${body.trim()}`) };
+      }
+      const type = response.headers.get('content-type') ?? '';
+      if (!type.startsWith(isDeepgram(backend) ? 'audio/l16' : 'audio/pcm') || !response.body)
+        return { ok: false, reason: 'Speech service returned no PCM audio' };
+      const reader = response.body.getReader();
+      try {
+        const first = await reader.read();
+        return first.value?.byteLength
+          ? { ok: true }
+          : { ok: false, reason: 'Speech service returned no audio' };
+      } finally {
+        await reader.cancel();
+      }
+    } catch (error) {
+      return { ok: false, reason: redact(error instanceof Error ? error.message : String(error)) };
     }
   }
 

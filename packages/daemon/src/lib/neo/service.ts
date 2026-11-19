@@ -333,7 +333,21 @@ export class NeoService {
         resolveSpeechPart(
           this.db.getGlobalSettings().voice,
           ProviderCredentialManager.create(this.db.getDatabase())
-        )
+        ),
+      async () => {
+        const manager = ProviderCredentialManager.create(this.db.getDatabase());
+        const ids = await manager.listCredentialProviderIds();
+        const credentials = await Promise.all(
+          ids
+            .filter((id) => id === 'voice-transcription' || id.startsWith('voice-transcription:'))
+            .map((id) => manager.getCredentials(id))
+        );
+        const inline = this.db.getGlobalSettings().voice?.apiKey;
+        return [
+          inline,
+          ...credentials.map((item) => (item?.type === 'api_key' ? item.apiKey : undefined)),
+        ].filter((key): key is string => !!key);
+      }
     );
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
