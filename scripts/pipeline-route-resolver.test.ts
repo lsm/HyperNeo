@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test';
-import { resolveLocalPipeline } from './pipeline-route-resolver.ts';
+import { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
+
+const resolveLocalPipeline = (source: string, name: string) =>
+  createLocalPipelineResolver(source)(name);
 
 const imports = `
   import superpipe from 'superpipe';
@@ -55,4 +58,20 @@ test('leaves duplicate operation definitions unknown', () => {
 test('returns the actual pipeline name for a mismatched operation', () => {
   const source = `${imports} ${runner} defineOperation({ name: 'demo.other', execute: run });`;
   expect(resolveLocalPipeline(source, 'demo.other')).toEqual({ kind: 'named', name: 'demo.read' });
+});
+
+test('reuses one resolver across multiple operations without leaking resolution state', () => {
+  const source = `${imports} ${runner}
+    const alias = run;
+    defineOperation({ name: 'demo.first', execute: alias });
+    defineOperation({ name: 'demo.second', execute: () => alias() });
+    defineOperation({ name: 'demo.ambiguous', execute: alias });
+    defineOperation({ name: 'demo.ambiguous', execute: alias });
+  `;
+  const resolve = createLocalPipelineResolver(source);
+  expect(resolve('demo.first')).toEqual({ kind: 'named', name: 'demo.read' });
+  expect(resolve('demo.second')).toEqual({ kind: 'named', name: 'demo.read' });
+  expect(resolve('demo.ambiguous')).toEqual({ kind: 'unknown' });
+  expect(resolve('demo.missing')).toEqual({ kind: 'unknown' });
+  expect(resolve('demo.first')).toEqual({ kind: 'named', name: 'demo.read' });
 });

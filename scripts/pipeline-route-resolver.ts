@@ -4,11 +4,10 @@ export type LocalPipelineResolution = { kind: 'named'; name: string } | { kind: 
 
 const unknown: LocalPipelineResolution = { kind: 'unknown' };
 
-export function resolveLocalPipeline(
+export function createLocalPipelineResolver(
   source: string,
-  operationName: string,
   fileName = 'route.ts'
-): LocalPipelineResolution {
+): (operationName: string) => LocalPipelineResolution {
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
   const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
@@ -126,7 +125,7 @@ export function resolveLocalPipeline(
     return callable(expression.expression, seen);
   }
 
-  const matches: ts.Expression[] = [];
+  const matches = new Map<string, ts.Expression[]>();
   const visit = (node: ts.Node) => {
     if (
       ts.isCallExpression(node) &&
@@ -147,14 +146,19 @@ export function resolveLocalPipeline(
         name &&
         ts.isPropertyAssignment(name) &&
         ts.isStringLiteral(name.initializer) &&
-        name.initializer.text === operationName &&
         execute &&
         ts.isPropertyAssignment(execute)
-      )
-        matches.push(execute.initializer);
+      ) {
+        const nameMatches = matches.get(name.initializer.text) ?? [];
+        nameMatches.push(execute.initializer);
+        matches.set(name.initializer.text, nameMatches);
+      }
     }
     ts.forEachChild(node, visit);
   };
   visit(parsed);
-  return matches.length === 1 ? callable(matches[0], new Set()) : unknown;
+  return (operationName) => {
+    const found = matches.get(operationName);
+    return found?.length === 1 ? callable(found[0], new Set()) : unknown;
+  };
 }

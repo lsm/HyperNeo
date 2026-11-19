@@ -3,7 +3,7 @@ import { dirname, join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
-export { resolveLocalPipeline } from './pipeline-route-resolver.ts';
+export { createLocalPipelineResolver } from './pipeline-route-resolver.ts';
 
 type Kind = 'op' | 'rpc' | 'event' | 'table';
 type Role = 'defines' | 'uses' | 'handles' | 'calls' | 'emits' | 'listens' | 'reads' | 'writes';
