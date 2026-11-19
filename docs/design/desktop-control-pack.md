@@ -10,7 +10,7 @@
 - Neo can use the computer three ways and has no rule for choosing:
   - native desktop control through a local worker;
   - a Codex or Claude Desktop worker with its own computer use;
-  - the life-admin pack's Chrome DevTools connection, which reaches the browser only.
+  - the life-admin pack's Chrome DevTools connection, which reaches page content only.
 
 ## Design
 
@@ -24,8 +24,7 @@
    - The guidance:
      - Only a worker can call `desktop.call`. Neo adds the todo with `named.desktopControl: true` on a local worker.
      - When the preference is not "allow", Neo sends a `desktop_control` question and the human taps Allow.
-     - For a browser-only step, use life-admin's Chrome connection when that pack is on.
-     - For other apps, or when no Chrome connection exists, use native desktop control.
+     - Use native desktop control for every computer step, browser steps included.
      - Use a Codex or Claude Desktop worker's own computer use only when native control is unavailable.
      - Say once to the human what they must tap.
    - The pack is on by default. It costs nothing when the app is absent.
@@ -39,6 +38,11 @@
    - A non-worker caller gets `desktop_worker_only` (#11286).
    - The `neo.todo.add` refusal names the panel switch and the todo's "Allow this computer" menu item, not "the Neo page".
 
+4. **Life-admin drops its Chrome DevTools route.**
+   - Its instructions point to the desktop pack instead of `chrome-devtools-user`.
+   - Chrome DevTools reaches page content only. It cannot click extension popups such as a password manager, or browser dialogs, so tasks stall there.
+   - One route means one set of grants and one way to stop and take over.
+
 ## Not in scope
 
 - No new preference, table or column. No change to the worker-side opt-in rule.
@@ -47,3 +51,4 @@
 
 1. The `desktop` pack: guidance moved out of core prompts, plus the refusal text. This absorbs #11286.
 2. The panel switch, plus the permission prompt.
+3. Life-admin instructions switched to the desktop pack.
