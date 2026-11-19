@@ -8,7 +8,7 @@ import { createWorkVerbOperations } from '../../../packages/daemon/src/lib/drive
 import type { WorkAdapter, WorkSummary } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
-import { readReusableWorkers, recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { readReusableWorkers, recordWorkerStarted } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { packWorkerStartFixture } from '../../../packages/daemon/tests/unit/helpers/pack-worker-start.ts';
 
 const run = resolve(process.argv.at(-1)!);

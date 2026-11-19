@@ -1,8 +1,8 @@
 {
-  "prepare": 1411,
+  "prepare": 1409,
   "transaction": 149,
   "exec": 116,
   "query": 13,
-  "run": 611,
+  "run": 609,
   "open": 4
 }

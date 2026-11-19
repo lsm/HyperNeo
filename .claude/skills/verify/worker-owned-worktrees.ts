@@ -8,7 +8,7 @@ import { createTables, runMigrations } from '../../../packages/daemon/src/storag
 import { gatewayFor } from '../../../packages/daemon/src/storage/db-gateway/db-gateway.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
-import { recordWorkerStarted, readFreeWorkers } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordWorkerStarted, readFreeWorkers } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { createNeoTodoRunner } from '../../../packages/daemon/src/lib/neo/todo-runner.ts';
 import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';

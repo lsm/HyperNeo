@@ -7,7 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createNeoService } from '../../../packages/daemon/tests/unit/helpers/neo-service.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
-import { recordWorkerStarted } from '../../../packages/daemon/src/storage/work-started-sessions.ts';
+import { recordWorkerStarted } from '../../../packages/daemon/src/storage/repositories/work-started-sessions-worker.ts';
 import { waitForSdkBodyCopy } from './wait-for-sdk-body-copy.ts';
 
 const run = resolve(process.argv.at(-1)!);

@@ -65,7 +65,9 @@ class WorkCleanupRepository {
     const bindings = this.db
       .prepare(`${removed} SELECT s.ref, t.state, t.id AS todoId,
         EXISTS (SELECT 1 FROM neo_todo_sessions peer JOIN neo_todos live ON live.id = peer.todo_id
-          WHERE live.state IN ('todo', 'doing', 'blocked')
+          WHERE (live.state IN ('todo', 'doing', 'blocked')
+              OR (EXISTS (SELECT 1 FROM pack_facts k WHERE k.todo_id = peer.todo_id AND k.pack = 'core' AND k.key = 'release_kept')
+                AND NOT EXISTS (SELECT 1 FROM pack_facts r WHERE r.todo_id = peer.todo_id AND r.pack = 'core' AND r.key = 'released')))
             AND COALESCE(json_extract(peer.ref, '$.adapter'), json_extract(peer.target, '$.ref.adapter')) = json_extract(s.ref, '$.adapter')
             AND COALESCE(json_extract(peer.ref, '$.id'), json_extract(peer.target, '$.ref.id')) = json_extract(s.ref, '$.id')
             AND COALESCE(json_extract(peer.ref, '$.daemon'), json_extract(peer.target, '$.ref.daemon')) IS NULL

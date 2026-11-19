@@ -4,6 +4,18 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-11-19
+
+- Store voice provider credentials per host (#11126).
+- Give Neo resident tools their full action descriptions (#11147).
+- Keep desktop control available for blocked workers (#11134).
+- Repair the SDK download smoke check used by release builds (#11136).
+- Upgrade the pinned Bun runtime to 1.4.4 (#11141).
+
+### API compatibility
+
+Compared with v0.60.0, the pinned phone source inventory reports 0 breaking, 0 risky, and 0 safe methods. No API surface changes were detected.
+
 ## [0.60.0] - 2026-11-18
 
 - Connect Microsoft accounts and use Outlook mail drafts, search, calendars, and events (#10898, #11077, #11099, #11103, #11106).

@@ -87,13 +87,16 @@ export interface WorkVerbDeps {
     adapter: string,
     todoId?: string,
     sessionId?: string
-  ) => ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>;
+  ) =>
+    | ReadonlySet<string>
+    | ReadonlyMap<string, WorkerReuseFacts>
+    | Promise<ReadonlySet<string> | ReadonlyMap<string, WorkerReuseFacts>>;
   reusePolicy?: (
     adapter: string,
     todoId: string | undefined,
     caller: OperationCaller
   ) => Promise<{ mode: 'long_lived' | 'per_ask' | 'per_todo'; sameAsk: string[] }>;
-  markUnusable?: (ref: WorkRef) => void;
+  markUnusable?: (ref: WorkRef) => void | Promise<void>;
   claimWorker?: (ref: WorkRef, todoId?: string) => Promise<boolean>;
   unclaimWorker?: (todoId: string, ref: WorkRef) => Promise<void>;
   isOpenTodo?: (todoId: string, sessionId: string) => boolean;
@@ -114,7 +117,7 @@ export interface WorkVerbDeps {
     recordFailure(id: string, error: unknown): Promise<void>;
   };
   queueInput?: (input: WorkerInput, from: string, caller: OperationCaller) => Promise<string>;
-  recordStarted?: (ref: WorkRef, directory?: string) => void;
+  recordStarted?: (ref: WorkRef, directory?: string) => void | Promise<void>;
   reportUncertain?: (report: WorkSendUncertainty) => Promise<void>;
   startPlace?: (input: StartDraft, caller: OperationCaller) => Gate<StartInput>;
 }
@@ -628,7 +631,7 @@ export async function startWork(
           }
         : input;
     const result = await route.local(request, { from, caller });
-    if (result.ok) deps.recordStarted?.(result.value.ref, result.value.execution?.directory);
+    if (result.ok) await deps.recordStarted?.(result.value.ref, result.value.execution?.directory);
     return result;
   }
   const { daemon: _daemon, ...place } = input.place;
@@ -680,7 +683,7 @@ export async function reuseIdleWorker(
     return null;
   const policy = await deps.reusePolicy?.(adapter.id, input.todoId, caller);
   if (policy?.mode === 'per_todo') return null;
-  const free = deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
+  const free = await deps.freeWorkers?.(adapter.id, input.todoId, caller.sessionId);
   if (!free?.size && !(policy?.mode === 'per_ask' && policy.sameAsk.length)) return null;
   const configured =
     input.model || input.effort ? await adapter.resolveStartConfiguration!(input) : null;
@@ -777,7 +780,7 @@ export async function reuseIdleWorker(
     }
     reuseHolds.delete(key);
     if (sent.notSent && todoId) await deps.unclaimWorker?.(todoId, work.ref);
-    deps.markUnusable?.(work.ref);
+    await deps.markUnusable?.(work.ref);
     if (sent.notSent || sent.reason === 'not_open' || sent.reason === 'not_found') continue;
     const reported = await reportUncertainWorkSend(sent, { ref: work.ref, message }, from, deps);
     return reported.ok ? sent : reported;
