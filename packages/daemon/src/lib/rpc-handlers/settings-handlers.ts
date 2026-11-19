@@ -141,16 +141,20 @@ export function registerSettingsHandlers(
             );
           } catch (error) {
             await settingsManager.rollbackGlobalSettingsAsync(rollback);
-            await restorePriorCredential(
-              priorVoiceCredential,
-              credentialManager,
-              voiceMutation.providerId ?? VOICE_CREDENTIAL_PROVIDER_ID
-            );
-            await restorePriorCredential(
-              priorExaCredential,
-              credentialManager,
-              EXA_CREDENTIAL_PROVIDER_ID
-            );
+            if (voiceMutation.storeKey || voiceMutation.remove) {
+              await restorePriorCredential(
+                priorVoiceCredential,
+                credentialManager,
+                voiceMutation.providerId ?? VOICE_CREDENTIAL_PROVIDER_ID
+              );
+            }
+            if (exaMutation.storeKey || exaMutation.remove) {
+              await restorePriorCredential(
+                priorExaCredential,
+                credentialManager,
+                EXA_CREDENTIAL_PROVIDER_ID
+              );
+            }
             throw error;
           }
           return result;
