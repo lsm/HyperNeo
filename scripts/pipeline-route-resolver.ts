@@ -6,7 +6,8 @@ const unknown: LocalPipelineResolution = { kind: 'unknown' };
 
 export function createLocalPipelineResolver(
   source: string,
-  fileName = 'route.ts'
+  fileName = 'route.ts',
+  strictCalls = false
 ): (operationName: string) => LocalPipelineResolution {
   const path = fileName.endsWith('.tsx') ? '/route.tsx' : '/route.ts';
   const options: ts.CompilerOptions = { noLib: true, noResolve: true, noEmit: true };
@@ -170,7 +171,12 @@ export function createLocalPipelineResolver(
   function action(expression: ts.Expression, seen: Set<ts.Node>): LocalPipelineResolution {
     expression = unwrap(expression);
     if (ts.isAwaitExpression(expression)) return action(expression.expression, seen);
-    if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return unknown;
+    if (
+      !ts.isCallExpression(expression) ||
+      (strictCalls && (expression.flags & ts.NodeFlags.OptionalChain) !== 0) ||
+      !ts.isIdentifier(expression.expression)
+    )
+      return unknown;
     return callable(expression.expression, seen);
   }
 

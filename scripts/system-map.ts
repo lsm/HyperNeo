@@ -761,7 +761,11 @@ export function countPipelineRoutes(
         if (arrow && !call) {
           counts.missing++;
         } else {
-          const resolved = (resolveLocal ??= createLocalPipelineResolver(source, file))(name);
+          const resolved = (resolveLocal ??= createLocalPipelineResolver(
+            source,
+            file,
+            strictCalls
+          ))(name);
           if (resolved.kind !== 'named' || resolved.name !== name) counts.unreadable++;
         }
       } else if (!reached.some((pipeline) => pipeline.name === name)) counts.misnamed++;

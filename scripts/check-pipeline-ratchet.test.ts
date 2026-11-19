@@ -123,8 +123,21 @@ test.each([
   'queue(() => run())',
   'run?.()',
 ])('a conditional or deferred pipeline call stays unreadable: %s', (expression) => {
-  const source = `const run = superpipe({})('demo.maybe').end();
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
     defineOperation({ name: 'demo.maybe', execute: () => ${expression} });`;
+  expect(
+    countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
+  ).toBe(1);
+});
+
+test('an optional pipeline call inside a helper stays unreadable', () => {
+  const source = `import superpipe from 'superpipe';
+    import { defineOperation } from './registry.ts';
+    const run = superpipe({})('demo.maybe').end();
+    const helper = () => run?.();
+    defineOperation({ name: 'demo.maybe', execute: () => helper() });`;
   expect(
     countPipelineRoutes(new Map([['packages/demo/src/added.ts', source]]), true).unreadable
   ).toBe(1);
