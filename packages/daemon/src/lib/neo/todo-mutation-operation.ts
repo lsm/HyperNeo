@@ -158,6 +158,8 @@ export function wireNeoTodoMutations(
         deps.write(neoTodoMutations, {
           input,
           checked: { check: plan.todo.check, result: completion },
+          holdStartedAt:
+            input.kind === 'edit' && input.hold != null ? plan.todo.startedAt : undefined,
           now: Date.now(),
           registered,
         }),

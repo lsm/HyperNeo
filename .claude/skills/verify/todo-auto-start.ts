@@ -239,7 +239,7 @@ try {
     assert.deepEqual(open(first), []);
     assert.deepEqual([state(first, one.id), state(first, two.id), state(first, three.id)], ['doing', 'todo', 'todo']);
     assert.equal(starts(), 1);
-    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.' });
+    await call('neo.todo.hold', { todoId: held.id, reason: 'Human paused this step.', decision: true });
     const unapproved = seedUnapproved(one.askId);
     app!.db.getDatabase().prepare('UPDATE neo_todos SET approved_at = NULL WHERE id = ?').run(unapproved.id);
     const unrelated = reply(one.askId);

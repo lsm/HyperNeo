@@ -17,6 +17,7 @@ type Input = {
   input: Parameters<Planner['plan']>[0];
   checked?: { check: NeoTodo['check']; result: NeoTodoCheckResult | null };
   now: number;
+  holdStartedAt?: number | null;
   registered?: readonly (ArtifactRef | null)[];
 };
 type Outcome =
@@ -35,6 +36,19 @@ const commit = (superpipe({})('neo.todo.commit-mutation') as PipelineAPI)
       return 'patch' in plan ? { value: plan } : { reason: plan };
     },
     ['db', 'args'],
+    'result:outcome'
+  )
+  .pipe(
+    (plan: Plan, args: Input) =>
+      args.holdStartedAt === undefined || args.holdStartedAt === plan.todo.startedAt
+        ? { value: plan }
+        : {
+            reason: {
+              ok: false as const,
+              reason: 'todo_changed: the worker changed; retry the hold.',
+            },
+          },
+    ['outcome', 'args'],
     'result:outcome'
   )
   .pipe(

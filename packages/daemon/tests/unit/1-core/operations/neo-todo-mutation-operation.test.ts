@@ -23,6 +23,7 @@ describe('Writer-backed todo operation activation', () => {
   let order: string[];
   let stopFailure: string | null;
   let duringStop: (() => void) | null;
+  let beforeWrite: (() => void) | null;
   let checkDone: boolean;
   let workerRemotes: string[] | undefined;
   let advance: () => Promise<unknown>;
@@ -36,6 +37,7 @@ describe('Writer-backed todo operation activation', () => {
     order = [];
     stopFailure = null;
     duringStop = null;
+    beforeWrite = null;
     checkDone = true;
     workerRemotes = undefined;
     gateway.onChanges = () => {
@@ -100,7 +102,10 @@ describe('Writer-backed todo operation activation', () => {
     const registry = createOperationRegistry(
       wireNeoTodoMutations(legacy, {
         gateway,
-        write: gateway.run.bind(gateway),
+        write: (...args) => {
+          beforeWrite?.();
+          return gateway.run(...args);
+        },
         packs: () => packs,
         artifact: () => null,
         stop,
@@ -264,6 +269,16 @@ describe('Writer-backed todo operation activation', () => {
       ok: true,
       todo: { state: 'blocked', blockedBy: 'worker' },
     });
+  });
+
+  test('a passive hold refuses a worker started after planning', async () => {
+    beforeWrite = () =>
+      store.updateTodo(store.getTodo('peer')!, { state: 'doing', startedAt: 4 }, 4);
+    expect(await call('neo.todo.hold', { todoId: 'peer', reason: 'Wait.' })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('todo_changed'),
+    });
+    expect(store.getTodo('peer')).toMatchObject({ state: 'doing', startedAt: 4 });
   });
 
   test('a passive hold refuses a worker that changed while stopping', async () => {

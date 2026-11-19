@@ -615,6 +615,8 @@ export function createNeoTodoOperations(
     if (input?.addUrls || input?.check || input?.hold !== undefined) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
+      if (input.hold != null && checked.startedAt !== latest.value.startedAt)
+        return { ok: false, reason: 'todo_changed: the worker changed; retry the hold.' };
       const edited = planNeoTodoEdit(latest.value, input);
       if ('reason' in edited) return edited.reason;
       const rebased = withCheck(edited.value, input);
