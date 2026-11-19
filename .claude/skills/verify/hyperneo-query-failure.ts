@@ -78,13 +78,31 @@ try {
   evidence.mailbox = mailbox();
   const [queued] = db.getJobQueueRepo().dequeue('mailbox');
   if (queued) {
+    const main = db.getDatabase();
+    const expectedRowid = (main.prepare('SELECT rowid AS rid FROM job_queue WHERE id = ?')
+      .get(queued.id) as { rid: number }).rid;
+    const prepare = main.prepare.bind(main);
+    let admissionReads = 0;
+    main.prepare = ((sql: string) => {
+      if (sql === 'SELECT rowid AS rid FROM job_queue WHERE id = ?') admissionReads++;
+      return prepare(sql);
+    }) as typeof main.prepare;
     const handler = createMailboxDeliveryHandler({
       jobQueue: db.getJobQueueRepo(), db: db.getDatabase(), sdkMessageRepo: db.getSDKMessageRepo(),
       getSession: async (id) => id === root ? agent : null, isSessionArchived: () => false,
       prepareEntry: (entry, jobId) => db.getSDKMessageRepo().runWrite(sdkNeoWakeQueue,
         { prepare: [entry, jobId, true] }),
     });
-    evidence.delivery = await handler(queued);
+    try {
+      evidence.delivery = await handler(queued);
+    } finally {
+      main.prepare = prepare;
+      evidence.mainThreadAdmissionReads = admissionReads;
+    }
+    assert.equal(admissionReads, 0, 'Mailbox admission rowid must be read through the gateway');
+    const deliveryJobs = db.getJobQueueRepo().listJobs({ queue: 'message_delivery' });
+    evidence.admissionRowid = { expected: expectedRowid, actual: deliveryJobs[0]?.payload.admissionRowid };
+    assert.equal(deliveryJobs[0]?.payload.admissionRowid, expectedRowid);
   }
   evidence.recipientInputs = db.getDatabase().prepare(
     `SELECT ${sdkMessageBodyAt('m.rowid')} AS body, send_status FROM sdk_messages m WHERE session_id=? AND message_type='user'`
