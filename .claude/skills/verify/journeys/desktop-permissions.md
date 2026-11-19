@@ -28,8 +28,11 @@ window appears at startup. Approve a todo with desktop control and invoke
 `desktop.call` as its worker; confirm the permissions window appears and the
 call is refused without dispatch. While the guide is visible, switch to another
 app and repeat the call; confirm the guide does not steal focus. The Accessibility
-and Screen Recording buttons must request access and open their respective System Settings panes. After
-granting Screen Recording, quit and reopen the app to finish the grant.
+button must request access and open its System Settings pane. Confirm the guide
+advances to Screen Recording on its own when Accessibility is granted. The
+Screen Recording button opens its own pane. Confirm the guide closes on its own
+when both grants are visible to the app. If macOS requires a relaunch, follow
+the system prompt before retrying the worker call.
 
 With both permissions granted, retry `desktop.call` as the opted-in worker
 against a test-owned app, allowing the requested app access in the owner dialog.

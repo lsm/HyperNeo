@@ -3,5 +3,5 @@
   "identifier": "permissions-window",
   "description": "Desktop permission setup window",
   "windows": ["permissions"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-close"]
 }
