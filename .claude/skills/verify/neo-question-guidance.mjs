@@ -21,30 +21,40 @@ const rpc = (name, input = {}) => {
 const prompt = execFileSync('bun', ['-e', "import {neoPrompt} from './packages/daemon/src/lib/neo/prompt.ts'; console.log(neoPrompt([]));"], { encoding: 'utf8' });
 assert(!prompt.includes('a few bullets or a small comparison table'));
 const guidance = rpc('operations.describe', { name: 'neo.question.ask' });
-assert(JSON.stringify(guidance).includes('short title line, a few bullets or a small table, bold key choice'));
+assert.equal(guidance.found, true);
+for (const phrase of ['short Markdown title', 'a few bullets or a small table', 'bold the key choice']) {
+  assert(guidance.description.includes(phrase), phrase);
+}
 const fixtures = JSON.parse(readFileSync('packages/web/src/neo/__tests__/fixtures/question-guidance.json', 'utf8'));
 const opened = rpc('neo.open');
 assert(opened.ok);
-const ask = crypto.randomUUID();
 const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const now = Date.now();
-execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic guidance examples','Synthetic verification only','open',${now},${now});`]);
 const questions = fixtures.map((fixture) => {
+      const ask = crypto.randomUUID();
+      execFileSync('sqlite3', [`${run}/data/daemon.db`, `INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES(${quote(ask)},${quote(opened.sessionId)},'Synthetic guidance examples','Synthetic verification only','open',${now},${now});`]);
       const receipt = rpc('neo.question.ask', { retireWhen: { pack: 'core', kind: 'evidence', params: { path: `${run}/question-no-longer-needed` } }, askId: ask, kind: 'choice', text: fixture.text, options: ['Release now', 'Preview first'] });
       assert(receipt.ok, JSON.stringify(receipt));
-      return { ...fixture, id: receipt.question.id };
+      return { ...fixture, ask, id: receipt.question.id };
     });
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
+const base = `http://127.0.0.1:${port}`;
 const results = [];
 try {
+  const context = await browser.newContext();
+  const { code } = rpc('device.pair.create', { kind: 'human', name: 'Synthetic question browser' });
+  assert(code);
+  const paired = await context.request.post(`${base}/pair`, { headers: { origin: base }, data: { code, name: 'Synthetic question browser' } });
+  assert.equal(paired.status(), 200);
   for (const width of [1280, 390]) {
-    const page = await browser.newPage({ viewport: { width, height: 1000 } });
+    const page = await context.newPage();
+    await page.setViewportSize({ width, height: 1000 });
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if (width === 390) await page.getByRole('button', { name: /^Your work/ }).click();
-    const card = await revealAsk(page, ask);
-    await card.waitFor();
     for (const fixture of questions) {
+      const card = await revealAsk(page, fixture.ask);
+      await card.waitFor();
       const body = card.locator(`[id="neo-ref-question-${fixture.id}"]`);
       await body.locator('strong').waitFor();
       assert.equal(await body.locator('strong').innerText(), fixture.keyChoice);
@@ -63,10 +73,12 @@ try {
     await page.screenshot({ path: `${run}/evidence/neo-question-guidance-${width}.png`, fullPage: true });
     let answered = null;
     if (width === 390) {
+      const card = await revealAsk(page, questions[0].ask);
       await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).locator('[data-choice-option]', { hasText: 'Preview first' }).click();
       await card.locator('[data-ask-details-toggle]').click();
-      await card.locator(`[id="neo-ref-question-${questions[0].id}"] strong`).waitFor();
-      assert((await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).innerText()).includes('Preview first'));
+      const detail = page.getByRole('dialog').locator(`[id="neo-ref-question-${questions[0].id}"]`);
+      await detail.locator('strong').waitFor();
+      assert((await detail.innerText()).includes('Preview first'));
       answered = rpc('neo.question.get', { questionId: questions[0].id });
       assert.equal(answered.question.state, 'answered');
       assert.deepEqual(answered.question.answer, ['Preview first']);

@@ -901,6 +901,22 @@ open(sys.argv[2], 'w').write(reply.decode())
         return self.call('dispatch', worker, tool=tool, arguments=arguments,
                          callId='call-' + tool, **params)
 
+    def test_permissions_are_requested_only_on_desktop_call(self):
+        missing = self.root / 'permissions-missing'
+        events = self.root / 'permission-checks'
+        missing.touch()
+        self.assertTrue(self.call('status')['ok'])
+        self.assertFalse(events.exists())
+        reply = self.dispatch('click', {'pid': os.getpid()}, workDir=str(self.work))['result']
+        self.assertEqual((reply['decision'], reply['reason'], reply['dispatched']),
+                         ('refused', 'desktop_permissions_required', False))
+        self.assertEqual(events.read_text().splitlines(), ['check'])
+        self.assertFalse(list(self.work.glob('d-*')))
+        missing.unlink()
+        reply = self.dispatch('kill_app', {}, workDir=str(self.work))['result']
+        self.assertNotEqual(reply['reason'], 'desktop_permissions_required')
+        self.assertEqual(events.read_text().splitlines(), ['check', 'check'])
+
     def test_dispatch_refuses_without_starting_a_driver(self):
         pid = finder()
         self.call('fixture-revoke', tool='click', arguments={'pid': pid})

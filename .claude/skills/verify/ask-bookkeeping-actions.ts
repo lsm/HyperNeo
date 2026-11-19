@@ -65,9 +65,8 @@ for (const phase of ['initial', 'reopen']) {
     };
     const described = await call('operations.describe', { name: 'neo.question.ask' });
     assert.equal(described.found, true);
-    assert(described.description.includes('If a supplied todoId is unknown, belongs to another ask, or is done or removed'));
-    assert(described.description.includes('supply explicit retireWhen to open the question on the ask without linking that todo'));
-    assert(described.description.includes('A successful unlinked card includes a todo_closed record'));
+    assert.match(described.description, /supply retireWhen.*supply it explicitly for a missing check or invalid, foreign, done or removed todo/);
+    assert.match(described.description, /With an explicit check, .* produces an unlinked card and todo_closed/);
     if (phase === 'initial') {
       seedHistoricalAsk(store, 'neo', { title: 'One cross-repo request', request: 'Keep both repositories together' });
       const mixed = await call('neo.ask.open', {
@@ -91,7 +90,10 @@ for (const phase of ['initial', 'reopen']) {
         instruction: 'Work',
         target: { verb: 'start', adapter: 'hyperneo' },
       };
-      const refused = await call('neo.todo.add', { after: [], askId: repoAsk.id, ...draft }, false);
+      const refused = await call('neo.todo.add', {
+        askId: repoAsk.id, ...draft,
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: ['https://github.com/synthetic/root/pull/1'] } },
+      }, false);
       assert(refused.reason.startsWith('place_required:'));
       assert.deepEqual(store.listTodos(repoAsk.id), [context]);
       const placed = await call('neo.todo.add', { after: [],

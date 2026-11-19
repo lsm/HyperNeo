@@ -39,7 +39,7 @@ try {
   const questionDescription = await rpc('operations.describe', { name: 'neo.question.ask' });
   assert(JSON.stringify(doneDescription).includes('unanswered card linked to this todo refuses completion'));
   assert(!JSON.stringify(doneDescription).includes('explicitly retire the card'));
-  assert(JSON.stringify(questionDescription).includes('Marking the todo done is refused while the linked card is open'));
+  assert(JSON.stringify(questionDescription).includes('an open linked card blocks manual todo completion'));
   evidence.push({ doneDescription, questionDescription });
   const store = service.todos;
   store.openAsk({ id: 'ask', projectId: null, sessionId: sender, originMessageId: null, title: 'Synthetic question', request: 'Keep the answer visible', createdAt: 1 });
