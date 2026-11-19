@@ -162,7 +162,7 @@ jobs:
         run: bun run test:pipeline-ratchet
 
       - name: Test CI ratchet base
-        run: HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-ratchet-base.test.ts
+        run: bun run test:ci-ratchet-base
 
       - name: Test test-type ratchet CLI
         run: bun run test:test-types

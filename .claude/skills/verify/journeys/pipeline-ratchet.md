@@ -6,7 +6,7 @@ The user surface is the CI quality command. Run from the checkout root after
 ```bash
 bun run check:pipeline-ratchet
 bun run test:pipeline-ratchet
-HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-ratchet-base.test.ts
+bun run test:ci-ratchet-base
 ```
 
 The first prints all four counts and exits zero at the committed baseline. The
