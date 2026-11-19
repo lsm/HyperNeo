@@ -49,7 +49,7 @@ import { runMigration510 } from '../../../../src/storage/schema/m510-neo-card-ac
 import { runMigration512 } from '../../../../src/storage/schema/m512-neo-todo-produces-follow-up.ts';
 import { runMigration515 } from '../../../../src/storage/schema/m515-neo-question-held.ts';
 import { runMigration527 } from '../../../../src/storage/schema/m527-neo-question-option-details.ts';
-import { runMigration528 } from '../../../../src/storage/schema/m528-neo-question-desktop-app.ts';
+import { runMigration529 } from '../../../../src/storage/schema/m529-neo-question-desktop-app.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
@@ -94,7 +94,7 @@ describe('neo.message.send replyTo', () => {
     runMigration512(mailbox.db);
     runMigration515(mailbox.db);
     runMigration527(mailbox.db);
-    runMigration528(mailbox.db);
+    runMigration529(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     prepareCodingTodoStorage(mailbox.db);
