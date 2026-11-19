@@ -318,6 +318,14 @@ export const en = {
   'chat.sending': 'Sending',
   'chat.notSent': 'Not sent',
   'chat.notSentReason': 'Not sent: {reason}',
+  'download.registryUnreachable':
+    "Can't download Claude Code: Cannot reach npm registry at {host}.",
+  'download.registryMetadata':
+    "Can't download Claude Code: registry returned a web page, not package metadata (blocked by the network?)",
+  'download.npmFailure': "Can't download Claude Code: check your npm registry and login.",
+  'download.stillDownloading': 'Claude Code is still downloading. Try again shortly.',
+  'download.retryFailed': "Can't retry the Claude Code download. Try again shortly.",
+  'download.retrying': 'Retrying…',
   'chat.refused': 'Neo could not process this message.',
   'chat.retried': 'Retried',
   'chat.retry': 'Retry',

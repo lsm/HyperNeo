@@ -567,6 +567,20 @@ describe('SDKUserMessage', () => {
       });
     });
 
+    it('hides message retry while the download requires attention', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        id: 'db-1',
+        deliveryStatus: 'failed' as const,
+      };
+      const { container, rerender } = render(
+        <SDKUserMessage message={message} sessionId="sess-1" disableDeliveryRetry />
+      );
+      expect(container.querySelector('[data-testid="user-delivery-retry-button"]')).toBeNull();
+      rerender(<SDKUserMessage message={message} sessionId="sess-1" />);
+      expect(container.querySelector('[data-testid="user-delivery-retry-button"]')).toBeTruthy();
+    });
+
     it('shows a retry countdown + retry N/Max for a retrying message', () => {
       const message = {
         ...createTextMessage('Hello world'),
