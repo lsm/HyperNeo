@@ -27,7 +27,7 @@ before returning it, including for live streams and speech.
 ## The design
 
 **Three jobs, each with a provider.** Voice settings hold three parts, each with its own
-provider, address and model or voice:
+provider and address, with a model or voice where supported:
 
 | Part | Providers in the first version | Wire shape |
 |---|---|---|
@@ -85,9 +85,9 @@ voice up by answering Neo:
   a server that echoes the token never puts it in Neo's context. After a provider choice or a key save,
   Neo runs the three and says which part works.
 
-- **One part or one voice: on request.** When the human asks to change only one part, its
-  model or its voice ("use voice X"), Neo asks a card naming that part's choices (the
-  adapter's voice list, or a typed name by reply). The web voice settings form gains
+- **One part or one voice: on request.** When the human asks to change one part, the
+  recorded or speech model, or the speech voice ("use voice X"), Neo asks a card naming
+  that part's choices (the adapter's voice list, or a typed name by reply). The web voice settings form gains
   fields for the same edits; no new page is built.
 
 **Upgrade.** Existing settings map without loss: the batch endpoint and model become the
@@ -130,7 +130,7 @@ to 200 production lines, failing tests first.
 7. **The provider card.** The preset preference, asked on a card; for "My own server" the
    reply card for its base URL, which fills the three addresses; and the follow-up that names
    the hosts still missing a key and runs the three tests. The on-request card changes one
-   part, model or voice.
+   part, recorded or speech model, or speech voice.
 
 Acceptance, one test per row: against local fake servers for requests and tests, and as
 daemon integration cases for cards and Neo messages:
