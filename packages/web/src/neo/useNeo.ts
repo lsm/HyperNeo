@@ -169,8 +169,10 @@ export function useNeo() {
       );
       if (!result.accepted) throw new Error(result.reason);
       await refresh();
+      return true;
     } catch (cause) {
       if (alive.current) setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     }
   }
 

@@ -147,6 +147,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.open': '打开',
   'ask.todoCount': '{count} 个待办',
   'ask.questionsWaiting': '{count} 个问题等你',
+  'question.allow': 'Allow',
   'todo.desktopControl': '允许智能体使用这台电脑',
   'todo.desktopOn': '允许用这台电脑',
   'todo.desktopOff': '不再允许用这台电脑',
