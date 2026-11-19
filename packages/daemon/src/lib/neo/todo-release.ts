@@ -7,7 +7,7 @@ import {
   WORKTREE_IN_USE,
   WORKTREE_UNVERIFIED,
 } from '../drivers/work-placement.ts';
-import type { WorkRef } from '../drivers/types.ts';
+import type { WorkAdapter, WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import {
@@ -21,6 +21,36 @@ type Invoke = (
   name: string,
   input: Record<string, unknown>
 ) => Promise<OperationOutcome>;
+export type WorkerCompact = (adapter: string) => WorkAdapter['compact'];
+type ReuseDecision = ReturnType<typeof followSessionReuse>;
+type ReuseRelease =
+  | { value: WorkRef }
+  | { reason: Kept }
+  | { compact: NonNullable<WorkAdapter['compact']>; ref: WorkRef; kept: Kept };
+const compacting = new Set<string>();
+
+function planKeptCompaction({
+  ref,
+  decision,
+  hasLookup,
+  compact,
+  compactedAt,
+  lastUse,
+}: {
+  ref: WorkRef;
+  decision: ReuseDecision;
+  hasLookup: boolean;
+  compact: WorkAdapter['compact'];
+  compactedAt: number | null | undefined;
+  lastUse: number;
+}): ReuseRelease {
+  if ('value' in decision || !hasLookup) return decision;
+  if (!compact) return { value: ref };
+  if (compactedAt === undefined || (compactedAt !== null && compactedAt >= lastUse))
+    return decision;
+  return { compact, ref, kept: decision.reason };
+}
+
 type Released = { released: unknown };
 type Kept = {
   kept:
@@ -141,7 +171,7 @@ export function readNeoTodoArchive(
 }
 
 const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
-  .input(['row', 'invoke', 'sessions'])
+  .input(['row', 'invoke', 'sessions', 'workerCompact'])
   .pipe(
     async (row: FinishedWorker, sessions: NeoTodoSessionRepository) => {
       if (!row.releasedBy) return { value: row };
@@ -156,9 +186,38 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .pipe(readWorkerFolder, ['release', 'invoke'], 'result:release')
   .pipe(requireNeoWorkerSaved, 'release', 'result:release')
   .pipe(
-    async (ref: WorkRef, row: FinishedWorker, sessions: NeoTodoSessionRepository) =>
-      followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref),
-    ['release', 'row', 'sessions'],
+    async (
+      ref: WorkRef,
+      row: FinishedWorker,
+      sessions: NeoTodoSessionRepository,
+      lookup: WorkerCompact | undefined
+    ) => {
+      const decision = followSessionReuse(await sessions.read('reuseFacts', row.todoId), ref);
+      const compact = 'reason' in decision ? lookup?.(ref.adapter) : undefined;
+      const compactedAt = compact ? await sessions.read('workerCompactedAt', ref) : undefined;
+      return { ref, decision, hasLookup: !!lookup, compact, compactedAt, lastUse: row.lastUse };
+    },
+    ['release', 'row', 'sessions', 'workerCompact'],
+    'reuse'
+  )
+  .pipe(planKeptCompaction, 'reuse', 'compaction')
+  .pipe(
+    async (plan: ReuseRelease, sessions: NeoTodoSessionRepository) => {
+      if (!('compact' in plan)) return plan;
+      const key = neoWorkerKey(plan.ref)!;
+      if (compacting.has(key)) return { reason: plan.kept };
+      compacting.add(key);
+      const at = Date.now();
+      try {
+        const result = await plan.compact(plan.ref, { caller: daemon, from: 'neo' });
+        if (result.ok && result.value.compacted)
+          await sessions.write('recordWorkerCompacted', plan.ref, at);
+      } finally {
+        compacting.delete(key);
+      }
+      return { reason: plan.kept };
+    },
+    ['compaction', 'sessions'],
     'result:release'
   )
   .pipe(
@@ -192,7 +251,8 @@ const releaseWorker = (superpipe({})('neo.todo.release-worker') as PipelineAPI)
   .endAsync('release') as (
   row: FinishedWorker,
   invoke: Invoke,
-  sessions: NeoTodoSessionRepository
+  sessions: NeoTodoSessionRepository,
+  workerCompact?: WorkerCompact
 ) => Promise<Released | Kept | Pending>;
 
 export async function releaseNeoTodoWorkers(
@@ -200,7 +260,8 @@ export async function releaseNeoTodoWorkers(
   invoke: Invoke,
   warn: (message: string, error: unknown) => void,
   now = Date.now(),
-  wake?: (row: FinishedWorker, reason: string) => Promise<void>
+  wake?: (row: FinishedWorker, reason: string) => Promise<void>,
+  workerCompact?: WorkerCompact
 ): Promise<void> {
   const rows = await sessions.read('finishedWorkers', now - RELEASE_WINDOW_MS);
   const notified = new Set(
@@ -208,7 +269,7 @@ export async function releaseNeoTodoWorkers(
   );
   for (const row of rows) {
     try {
-      const outcome = await releaseWorker(row, invoke, sessions).catch(
+      const outcome = await releaseWorker(row, invoke, sessions, workerCompact).catch(
         (error: unknown): Pending => ({
           code: 'error',
           pending: error instanceof Error ? error.message : String(error),

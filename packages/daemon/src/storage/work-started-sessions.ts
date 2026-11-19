@@ -10,6 +10,7 @@ export interface StartedWork {
 export interface StartedWorkFacts extends StartedWork {
   releasedAt: number | null;
   claimedBy: string | null;
+  compactedAt: number | null;
 }
 
 export function recordStartedWork(
@@ -19,16 +20,19 @@ export function recordStartedWork(
   unusable = false,
   released = false,
   claim?: { todoId: string | null },
-  role: 'worker' | null = null
+  role: 'worker' | null = null,
+  compactedAt: number | null = null
 ): void {
   db.prepare(
     `INSERT INTO work_started_sessions
-       (adapter, id, started_at, unusable_at, released_at, claimed_by, role)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8) ON CONFLICT (adapter, id) DO UPDATE SET
+       (adapter, id, started_at, unusable_at, released_at, claimed_by, role, compacted_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9) ON CONFLICT (adapter, id) DO UPDATE SET
        unusable_at = COALESCE(excluded.unusable_at, unusable_at),
        released_at = COALESCE(released_at, excluded.released_at),
        claimed_by = CASE WHEN ?7 THEN excluded.claimed_by ELSE claimed_by END,
-       role = COALESCE(excluded.role, role)`
+       role = COALESCE(excluded.role, role),
+       compacted_at = CASE WHEN excluded.compacted_at > COALESCE(compacted_at, -1)
+         THEN excluded.compacted_at ELSE compacted_at END`
   ).run(
     ref.adapter,
     ref.id,
@@ -37,7 +41,8 @@ export function recordStartedWork(
     released ? at : null,
     claim?.todoId ?? null,
     Number(!!claim),
-    role
+    role,
+    compactedAt
   );
 }
 
@@ -90,7 +95,9 @@ export function readStartedWork(
          (SELECT released_at FROM work_started_sessions own
            WHERE own.adapter = worker.adapter AND own.id = worker.id) AS releasedAt,
          (SELECT claimed_by FROM work_started_sessions own
-           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy
+           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS claimedBy,
+         (SELECT compacted_at FROM work_started_sessions own
+           WHERE own.adapter = worker.adapter AND own.id = worker.id) AS compactedAt
        FROM (
          SELECT adapter, id FROM work_started_sessions
          WHERE (?1 IS NULL OR role = 'worker')

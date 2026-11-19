@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { cleanupOwnedWorktree } from '../../../../src/lib/drivers/work-placement.ts';
+import type { WorkAdapter } from '../../../../src/lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../../../src/lib/neo/driver-work.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import {
@@ -69,6 +70,11 @@ function setup() {
     createdAt: 1,
   });
   const archived: unknown[] = [];
+  const compacted: string[] = [];
+  let compact: WorkAdapter['compact'] = async (ref) => {
+    compacted.push(ref.id);
+    return { ok: true, value: { compacted: true } };
+  };
   const notices: string[] = [];
   let archive: (caller: OperationCaller) => unknown = () => ({
     ok: true,
@@ -119,6 +125,7 @@ function setup() {
     store,
     sessions,
     invoke,
+    workerCompact: () => compact,
     packs: () => [],
     tell: async (_ask, _todo, note) => {
       notices.push(note);
@@ -160,6 +167,10 @@ function setup() {
     finishTodo,
     refresh,
     archived,
+    compacted,
+    setCompact: (next: WorkAdapter['compact']) => {
+      compact = next;
+    },
     notices,
     setArchive: (next: (caller: OperationCaller) => unknown) => {
       archive = next;
@@ -666,6 +677,7 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(kept(h)).toEqual([]);
+      expect(h.compacted).toEqual([]);
     } finally {
       h.db.close();
     }
@@ -684,6 +696,59 @@ describe('neo todo runner refresh follows the session reuse setting', () => {
       await h.refresh();
       expect(h.archived).toEqual([worker]);
       expect(h.released()).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('compacts a kept worker once per free period', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id]);
+
+      const next = h.add(started);
+      await h.finishTodo(next);
+      h.db
+        .prepare('UPDATE neo_todos SET finished_at = ? WHERE id = ?')
+        .run(Date.now() + 1, next.id);
+      await h.refresh();
+      expect(h.compacted).toEqual([worker.id, worker.id]);
+      expect(h.archived).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('releases workers whose adapter cannot compact', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      h.setCompact(undefined);
+      await h.finishTodo(h.add(started));
+      await h.refresh();
+      expect(h.archived).toEqual([worker]);
+      expect(kept(h)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('skips a worker claimed during the release sweep', async () => {
+    const h = setup();
+    try {
+      h.reuse('long_lived');
+      await h.finishTodo(h.add(started));
+      h.setOnStatus(() => {
+        h.setOnStatus(() => {});
+        h.sessions.recordRef(h.add(started).id, worker);
+      });
+      await h.refresh();
+      expect(h.compacted).toEqual([]);
+      expect(h.archived).toEqual([]);
     } finally {
       h.db.close();
     }

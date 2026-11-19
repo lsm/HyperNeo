@@ -96,6 +96,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     method: 'finishedWorkers',
     since: number
   ): Promise<ReturnType<NeoTodoSessionRepository['finishedWorkers']>>;
+  read(method: 'workerCompactedAt', ref: WorkRef): Promise<number | null | undefined>;
   read(
     method: 'reuseFacts',
     todoId: string
@@ -721,6 +722,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     todoId: string;
     target: NeoDriverTarget;
     ref: WorkRef;
+    lastUse: number;
     shared: boolean;
     humanNamed: boolean;
     releasedBy: string | null;
@@ -733,6 +735,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       this.db
         .prepare(
           `SELECT s.todo_id AS todoId, s.target, s.ref,
+              COALESCE(t.finished_at, t.started_at, t.created_at) AS lastUse,
               EXISTS (SELECT 1 FROM work_started_sessions w WHERE w.adapter = json_extract(s.ref, '$.adapter') AND w.id = json_extract(s.ref, '$.id') AND w.role = 'worker') AS owned,
               (SELECT value_json FROM pack_facts WHERE todo_id = s.todo_id AND pack = 'core' AND key = 'release_pending') AS pending,
               EXISTS (SELECT 1 FROM neo_todo_sessions o JOIN neo_todos ot ON ot.id = o.todo_id
@@ -765,6 +768,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         humanNamed: number;
         releasedBy: string | null;
         owned: number;
+        lastUse: number;
         pending: string | null;
       }[]
     ).map((row) => ({
@@ -775,6 +779,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
       humanNamed: row.humanNamed === 1,
       releasedBy: row.releasedBy,
       owned: row.owned === 1,
+      lastUse: row.lastUse,
       pending: row.pending ? JSON.parse(row.pending) : null,
     }));
   }
@@ -829,6 +834,22 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     return releaseReuseFacts(this.db, todoId);
   }
 
+  workerCompactedAt(ref: WorkRef): number | null | undefined {
+    const own = readStartedWork(this.db, null, undefined, ref)[0];
+    if (
+      !own ||
+      own.releasedAt !== null ||
+      this.liveTodo(own.claimedBy) ||
+      this.doingTodoOn(ref, null, LIVE_TODO_STATES)
+    )
+      return undefined;
+    return own.compactedAt;
+  }
+
+  recordWorkerCompacted(ref: WorkRef, at: number): void {
+    recordStartedWork(this.db, ref, at, false, false, undefined, null, at);
+  }
+
   recordReleaseKept(todoId: string, kept: unknown): void {
     this.writeCoreFact(todoId, 'release_kept', kept);
   }
@@ -870,6 +891,7 @@ export const neoTodoSessionReads = defineRepositoryOp(
     'syncedLive',
     'finishedWorkers',
     'reuseFacts',
+    'workerCompactedAt',
   ]
 );
 export const neoTodoSessionWrites = defineRepositoryOp(
@@ -895,6 +917,7 @@ export const neoTodoSessionWrites = defineRepositoryOp(
     'unclaimWorker',
     'recordReleased',
     'recordReleaseKept',
+    'recordWorkerCompacted',
     'recordReleasePending',
   ]
 );

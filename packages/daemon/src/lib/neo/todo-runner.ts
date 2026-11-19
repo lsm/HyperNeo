@@ -58,7 +58,7 @@ import { sameNeoTodoCheck } from './todo-completion.ts';
 import { planNudge } from './nudge.ts';
 import { isNeoTodoWorkerWait, planNeoTodoWaits } from './todo-worker-wait.ts';
 import { planNeoTurnReportSweep } from './turn-report-sweep.ts';
-import { releaseNeoTodoWorkers } from './todo-release.ts';
+import { releaseNeoTodoWorkers, type WorkerCompact } from './todo-release.ts';
 import { neoTurnOrigin } from './turn-origin.ts';
 import { deliverNeoTurnReport } from './turn-report.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -92,6 +92,7 @@ export interface NeoTodoRunnerDeps {
     ref?: WorkRef
   ) => Promise<string>;
   workerNames?: () => NeoWorkerNameSource | undefined;
+  workerCompact?: WorkerCompact;
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
   invoke(
@@ -1814,18 +1815,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       await fill().catch((error) => warn('Queued todo start pending', error));
-      await releaseNeoTodoWorkers(sessions, deps.invoke, warn, Date.now(), async (row, reason) => {
-        const todo = store.getTodo(row.todoId);
-        const ask = todo && store.getAsk(todo.askId);
-        if (!todo || !ask) throw new Error('Pending worker todo or ask is missing');
-        await deps.tell(
-          ask,
-          todo,
-          `Finished todo "${todo.title}" (${todo.id}) has a worker (${row.ref.adapter}:${row.ref.id}) pending release for 24 hours: ${reason}.`,
-          neoDerivedId(JSON.stringify(['worker-release-pending', row.ref])),
-          'event'
-        );
-      });
+      await releaseNeoTodoWorkers(
+        sessions,
+        deps.invoke,
+        warn,
+        Date.now(),
+        async (row, reason) => {
+          const todo = store.getTodo(row.todoId);
+          const ask = todo && store.getAsk(todo.askId);
+          if (!todo || !ask) throw new Error('Pending worker todo or ask is missing');
+          await deps.tell(
+            ask,
+            todo,
+            `Finished todo "${todo.title}" (${todo.id}) has a worker (${row.ref.adapter}:${row.ref.id}) pending release for 24 hours: ${reason}.`,
+            neoDerivedId(JSON.stringify(['worker-release-pending', row.ref])),
+            'event'
+          );
+        },
+        deps.workerCompact
+      );
     },
   };
 }
